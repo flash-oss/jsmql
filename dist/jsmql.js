@@ -3791,6 +3791,8 @@ var OPERATOR_ARG_RULES = {
     keyTypes: { startDate: "date", endDate: "date", timezone: "string" }
   },
   // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
+  // Every part must evaluate to an integer — mongod rejects a string or a fractional
+  // double ("'year' must evaluate to an integer, found double with value 2030.5").
   $dateFromParts: {
     optional: [
       "year",
@@ -3804,7 +3806,20 @@ var OPERATOR_ARG_RULES = {
       "second",
       "millisecond",
       "timezone"
-    ]
+    ],
+    keyTypes: {
+      year: "int-or-long",
+      isoWeekYear: "int-or-long",
+      month: "int-or-long",
+      isoWeek: "int-or-long",
+      day: "int-or-long",
+      isoDayOfWeek: "int-or-long",
+      hour: "int-or-long",
+      minute: "int-or-long",
+      second: "int-or-long",
+      millisecond: "int-or-long",
+      timezone: "string"
+    }
   },
   $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
   $dateToParts: {
@@ -5939,6 +5954,18 @@ var METHODS = {
   minus: { receiver: "date" },
   diff: { returns: "number", receiver: "date" },
   startOf: { receiver: "date" },
+  format: { returns: "string", receiver: "date" },
+  week: { returns: "number", receiver: "date" },
+  isoWeek: { returns: "number", receiver: "date" },
+  isoWeekYear: { returns: "number", receiver: "date" },
+  isoWeekday: { returns: "number", receiver: "date" },
+  dayOfYear: { returns: "number", receiver: "date" },
+  quarter: { returns: "number", receiver: "date" },
+  isSame: { returns: "bool", receiver: "date" },
+  isBefore: { returns: "bool", receiver: "date" },
+  isAfter: { returns: "bool", receiver: "date" },
+  set: { receiver: "date" },
+  endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
@@ -7418,12 +7445,89 @@ function utcDate(date) {
 var DATE_OPTION_CHECK = {
   binSize: (l, v) => checkArgType(l, "binSize", v, "number"),
   timezone: (l, v) => checkArgType(l, "timezone", v, "string"),
-  startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday"),
-  onNull: () => {
-  }
-  // any expression is valid — it's the value substituted for null
+  startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday")
 };
-var DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek", "onNull"];
+var DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"];
+var DATE_PARTS_CALENDAR = ["year", "month", "day", "hour", "minute", "second", "millisecond"];
+var DATE_PARTS_ISO = ["isoWeekYear", "isoWeek", "isoDayOfWeek", "hour", "minute", "second", "millisecond"];
+var DATE_PARTS_ISO_MARKERS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"];
+var DATE_PARTS_CALENDAR_MARKERS = ["year", "month", "day"];
+var DATE_PART_OPERATOR = {
+  week: "$week",
+  isoWeek: "$isoWeek",
+  isoWeekYear: "$isoWeekYear",
+  isoWeekday: "$isoDayOfWeek",
+  dayOfYear: "$dayOfYear"
+};
+var DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+var MOMENT_FORMAT_TOKENS = [
+  ["YYYY", "%Y"],
+  ["MMMM", null],
+  // month name
+  ["dddd", null],
+  // weekday name
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null],
+  // 2-digit year
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null],
+  // 12-hour clock
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null]
+  // ordinal day
+];
+var MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+function momentFormatHint(fmt) {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token, i)) continue;
+      out += spec ?? token;
+      i += token.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}: it outputs no month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts (e.g. ["Jan", \u2026][$.t.getMonth() - 1]).`;
+}
+function checkDateFormat(label, arg) {
+  const fmt = litString(arg);
+  if (fmt === null) return;
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === void 0 || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      const flip = spec === void 0 ? void 0 : flipCase(spec);
+      const hint = flip !== void 0 && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${label}' format has an invalid specifier '%${spec ?? ""}'.${hint} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        arg.pos
+      );
+    }
+    i++;
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${label}' takes MongoDB's date format specifiers, not Moment/Luxon tokens \u2014 '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      arg.pos
+    );
+  }
+}
+function flipCase(ch) {
+  const up = ch.toUpperCase();
+  return ch === up ? ch.toLowerCase() : up;
+}
 function dateOptions(method, arg, allowed, ctx) {
   if (arg === void 0) return {};
   const label = `.${method}`;
@@ -8082,6 +8186,105 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       };
     }
+    case "set": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "{ parts }[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const info = objectInfo(exprArgs[0]);
+      if (info === null || info.hasSpread) {
+        throw new CodegenError(
+          `.set({ \u2026 }) needs an object literal with plain keys (${DATE_PARTS_CALENDAR.join(", ")}) \u2014 MongoDB reads the parts by name, so a spread or computed key can't be resolved at compile time. Spell the keys and pass field paths or parameters as their values.`,
+          exprArgs[0].pos
+        );
+      }
+      const tzArg = info.byKey.get("timezone");
+      if (tzArg !== void 0) {
+        throw new CodegenError(
+          `.set({ \u2026 }) takes date parts only \u2014 the timezone is the second argument: .set({ \u2026 }, "America/New_York").`,
+          tzArg.pos
+        );
+      }
+      const keys = [...info.byKey.keys()];
+      const isoKey = keys.find((k) => DATE_PARTS_ISO_MARKERS.includes(k));
+      const calKey = keys.find((k) => DATE_PARTS_CALENDAR_MARKERS.includes(k));
+      if (isoKey !== void 0 && calKey !== void 0) {
+        throw new CodegenError(
+          `.set({ \u2026 }) can't mix ISO-week parts with calendar parts ('${isoKey}' with '${calKey}') \u2014 MongoDB builds a date from one family or the other. Use ${DATE_PARTS_CALENDAR_MARKERS.join("/")} or ${DATE_PARTS_ISO_MARKERS.join("/")}, plus any of hour/minute/second/millisecond.`,
+          info.byKey.get(isoKey).pos
+        );
+      }
+      const family = isoKey !== void 0 ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
+      for (const [key, value] of info.byKey) {
+        if (family.includes(key)) continue;
+        throw new CodegenError(
+          `.set({ \u2026 }) has no date part '${key}'.${didYouMean(key, family, (s) => s)} Valid parts: ${family.join(", ")}.`,
+          value.pos
+        );
+      }
+      const tz = dateOptions(method, exprArgs[1], ["timezone"], ctx);
+      const complete = family.every((k) => info.byKey.has(k));
+      const [partsVar, partsRef] = complete ? ["", ""] : internalVar(ctx, "parts");
+      const rebuilt = {};
+      for (const key of family) {
+        const value = info.byKey.get(key);
+        if (value !== void 0) checkArgType(".set", key, value, "int-or-long");
+        rebuilt[key] = value !== void 0 ? _generate(value, ctx) : `${partsRef}.${key}`;
+      }
+      const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
+      if (complete) return fromParts;
+      const toParts = { date: genObj, ...tz };
+      if (isoKey !== void 0) toParts.iso8601 = true;
+      return { $let: { vars: { [partsVar]: { $dateToParts: toParts } }, in: fromParts } };
+    }
+    case "isSame":
+    case "isBefore":
+    case "isAfter": {
+      const exprArgs = exprArgsOnly(args, method);
+      if (exprArgs.length === 1) {
+        const jsOp = method === "isSame" ? "===" : method === "isBefore" ? "<" : ">";
+        throw new CodegenError(
+          `.${method}(other) without a unit is just '${jsOp}' \u2014 write 'a ${jsOp} b'. Pass a unit to compare at that granularity instead: .${method}(other, "day").`,
+          callPos
+        );
+      }
+      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
+      checkArgType(`.${method}`, "other", exprArgs[0], "date");
+      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
+      const bucketOf = (date) => ({
+        $dateTrunc: {
+          date,
+          unit: _generate(exprArgs[1], ctx),
+          ...dateOptions(method, exprArgs[2], ["binSize", "timezone", "startOfWeek"], ctx)
+        }
+      });
+      const cmp = method === "isSame" ? "$eq" : method === "isBefore" ? "$lt" : "$gt";
+      return { [cmp]: [bucketOf(genObj), bucketOf(_generate(exprArgs[0], ctx))] };
+    }
+    case "week":
+    case "isoWeek":
+    case "isoWeekYear":
+    case "isoWeekday":
+    case "dayOfYear":
+    case "quarter": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "[timezone]", allowed: [0, 1] }, exprArgs.length, callPos);
+      const opts = dateOptions(method, exprArgs[0], ["timezone"], ctx);
+      const operand = opts.timezone === void 0 ? genObj : { date: genObj, ...opts };
+      const op = DATE_PART_OPERATOR[method];
+      return op === void 0 ? { $toInt: { $ceil: { $divide: [{ $month: operand }, 3] } } } : { [op]: operand };
+    }
+    case "format": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "format[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkArgType(".format", "format", exprArgs[0], "string");
+      checkDateFormat(".format", exprArgs[0]);
+      return {
+        $dateToString: {
+          date: genObj,
+          format: _generate(exprArgs[0], ctx),
+          ...dateOptions(method, exprArgs[1], ["timezone"], ctx)
+        }
+      };
+    }
     case "startOf": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
@@ -8093,6 +8296,19 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
           ...dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx)
         }
       };
+    }
+    case "endOf": {
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      checkEnum(".endOf", "unit", exprArgs[0], TIME_UNIT);
+      const opts = dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx);
+      const step = {
+        startDate: { $dateTrunc: { date: genObj, unit: _generate(exprArgs[0], ctx), ...opts } },
+        unit: _generate(exprArgs[0], ctx),
+        amount: opts.binSize ?? 1
+      };
+      if (opts.timezone !== void 0) step.timezone = opts.timezone;
+      return { $dateSubtract: { startDate: { $dateAdd: step }, unit: "millisecond", amount: 1 } };
     }
     case "diff": {
       const exprArgs = exprArgsOnly(args, method);

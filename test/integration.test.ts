@@ -105,6 +105,38 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(byName["Karen Spärck Jones"]).toEqual({ tail: "", len: 0 }); // email absent
   });
 
+  // The date vocabulary, end-to-end. Three of these compose more than one
+  // operator, which is exactly the class a `toEqual` on emitted MQL can't
+  // validate: `.endOf` is trunc + add + −1 ms, `.set` reads the parts back
+  // through a `$let`, and `.quarter` needs `$toInt` or it returns a double.
+  // Ada Lovelace: createdAt 2025-01-15, lastSeen 2026-06-10, expiresAt 2026-12-01.
+  it("expr: the date methods produce the values MongoDB actually computes", async () => {
+    const [row] = (await aggregate(
+      "users",
+      `$$.filter({ name: "Ada Lovelace" });
+       $ = { monthStart: $.expiresAt.startOf("month"),
+             monthEnd: $.expiresAt.endOf("month"),
+             label: $.expiresAt.startOf("month").format("%Y-%m"),
+             daysLived: $.expiresAt.diff($.createdAt, "day"),
+             quarter: $.expiresAt.quarter(),
+             isoWeek: $.expiresAt.isoWeek(),
+             sameYear: $.expiresAt.isSame($.lastSeen, "year"),
+             sameMonth: $.expiresAt.isSame($.lastSeen, "month"),
+             newYearsDay: $.expiresAt.set({ month: 1, day: 1 }) };`,
+    )) as Record<string, unknown>[];
+    expect(row).toEqual({
+      monthStart: new Date("2026-12-01T00:00:00.000Z"),
+      monthEnd: new Date("2026-12-31T23:59:59.999Z"), // the inclusive end, not the next month
+      label: "2026-12",
+      daysLived: 685, // expiresAt − createdAt: the receiver is the LATER date
+      quarter: 4,
+      isoWeek: 49,
+      sameYear: true, // 2026-12-01 vs 2026-06-10
+      sameMonth: false,
+      newYearsDay: new Date("2026-01-01T00:00:00.000Z"), // month is 1-based
+    });
+  });
+
   // Variable capture: a lowering that `$let`-binds its receiver and then splices
   // a user argument into the body used to shadow that argument's lambda param —
   // here `s.qty`, the padStart target, which resolved against the padded string

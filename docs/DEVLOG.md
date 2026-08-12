@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — test: the date vocabulary runs against a live MongoDB
+
+The date methods were each probed against a local `mongod` as they landed, but three of them
+compose more than one operator and that is precisely the class a `toEqual` on emitted MQL
+cannot validate. `.endOf` is truncate + add + −1 ms, `.set` reads the parts back through a
+`$let`, and `.quarter` needs its `$toInt` or it returns a double. So the composition now has
+a permanent case in [test/integration.test.ts](../test/integration.test.ts), asserted on the
+documents the fixture server returns rather than on what jsmql emits.
+
+The expected values come from a live run, not from reasoning: for Ada Lovelace (createdAt
+2025-01-15, expiresAt 2026-12-01) the case pins `.endOf("month")` to
+`2026-12-31T23:59:59.999Z`, `.diff` to 685 days in the receiver-minus-argument direction,
+`.quarter()` to `4`, `.isoWeek()` to `49`, and `.set({ month: 1, day: 1 })` to
+`2026-01-01T00:00:00Z` — which is also the 1-based month base, checked by the server rather
+than asserted about.
+
+---
+
 ## 2026-08-12 — feat: `.set({ parts })` rebuilds a date, 1-based months
 
 ```
