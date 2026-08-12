@@ -636,6 +636,7 @@ const METHODS: Record<string, MethodMeta> = {
   isSame: { returns: "bool", receiver: "date" },
   isBefore: { returns: "bool", receiver: "date" },
   isAfter: { returns: "bool", receiver: "date" },
+  set: { receiver: "date" },
   endOf: { receiver: "date" },
   // ── lodash array methods (Phase 1) ──────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
@@ -3287,6 +3288,16 @@ const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"] as const;
 
 type DateOptionKey = (typeof DATE_OPTION_ORDER)[number];
 
+// ── .set(): the two $dateFromParts families ───────────────────────────────────
+// The operator takes calendar parts OR ISO-week parts, never both — mongod says
+// "$dateFromParts does not allow mixing natural dates with ISO dates". Listed in
+// the operator's own field order; the four time parts belong to both.
+const DATE_PARTS_CALENDAR = ["year", "month", "day", "hour", "minute", "second", "millisecond"] as const;
+const DATE_PARTS_ISO = ["isoWeekYear", "isoWeek", "isoDayOfWeek", "hour", "minute", "second", "millisecond"] as const;
+// The keys that decide which family a `.set({ … })` call is in.
+const DATE_PARTS_ISO_MARKERS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"];
+const DATE_PARTS_CALENDAR_MARKERS = ["year", "month", "day"];
+
 // The MQL date parts JavaScript's `Date` has no getter for, under the method
 // names Moment gives them. Each operator takes a bare date, or the
 // `{ date, timezone }` form when a timezone is passed.
@@ -4235,6 +4246,65 @@ function generateMethodCall(
           ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
         },
       };
+    }
+    case "set": {
+      // `d.set({ year: 2030 })` → read the parts, override the named ones, rebuild.
+      // Luxon's `.set` (Temporal's `.with`); immutable, like every jsmql method.
+      // Months are 1-based here, the same base `.getMonth()` and `$month` use.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "{ parts }[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
+      const info = objectInfo(exprArgs[0]);
+      if (info === null || info.hasSpread) {
+        throw new CodegenError(
+          `.set({ … }) needs an object literal with plain keys (${DATE_PARTS_CALENDAR.join(", ")}) — ` +
+            `MongoDB reads the parts by name, so a spread or computed key can't be resolved at compile ` +
+            `time. Spell the keys and pass field paths or parameters as their values.`,
+          exprArgs[0].pos,
+        );
+      }
+      const tzArg = info.byKey.get("timezone");
+      if (tzArg !== undefined) {
+        throw new CodegenError(
+          `.set({ … }) takes date parts only — the timezone is the second argument: ` +
+            `.set({ … }, "America/New_York").`,
+          tzArg.pos,
+        );
+      }
+      const keys = [...info.byKey.keys()];
+      const isoKey = keys.find((k) => DATE_PARTS_ISO_MARKERS.includes(k));
+      const calKey = keys.find((k) => DATE_PARTS_CALENDAR_MARKERS.includes(k));
+      if (isoKey !== undefined && calKey !== undefined) {
+        throw new CodegenError(
+          `.set({ … }) can't mix ISO-week parts with calendar parts ('${isoKey}' with '${calKey}') — ` +
+            `MongoDB builds a date from one family or the other. Use ${DATE_PARTS_CALENDAR_MARKERS.join("/")} ` +
+            `or ${DATE_PARTS_ISO_MARKERS.join("/")}, plus any of hour/minute/second/millisecond.`,
+          info.byKey.get(isoKey)!.pos,
+        );
+      }
+      const family: readonly string[] = isoKey !== undefined ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
+      for (const [key, value] of info.byKey) {
+        if (family.includes(key)) continue;
+        throw new CodegenError(
+          `.set({ … }) has no date part '${key}'.${didYouMean(key, family, (s) => s)} ` +
+            `Valid parts: ${family.join(", ")}.`,
+          value.pos,
+        );
+      }
+      const tz = dateOptions(method, exprArgs[1], ["timezone"], ctx);
+      // Every part overridden → nothing to read back, so no $let/$dateToParts.
+      const complete = family.every((k) => info.byKey.has(k));
+      const [partsVar, partsRef] = complete ? ["", ""] : internalVar(ctx, "parts");
+      const rebuilt: Record<string, unknown> = {};
+      for (const key of family) {
+        const value = info.byKey.get(key);
+        if (value !== undefined) checkArgType(".set", key, value, "int-or-long");
+        rebuilt[key] = value !== undefined ? _generate(value, ctx) : `${partsRef}.${key}`;
+      }
+      const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
+      if (complete) return fromParts;
+      const toParts: Record<string, unknown> = { date: genObj, ...tz };
+      if (isoKey !== undefined) toParts.iso8601 = true;
+      return { $let: { vars: { [partsVar]: { $dateToParts: toParts } }, in: fromParts } };
     }
     case "isSame":
     case "isBefore":

@@ -200,13 +200,15 @@ only a **certain-wrong literal** throws —
 
 Wired (all verified on `mongod`): date accessors (`$year`/`$month`/…) `singleType:
 "date"`; date operators' `keyTypes` (`startDate`/`date`/`endDate` → date, `amount`
-→ int-or-long, `timezone` → string, `binSize` → number); numeric ops `number`;
+and every `$dateFromParts` part → int-or-long, `timezone` → string, `binSize` →
+number); numeric ops `number`;
 bitwise `int-or-long`; `$mergeObjects`/`$objectToArray` `object`; `$size`/
 `$reverseArray` `array`; `$tsSecond`/`$tsIncrement` `timestamp`.
 
 ```
 $year("2020-01-01")     → ✗ "expects a date, but got a string. Use a field path or new Date(…)."
 $dateAdd({ …, amount: "3" })  → ✗ "amount expects an integer, but got a string"
+$dateFromParts({ year: 2030.5 }) → ✗ "year expects an integer, but got a number"
 $abs("x")               → ✗ "expects a number, but got a string"
 $year("$createdAt")     → { $year: "$createdAt" }    ($-string = field ref → valid)
 $year(new Date("…"))    → { $year: { $toDate: "…" } }  (non-literal → valid)

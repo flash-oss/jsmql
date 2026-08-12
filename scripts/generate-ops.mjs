@@ -363,6 +363,7 @@ const VALUE_METHOD_SKIP = {
     "isSame",
     "isBefore",
     "isAfter",
+    "set",
     "endOf",
   ]),
   // Object-receiver — no safe interface (Object is the base of everything).

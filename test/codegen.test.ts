@@ -2340,6 +2340,105 @@ describe("date arithmetic (.plus / .minus)", () => {
   });
 });
 
+describe("replacing date parts (.set)", () => {
+  // Verified on a live mongod with t = 2026-08-12T15:47:03.123Z:
+  // { year: 2030 } → 2030-08-12T15:47:03.123Z, { month: 1, day: 1 } →
+  // 2026-01-01T15:47:03.123Z, the four time parts at 0 → 2026-08-12T00:00:00Z,
+  // { isoWeek: 5 } → 2026-01-28T15:47:03.123Z (the Wednesday of ISO week 5).
+  it("reads the parts, overrides the named ones, rebuilds", () => {
+    expect(jsmql.expr("$.t.set({ year: 2030 })")).toEqual({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+        in: {
+          $dateFromParts: {
+            year: 2030,
+            month: "$$jsmqlParts.month",
+            day: "$$jsmqlParts.day",
+            hour: "$$jsmqlParts.hour",
+            minute: "$$jsmqlParts.minute",
+            second: "$$jsmqlParts.second",
+            millisecond: "$$jsmqlParts.millisecond",
+          },
+        },
+      },
+    });
+  });
+  it("months are 1-based, the same base .getMonth() uses", () => {
+    // { month: 1 } is January — MQL's base, not JavaScript's 0-based one.
+    expect(jsmql.expr("$.t.set({ month: 1, day: 1 })")).toMatchObject({
+      $let: { in: { $dateFromParts: { month: 1, day: 1, year: "$$jsmqlParts.year" } } },
+    });
+  });
+  it("drops the $let when every part is overridden — nothing is left to read back", () => {
+    expect(
+      jsmql.expr("$.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 })"),
+    ).toEqual({ $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } });
+  });
+  it("switches to the ISO family, which needs iso8601 on the read side", () => {
+    expect(jsmql.expr("$.t.set({ isoWeek: 5 })")).toEqual({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$t", iso8601: true } } },
+        in: {
+          $dateFromParts: {
+            isoWeekYear: "$$jsmqlParts.isoWeekYear",
+            isoWeek: 5,
+            isoDayOfWeek: "$$jsmqlParts.isoDayOfWeek",
+            hour: "$$jsmqlParts.hour",
+            minute: "$$jsmqlParts.minute",
+            second: "$$jsmqlParts.second",
+            millisecond: "$$jsmqlParts.millisecond",
+          },
+        },
+      },
+    });
+  });
+  it("threads the timezone through both the read and the rebuild", () => {
+    expect(jsmql.expr('$.t.set({ year: 2030 }, "America/New_York")')).toMatchObject({
+      $let: {
+        vars: { jsmqlParts: { $dateToParts: { date: "$t", timezone: "America/New_York" } } },
+        in: { $dateFromParts: { year: 2030, timezone: "America/New_York" } },
+      },
+    });
+  });
+  it("gensyms its variable around a colliding lambda parameter", () => {
+    expect(jsmql.expr("$.items.map(jsmqlParts => jsmqlParts.t.set({ year: 2030 }))")).toMatchObject({
+      $map: { as: "jsmqlParts", in: { $let: { vars: { jsmqlParts2: { $dateToParts: { date: "$$jsmqlParts.t" } } } } } },
+    });
+  });
+  it("rejects a mix of the two families, which mongod refuses outright", () => {
+    expect(() => jsmql.expr("$.t.set({ year: 2030, isoWeek: 5 })")).toThrow(
+      /can't mix ISO-week parts with calendar parts \('isoWeek' with 'year'\)/,
+    );
+  });
+  it("rejects an unknown part with a suggestion", () => {
+    expect(() => jsmql.expr("$.t.set({ yaer: 2030 })")).toThrow(
+      /\.set\(\{ … \}\) has no date part 'yaer'\. Did you mean 'year'\?/,
+    );
+  });
+  it("points a timezone inside the parts object at the second argument", () => {
+    expect(() => jsmql.expr('$.t.set({ timezone: "UTC" })')).toThrow(
+      /takes date parts only — the timezone is the second argument/,
+    );
+  });
+  it("needs a written-out object literal — MongoDB reads the parts by name", () => {
+    expect(() => jsmql.expr("$.t.set($.parts)")).toThrow(/\.set\(\{ … \}\) needs an object literal with plain keys/);
+    expect(() => jsmql.expr("$.t.set({ ...$.p })")).toThrow(/\.set\(\{ … \}\) needs an object literal with plain keys/);
+  });
+  it("rejects a part that isn't an integer, as mongod does", () => {
+    expect(() => jsmql.expr("$.t.set({ year: 2030.5 })")).toThrow(
+      /'\.set' year expects an integer, but got a number\./,
+    );
+    expect(() => jsmql.expr('$.t.set({ year: "2030" })')).toThrow(
+      /'\.set' year expects an integer, but got a string\./,
+    );
+  });
+  it("gates the same slots in the $dateFromParts operator form", () => {
+    expect(() => jsmql.expr('$dateFromParts({ year: "2030" })')).toThrow(
+      /'\$dateFromParts' year expects an integer, but got a string\./,
+    );
+  });
+});
+
 describe("granular date comparison (.isSame / .isBefore / .isAfter)", () => {
   // Verified on a live mongod with a = 2026-08-12T15:47:03.123Z,
   // b = 2026-11-30T01:02:03Z → sameDay false, sameYear true, beforeMonth true,

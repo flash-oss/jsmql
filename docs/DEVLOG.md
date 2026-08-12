@@ -10,6 +10,51 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-12 — feat: `.set({ parts })` rebuilds a date, 1-based months
+
+```
+$.t.set({ year: 2030 })
+// { $let: { vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+//           in: { $dateFromParts: { year: 2030, month: "$$jsmqlParts.month",
+//                                   day: "$$jsmqlParts.day", hour: "$$jsmqlParts.hour",
+//                                   minute: "$$jsmqlParts.minute", second: "$$jsmqlParts.second",
+//                                   millisecond: "$$jsmqlParts.millisecond" } } } }
+
+// Every part overridden → nothing to read back, so the $let goes away:
+$.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 })
+// { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
+```
+
+Luxon's `.set` (Temporal's `.with`), and immutable like every jsmql method. `$dateFromParts`
+needs every part it will use, so overriding one means reading the rest back — a `$let` binds
+`$dateToParts` once and each unnamed part reads `$$jsmqlParts.<key>`. The variable comes from
+`internalVar`, so a lambda parameter spelled `jsmqlParts` is gensymed around
+(`$.items.map(jsmqlParts => jsmqlParts.t.set({ year: 2030 }))` binds `jsmqlParts2`).
+
+**Months are 1-based**, matching `.getMonth()` and `$month`. That was the open question when
+this method was proposed: Luxon is 1-based, Moment 0-based, JavaScript 0-based, MQL 1-based.
+Picking MQL's base and moving `.getMonth()` to match it (see the earlier entry) means JSMQL
+now has exactly one month base rather than a per-method one.
+
+`$dateFromParts` has two mutually-exclusive key families and mongod refuses a document that
+mixes them ("does not allow mixing natural dates with ISO dates"), so `.set` follows whichever
+family the call names — `year`/`month`/`day` or `isoWeekYear`/`isoWeek`/`isoDayOfWeek`, either
+with the four time parts — and a mix is a compile-time error naming both offending keys. The
+ISO family also needs `iso8601: true` on the `$dateToParts` read, or the read returns calendar
+parts the rebuild has no slot for.
+
+The timezone is the second argument rather than a part, and it applies to both the read and
+the rebuild, so the parts are interpreted in that zone. A `timezone` key inside the parts
+object gets a message naming the second-argument form — it is a reasonable thing to try, so it
+earns better than a generic unknown-key error.
+
+Part values are gated to integers, and `$dateFromParts` gained the same `keyTypes` in the
+operator registry: mongod rejects a string or a fractional double in **any** part ("'year'
+must evaluate to an integer, found double with value 2030.5"), so both spellings now reject it
+with the same wording instead of the method inventing a restriction of its own.
+
+---
+
 ## 2026-08-12 — feat: `.isSame` / `.isBefore` / `.isAfter` compare at a granularity
 
 ```

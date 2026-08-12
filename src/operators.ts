@@ -793,6 +793,8 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
     keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
   },
   // year-or-isoWeekYear is a structural rule (deferred); list the full key set so unknown-key works.
+  // Every part must evaluate to an integer — mongod rejects a string or a fractional
+  // double ("'year' must evaluate to an integer, found double with value 2030.5").
   $dateFromParts: {
     optional: [
       "year",
@@ -807,6 +809,19 @@ const OPERATOR_ARG_RULES: Record<string, ArgRules> = {
       "millisecond",
       "timezone",
     ],
+    keyTypes: {
+      year: "int-or-long",
+      isoWeekYear: "int-or-long",
+      month: "int-or-long",
+      isoWeek: "int-or-long",
+      day: "int-or-long",
+      isoDayOfWeek: "int-or-long",
+      hour: "int-or-long",
+      minute: "int-or-long",
+      second: "int-or-long",
+      millisecond: "int-or-long",
+      timezone: "string",
+    },
   },
   $dateFromString: { required: ["dateString"], optional: ["format", "timezone", "onError", "onNull"] },
   $dateToParts: {
