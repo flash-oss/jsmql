@@ -65,13 +65,15 @@ const candidateProductIdCounts = $$$.orders
   .filter(o => o.productIds.some(p => myProductIds.includes(p)))
   .toSorted({ createdAt: -1 })
   .take(100) // co-purchase orders, recent, capped
-  .map("productIds").flatten()
+  .map("productIds")
+  .flatten()
   .filter(p => !myProductIds.includes(p))
   .countBy(); // { ID: count } map
 const candidateProductIds = Object.keys(candidateProductIdCounts);
 
 const candidateProducts = $$$.products
-  .filter(pr => pr._id in candidateProductIds).take(500);
+  .filter(pr => pr._id in candidateProductIds)
+  .take(500);
 
 $ = candidateProductIds
   .map(id => ({
