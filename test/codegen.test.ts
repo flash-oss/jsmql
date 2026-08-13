@@ -4064,6 +4064,64 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // (number OR date), so it's uncertain — `.clamp(...).getFullYear()` must compile.
     expect(() => jsmql.expr("$.d.clamp($.a, $.b).getFullYear()")).not.toThrow();
   });
+  it("rejects a date-receiver + string/number/array/object method", () => {
+    // Every date-producing method: the five that return a date (same-as-receiver,
+    // so they carry no invariant `returns`) plus the `new Date(…)` constructor.
+    expect(() => jsmql.expr('$.t.startOf("month").map(x => x)')).toThrow(
+      /expects an array receiver.*'\.startOf\(\.\.\.\)' returns a date/,
+    );
+    expect(() => jsmql.expr('$.t.endOf("month").mapValues(v => v)')).toThrow(
+      /expects an object.*receiver.*returns a date/,
+    );
+    expect(() => jsmql.expr("$.t.set({ year: 2030 }).round(2)")).toThrow(/expects a number receiver.*returns a date/);
+    expect(() => jsmql.expr('$.t.minus(1, "day").split(",")')).toThrow(/expects a string receiver.*returns a date/);
+    expect(() => jsmql.expr("new Date($.x).map(y => y)")).toThrow(/expects an array receiver.*returns a date/);
+  });
+  it("names the date→string and date→number conversions in the hint", () => {
+    expect(() => jsmql.expr('$.t.plus(1, "day").toUpperCase()')).toThrow(
+      /Render the date as a string first with '\.format\("%Y-%m-%d"\)' or '\.toISOString\(\)'\./,
+    );
+    expect(() => jsmql.expr('$.t.plus(1, "day").round(2)')).toThrow(
+      /Turn the date into a number first with '\.getTime\(\)' \(epoch milliseconds\)/,
+    );
+  });
+  it("compatible date chains still compile — a date method, or a universal one", () => {
+    expect(() => jsmql.expr('$.t.startOf("month").plus(1, "month")')).not.toThrow();
+    expect(() => jsmql.expr('$.t.plus(1, "day").format("%Y")')).not.toThrow();
+    expect(() => jsmql.expr('$.t.startOf("month").isSame($.b, "day")')).not.toThrow();
+    expect(() => jsmql.expr("new Date($.x).getMonth()")).not.toThrow();
+    // The universal pair is exempt on every receiver type.
+    expect(() => jsmql.expr('$.t.plus(1, "day").getTime()')).not.toThrow();
+    expect(() => jsmql.expr('$.t.plus(1, "day").toString()')).not.toThrow();
+    // .clamp is number-OR-date, so it is never gated in either direction.
+    expect(() => jsmql.expr('$.t.plus(1, "day").clamp($.a, $.b)')).not.toThrow();
+  });
+  it("rejects a wrong-family method on a literal or template receiver", () => {
+    expect(() => jsmql.expr('"abc".map(x => x)')).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr('"abc".mapValues(v => v)')).toThrow(/expects an object.*receiver.*returns a string/);
+    expect(() => jsmql.expr("(5).trim()")).toThrow(/expects a string receiver.*returns a number/);
+    expect(() => jsmql.expr("(5).map(x => x)")).toThrow(/expects an array receiver.*returns a number/);
+    expect(() => jsmql.expr("`a${$.x}b`.plus(1, 'day')")).toThrow(/expects a date receiver.*returns a string/);
+    expect(() => jsmql.expr("(typeof $.x).map(c => c)")).toThrow(/expects an array receiver.*returns a string/);
+  });
+  it("rejects a wrong-family method after .length, whose type is invariant", () => {
+    expect(() => jsmql.expr("$.s.length.map(x => x)")).toThrow(/expects an array receiver.*returns a number/);
+    expect(() => jsmql.expr("$.items.length.trim()")).toThrow(/expects a string receiver.*returns a number/);
+    // Number methods on it still compile.
+    expect(() => jsmql.expr("$.s.length.clamp(0, 10)")).not.toThrow();
+  });
+  it("treats .pick / .omit as object-returning here — reaching value position settles it", () => {
+    // They carry no invariant `returns` because a `$$` stream reads them as a
+    // `$project`; a value-position receiver can only be the object form.
+    expect(() => jsmql.expr('$.o.pick(["a"]).trim()')).toThrow(/expects a string receiver.*returns an object/);
+    expect(() => jsmql.expr('$.o.pick(["a"]).mapValues(v => v)')).not.toThrow();
+  });
+  it("an HR1 $-string receiver stays uncertain — it IS a field reference", () => {
+    // A source `"$items"` is the field ref $items, a runtime value of any type,
+    // so it must not be treated as a string literal.
+    expect(() => jsmql.expr('"$items".map(x => x)')).not.toThrow();
+    expect(() => jsmql.expr('"$t".plus(1, "day")')).not.toThrow();
+  });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
     // Offset the chain so the receiver isn't at column 0 — the error's .pos must
     // point at the boolean-producing receiver, not be a 0 placeholder. Every

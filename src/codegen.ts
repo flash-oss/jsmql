@@ -1031,6 +1031,9 @@ function isProvablyBool(expr: Expr): boolean {
 // two sets fill that gap for `requiredReceiverFamily`. `clamp` is excluded (its
 // receiver may be a number OR a date), matching its omitted `returns`.
 const NUMBER_RECEIVER_METHODS = new Set(["round", "ceil", "floor", "inRange"]);
+// Methods that carry no invariant `returns` only because they mean one thing in a
+// stream and another in value position, and whose value-mode result is an object.
+const VALUE_MODE_OBJECT_METHODS = new Set(["pick", "omit"]);
 const OBJECT_RECEIVER_METHODS = new Set([
   "mapValues",
   "mapKeys",
@@ -1064,17 +1067,48 @@ export function requiredReceiverFamily(method: string): ReceiverFamily | null {
 /** The provable, invariant type of a receiver expression, or null when uncertain.
  *  `bool`/`array` reuse the verified-sound isProvablyBool/isArrayProducing (which
  *  recurse through `.slice`/MethodCall and subsume literals + array-typed ops);
- *  `string`/`number`/`object` come from the receiver method's invariant `returns`.
+ *  `string`/`number`/`object` come from the receiver method's invariant `returns`,
+ *  `date` from a date method that has none (its result is same-as-receiver).
  *  Returns null for every unknown receiver — the literal-gating guarantee. */
-function certainReceiverType(o: Expr): "bool" | "array" | "string" | "number" | "object" | null {
+function certainReceiverType(o: Expr): ReceiverFamily | "bool" | null {
   if (isProvablyBool(o)) return "bool";
   if (isArrayProducing(o)) return "array";
-  if (o.type === "MethodCall") {
-    if (o.method === "slice") return certainReceiverType(o.object); // .slice preserves receiver type
-    const r = METHODS[o.method]?.returns;
-    if (r === "string" || r === "number" || r === "object") return r;
+  switch (o.type) {
+    case "MethodCall": {
+      if (o.method === "slice") return certainReceiverType(o.object); // .slice preserves receiver type
+      const meta = METHODS[o.method];
+      if (meta === undefined) return null;
+      if (meta.returns === "string" || meta.returns === "number" || meta.returns === "object") return meta.returns;
+      if (meta.returns !== undefined) return null;
+      // A date method with no invariant `returns` yields a date, same-as-receiver
+      // (`.plus`/`.minus`/`.startOf`/`.endOf`/`.set`). The date methods that
+      // return something else all declare it and are caught above.
+      if (meta.receiver === "date") return "date";
+      // `.pick`/`.omit` omit `returns` because they mean different things in a
+      // stream (a `$project` document stream) and in value position. Reaching
+      // here IS value position — a stream chain never gets to generateMethodCall
+      // — so the value-mode answer, an object, is certain.
+      return VALUE_MODE_OBJECT_METHODS.has(o.method) ? "object" : null;
+    }
+    case "NewDate":
+      return "date";
+    case "StringLiteral":
+      // HR1: a source `"$x"` IS the field reference `$x` — a runtime value of any
+      // type, so it stays uncertain. Any other string literal is a string.
+      return o.value.startsWith("$") ? null : "string";
+    case "NumberLiteral":
+    case "BigIntLiteral":
+      return "number";
+    case "TemplateLiteral":
+    case "TypeofExpr":
+      return "string";
+    case "MemberAccess":
+      // `.length` is the one member whose type is invariant; every other member
+      // is a document field of unknown type.
+      return o.member === "length" ? "number" : null;
+    default:
+      return null;
   }
-  return null;
 }
 
 export const RECEIVER_NOUN: Record<string, string> = {
@@ -1122,11 +1156,7 @@ function receiverPhrase(o: Expr): string {
 
 /** Throw when `method` cannot run on a receiver of the provable type `recv`.
  *  `object` supplies the error position and a human phrase. */
-function rejectIncompatibleChain(
-  recv: "bool" | "array" | "string" | "number" | "object",
-  method: string,
-  object: Expr,
-): void {
+function rejectIncompatibleChain(recv: ReceiverFamily | "bool", method: string, object: Expr): void {
   // A boolean is a scalar with NO methods except `.toString()` / `.getTime()`, so
   // reject regardless of the called method's required family (unlike the other
   // types, which each have their own valid method families).
@@ -1147,7 +1177,11 @@ function rejectIncompatibleChain(
         ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.`
         : recv === "object" && need === "array"
           ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.`
-          : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
+          : recv === "date" && need === "string"
+            ? `Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.`
+            : recv === "date" && need === "number"
+              ? `Turn the date into a number first with '.getTime()' (epoch milliseconds), or read one part of it ('.getFullYear()', '.week()', …).`
+              : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
   throw new CodegenError(
     `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
     object.pos,

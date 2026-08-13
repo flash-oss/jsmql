@@ -1142,6 +1142,31 @@ enum slots — `unit`/`startOfWeek`/`$convert.to`/regex flags; and literal types
 date slot, a non-number in `$abs`, …). Use `jsmql.validate(...)` to get these as a list of
 `{ message, pos }` instead of a throw.
 
+### A method chained on the wrong type
+
+When jsmql knows what a value *is*, it also knows which methods can follow it — so a chain that would be a `TypeError` in JavaScript is a compile error here, with the conversion you actually wanted named in the message:
+
+```js
+jsmql.expr('$.createdAt.startOf("month").map(x => x)')
+// ✗ '.map(...)' expects an array receiver, but '.startOf(...)' returns a date.
+//   Call '.map(...)' on an array value instead.
+
+jsmql.expr('$.createdAt.plus(1, "day").toUpperCase()')
+// ✗ '.toUpperCase(...)' expects a string receiver, but '.plus(...)' returns a date.
+//   Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.
+
+jsmql.expr('$.items.every(x => x.ok).filter(y => y)')
+// ✗ '.filter(...)' can't run on a boolean — the value before it evaluates to true/false…
+
+jsmql.expr('$.tags.split(",").toUpperCase()')
+// ✗ '.toUpperCase(...)' expects a string receiver, but the value before it returns an array.
+//   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
+```
+
+A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from `new Date(…)`, from a literal or a template string, or from `.length`. Where it *isn't* known — a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `$op(...)` call, or a `.clamp()` that could be numeric or a date — nothing is rejected and the MQL is emitted. `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
+
+**This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does jsmql, because you almost certainly meant `.format(…)`. Writing the operator by hand (`$toUpper($.createdAt)`) still passes through untouched — raw MQL is yours.
+
 **Only certain mistakes throw.** If the offending value is a field reference or expression
 jsmql can't evaluate (`$limit($.pageSize)`, `$bucket({ boundaries: $.bounds })`), the MQL is
 emitted as-is — jsmql never blocks a query it can't *prove* is wrong. Constraints that depend

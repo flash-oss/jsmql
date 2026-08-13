@@ -10,6 +10,54 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: the chain type-check knows every type it can prove, not just five
+
+```
+$.createdAt.startOf("month").map(x => x)
+// before: {"$map":{"input":{"$dateTrunc":…}}}     ← emitted; mongod refuses it
+// now:    '.map(...)' expects an array receiver, but '.startOf(...)' returns a date.
+
+$.createdAt.plus(1, "day").toUpperCase()
+// now: '.toUpperCase(...)' expects a string receiver, but '.plus(...)' returns a date.
+//      Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.
+
+"abc".map(x => x)          // now rejected — a string is not an array
+$.s.length.map(x => x)     // now rejected — .length is a number
+```
+
+`requiredReceiverFamily` has always been able to say a method needs a **date**, and
+`RECEIVER_NOUN` has always had the noun, but `certainReceiverType` had no way to *report* one —
+so every date-producing receiver was invisible to the check and `.plus(1, "day").trim()` emitted
+MQL the server refuses. Three new date methods (`.startOf`, `.endOf`, `.set`) tripled the reach
+of that hole, which is what surfaced it.
+
+Fixing only the date case would have left the same shape of bug in five other places, so
+`certainReceiverType` now reports every family it can prove: a date from a date method with no
+invariant `returns` (the omission means same-as-receiver) and from a `NewDate` node; a string
+from a string, template or `typeof` literal; a number from a number or bigint literal and from
+`.length`, the one member access whose type is invariant; and an object from `.pick`/`.omit`,
+which omit `returns` only because a `$$` stream reads them as a `$project` — and reaching
+`generateMethodCall` *is* value position, so the value-mode answer is certain. An HR1 `$`-string
+stays uncertain, because a source `"$items"` IS the field reference and can hold anything.
+
+Two families needed nothing: `isArrayProducing` and `isProvablyBool` already recurse into
+operator calls, so `$split(…).trim()` and `$eq(…).map(…)` were caught before this change. The
+gap that remains is a **string/number/date/object-returning `$op(...)` call** — the operator
+registry carries no return type, and the vendored spec cannot supply one: it declares `$trunc`
+as `resolvesToString`, where mongod returns a `double`. A generated map would have introduced a
+false rejection, so operator receivers stay uncertain until the categories can be verified
+against a live server.
+
+The rule these rejections follow is **JavaScript's type system, not mongod's coercions**, and
+this change makes that explicit in the spec. Most of them coincide with a real server rejection
+(`$map`/`$size`/`$trim` over a date all fail), but not all: mongod *accepts* `$toUpper` on a
+date and returns the stringified date. jsmql refuses it anyway, because `date.toUpperCase()` is
+a `TypeError` in the language jsmql is a subset of, and because the developer meant `.format(…)`
+— which the error now names. A hand-written `$toUpper($.t)` still passes through untouched: raw
+MQL is the developer's own and outside this check.
+
+---
+
 ## 2026-08-13 — feat!: `getDay()` / `getUTCDay()` return MongoDB's 1-based `$dayOfWeek`
 
 ```
