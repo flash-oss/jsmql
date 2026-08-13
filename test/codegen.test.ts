@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
 import { OPERATOR_RETURNS, OPERATORS } from "../src/operators.ts";
+import { requiredReceiverFamily, valueMethodNames } from "../src/codegen.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -4053,6 +4054,36 @@ describe("operator return types (OPERATOR_RETURNS) drive the inference passes", 
   });
 });
 
+describe("every method declares the receiver family it needs", () => {
+  // The gate only fires for methods that say which receiver they need, so a
+  // single-type method with no declared family is silently ungated. This asserts
+  // the complement: the never-gated list holds ONLY methods that are genuinely
+  // dual-type, universal, or unreachable in a value chain. A new single-type
+  // method without its family fails here instead of quietly emitting bad MQL.
+  const UNGATED_BY_DESIGN = {
+    clamp: "number OR date — the result follows its arguments",
+    concat: "string OR array",
+    includes: "string OR array",
+    indexOf: "string OR array",
+    lastIndexOf: "string OR array",
+    slice: "string OR array",
+    size: "array OR object",
+    getTime: "universal — $toLong converts strings and numbers too",
+    toString: "universal",
+    toLocaleString: "universal in JS — Number, Date and Array all have it",
+    exec: "regex receiver, intercepted before generateMethodCall",
+    test: "regex receiver, intercepted before generateMethodCall",
+    isSubsetOf: "Set receiver only — a plain one falls through to 'Unknown method'",
+    isSupersetOf: "Set receiver only — a plain one falls through to 'Unknown method'",
+  };
+  it("only the dual / universal / unreachable methods are left ungated", () => {
+    const ungated = valueMethodNames()
+      .filter((m) => requiredReceiverFamily(m) === null)
+      .sort();
+    expect(ungated).toEqual(Object.keys(UNGATED_BY_DESIGN).sort());
+  });
+});
+
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
   // 100%-certain mismatches throw (they'd otherwise emit MQL mongod rejects — e.g.
   // $map over a boolean/number/string, $slice over an object). Verified on mongod.
@@ -4183,6 +4214,53 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr('$split($.s, ",").map(x => x)')).not.toThrow();
     expect(() => jsmql.expr("$year($.t).clamp(0, 5)")).not.toThrow();
     expect(() => jsmql.expr("$dateToParts($.t).mapValues(v => v)")).not.toThrow();
+  });
+  it("rejects the array-only methods that used to declare no family at all", () => {
+    // Each of these is Array.prototype (or lodash-array) and single-type, but
+    // carried no receiver family, so the gate never saw them.
+    expect(() => jsmql.expr("$.s.trim().findIndex(x => x)")).toThrow(
+      /'\.findIndex\(\.\.\.\)' expects an array receiver, but '\.trim\(\.\.\.\)' returns a string/,
+    );
+    expect(() => jsmql.expr("$.s.trim().toSpliced(0, 1)")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.s.trim().with(0, 1)")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.n.round(2).reduceRight((a, b) => a, 0)")).toThrow(
+      /expects an array receiver.*returns a number/,
+    );
+    expect(() => jsmql.expr('$.t.startOf("month").findIndex(x => x)')).toThrow(
+      /expects an array receiver.*returns a date/,
+    );
+    // .difference / .intersection / .union also have a plain-array form.
+    expect(() => jsmql.expr("$.a.size().difference($.b)")).toThrow(/expects an array receiver.*returns a number/);
+    expect(() => jsmql.expr("$.s.trim().union($.b)")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.s.trim().unzipWith((a, b) => a)")).toThrow(/expects an array receiver/);
+    // …and every one of them still compiles on a real array.
+    for (const src of [
+      "$.a.findIndex(x => x > 1)",
+      "$.a.toSpliced(0, 1)",
+      "$.a.with(0, 9)",
+      "$.a.reduceRight((acc, x) => acc, 0)",
+      "$.a.difference($.b)",
+      "$.a.intersection($.b)",
+      "$.a.union($.b)",
+    ]) {
+      expect(() => jsmql.expr(src), src).not.toThrow();
+    }
+  });
+  it("the type error beats the mutator shim when the receiver is a known non-array", () => {
+    // "use '.toSorted()'" is the wrong advice for a string, so the family
+    // mismatch has to be reported first.
+    expect(() => jsmql.expr("$.s.trim().sort()")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.s.trim().push(1)")).toThrow(/expects an array receiver.*returns a string/);
+    expect(() => jsmql.expr("$.n.round(2).pop()")).toThrow(/expects an array receiver.*returns a number/);
+    expect(() => jsmql.expr("$.s.trim().forEach(x => x)")).toThrow(/expects an array receiver.*returns a string/);
+    // On a real array the mutator advice is what the user needs, so it survives.
+    expect(() => jsmql.expr("$.a.sort()")).toThrow(/\.sort\(\) mutates the array in JavaScript/);
+    expect(() => jsmql.expr("$.a.forEach(x => x)")).toThrow(/\.forEach\(\) returns undefined in JavaScript/);
+  });
+  it("names the string reader when .at is chained on a string", () => {
+    expect(() => jsmql.expr("$.s.trim().at(-1)")).toThrow(
+      /For a string, read one character with '\.charAt\(index\)' — or '\.slice\(-1\)' for the last one/,
+    );
   });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
     // Offset the chain so the receiver isn't at column 0 — the error's .pos must

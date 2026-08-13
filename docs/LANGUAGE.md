@@ -1163,6 +1163,8 @@ jsmql.expr('$.tags.split(",").toUpperCase()')
 //   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
 ```
 
+Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` on a number or a date, and `.toString` / `.getTime` on anything.
+
 A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
 
 Where it *isn't* known, nothing is rejected and the MQL is emitted: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever they are given). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.

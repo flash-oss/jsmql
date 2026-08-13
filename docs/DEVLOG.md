@@ -10,6 +10,58 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: every single-type method declares the receiver family it needs
+
+```
+$.s.trim().findIndex(x => x)
+// before: {"$reduce":{"input":{"$zip":{"inputs":[{"$range":[0,{"$size":{"$trim":…}}]},…]}}}}
+// now:    '.findIndex(...)' expects an array receiver, but '.trim(...)' returns a string.
+
+$.s.trim().sort()
+// before: .sort() mutates the array in JavaScript … use '.toSorted()'   ← wrong advice for a string
+// now:    '.sort(...)' expects an array receiver, but '.trim(...)' returns a string.
+
+$.s.trim().at(-1)
+// now: … For a string, read one character with '.charAt(index)' — or '.slice(-1)' for the
+//      last one, which also accepts a negative index.
+```
+
+Knowing a receiver's type is only half of the chain type-check: the gate fires only when the
+called method also declares which receiver it needs, so a **single-type method with no declared
+family was silently ungated**. Auditing all 200-odd methods against
+`requiredReceiverFamily` found fifteen in that state, every one array-only —
+`.findIndex`, `.reduceRight`, `.toSpliced`, `.with`, `.difference`, `.intersection`, `.union`,
+`.unzipWith`, and the eight mutator and four void/iterator shims.
+
+They fall into two groups. The first genuinely emitted bad MQL: `$.s.trim().findIndex(…)` built
+a `$reduce` over a `$zip` of a string. The second only ever throws, but threw the *wrong* error —
+a string receiver under `.sort()` was told to "use '.toSorted()'", which will not help it.
+Declaring the family puts the type mismatch first in both groups.
+
+Two names stay ungated on purpose. `.isSubsetOf` / `.isSupersetOf` have no plain-receiver form
+at all — a non-`Set` receiver falls through to "Unknown method" — so there is no family to
+declare. `.toLocaleString` is genuinely universal in JavaScript, where Number, Date and Array
+all carry it.
+
+The audit is now a test rather than a one-off: the set of methods with **no** family must equal
+a written-out list of the dual (`.slice`, `.concat`, `.indexOf`, `.includes`, `.lastIndexOf`,
+`.size`, `.clamp`), universal (`.toString`, `.getTime`, `.toLocaleString`) and unreachable
+(regex, Set) ones. A new single-type method that forgets its family fails that assertion instead
+of quietly emitting MQL the server refuses.
+
+Declaring `optional: "array"` also settles the `?.` neutral for the same methods, so
+`$.maybe?.findIndex(…)` now wraps its receiver in `$ifNull(…, [])` exactly as
+`$.maybe?.map(…)` always has — the sibling inconsistency went with the gap. And
+`.difference`/`.intersection`/`.union` gained `returns: "array"`, so `.difference(b).length`
+emits a plain `$size` rather than a runtime `$isArray` hedge.
+
+One message gained a receiver-specific hint: jsmql's `.at` is the array reader
+(`$arrayElemAt`), so a string receiver is a real mismatch — but the useful answer is
+`.charAt(index)`, or `.slice(-1)` when the index is negative, and the error now names both
+rather than only stating the mismatch.
+
+---
+
 ## 2026-08-13 — fix: one operator-return table, and `$op(...)` receivers join the chain check
 
 ```

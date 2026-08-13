@@ -6015,21 +6015,21 @@ var METHODS = {
   toSorted: { returns: "array", optional: "array" },
   sortBy: { returns: "array", optional: "array" },
   orderBy: { returns: "array", optional: "array" },
-  toSpliced: { returns: "array" },
-  with: { returns: "array" },
+  toSpliced: { returns: "array", optional: "array" },
+  with: { returns: "array", optional: "array" },
   flat: { returns: "array", optional: "array" },
   flatMap: { returns: "array", optional: "array" },
   map: { returns: "array", optional: "array" },
   filter: { returns: "array", optional: "array" },
   find: { optional: "array" },
-  findIndex: { returns: "number" },
+  findIndex: { returns: "number", optional: "array" },
   findLast: { optional: "array" },
   findLastIndex: { returns: "number", optional: "array" },
   lastIndexOf: { returns: "number" },
   some: { returns: "bool", optional: "array" },
   every: { returns: "bool", optional: "array" },
   reduce: { optional: "array" },
-  reduceRight: {},
+  reduceRight: { optional: "array" },
   join: { returns: "string", optional: "array" },
   // returns a string, but the receiver is an array
   // NB `toString` is intentionally left without a `returns` — the key collides with
@@ -6037,20 +6037,24 @@ var METHODS = {
   // it's also universal (never gated), so its return type doesn't matter here.
   toString: {},
   // ── Mutators (shimmed with tailored errors that point at immutable variants) ─
-  sort: {},
-  splice: {},
-  push: {},
-  pop: {},
-  shift: {},
-  unshift: {},
-  fill: {},
-  copyWithin: {},
+  //    All are Array.prototype, so they carry the array family: on a receiver of a
+  //    known other type the chain type-check fires first, and "use '.toSorted()'"
+  //    would be the wrong advice for, say, a string.
+  sort: { optional: "array" },
+  splice: { optional: "array" },
+  push: { optional: "array" },
+  pop: { optional: "array" },
+  shift: { optional: "array" },
+  unshift: { optional: "array" },
+  fill: { optional: "array" },
+  copyWithin: { optional: "array" },
   // ── Iterator / void / locale (shimmed with tailored errors) ─────────────────
-  forEach: {},
-  entries: {},
-  keys: {},
-  values: {},
+  forEach: { optional: "array" },
+  entries: { optional: "array" },
+  keys: { optional: "array" },
+  values: { optional: "array" },
   toLocaleString: {},
+  // genuinely universal in JS (Number / Date / Array all have it)
   // ── Date ────────────────────────────────────────────────────────────────────
   // The accessors all return a number ($year/$month/…); toISOString → string;
   // plus/minus → a date (same-as-receiver, so returns is omitted).
@@ -6136,7 +6140,7 @@ var METHODS = {
   zip: { returns: "array", optional: "array" },
   unzip: { returns: "array", optional: "array" },
   zipWith: { returns: "array", optional: "array" },
-  unzipWith: {},
+  unzipWith: { optional: "array" },
   // shimmed with a tailored "use .unzip().map(group => …)" error
   keyBy: { returns: "object", optional: "array" },
   groupBy: { optional: "array" },
@@ -6176,9 +6180,13 @@ var METHODS = {
   floor: { returns: "number" },
   // ── Set (intercepted before generateMethodCall when the receiver is a NewSet,
   //    but listed so a typo on a non-NewSet receiver still surfaces a suggestion) ─
-  intersection: {},
-  union: {},
-  difference: {},
+  // …and reachable on a plain array receiver too, where they keep source order
+  // rather than using the $set* operators. Array-shaped in both paths.
+  intersection: { returns: "array", optional: "array" },
+  union: { returns: "array", optional: "array" },
+  difference: { returns: "array", optional: "array" },
+  // No plain-receiver form — a non-NewSet receiver falls through to "Unknown
+  // method", so there is no family to declare.
   isSubsetOf: {},
   isSupersetOf: {},
   // ── Regex (intercepted on RegexLiteral receivers; same rationale) ───────────
@@ -6414,7 +6422,7 @@ function rejectIncompatibleChain(recv, method, object) {
   }
   const need = requiredReceiverFamily(method);
   if (need === null || need === recv) return;
-  const hint = recv === "array" && need === "object" ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.` : recv === "array" ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.` : recv === "object" && need === "array" ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.` : recv === "date" && need === "string" ? `Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.` : recv === "date" && need === "number" ? `Turn the date into a number first with '.getTime()' (epoch milliseconds), or read one part of it ('.getFullYear()', '.week()', \u2026).` : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
+  const hint = recv === "array" && need === "object" ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.` : recv === "array" ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.` : recv === "object" && need === "array" ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.` : recv === "string" && method === "at" ? `For a string, read one character with '.charAt(index)' \u2014 or '.slice(-1)' for the last one, which also accepts a negative index.` : recv === "date" && need === "string" ? `Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.` : recv === "date" && need === "number" ? `Turn the date into a number first with '.getTime()' (epoch milliseconds), or read one part of it ('.getFullYear()', '.week()', \u2026).` : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
   throw new CodegenError(
     `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
     object.pos
