@@ -263,13 +263,13 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     // Multi-arg `new Date(y, m, d)` is interpreted as UTC — same as the
     // `$dateFromParts` codegen lowering — so the folded value is TZ-independent
     // (the expected uses Date.UTC, NOT the machine-local `new Date(2026,0,1)`).
-    expect(jsmql("[$match($.createdAt >= new Date(2026, 0, 1))]")).toEqual([
+    expect(jsmql("[$match($.createdAt >= new Date(2026, 1, 1))]")).toEqual([
       { $match: { createdAt: { $gte: new Date(Date.UTC(2026, 0, 1)) } } },
     ]);
   });
 
   it("folds `new Date(Date.UTC(...))` for UTC-anchored dates", () => {
-    expect(jsmql("[$match($.createdAt >= new Date(Date.UTC(2026, 0, 1)))]")).toEqual([
+    expect(jsmql("[$match($.createdAt >= new Date(Date.UTC(2026, 1, 1)))]")).toEqual([
       { $match: { createdAt: { $gte: new Date(Date.UTC(2026, 0, 1)) } } },
     ]);
   });

@@ -1,6 +1,6 @@
 import { lookupOperator } from "./operators.ts";
 import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
-import { checkEnum, litString, objectInfo } from "./literal-gate.ts";
+import { checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { someExpr } from "./ast-walk.ts";
@@ -6296,9 +6296,11 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
  */
 function evalConstDate(args: Expr[]): Date | null {
   if (args.length === 0) return null; // new Date() — runtime "now"
+  checkMonthBase(args);
   if (args.length === 1) {
     const arg = args[0];
     if (arg.type === "DateUTC") {
+      checkMonthBase(arg.args);
       const utc = constNumberArgs(arg.args);
       return utc === null ? null : new Date(utcMs(utc));
     }
@@ -6326,7 +6328,35 @@ export function foldConstantDate(args: Expr[]): Date | null {
 }
 
 function utcMs(parts: number[]): number {
-  return (Date.UTC as (...a: number[]) => number)(...parts);
+  // `parts[1]` is a 1-based month (MQL's base, and jsmql's everywhere); JS
+  // `Date.UTC` takes a 0-based one. Both roll a month outside 1–12 over into the
+  // neighbouring year the same way, so the shift is the whole difference and the
+  // folded value stays identical to what `$dateFromParts` would compute.
+  const jsParts = parts.length >= 2 ? [parts[0], parts[1] - 1, ...parts.slice(2)] : parts;
+  return (Date.UTC as (...a: number[]) => number)(...jsParts);
+}
+
+/**
+ * Months are 1-based in jsmql, as in MQL. A literal `0` or negative month is
+ * therefore a JavaScript 0-based holdover rather than a deliberate roll back into
+ * the previous year: both engines *accept* it (month 0 is December of the year
+ * before), so nothing downstream would complain — which is exactly why it is
+ * caught here. Silently shifting a query by a year is the worst outcome
+ * available. A month above 12 is left alone: `new Date($.y, 13, 1)` rolls into
+ * next January in both engines, and `m + 1` arithmetic legitimately produces it.
+ */
+function checkMonthBase(args: Expr[]): void {
+  const monthAst = args[1];
+  if (monthAst === undefined) return;
+  const month = litNumber(monthAst);
+  if (month === null || month >= 1) return;
+  throw new CodegenError(
+    `Month ${month} is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, ` +
+      `December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in ${month} ` +
+      `means ${month === 0 ? "January there and December of the previous year here" : "an earlier year here"}. ` +
+      `Write ${month === 0 ? "1 for January" : "a month from 1 to 12"}.`,
+    monthAst.pos,
+  );
 }
 
 function constNumberArgs(args: Expr[]): number[] | null {
@@ -6428,19 +6458,13 @@ function generateDateUTC(args: Expr[], ctx: GenerateCtx): unknown {
 /**
  * Build a `$dateFromParts` document from a positional argument list. Used by
  * both `new Date(y, m, d, …)` (no timezone) and `Date.UTC(y, m, d, …)`
- * (timezone: "UTC"). Folds the JS-to-MQL month offset (+1) when the month
- * argument is a number literal.
+ * (timezone: "UTC"). The month passes straight through: jsmql's month base is
+ * MQL's, so there is no offset to fold.
  */
 function generateDateFromParts(args: Expr[], ctx: GenerateCtx, timezone: string | null): unknown {
+  checkMonthBase(args);
   const parts: Record<string, unknown> = { year: _generate(args[0], ctx) };
-  if (args.length >= 2) {
-    const monthAst = args[1];
-    if (monthAst.type === "NumberLiteral") {
-      parts.month = monthAst.value + 1;
-    } else {
-      parts.month = { $add: [_generate(monthAst, ctx), 1] };
-    }
-  }
+  if (args.length >= 2) parts.month = _generate(args[1], ctx);
   const slots = ["day", "hour", "minute", "second", "millisecond"];
   for (let i = 2; i < args.length && i - 2 < slots.length; i++) {
     parts[slots[i - 2]] = _generate(args[i], ctx);

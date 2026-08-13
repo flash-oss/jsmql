@@ -2844,21 +2844,31 @@ describe("new Date()", () => {
     // query-document positions. `{ $toDate }` only works in the former.
     expect(jsmql.expr('new Date("2024-01-01")')).toEqual(new Date("2024-01-01"));
   });
-  it("new Date(y, m) folds to a UTC Date", () => {
-    expect(jsmql.expr("new Date(2024, 0)")).toEqual(new Date(Date.UTC(2024, 0)));
+  it("new Date(y, m) folds to a UTC Date — month 1 is January", () => {
+    expect(jsmql.expr("new Date(2024, 1)")).toEqual(new Date(Date.UTC(2024, 0)));
   });
   it("new Date(y, m, d) folds to a UTC Date", () => {
-    expect(jsmql.expr("new Date(2024, 0, 15)")).toEqual(new Date(Date.UTC(2024, 0, 15)));
+    expect(jsmql.expr("new Date(2024, 1, 15)")).toEqual(new Date(Date.UTC(2024, 0, 15)));
   });
   it("new Date(y, m, d, h, mi, s, ms) folds to a UTC Date", () => {
-    expect(jsmql.expr("new Date(2024, 11, 31, 23, 59, 58, 999)")).toEqual(
+    expect(jsmql.expr("new Date(2024, 12, 31, 23, 59, 58, 999)")).toEqual(
       new Date(Date.UTC(2024, 11, 31, 23, 59, 58, 999)),
     );
   });
-  it("non-literal month gets $add: [m, 1] (runtime form, not folded)", () => {
-    expect(jsmql.expr("new Date($.y, $.m, 1)")).toEqual({
-      $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: 1 },
-    });
+  it("a month above 12 rolls into the next year, as both engines do", () => {
+    expect(jsmql.expr("new Date(2024, 13, 1)")).toEqual(new Date(Date.UTC(2025, 0, 1)));
+  });
+  it("a runtime month passes straight through — no offset to fold", () => {
+    expect(jsmql.expr("new Date($.y, $.m, 1)")).toEqual({ $dateFromParts: { year: "$y", month: "$m", day: 1 } });
+  });
+  it("rejects a literal month below 1 — a JavaScript 0-based holdover", () => {
+    // Valid in both engines (month 0 is December of the year before), which is
+    // exactly why it is caught: nothing downstream would ever complain.
+    expect(() => jsmql.expr("new Date(2024, 0, 15)")).toThrow(
+      /Month 0 is out of range — months are 1-based in jsmql, as in MongoDB/,
+    );
+    expect(() => jsmql.expr("new Date(2024, -1, 15)")).toThrow(/Month -1 is out of range/);
+    expect(() => jsmql.expr("Date.UTC(2024, 0, 15)")).toThrow(/Month 0 is out of range/);
   });
   it("rejects a constant date string that can't be parsed (HR3)", () => {
     // We KNOW the value at compile time and the server rejects the equivalent
@@ -2886,7 +2896,7 @@ describe("new Date()", () => {
 
 describe("Date.UTC()", () => {
   it("Date.UTC(y, m, d) → $toLong of $dateFromParts with UTC timezone", () => {
-    expect(jsmql.expr("Date.UTC(2024, 0, 15)")).toEqual({
+    expect(jsmql.expr("Date.UTC(2024, 1, 15)")).toEqual({
       $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } },
     });
   });
@@ -2894,7 +2904,7 @@ describe("Date.UTC()", () => {
     expect(jsmql.expr("Date.UTC(1970)")).toEqual({ $toLong: { $dateFromParts: { year: 1970, timezone: "UTC" } } });
   });
   it("new Date(Date.UTC(...)) with constant parts folds to a real UTC Date", () => {
-    expect(jsmql.expr("new Date(Date.UTC(2024, 0, 15))")).toEqual(new Date(Date.UTC(2024, 0, 15)));
+    expect(jsmql.expr("new Date(Date.UTC(2024, 1, 15))")).toEqual(new Date(Date.UTC(2024, 0, 15)));
   });
   it("Date.UTC requires at least 1 arg", () => {
     expect(() => jsmql.expr("Date.UTC()")).toThrow(/Date\.UTC.*takes 1 to 7 arguments/);

@@ -108,7 +108,7 @@ jsmql("$add($.a, $.b)");
 
 The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/match-query-translation.md](specs/match-query-translation.md) for the full table.
 
-**`new Date(...)` and indexes.** When all `new Date(...)` arguments are compile-time literals — `new Date("2026-01-01")`, `new Date(2026, 0, 1)`, `new Date(Date.UTC(2026, 0, 1))` — jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. That's the shape MongoDB indexes on `createdAt` actually need. `new Date()` (zero-arg, server-side `$$NOW`) and `new Date($.someField)` necessarily fall back to `$expr` since they can't be evaluated until query time. Conversely, `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter — MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument, never matching anything. The fold avoids that footgun.
+**`new Date(...)` and indexes.** When all `new Date(...)` arguments are compile-time literals — `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, `new Date(Date.UTC(2026, 1, 1))` — jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. That's the shape MongoDB indexes on `createdAt` actually need. `new Date()` (zero-arg, server-side `$$NOW`) and `new Date($.someField)` necessarily fall back to `$expr` since they can't be evaluated until query time. Conversely, `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter — MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument, never matching anything. The fold avoids that footgun.
 
 ### Stage call → Pipeline (no `;` required)
 
@@ -2051,23 +2051,34 @@ jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObject
 ```js
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
 new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
-new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)   (UTC)
-new Date(2024, 11, 31, 23, 59, 58, 999)
+new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   (UTC; month 1 = January)
+new Date(2024, 12, 31, 23, 59, 58, 999)
                                    // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form
-new Date(Date.UTC(2024, 0, 15))    // Date(2024-01-15T00:00:00Z)
+new Date(Date.UTC(2024, 1, 15))    // Date(2024-01-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
-new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: "$m", day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
-Date.UTC(2024, 0, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
+Date.UTC(2024, 1, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
 ```
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` / `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document: `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter / `$match` — MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, never matching anything. Only genuinely runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments don't form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time rather than emit MQL the server would refuse.
 
-**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly. JS month indices stay 0-based on the input side — jsmql folds the `+1` adjustment for you.
+**Months are 1-based here too — `new Date(2024, 1, 15)` is 15 January.** This is the one place JSMQL's month base differs from JavaScript's, whose `new Date(y, m, d)` and `Date.UTC(y, m, d)` count January as `0`. JSMQL uses MongoDB's base everywhere instead — the constructors, `.getMonth()`, `.set({ month })`, `$month` and `$dateFromParts` all agree — so a month never changes meaning as a value moves through your query. A literal `0` or negative month is rejected at compile time rather than silently read as the previous December:
+
+```js
+new Date(2024, 0, 15)
+// ✗ Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1,
+//   December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0
+//   means January there and December of the previous year here. Write 1 for January.
+```
+
+A month **above** 12 is left alone: `new Date(2024, 13, 1)` is 1 January 2025 in both engines, which is what `m + 1` arithmetic legitimately produces.
+
+**Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly.
 
 ### Date Getter Methods
 
@@ -2264,7 +2275,7 @@ The options form must be **written out** as an object literal: MongoDB reads the
 
 **Months are 1-based — January is `1`.** `getMonth()` / `getUTCMonth()` return MongoDB's `$month` unchanged, so the month base is the same in JSMQL as it is in the MQL you read back: the getters, `.set({ month })`, `$month`, and `$dateFromParts` all count January as `1`. This is the one place a date getter deliberately diverges from JavaScript, whose `Date.prototype.getMonth()` is 0-based. `getDay()` / `getUTCDay()` stay 0-based (Sunday = 0) to match JS. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
 
-**Note:** the multi-argument `new Date(y, m, d, …)` constructor keeps JavaScript's 0-based month on the *input* side, so `new Date(2024, 0, 15)` is 15 January. A round trip through the getters therefore needs the adjustment written out: `new Date($.t.getFullYear(), $.t.getMonth() - 1, 1)`. Prefer `.set({ month: 1, day: 1 })`, which is 1-based like the getters and keeps the rest of the date.
+**Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow) for the compile-time rejection of a 0-based month.
 
 **Note:** these methods require a date receiver, so a literal non-date is rejected at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings/numbers.
 

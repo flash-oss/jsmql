@@ -3157,7 +3157,7 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
 });
           `),
     ).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
+      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       {
         $lookup: {

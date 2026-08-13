@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — feat!: one month base for the whole language — `new Date(y, m, d)` is 1-based
+
+```
+new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   — month 1 = January
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: "$m", day: "$d" } }
+Date.UTC(2024, 1, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, … } } }
+
+new Date(2024, 0, 15)
+// ✗ Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1,
+//   December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means
+//   January there and December of the previous year here. Write 1 for January.
+```
+
+Moving `.getMonth()` to MQL's base left the *input* side 0-based, which is worse than either
+base on its own: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` — the most natural thing a
+developer writes — was off by a month, and the `- 1` had to be documented as a workaround.
+Now every month slot in the language counts January as 1: the constructors, `Date.UTC`, the
+getters, `.set({ month })`, and the `$dateFromParts` a reader sees in the output. A month no
+longer changes meaning as a value moves through a query.
+
+The `$add: [month, 1]` offset is gone from `generateDateFromParts`, so a runtime month passes
+straight through. The constant fold still has to shift, since JS `Date.UTC` is 0-based — that
+lives in `utcMs` alone, and both engines roll a month outside 1–12 over into the neighbouring
+year identically, so the folded value stays byte-identical to what `$dateFromParts` computes
+(verified against mongod for months 0, 1, 12, 13 and −1).
+
+A **literal month below 1 is now rejected**, which is the part that matters. Both engines
+accept it — month 0 is December of the year before — so nothing downstream would ever
+complain, and a pasted-in JS `new Date(2024, 0, 15)` would silently shift a query by a year.
+`checkMonthBase` guards every site that reads a month argument (the runtime lowering, the
+constant fold, and `Date.UTC`), is literal-gated so a runtime month passes, and catches the
+unary-minus form too. A month above 12 is deliberately left alone: `new Date($.y, 13, 1)` is
+next January in both engines and `m + 1` arithmetic legitimately produces it.
+
+---
+
 ## 2026-08-12 — test: the date vocabulary runs against a live MongoDB
 
 The date methods were each probed against a local `mongod` as they landed, but three of them
