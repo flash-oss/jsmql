@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 
 // `;` at top level is the implicit pipeline-stage separator. Each `;`-separated
 // chunk becomes its own stage(s) with no cross-coalescing — in contrast to the
@@ -28,7 +29,10 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("comma-grouped update ops inside one `;` chunk still coalesce", () => {
-    expect(jsmql("$.a = 1, $.b = 2; $match($.x)")).toEqual([{ $set: { a: 1, b: 2 } }, { $match: { $expr: "$x" } }]);
+    expect(jsmql("$.a = 1, $.b = 2; $match($.x)")).toEqual([
+      { $set: { a: 1, b: 2 } },
+      { $match: { $expr: truthy("$x") } },
+    ]);
   });
 
   it("stage call followed by update op", () => {
@@ -37,7 +41,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
 
   it("two stage calls produce two stages", () => {
     expect(jsmql("$match($.active); $sort({ score: -1 })")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $sort: { score: -1 } },
     ]);
   });
@@ -67,7 +71,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
 
   it("$match-led pipeline ending in update ops", () => {
     expect(jsmql("$match($.active); $.score += 1; $.touched = true")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { score: { $add: ["$score", 1] } } },
       { $set: { touched: true } },
     ]);
@@ -121,7 +125,7 @@ describe("implicit pipeline — block-body arrow input", () => {
       $.touched = true;
     });
     expect(result).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { score: { $add: ["$score", 1] } } },
       { $set: { touched: true } },
     ]);
@@ -134,7 +138,7 @@ describe("implicit pipeline — block-body arrow input", () => {
       $.status = "complete";
     });
     expect(result).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $set: { status: "complete" } },
     ]);

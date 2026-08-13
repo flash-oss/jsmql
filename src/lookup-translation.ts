@@ -34,7 +34,7 @@ import {
   type StageRewrite,
 } from "./callback-block.ts";
 import {
-  generateExprBlockWithCtx,
+  generateExprBlockPredicate,
   noteSlotType,
   internalError,
   CodegenError,
@@ -1387,7 +1387,7 @@ export function translatePredicate(
     return {
       kind: "pipeline",
       letVars,
-      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }],
+      pipeline: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }],
     };
   }
 
@@ -1623,7 +1623,7 @@ export function buildPipelineFormPredicate(
       enclosing.foreignParams.length,
     );
     const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
-    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }] };
   }
   return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
@@ -1962,7 +1962,7 @@ export function lowerLambdaPredicate(
     const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
-    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
+    return [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }];
   }
 
   return opts.missingBody();

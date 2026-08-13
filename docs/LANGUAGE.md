@@ -1293,7 +1293,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position on an array-value method — the JavaScript predicate methods, the lodash predicate-run family, and `.compact()`, whichever spelling the predicate is written in (arrow, `_.matches` object, field-name string, `["field", value]` pair, bare `Boolean`) — all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position — an array-value method (the JavaScript predicate methods, the lodash predicate-run family, `.compact()`), a `$match` body, a stream `$$.filter(p)` / `$$.reject(p)`, a `$$$.<coll>` lookup predicate, and a bare-expression Filter — all use **JavaScript** truthy/falsy semantics, not MongoDB's. This holds whichever spelling the predicate is written in: arrow, `_.matches` object, field-name string, `["field", value]` pair, or bare `Boolean`. The values treated as falsy are:
 
 | Value | Falsy? |
 |---|---|
@@ -1307,9 +1307,17 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 MongoDB's raw `$toBool` and bare `$cond` use a different rule (e.g. `""` is truthy in MQL). When you need raw MongoDB semantics — for example to match the behaviour of an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes are unaffected.
 
-One rule across every spelling means the pairs that ought to agree do agree: `.compact()` is `.filter(Boolean)`, `.reject(p)` is the exact complement of `.filter(p)`, and `.partition(p)` is `[filter(p), reject(p)]` — so no element can fall out of both halves.
+One rule across every spelling and every position means the pairs that ought to agree do agree: `.compact()` is `.filter(Boolean)`, `.reject(p)` is the exact complement of `.filter(p)`, `.partition(p)` is `[filter(p), reject(p)]` — so no element can fall out of both halves — and a stream `$$.filter(p)` keeps exactly the documents the value-mode `.filter(p)` keeps.
 
-**Known limitation: `NaN` is treated as truthy.** Detecting `NaN` in MongoDB aggregation requires an expensive per-value `$convert` (its `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work). `NaN` values are vanishingly rare in MongoDB data; the divergence is documented rather than papered over.
+```js
+$.active                            // Filter: { $expr: <JS-truthy check on "$active"> }
+$match($.active)                    // the same check, as a stage
+$$.filter(o => o.active)            // and again, on a stream
+```
+
+Only the index-friendly half of a `$match` is exempt, because it needs no coercion: a comparison is already a boolean, so `$.age > 18` still emits the plain query form `{ age: { $gt: 18 } }`. When you want MongoDB's own truthiness in a `$match`, write the object-literal escape hatch — `$match({ $expr: $.active })` passes through verbatim.
+
+**Known limitation: `NaN` is treated as truthy.** It is the one JS-falsy value the rule above does not catch, so `$.xs.compact()` keeps a `NaN` that `_.compact` would drop. Detecting it needs a per-value `$convert` — MongoDB's `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work — and that measures at roughly +40% on a `$match` and +20% on a `$filter`, paid by *every* predicate in the language. `NaN` values are vanishingly rare in MongoDB data, so the divergence is documented rather than bought at that price. When you do need the check, compare explicitly — `$ne($.x, $toDouble("NaN"))` → `{ "$ne": ["$x", { "$toDouble": "NaN" }] }` — which is true for every value except a `NaN` (of either `double` or `decimal` type).
 
 ### Bitwise
 

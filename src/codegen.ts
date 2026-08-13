@@ -572,7 +572,8 @@ const METHODS: Record<string, MethodMeta> = {
   endsWith: { returns: "bool", optional: "string" },
   replace: { returns: "string", optional: "string" },
   replaceAll: { returns: "string", optional: "string" },
-  match: { optional: "string" },
+  // `.match` lowers to `$regexMatch` — a boolean, unlike JS's array-or-null result.
+  match: { returns: "bool", optional: "string" },
   matchAll: { optional: "string" },
   search: { returns: "number", optional: "string" },
   padStart: { returns: "string", optional: "string" },
@@ -734,7 +735,7 @@ const METHODS: Record<string, MethodMeta> = {
   isSubsetOf: {},
   isSupersetOf: {},
   // ── Regex (intercepted on RegexLiteral receivers; same rationale) ───────────
-  test: {},
+  test: { returns: "bool" }, // → `$regexMatch`
   exec: {},
 };
 
@@ -980,9 +981,18 @@ function isStringProducing(expr: Expr, ctx?: GenerateCtx): boolean {
 // MQL). To make `&&`, `||`, `!`, `?:`, `Boolean()`, and predicate-method
 // bodies match the JS semantics users expect, we wrap operands in `jsBool`.
 //
-// NaN: detecting NaN in MongoDB is expensive (its $eq treats NaN==NaN as
-// true, so `$ne:[x,x]` does not work). NaN values are vanishingly rare in
-// MongoDB collections, so we accept this divergence and document it.
+// NaN is the one JS-falsy value jsBool does NOT catch, and the omission is a
+// priced decision rather than a missing feature. MongoDB's $eq treats NaN==NaN
+// as true, so the cheap self-comparison `$ne:[x,x]` cannot work — but that same
+// property makes a comparison against a SYNTHESISED NaN exact: `$ne:[x,
+// {$toDouble:"NaN"}]` is false for a double NaN and a Decimal128 NaN, and true
+// for every other value (±Infinity, ±0, the string "NaN", null, missing, [], {}).
+// It is simply expensive: measured on a local mongod, a fifth clause of that shape
+// costs +41% on a $match over 300k documents and +22% on a per-document $filter,
+// against a +15% floor for ANY fifth clause — the $convert re-runs per document and
+// binding it in a $let does not help. That is a whole-language cost (every predicate
+// position routes through here) for a value that is vanishingly rare in MongoDB
+// collections, so we accept the divergence and document it.
 
 // Operators whose return type is always a boolean — used to elide the jsBool
 // wrap when an operand is already a boolean.
@@ -1231,8 +1241,65 @@ function jsBool(value: unknown): unknown {
  *  provably boolean. The AST is needed to do the elision check; the generated
  *  value is what gets emitted. Pass them both for the common case where
  *  callers have already invoked _generate(). */
-function jsBoolIfNeeded(srcExpr: Expr, generated: unknown): unknown {
-  return isProvablyBool(srcExpr) ? generated : jsBool(generated);
+export function jsBoolIfNeeded(srcExpr: Expr, generated: unknown): unknown {
+  return isProvablyBool(srcExpr) || isBoolValued(generated) ? generated : jsBool(generated);
+}
+
+/**
+ * [isProvablyBool] asks the SOURCE node; this asks the GENERATED value. Some
+ * constructs are boolean only after lowering — an inlined reusable function or IIFE
+ * (`$match(isBig($.amount))` → a `$let` whose body is a `$gt`) and a `jsmql.compile`
+ * param bound to a boolean both reach a predicate position with no bool-shaped AST to
+ * inspect. Wrapping those in `jsBool` is correct but pure noise, so check the value too.
+ */
+function isBoolValued(value: unknown): boolean {
+  if (typeof value === "boolean") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== 1) return false;
+  if (BOOL_OUTPUT_OPS.has(keys[0])) return true;
+  // A `$let` evaluates to its body, so it is boolean exactly when the body is.
+  const let_ = (value as { $let?: { in?: unknown } }).$let;
+  return keys[0] === "$let" && let_ !== undefined && isBoolValued(let_.in);
+}
+
+/**
+ * Generate `expr` in BOOLEAN POSITION — somewhere only its JS truthiness is observed
+ * (a `?:` / `$cond` test, `!`, `Boolean()`, a predicate body, a `$match` residual).
+ *
+ * A `&&` / `||` chain becomes `$and` / `$or` of its boolified operands. That is the
+ * same answer as `jsBool` of the operand-preserving `$cond` form — `jsBool(a && b)` is
+ * "a truthy AND b truthy" — but the `$cond` is invisible where nothing reads the
+ * operand, and jsBool would otherwise repeat the whole chain four times (once per
+ * falsy-value clause) and re-evaluate it as many times on the server. Everywhere the
+ * operand IS read (`$set({ v: $.a && $.b })`) keeps the `$cond` form via `_generate`.
+ */
+export function generateBool(expr: Expr, ctx: GenerateCtx): unknown {
+  if (expr.type === "BinaryExpr" && (expr.op === "&&" || expr.op === "||")) {
+    const key = expr.op === "&&" ? "$and" : "$or";
+    const chain: Expr[] = [];
+    collectExprChain(expr.op, expr.left, chain);
+    chain.push(expr.right);
+    // Splice an operand that is already the SAME connective into this one. `jsBool`
+    // emits an `$and`, so without this every operand of a `&&` adds a nesting level
+    // that says nothing. Both connectives are associative and evaluate left to right
+    // in MQL as in JS, so the flattened form short-circuits identically.
+    const operands = chain.flatMap((e) => {
+      const g = generateBool(e, ctx);
+      return soleKeyArray(g, key) ?? [g];
+    });
+    return { [key]: operands };
+  }
+  return jsBoolIfNeeded(expr, _generate(expr, ctx));
+}
+
+/** The array under `key` when `value` is exactly `{ [key]: [...] }` — else null. */
+function soleKeyArray(value: unknown, key: string): unknown[] | null {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== key) return null;
+  const inner = (value as Record<string, unknown>)[key];
+  return Array.isArray(inner) ? inner : null;
 }
 
 /** True if `expr` resolves to a stable field/param/path (no computation,
@@ -1653,14 +1720,18 @@ export function generateWithCtx(expr: Expr, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Generate an `ExprBlock` (`{ (const|let … ;)* return <expr>; }`) as a value — the
- * right-folded nest of `$let` a block-bodied arrow means. Exported for the predicate
- * translators, which lower a block-bodied predicate into `$match: { $expr: … }` and
- * must not re-implement the folding, shadowing, and re-declaration rules
- * [generateExprBlock] already owns.
+ * Generate an `ExprBlock` (`{ (const|let … ;)* return <expr>; }`) in PREDICATE
+ * position — the right-folded nest of `$let` a block-bodied arrow means, wrapped in
+ * the same JS-truthiness check a predicate written without bindings gets (the block's
+ * `return` decides the match, so that is what the elision check inspects). Exported
+ * for the predicate translators, which lower a block-bodied predicate into
+ * `$match: { $expr: … }` and must not re-implement the folding, shadowing, and
+ * re-declaration rules [generateExprBlock] already owns. There is deliberately no
+ * unwrapped export: every current caller is a `$match` body, so making the wrap part
+ * of the only entry point stops a new one from silently emitting MQL truthiness.
  */
-export function generateExprBlockWithCtx(block: ExprBlock, ctx: GenerateCtx): unknown {
-  return generateExprBlock(block, ctx);
+export function generateExprBlockPredicate(block: ExprBlock, ctx: GenerateCtx): unknown {
+  return generateExprBlock(block, ctx, generateBool);
 }
 
 // ── Core generator ────────────────────────────────────────────────────────────
@@ -1799,11 +1870,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
       return generateUnaryExpr(expr.op, expr.operand, ctx, expr.pos);
 
     case "TernaryExpr":
-      return cond(
-        jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
-        _generate(expr.consequent, ctx),
-        _generate(expr.alternate, ctx),
-      );
+      return cond(generateBool(expr.condition, ctx), _generate(expr.consequent, ctx), _generate(expr.alternate, ctx));
 
     case "IndexAccess": {
       // `obj[idx]` and `obj?.[idx]` produce the same AST shape; only the
@@ -2618,7 +2685,7 @@ function generateUnaryExpr(op: "!" | "-" | "~", operand: Expr, ctx: GenerateCtx,
     if (operand.type === "UnaryExpr" && operand.op === "!") {
       return jsBool(_generate(operand.operand, ctx));
     }
-    return { $not: jsBoolIfNeeded(operand, _generate(operand, ctx)) };
+    return { $not: generateBool(operand, ctx) };
   }
   if (op === "~") {
     return { $bitNot: _generate(operand, ctx) };
@@ -3912,7 +3979,7 @@ function generateMethodCall(
     case "findLast": {
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
-      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
       }
@@ -3937,7 +4004,7 @@ function generateMethodCall(
       if (lambda.params[1]) {
         vars[safeVarName(lambda.params[1])] = { $arrayElemAt: ["$$this", 0] };
       }
-      const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
+      const predicate = genLambdaBoolBody(lambda, bodyCtx);
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
@@ -4040,7 +4107,7 @@ function generateMethodCall(
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
-      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $filter: { input: iter.input, as: iter.asName, cond } };
       }
@@ -4058,7 +4125,7 @@ function generateMethodCall(
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
-      const cond = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
       }
@@ -4070,11 +4137,7 @@ function generateMethodCall(
       const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
-          $map: {
-            input: iter.input,
-            as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx))),
-          },
+          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) },
         },
       };
     }
@@ -4083,11 +4146,7 @@ function generateMethodCall(
       const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
-          $map: {
-            input: iter.input,
-            as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx))),
-          },
+          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) },
         },
       };
     }
@@ -5580,6 +5639,12 @@ function genLambdaBody(lambda: LambdaLike, ctx: GenerateCtx): unknown {
   return lambda.exprBlock ? generateExprBlock(lambda.exprBlock, ctx) : _generate(lambda.body!, ctx);
 }
 
+/** [genLambdaBody] in BOOLEAN position — a predicate lambda, whose result only ever
+ *  reads as a JS truthiness. See [generateBool]. */
+function genLambdaBoolBody(lambda: LambdaLike, ctx: GenerateCtx): unknown {
+  return lambda.exprBlock ? generateExprBlock(lambda.exprBlock, ctx, generateBool) : generateBool(lambda.body!, ctx);
+}
+
 /**
  * Lower an expr-block body. A declaration whose initialiser is a compile-time
  * constant folds — its value is inlined at every reference (via `ctx.bindings`)
@@ -5589,11 +5654,17 @@ function genLambdaBody(lambda: LambdaLike, ctx: GenerateCtx): unknown {
  * folded so each initialiser and the `return` see every PRIOR declaration as a
  * `$$name` variable. See docs/specs/const-folding.md and method-dispatch.md.
  */
-function generateExprBlock(block: ExprBlock, ctx: GenerateCtx): unknown {
+function generateExprBlock(
+  block: ExprBlock,
+  ctx: GenerateCtx,
+  // How to generate the `return` expression. Defaults to value position; a predicate
+  // block passes [generateBool] so the `$let` this folds to reads as a boolean.
+  genRet: (e: Expr, c: GenerateCtx) => unknown = _generate,
+): unknown {
   const seen = new Set<string>();
   const emptyEnv: ConstEnv = new Map();
   const fold = (i: number, c: GenerateCtx): unknown => {
-    if (i === block.decls.length) return _generate(block.ret, c);
+    if (i === block.decls.length) return genRet(block.ret, c);
     const decl = block.decls[i];
     if (seen.has(decl.name)) {
       throw new CodegenError(
@@ -5849,7 +5920,7 @@ export function generateAssertGuardExpr(args: CallArg[], ctx: GenerateCtx, callP
     return a;
   });
   checkArity("assert", { sig: "condition[, message]", allowed: [1, 2] }, exprArgs.length, callPos, "");
-  const condition = jsBoolIfNeeded(exprArgs[0], _generate(exprArgs[0], ctx));
+  const condition = generateBool(exprArgs[0], ctx);
   return { $convert: { input: true, to: { $cond: [condition, "bool", assertFailType(exprArgs[1], ctx)] } } };
 }
 
@@ -5878,7 +5949,7 @@ function generateTypeCast(cast: TypeCastOp, arg: Expr, ctx: GenerateCtx, _pos: n
     case "Boolean":
       // JS truthy/falsy semantics — see jsBool() above. Users who want the
       // raw MongoDB $toBool can call it directly: $toBool($.x).
-      return jsBoolIfNeeded(arg, val);
+      return generateBool(arg, ctx);
     case "parseInt":
       return { $toInt: val };
   }

@@ -10,6 +10,68 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: a `$match` / Filter predicate reads under JS truthiness too
+
+```
+$$.filter(o => o.active)
+// before: [{ $match: { $expr: "$active" } }]
+//         ← MQL truthiness. `$$.reject(o => o.active)` negated with `!`, which HAS
+//           always used jsBool, so a doc with `active: ""` fell out of BOTH halves.
+// now:    [{ $match: { $expr: <jsBool of "$active"> } }]
+
+$.a && $.b                                  // Filter
+// before: { $expr: { $cond: { if: <jsBool "$a">, then: "$b", else: "$a" } } }
+// now:    { $expr: { $and: [ …jsBool "$a", …jsBool "$b" ] } }
+```
+
+Extends the value-mode rule (see *every array-method predicate position reads under JS
+truthiness*, same date) to the remaining predicate positions: the `$match` stage body, a
+stream `$$.filter` / `$$.reject`, a `$$$.<coll>` lookup predicate, and a bare-expression
+Filter. The `$expr` residual is a boolean position — a `$match` decides which documents
+survive, the same question `.filter` asks — so it now lowers through the same wrap. Only
+the residual takes it: the index-friendly `query` half is comparisons, already boolean,
+so `$.age > 18` still emits `{ age: { $gt: 18 } }`. `$match({ $expr: … })` written as an
+object literal skips the translator entirely and stays raw MQL, which is the escape
+hatch for MongoDB's own truthiness.
+
+Naively wrapping the residual made the most common Filter shape explode: `&&` lowers to
+the operand-preserving `$cond`, and `jsBool` of that repeats the whole chain once per
+falsy-value clause (`$.a && $.b` went from 233 to 684 bytes, with four evaluations of
+the chain per document). So boolean position is now its own lowering — `generateBool` in
+[src/codegen.ts](src/codegen.ts) — and a `&&` / `||` chain in it becomes `$and` / `$or`
+of the boolified operands, spliced flat, which is the same answer without the `$cond`
+nothing there can observe. Value position keeps the `$cond`. Every boolean position
+routes through it (`?:` test, `!`, `Boolean()`, `assert`, predicate lambda bodies,
+`resolvePredicate`, `.compact()`, the `$match` residual), so the rule is stated once.
+
+Two elision gaps surfaced while checking the new output for redundant wraps, both fixed
+rather than papered over: `.match()` and `/re/.test()` lower to `$regexMatch` — a boolean,
+unlike JS's array-or-null result — and were missing `returns: "bool"` in the `METHODS`
+registry; and a construct that becomes boolean only *after* lowering (an inlined
+reusable function, `$match(isBig($.amount))` → a `$let` around a `$gt`; a `jsmql.compile`
+param bound to `true`) has no bool-shaped AST for `isProvablyBool` to inspect, so
+`isBoolValued` now asks the same question of the generated value. A block-bodied
+predicate also moved its wrap inside the `$let`, around the `return`, so the bindings are
+evaluated once instead of once per clause. `NaN` remains truthy, and that is now a
+priced decision rather than an assumption: `{$toDouble: "NaN"}` yields a genuine double
+NaN on the server, and since MongoDB's `$eq` treats `NaN == NaN` as true — the very
+property that defeats the cheap `$ne:[x,x]` — comparing against it is an *exact* test
+(true for `double` and `decimal` NaN, false for ±Infinity, ±0, the string `"NaN"`, null,
+missing, `[]`, `{}`). It is just expensive: a fifth `jsBool` clause of that shape measured
+at +41% on a `$match` over 300k documents and +22% on a per-document `$filter`, against a
++15% floor for *any* fifth clause, and binding the constant in a `$let` does not help
+(the `$convert` re-runs per document). The cheap alternative — emitting a real BSON NaN
+literal — is closed off because jsmql's output must stay JSON-serialisable and
+`JSON.stringify(NaN)` is `null`. Paying a whole-language cost for a value that is
+vanishingly rare in MongoDB data is the wrong trade, so the divergence stands and
+`docs/LANGUAGE.md` now names the explicit `$ne($.x, $toDouble("NaN"))` spelling for
+anyone who does need the check. The same finding corrects DEF-022's blocker list. The `jsBool` mirror the suites assert against moved to
+[test/truthy.ts](../test/truthy.ts) so the rule has one home on the test side too. Rules:
+[docs/LANGUAGE.md](LANGUAGE.md) § Truthy and falsy, [docs/specs/grammar.md](specs/grammar.md),
+[docs/specs/match-query-translation.md](specs/match-query-translation.md).
+
+---
+
 ## 2026-08-13 — fix: every array-method predicate position reads under JS truthiness
 
 ```

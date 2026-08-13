@@ -23,9 +23,6 @@ import "../src/ops.ts";
 declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?: string; features?: string[] } }
 
 // JS-truthiness coercion jsmql emits for `&&`/`||`/ternary conditions.
-const truthy = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
 
 // "Recommended products" for one user — the classic collaborative-filtering
 // query, in a handful of lines of JavaScript. It's the playground's default
@@ -839,7 +836,14 @@ $ = ["sender", "recipient"].map(party => {
                           vars: { score: "$$leg.riskScore" },
                           in: {
                             $cond: {
-                              if: truthy("$$score"),
+                              if: {
+                                $and: [
+                                  { $ne: [{ $ifNull: ["$$score", null] }, null] },
+                                  { $ne: ["$$score", false] },
+                                  { $ne: ["$$score", ""] },
+                                  { $ne: ["$$score", 0] },
+                                ],
+                              },
                               then: {
                                 party: "$$party",
                                 score: "$$score",
@@ -855,7 +859,14 @@ $ = ["sender", "recipient"].map(party => {
                 },
               },
               as: "v",
-              cond: truthy("$$v"),
+              cond: {
+                $and: [
+                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                  { $ne: ["$$v", false] },
+                  { $ne: ["$$v", ""] },
+                  { $ne: ["$$v", 0] },
+                ],
+              },
             },
           },
         },
@@ -2764,18 +2775,16 @@ $$$$.exports.email_contacts = $$;
           {
             $match: {
               $expr: {
-                $cond: {
-                  if: {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$active", null] }, null] },
-                      { $ne: ["$active", false] },
-                      { $ne: ["$active", ""] },
-                      { $ne: ["$active", 0] },
-                    ],
-                  },
-                  then: "$contactDetails.email",
-                  else: "$active",
-                },
+                $and: [
+                  { $ne: [{ $ifNull: ["$active", null] }, null] },
+                  { $ne: ["$active", false] },
+                  { $ne: ["$active", ""] },
+                  { $ne: ["$active", 0] },
+                  { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
+                  { $ne: ["$contactDetails.email", false] },
+                  { $ne: ["$contactDetails.email", ""] },
+                  { $ne: ["$contactDetails.email", 0] },
+                ],
               },
             },
           },

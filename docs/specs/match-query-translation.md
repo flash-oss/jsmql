@@ -21,13 +21,23 @@ type MatchTranslation = {
 };
 ```
 
-The caller in `src/pipeline.ts:generateStageBody` emits:
+`mergeTranslatedQuery` (in `src/match-translation.ts`) is the one place the emission
+lives — every consumer routes through it, so the shape can't drift:
 
 - `query` non-empty, `residual === null` → `{ $match: <query> }`
-- `query` non-empty, `residual !== null` → `{ $match: { ...<query>, $expr: <generate(residual)> } }`
-- `query` empty → `{ $match: { $expr: <generate(body)> } }` (full fallback)
+- `query` non-empty, `residual !== null` → `{ $match: { ...<query>, $expr: <generateBool(residual)> } }`
+- `query` empty → `{ $match: { $expr: <generateBool(residual)> } }` (full fallback)
+- both empty → `null`, and the caller skips the `$match` entirely (vacuous predicate)
 
-`ObjectLiteral` bodies never reach the translator — they pass through verbatim, providing the explicit escape hatch (`$match({ $expr: $.foo === 5 })`).
+**The residual is a boolean position**, so it lowers through `generateBool` (see
+`grammar.md`) rather than plain `generate`: a `$match` decides which documents survive,
+which is the same question `.filter` asks, and raw `$expr` truthiness would keep a `""`
+that `.filter(x => x.f)` drops. Only the residual takes the wrap — the translated
+`query` half is comparisons, already boolean, so the index-friendly shape is untouched.
+A predicate written with `const`/`let` bindings rides in `$expr` entire and takes the
+wrap around its `return`, inside the `$let` (`generateExprBlockPredicate`).
+
+`ObjectLiteral` bodies never reach the translator — they pass through verbatim, providing the explicit escape hatch (`$match({ $expr: $.foo === 5 })`) for raw MQL truthiness.
 
 ## Translation rules
 

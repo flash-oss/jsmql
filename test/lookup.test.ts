@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 
 describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   it(".filter assigns the array directly to the LHS slot", () => {
@@ -559,7 +560,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
               },
             },
             { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
-            { $match: { $expr: "$__jsmql.tmp.1" } },
+            { $match: { $expr: truthy("$__jsmql.tmp.1") } },
           ],
           as: "x",
         },
@@ -646,7 +647,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         $lookup: {
           from: "a",
           pipeline: [
-            { $match: { $expr: "$active" } },
+            { $match: { $expr: truthy("$active") } },
             {
               $lookup: {
                 from: "b",
@@ -769,7 +770,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // non-document root). Instead the sub-pipeline is just the `.filter`'s `$match`,
     // and the map runs as a value-mode `$map` over the result array in the `$set`.
     expect(jsmql("$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));")).toEqual([
-      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: truthy("$active") } }], as: "__jsmql.tmp.1" } },
       { $set: { stats: { $map: { input: "$__jsmql.tmp.1", as: "u", in: { id: "$$u._id", name: "$$u.name" } } } } },
       { $unset: "__jsmql" },
     ]);
@@ -876,7 +877,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "users",
-          pipeline: [{ $match: { $expr: "$active" } }, { $sort: { score: -1 } }, { $limit: 5 }],
+          pipeline: [{ $match: { $expr: truthy("$active") } }, { $sort: { score: -1 } }, { $limit: 5 }],
           as: "__jsmql.tmp.1",
         },
       },
@@ -930,7 +931,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // that fire BEFORE the chain-extension check in extractLookupCalls; they
     // continue to lower the same way they did before this commit.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
-      { $lookup: { from: "users", pipeline: [{ $match: { $expr: "$active" } }], as: "__jsmql.tmp.1" } },
+      { $lookup: { from: "users", pipeline: [{ $match: { $expr: truthy("$active") } }], as: "__jsmql.tmp.1" } },
       { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
       { $set: { count: "$__jsmql.tmp.1" } },
       { $unset: "__jsmql" },

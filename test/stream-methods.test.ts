@@ -7,6 +7,7 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy, truthyAnd } from "./truthy.ts";
 
 describe(".slice(start, end?) — on $$ (top-level stream)", () => {
   it("two-arg slice lowers to $skip + $limit", () => {
@@ -27,7 +28,7 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
 
   it("chains after .filter(<predicate>) — $match + $limit", () => {
     expect(jsmql("$$ = $$.filter(o => o.active).slice(0, 10);")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $limit: 10 },
     ]);
   });
@@ -560,7 +561,10 @@ describe("lodash iteratee shorthands on stream methods", () => {
   });
 
   it(".filter works mid-chain (not only as the head)", () => {
-    expect(jsmql("$$ = $$.take(5).filter(o => o.active);")).toEqual([{ $limit: 5 }, { $match: { $expr: "$active" } }]);
+    expect(jsmql("$$ = $$.take(5).filter(o => o.active);")).toEqual([
+      { $limit: 5 },
+      { $match: { $expr: truthy("$active") } },
+    ]);
   });
 });
 
@@ -1324,24 +1328,10 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
         "$$ = $$.reduce((acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc), []);",
       ),
     ).toEqual([
-      {
-        $match: {
-          $expr: {
-            $cond: {
-              if: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$active", null] }, null] },
-                  { $ne: ["$active", false] },
-                  { $ne: ["$active", ""] },
-                  { $ne: ["$active", 0] },
-                ],
-              },
-              then: "$contactDetails.email",
-              else: "$active",
-            },
-          },
-        },
-      },
+      // `a && b` in a $match reads as a boolean, so it is `$and` of the two boolified
+      // operands — not the operand-preserving `$cond`, whose returned operand nothing
+      // here can observe.
+      { $match: { $expr: truthyAnd("$active", "$contactDetails.email") } },
       { $replaceWith: "$contactDetails" },
     ]);
   });

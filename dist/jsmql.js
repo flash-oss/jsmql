@@ -5877,7 +5877,8 @@ var METHODS = {
   endsWith: { returns: "bool", optional: "string" },
   replace: { returns: "string", optional: "string" },
   replaceAll: { returns: "string", optional: "string" },
-  match: { optional: "string" },
+  // `.match` lowers to `$regexMatch` — a boolean, unlike JS's array-or-null result.
+  match: { returns: "bool", optional: "string" },
   matchAll: { optional: "string" },
   search: { returns: "number", optional: "string" },
   padStart: { returns: "string", optional: "string" },
@@ -6051,7 +6052,8 @@ var METHODS = {
   isSubsetOf: {},
   isSupersetOf: {},
   // ── Regex (intercepted on RegexLiteral receivers; same rationale) ───────────
-  test: {},
+  test: { returns: "bool" },
+  // → `$regexMatch`
   exec: {}
 };
 function methodsWhere(pred) {
@@ -6323,7 +6325,37 @@ function jsBool(value) {
   };
 }
 function jsBoolIfNeeded(srcExpr, generated) {
-  return isProvablyBool(srcExpr) ? generated : jsBool(generated);
+  return isProvablyBool(srcExpr) || isBoolValued(generated) ? generated : jsBool(generated);
+}
+function isBoolValued(value) {
+  if (typeof value === "boolean") return true;
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return false;
+  const keys = Object.keys(value);
+  if (keys.length !== 1) return false;
+  if (BOOL_OUTPUT_OPS.has(keys[0])) return true;
+  const let_ = value.$let;
+  return keys[0] === "$let" && let_ !== void 0 && isBoolValued(let_.in);
+}
+function generateBool(expr, ctx) {
+  if (expr.type === "BinaryExpr" && (expr.op === "&&" || expr.op === "||")) {
+    const key = expr.op === "&&" ? "$and" : "$or";
+    const chain = [];
+    collectExprChain(expr.op, expr.left, chain);
+    chain.push(expr.right);
+    const operands = chain.flatMap((e) => {
+      const g = generateBool(e, ctx);
+      return soleKeyArray(g, key) ?? [g];
+    });
+    return { [key]: operands };
+  }
+  return jsBoolIfNeeded(expr, _generate(expr, ctx));
+}
+function soleKeyArray(value, key) {
+  if (value === null || typeof value !== "object" || Array.isArray(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== 1 || keys[0] !== key) return null;
+  const inner = value[key];
+  return Array.isArray(inner) ? inner : null;
 }
 function isPureRef(expr, ctx) {
   return asFieldPath(expr, ctx) !== null;
@@ -6508,8 +6540,8 @@ function isOpaqueBsonValue(value) {
 function generateWithCtx(expr, ctx) {
   return _generate(expr, ctx);
 }
-function generateExprBlockWithCtx(block, ctx) {
-  return generateExprBlock(block, ctx);
+function generateExprBlockPredicate(block, ctx) {
+  return generateExprBlock(block, ctx, generateBool);
 }
 function _generate(expr, ctx) {
   return _generateBody(expr, ctx);
@@ -6580,11 +6612,7 @@ function _generateBody(expr, ctx) {
     case "UnaryExpr":
       return generateUnaryExpr(expr.op, expr.operand, ctx, expr.pos);
     case "TernaryExpr":
-      return cond(
-        jsBoolIfNeeded(expr.condition, _generate(expr.condition, ctx)),
-        _generate(expr.consequent, ctx),
-        _generate(expr.alternate, ctx)
-      );
+      return cond(generateBool(expr.condition, ctx), _generate(expr.consequent, ctx), _generate(expr.alternate, ctx));
     case "IndexAccess": {
       if (expr.index.type === "StringLiteral" && expr.object.type === "FieldRef" && expr.object.path === "") {
         return `$${expr.index.value}`;
@@ -6994,7 +7022,7 @@ function generateUnaryExpr(op, operand, ctx, _pos) {
     if (operand.type === "UnaryExpr" && operand.op === "!") {
       return jsBool(_generate(operand.operand, ctx));
     }
-    return { $not: jsBoolIfNeeded(operand, _generate(operand, ctx)) };
+    return { $not: generateBool(operand, ctx) };
   }
   if (op === "~") {
     return { $bitNot: _generate(operand, ctx) };
@@ -7841,7 +7869,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "findLast": {
       const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
-      const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond2 = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, -1] };
       }
@@ -7861,7 +7889,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       if (lambda.params[1]) {
         vars[safeVarName(lambda.params[1])] = { $arrayElemAt: ["$$this", 0] };
       }
-      const predicate = jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, bodyCtx));
+      const predicate = genLambdaBoolBody(lambda, bodyCtx);
       const test = method === "findIndex" ? { $and: [{ $eq: ["$$value", -1] }, predicate] } : predicate;
       return {
         $reduce: {
@@ -7954,7 +7982,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "filter": {
       const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
-      const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond2 = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $filter: { input: iter.input, as: iter.asName, cond: cond2 } };
       }
@@ -7970,7 +7998,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "find": {
       const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
-      const cond2 = iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)));
+      const cond2 = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
       if (!iter.paired) {
         return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond: cond2 } }, 0] };
       }
@@ -7981,11 +8009,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
       return {
         $anyElementTrue: {
-          $map: {
-            input: iter.input,
-            as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)))
-          }
+          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) }
         }
       };
     }
@@ -7994,11 +8018,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
       return {
         $allElementsTrue: {
-          $map: {
-            input: iter.input,
-            as: iter.asName,
-            in: iter.wrap(jsBoolIfNeeded(lambdaResult(lambda), genLambdaBody(lambda, iter.bodyCtx)))
-          }
+          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) }
         }
       };
     }
@@ -9111,11 +9131,14 @@ function lambdaResult(lambda) {
 function genLambdaBody(lambda, ctx) {
   return lambda.exprBlock ? generateExprBlock(lambda.exprBlock, ctx) : _generate(lambda.body, ctx);
 }
-function generateExprBlock(block, ctx) {
+function genLambdaBoolBody(lambda, ctx) {
+  return lambda.exprBlock ? generateExprBlock(lambda.exprBlock, ctx, generateBool) : generateBool(lambda.body, ctx);
+}
+function generateExprBlock(block, ctx, genRet = _generate) {
   const seen = /* @__PURE__ */ new Set();
   const emptyEnv = /* @__PURE__ */ new Map();
   const fold = (i, c) => {
-    if (i === block.decls.length) return _generate(block.ret, c);
+    if (i === block.decls.length) return genRet(block.ret, c);
     const decl = block.decls[i];
     if (seen.has(decl.name)) {
       throw new CodegenError(
@@ -9270,7 +9293,7 @@ function generateAssertGuardExpr(args, ctx, callPos) {
     return a;
   });
   checkArity("assert", { sig: "condition[, message]", allowed: [1, 2] }, exprArgs.length, callPos, "");
-  const condition = jsBoolIfNeeded(exprArgs[0], _generate(exprArgs[0], ctx));
+  const condition = generateBool(exprArgs[0], ctx);
   return { $convert: { input: true, to: { $cond: [condition, "bool", assertFailType(exprArgs[1], ctx)] } } };
 }
 function assertFailType(msgExpr, ctx) {
@@ -9287,7 +9310,7 @@ function generateTypeCast(cast, arg, ctx, _pos) {
     case "String":
       return { $toString: val };
     case "Boolean":
-      return jsBoolIfNeeded(arg, val);
+      return generateBool(arg, ctx);
     case "parseInt":
       return { $toInt: val };
   }
@@ -10002,7 +10025,7 @@ function stageLinkBlock(m, body) {
 function mergeTranslatedQuery(t, ctx) {
   const queryEmpty = Object.keys(t.query).length === 0;
   if (t.residual === null) return queryEmpty ? null : t.query;
-  const exprBody = generateWithCtx(t.residual, ctx);
+  const exprBody = generateBool(t.residual, ctx);
   if (queryEmpty) return { $expr: exprBody };
   return { ...t.query, $expr: exprBody };
 }
@@ -12782,7 +12805,7 @@ function translatePredicate(call, outerCtx, lowerBlock2, enclosingArg) {
     return {
       kind: "pipeline",
       letVars,
-      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }]
+      pipeline: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }]
     };
   }
   return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
@@ -12904,7 +12927,7 @@ function buildPipelineFormPredicate(lambda, outerCtx, lowerBlock2, enclosingArg,
       enclosing.foreignParams.length
     );
     const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
-    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }] };
   }
   return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
@@ -13063,7 +13086,7 @@ function lowerLambdaPredicate(lambda, outerCtx, lowerBlock2, opts) {
     const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
-    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
+    return [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }];
   }
   return opts.missingBody();
 }

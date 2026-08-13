@@ -1,14 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
-
-// Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
-// (or missing), "", and 0 are falsy; everything else is truthy. Used in
-// expected outputs for `&&`, `||`, `!`, `?:`, `Boolean()`, and predicate-
-// method bodies wherever the operand is not provably boolean.
-const truthy = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
+// The `jsBool()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
+// `Boolean()`, and predicate bodies wherever the operand is not provably boolean.
+import { truthy, truthyAnd, truthyOr } from "./truthy.ts";
 
 // Mirror of `generateNumericIndexAccess`'s unknown-receiver branch: `v[i]` where
 // the receiver type can't be proven means all three JS readings are live, so the
@@ -2979,9 +2974,12 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     });
   });
 
-  it(".filter() block predicate is wrapped in jsBool around the whole $let", () => {
+  it(".filter() block predicate wraps the block's `return`, inside the $let", () => {
+    // The wrap goes around the RETURN, not around the whole `$let`: wrapping outside
+    // would repeat the entire `$let` once per falsy-value clause and re-evaluate every
+    // binding that many times. Same boolean either way.
     expect(jsmql.expr("$.items.filter(x => { const ok = x.active; return ok; })")).toEqual({
-      $filter: { input: "$items", as: "x", cond: truthy({ $let: { vars: { ok: "$$x.active" }, in: "$$ok" } }) },
+      $filter: { input: "$items", as: "x", cond: { $let: { vars: { ok: "$$x.active" }, in: truthy("$$ok") } } },
     });
   });
 
@@ -6244,7 +6242,7 @@ describe("jsmql.compile()", () => {
       // compile-time fold — the user can always destructure further at the
       // call site if they want fields hoisted as separate bindings.
       const q = jsmql.compile(({ defaults }: { defaults: { name: string } }) => defaults);
-      expect(q({ defaults: { name: "default" } })).toEqual({ $expr: { name: "default" } });
+      expect(q({ defaults: { name: "default" } })).toEqual({ $expr: truthy({ name: "default" }) });
     });
 
     it("the same compiled query is reusable with different params", () => {
@@ -6291,7 +6289,9 @@ describe("jsmql.compile()", () => {
   describe("scope and shadowing", () => {
     it("lambda parameter shadows a binding of the same name", () => {
       const q = jsmql.compile(({ x }: { x: number }, { $ }) => $.items.map((x) => x * 2));
-      expect(q({ x: 999 })).toEqual({ $expr: { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } } });
+      expect(q({ x: 999 })).toEqual({
+        $expr: truthy({ $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 2] } } }),
+      });
     });
 
     it("binding visible alongside other refs translates to a query-doc conjunction", () => {
@@ -6586,7 +6586,7 @@ describe("Filter dispatch (no semicolons)", () => {
 
   describe("$expr fallback for untranslatable expressions", () => {
     it("a non-predicate expression rides entirely in `$expr`", () => {
-      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
+      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: truthy({ $add: ["$a", "$b"] }) });
     });
 
     it("a method-call predicate isn't query-translatable and rides in `$expr`", () => {
@@ -6637,7 +6637,7 @@ describe("Filter dispatch (no semicolons)", () => {
     it("non-stage operator calls still go through Filter dispatch unaffected", () => {
       // `$add` is an expression operator, not a stage — the auto-wrap does
       // not fire, and the expression rides in `$expr`.
-      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: { $add: ["$a", "$b"] } });
+      expect(jsmql("$add($.a, $.b)")).toEqual({ $expr: truthy({ $add: ["$a", "$b"] }) });
     });
   });
 
