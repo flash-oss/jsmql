@@ -2272,8 +2272,8 @@ describe("date methods", () => {
   it("getDate", () => {
     expect(jsmql.expr("$.ts.getDate()")).toEqual({ $dayOfMonth: "$ts" });
   });
-  it("getDay (0-based)", () => {
-    expect(jsmql.expr("$.ts.getDay()")).toEqual({ $subtract: [{ $dayOfWeek: "$ts" }, 1] });
+  it("getDay (1-based, Sunday = 1, matching MongoDB's $dayOfWeek)", () => {
+    expect(jsmql.expr("$.ts.getDay()")).toEqual({ $dayOfWeek: "$ts" });
   });
   it("getHours", () => {
     expect(jsmql.expr("$.ts.getHours()")).toEqual({ $hour: "$ts" });
@@ -2793,7 +2793,7 @@ describe("date-method receiver type-check", () => {
 describe("date methods (UTC variants)", () => {
   // Same operators as the local getters, anchored to UTC via `timezone: "UTC"`.
   // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
-  // → { y:2023, mo:3, d:15, dow:3, h:18, mi:45, s:30, ms:123 }.
+  // → { y:2023, mo:3, d:15, dow:4, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
     expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({ $year: { date: "$ts", timezone: "UTC" } });
   });
@@ -2803,10 +2803,8 @@ describe("date methods (UTC variants)", () => {
   it("getUTCDate", () => {
     expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({ $dayOfMonth: { date: "$ts", timezone: "UTC" } });
   });
-  it("getUTCDay (0-based, Sunday=0)", () => {
-    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({
-      $subtract: [{ $dayOfWeek: { date: "$ts", timezone: "UTC" } }, 1],
-    });
+  it("getUTCDay (1-based, Sunday = 1, matching MongoDB's $dayOfWeek)", () => {
+    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({ $dayOfWeek: { date: "$ts", timezone: "UTC" } });
   });
   it("getUTCHours", () => {
     expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({ $hour: { date: "$ts", timezone: "UTC" } });

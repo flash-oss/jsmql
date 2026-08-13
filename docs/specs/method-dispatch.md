@@ -310,7 +310,7 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.getFullYear()` | `{ $year: expr }` | |
 | `.getMonth()` | `{ $month: expr }` | 1-based (January = 1) |
 | `.getDate()` | `{ $dayOfMonth: expr }` | |
-| `.getDay()` | `{ $subtract: [{ $dayOfWeek: expr }, 1] }` | 0-based, Sunday=0 |
+| `.getDay()` | `{ $dayOfWeek: expr }` | 1-based, Sunday = 1 |
 | `.getHours()` | `{ $hour: expr }` | |
 | `.getMinutes()` | `{ $minute: expr }` | |
 | `.getSeconds()` | `{ $second: expr }` | |
@@ -318,7 +318,7 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.getUTCFullYear()` | `{ $year: { date: expr, timezone: "UTC" } }` | UTC-anchored |
 | `.getUTCMonth()` | `{ $month: { date: expr, timezone: "UTC" } }` | UTC, 1-based |
 | `.getUTCDate()` | `{ $dayOfMonth: { date: expr, timezone: "UTC" } }` | UTC |
-| `.getUTCDay()` | `{ $subtract: [{ $dayOfWeek: { date: expr, timezone: "UTC" } }, 1] }` | UTC, 0-based, Sunday=0 |
+| `.getUTCDay()` | `{ $dayOfWeek: { date: expr, timezone: "UTC" } }` | UTC, 1-based, Sunday = 1 |
 | `.getUTCHours()` | `{ $hour: { date: expr, timezone: "UTC" } }` | UTC |
 | `.getUTCMinutes()` | `{ $minute: { date: expr, timezone: "UTC" } }` | UTC |
 | `.getUTCSeconds()` | `{ $second: { date: expr, timezone: "UTC" } }` | UTC |
@@ -339,6 +339,8 @@ The synthesized `AssignExpr` is indistinguishable from an explicit `$.field = �
 | `.isSame(other, unit[, opts])` | `{ $eq: [<trunc of expr>, <trunc of other>] }` | `$lt` for `.isBefore`, `$gt` for `.isAfter`; unit required |
 | `.set({ parts }[, opts])` | `{ $let: { vars: { jsmqlParts: { $dateToParts: … } }, in: { $dateFromParts: … } } }` | bare `$dateFromParts` when every part is overridden |
 | `.endOf(unit[, opts])` | `{ $dateSubtract: { startDate: { $dateAdd: { startDate: <the `.startOf` trunc>, unit, amount: binSize ?? 1[, timezone] } }, unit: "millisecond", amount: 1 } }` | no ceiling operator exists; `binSize` becomes the step |
+
+**Weekday base.** `.getDay()` / `.getUTCDay()` pass `$dayOfWeek` through unchanged (Sunday = 1 … Saturday = 7), for the same reason as the month: JavaScript's 0-based getter was the only thing that base served, and it made the number the developer read in JSMQL disagree with the number in the MQL beside it. The ISO weekday (Monday = 1) is `.isoWeekday()` → `$isoDayOfWeek`. Every other week concept was already MongoDB's and needed no change — `.week()` → `$week` (0–53, Sunday-based), `.isoWeek()` → `$isoWeek` (1–53), `.isoWeekYear()`, the `startOfWeek` option's Sunday default, and the `%U` / `%V` / `%u` / `%w` format specifiers — so weekday numbering was the single divergence to close.
 
 **Month base.** `.getMonth()` / `.getUTCMonth()` pass MongoDB's 1-based `$month` through unchanged, and so does every other month slot in the language: `new Date(y, m, d)` and `Date.UTC(y, m, d)` (`generateDateFromParts`, which has no offset to fold), the constant fold (`utcMs`, which shifts to JS's 0-based base only to call `Date.UTC`), `.set({ month })`, and `$dateFromParts`. JavaScript's own getter and constructors are 0-based, and this is the deliberate divergence — one base beats a per-site one, and it is the base a reader sees in the emitted MQL.
 

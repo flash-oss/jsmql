@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — feat!: `getDay()` / `getUTCDay()` return MongoDB's 1-based `$dayOfWeek`
+
+```
+$.t.getDay()
+// before: { $subtract: [{ $dayOfWeek: "$t" }, 1] }     ← 0-based, Sunday = 0
+// now:    { $dayOfWeek: "$t" }                          ← Sunday = 1 … Saturday = 7
+```
+
+The weekday was the last number in the language still translated into JavaScript's base, and
+the month change had already settled the argument: a base that exists only to satisfy one
+JavaScript getter makes the number a developer reads in JSMQL disagree with the number in the
+MQL printed beside it. `$dayOfWeek` now passes straight through, so Sunday is 1. For the ISO
+weekday (Monday = 1) `.isoWeekday()` → `$isoDayOfWeek` was already there.
+
+Auditing the rest of the week vocabulary against MQL found nothing else to change — every
+other week concept was already MongoDB's own and passes through untouched: `.week()` → `$week`
+(0–53, weeks begin Sunday), `.isoWeek()` → `$isoWeek` (1–53), `.isoWeekYear()`, the
+`startOfWeek` option and its Sunday default, `$dateTrunc` / `$dateDiff` on a `"week"` unit, and
+the `%U` / `%V` / `%u` / `%w` format specifiers. Weekday numbering was the single divergence,
+and it is closed.
+
+---
+
 ## 2026-08-13 — feat!: one month base for the whole language — `new Date(y, m, d)` is 1-based
 
 ```

@@ -4192,8 +4192,10 @@ function generateMethodCall(
     case "getDate":
       return { $dayOfMonth: genObj };
     case "getDay":
-      // 0-based: MongoDB $dayOfWeek is 1-based (Sunday=1)
-      return { $subtract: [{ $dayOfWeek: genObj }, 1] };
+      // 1-based with Sunday = 1, straight from MongoDB's $dayOfWeek (NOT
+      // JavaScript's 0-based getDay) — the same reasoning as .getMonth().
+      // For the ISO weekday (Monday = 1) use .isoWeekday().
+      return { $dayOfWeek: genObj };
     case "getHours":
       return { $hour: genObj };
     case "getMinutes":
@@ -4211,8 +4213,8 @@ function generateMethodCall(
     case "getUTCDate":
       return { $dayOfMonth: utcDate(genObj) };
     case "getUTCDay":
-      // 0-based: MongoDB $dayOfWeek is 1-based (Sunday=1)
-      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+      // 1-based with Sunday = 1, like `.getDay()` above.
+      return { $dayOfWeek: utcDate(genObj) };
     case "getUTCHours":
       return { $hour: utcDate(genObj) };
     case "getUTCMinutes":

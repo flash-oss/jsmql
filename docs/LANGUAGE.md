@@ -2088,7 +2088,7 @@ Call on any expression that produces a date:
 $.createdAt.getFullYear()          // { $year: "$createdAt" }
 $.createdAt.getMonth()             // { $month: "$createdAt" }    (1-based: January = 1)
 $.createdAt.getDate()              // { $dayOfMonth: "$createdAt" }
-$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }  (0=Sun, JS-compatible)
+$.createdAt.getDay()               // { $dayOfWeek: "$createdAt" }   (1 = Sunday … 7 = Saturday)
 $.createdAt.getHours()             // { $hour: "$createdAt" }
 $.createdAt.getMinutes()           // { $minute: "$createdAt" }
 $.createdAt.getSeconds()           // { $second: "$createdAt" }
@@ -2103,7 +2103,7 @@ Each component getter has a `getUTC*` variant that reads the date in UTC instead
 $.createdAt.getUTCFullYear()       // { $year: { date: "$createdAt", timezone: "UTC" } }
 $.createdAt.getUTCMonth()          // { $month: { date: "$createdAt", timezone: "UTC" } }   (1-based)
 $.createdAt.getUTCDate()           // { $dayOfMonth: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: { date: "$createdAt", timezone: "UTC" } }, 1] }  (0=Sun)
+$.createdAt.getUTCDay()            // { $dayOfWeek: { date: "$createdAt", timezone: "UTC" } }   (1 = Sunday)
 $.createdAt.getUTCHours()          // { $hour: { date: "$createdAt", timezone: "UTC" } }
 $.createdAt.getUTCMinutes()        // { $minute: { date: "$createdAt", timezone: "UTC" } }
 $.createdAt.getUTCSeconds()        // { $second: { date: "$createdAt", timezone: "UTC" } }
@@ -2273,7 +2273,9 @@ Which options a method accepts is exactly the set of fields its operator has lef
 
 The options form must be **written out** as an object literal: MongoDB reads these fields by name from the operator document, so the key names have to exist in your source. Their *values* are free to be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`), and any non-object argument in this slot is the timezone shorthand.
 
-**Months are 1-based — January is `1`.** `getMonth()` / `getUTCMonth()` return MongoDB's `$month` unchanged, so the month base is the same in JSMQL as it is in the MQL you read back: the getters, `.set({ month })`, `$month`, and `$dateFromParts` all count January as `1`. This is the one place a date getter deliberately diverges from JavaScript, whose `Date.prototype.getMonth()` is 0-based. `getDay()` / `getUTCDay()` stay 0-based (Sunday = 0) to match JS. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
+**Every date number is MongoDB's, not JavaScript's.** `getMonth()` / `getUTCMonth()` return `$month` unchanged (January = `1`), and `getDay()` / `getUTCDay()` return `$dayOfWeek` unchanged (Sunday = `1` … Saturday = `7`). JavaScript's own getters are 0-based in both cases, and this is the deliberate divergence: one base per concept beats a per-method one, and it is the base you see in the emitted MQL and in every other month or weekday slot — `.set({ month })`, `new Date(y, m, d)`, `$month`, `$dayOfWeek`, `$dateFromParts`. For the ISO weekday (Monday = `1`) use `isoWeekday()`. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
+
+Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), `isoWeekday()` is `$isoDayOfWeek` (1 = Monday), and the `startOfWeek` option and `%U` / `%V` / `%u` / `%w` format specifiers are MongoDB's own.
 
 **Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow) for the compile-time rejection of a 0-based month.
 
