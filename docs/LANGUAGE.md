@@ -1163,7 +1163,9 @@ jsmql.expr('$.tags.split(",").toUpperCase()')
 //   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
 ```
 
-A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from `new Date(…)`, from a literal or a template string, or from `.length`. Where it *isn't* known — a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `$op(...)` call, or a `.clamp()` that could be numeric or a date — nothing is rejected and the MQL is emitted. `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
+A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
+
+Where it *isn't* known, nothing is rejected and the MQL is emitted: a field path (`$.whatever`), an element plucked with `.find()` / `.at()`, a `.reduce()` result, a `.clamp()` that could be numeric or a date, and any operator whose result type follows its arguments — `$add` / `$subtract` (number or date), `$min` / `$max` / `$first` (an element of the array), `$ifNull` / `$cond` / `$switch` / `$getField` (whatever they are given). `.toString()` and `.getTime()` are exempt everywhere, as they are in JavaScript.
 
 **This check follows JavaScript, not MongoDB's coercions.** MongoDB would happily run `$toUpper` on a date and hand back the stringified date; JavaScript throws on `date.toUpperCase()`, and so does jsmql, because you almost certainly meant `.format(…)`. Writing the operator by hand (`$toUpper($.createdAt)`) still passes through untouched — raw MQL is yours.
 

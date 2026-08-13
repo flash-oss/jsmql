@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
+import { OPERATOR_RETURNS, OPERATORS } from "../src/operators.ts";
 
 // Mirror of the codegen-side `jsBool()` helper. JS truthy/falsy: false, null
 // (or missing), "", and 0 are falsy; everything else is truthy. Used in
@@ -4024,6 +4025,34 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
   });
 });
 
+describe("operator return types (OPERATOR_RETURNS) drive the inference passes", () => {
+  // One table replaces the three hand-kept per-category Sets, so a category is
+  // stated once. Every entry was verified against a live mongod with
+  // `{ $type: { <op>: <args> } }` — the vendored spec is NOT the authority here
+  // (trunc.yaml claims resolvesToString; mongod returns a double).
+  it("every table key is a real registry operator (no typos)", () => {
+    const unknown = Object.keys(OPERATOR_RETURNS).filter((name) => OPERATORS[name] === undefined);
+    expect(unknown).toEqual([]);
+  });
+  it("$trunc is a number, whatever the vendored spec's type: field says", () => {
+    expect(OPERATOR_RETURNS.$trunc).toBe("number");
+    // Consequence: it is not string-producing, so `+` stays arithmetic.
+    expect(jsmql.expr("$trunc($.n, 1) + 1")).toEqual({ $add: [{ $trunc: ["$n", 1] }, 1] });
+  });
+  it("$strcasecmp is a number — it compares and returns -1/0/1", () => {
+    // It used to sit in the string set, which made `+` a $concat on an int.
+    expect(jsmql.expr("$strcasecmp($.a, $.b) + 1")).toEqual({ $add: [{ $strcasecmp: ["$a", "$b"] }, 1] });
+  });
+  it("$toBool is boolean-producing, so a truthiness wrap is elided", () => {
+    expect(jsmql.expr("$toBool($.x) ? 1 : 2")).toEqual({ $cond: { if: { $toBool: "$x" }, then: 1, else: 2 } });
+  });
+  it("$regexFindAll is array-producing, so .length is a plain $size", () => {
+    expect(jsmql.expr('$regexFindAll($.s, "a").length')).toEqual({
+      $size: { $regexFindAll: { input: "$s", regex: "a" } },
+    });
+  });
+});
+
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
   // 100%-certain mismatches throw (they'd otherwise emit MQL mongod rejects — e.g.
   // $map over a boolean/number/string, $slice over an object). Verified on mongod.
@@ -4121,6 +4150,39 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // so it must not be treated as a string literal.
     expect(() => jsmql.expr('"$items".map(x => x)')).not.toThrow();
     expect(() => jsmql.expr('"$t".plus(1, "day")')).not.toThrow();
+  });
+  it("rejects a wrong-family method on an operator call whose return type is invariant", () => {
+    // Every category in OPERATOR_RETURNS was read off a live mongod with
+    // `{ $type: { <op>: <args> } }` — see the table's own note.
+    expect(() => jsmql.expr("$concat($.a, $.b).map(x => x)")).toThrow(
+      /expects an array receiver, but '\$concat\(\.\.\.\)' returns a string/,
+    );
+    expect(() => jsmql.expr("$abs($.n).trim()")).toThrow(
+      /expects a string receiver.*'\$abs\(\.\.\.\)' returns a number/,
+    );
+    expect(() => jsmql.expr('$dateTrunc($.t, "month").toUpperCase()')).toThrow(
+      /expects a string receiver.*'\$dateTrunc\(\.\.\.\)' returns a date/,
+    );
+    expect(() => jsmql.expr("$dateToParts($.t).map(x => x)")).toThrow(
+      /expects an array receiver.*'\$dateToParts\(\.\.\.\)' returns an object/,
+    );
+  });
+  it("leaves an operator whose return type depends on its arguments uncertain", () => {
+    // These are absent from OPERATOR_RETURNS on purpose: $add/$subtract are number
+    // OR date, and the element readers and pass-throughs can return anything.
+    expect(() => jsmql.expr('$add($.a, $.b).plus(1, "day")')).not.toThrow();
+    expect(() => jsmql.expr('$subtract($.a, $.b).plus(1, "day")')).not.toThrow();
+    expect(() => jsmql.expr("$ifNull($.a, $.b).trim()")).not.toThrow();
+    expect(() => jsmql.expr("$max($.a).map(x => x)")).not.toThrow();
+    expect(() => jsmql.expr("$first($.a).trim()")).not.toThrow();
+    expect(() => jsmql.expr("$cond($.c, $.a, $.b).map(x => x)")).not.toThrow();
+  });
+  it("compatible operator chains still compile", () => {
+    expect(() => jsmql.expr('$dateTrunc($.t, "month").plus(1, "month")')).not.toThrow();
+    expect(() => jsmql.expr("$concat($.a, $.b).trim()")).not.toThrow();
+    expect(() => jsmql.expr('$split($.s, ",").map(x => x)')).not.toThrow();
+    expect(() => jsmql.expr("$year($.t).clamp(0, 5)")).not.toThrow();
+    expect(() => jsmql.expr("$dateToParts($.t).mapValues(v => v)")).not.toThrow();
   });
   it("carries a real .pos (the offending receiver) for tooling (validate)", () => {
     // Offset the chain so the receiver isn't at column 0 — the error's .pos must

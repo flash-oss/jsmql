@@ -1,4 +1,4 @@
-import { lookupOperator } from "./operators.ts";
+import { lookupOperator, OPERATOR_RETURNS, operatorsReturning } from "./operators.ts";
 import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
 import { checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
@@ -483,24 +483,10 @@ export { EMPTY_CTX };
 
 // ── String-producing helpers ──────────────────────────────────────────────────
 
-// Operators whose return type is always a string — used for string-context + inference.
-const STRING_OUTPUT_OPS = new Set([
-  "$toLower",
-  "$toUpper",
-  "$trim",
-  "$ltrim",
-  "$rtrim",
-  "$concat",
-  "$substrCP",
-  "$substrBytes",
-  "$substr",
-  "$replaceOne",
-  "$replaceAll",
-  "$dateToString",
-  "$type",
-  "$strcasecmp",
-  "$toString",
-]);
+// Operators whose return type is always a string — used for string-context +
+// inference. Derived from the one operator-return table so a category can't be
+// stated twice and drift; see OPERATOR_RETURNS in src/operators.ts.
+const STRING_OUTPUT_OPS = operatorsReturning("string");
 
 // ── JS-method metadata registry ───────────────────────────────────────────────
 //
@@ -756,20 +742,7 @@ const STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
 // ── Array-producing helpers ───────────────────────────────────────────────────
 
 // Operators whose return type is always an array
-const ARRAY_OUTPUT_OPS = new Set([
-  "$split",
-  "$range",
-  "$reverseArray",
-  "$slice",
-  "$map",
-  "$filter",
-  "$concatArrays",
-  "$setUnion",
-  "$setIntersection",
-  "$setDifference",
-  "$zip",
-  "$objectToArray",
-]);
+const ARRAY_OUTPUT_OPS = operatorsReturning("array");
 
 // Method names that always return an array — derived from METHODS.
 const ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
@@ -944,25 +917,7 @@ function isStringProducing(expr: Expr): boolean {
 
 // Operators whose return type is always a boolean — used to elide the jsBool
 // wrap when an operand is already a boolean.
-const BOOL_OUTPUT_OPS = new Set([
-  "$eq",
-  "$ne",
-  "$gt",
-  "$gte",
-  "$lt",
-  "$lte",
-  "$and",
-  "$or",
-  "$not",
-  "$in",
-  "$regexMatch",
-  "$isNumber",
-  "$isArray",
-  "$allElementsTrue",
-  "$anyElementTrue",
-  "$setEquals",
-  "$setIsSubset",
-]);
+const BOOL_OUTPUT_OPS = operatorsReturning("bool");
 
 // Method names whose codegen always emits a boolean — derived from METHODS.
 const BOOL_RETURNING_METHODS = methodsWhere((m) => m.returns === "bool");
@@ -1090,6 +1045,11 @@ function certainReceiverType(o: Expr): ReceiverFamily | "bool" | null {
       // — so the value-mode answer, an object, is certain.
       return VALUE_MODE_OBJECT_METHODS.has(o.method) ? "object" : null;
     }
+    case "OperatorCall":
+      // An operator whose result category is invariant (OPERATOR_RETURNS, every
+      // entry read off a live mongod). Absent → uncertain, so `$add` (number or
+      // date), the element readers and the pass-throughs never seed a rejection.
+      return OPERATOR_RETURNS[o.name] ?? null;
     case "NewDate":
       return "date";
     case "StringLiteral":
@@ -1151,7 +1111,9 @@ export function documentReceiverViolation(method: string): string | null {
 }
 
 function receiverPhrase(o: Expr): string {
-  return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
+  if (o.type === "MethodCall") return `'.${o.method}(...)'`;
+  if (o.type === "OperatorCall") return `'${o.name}(...)'`;
+  return "the value before it";
 }
 
 /** Throw when `method` cannot run on a receiver of the provable type `recv`.

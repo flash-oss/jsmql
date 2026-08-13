@@ -143,8 +143,17 @@ This makes jsmql forward-compatible with new MongoDB operators that are not yet 
    `optional` — the closed key set; plus `enums` / `keyTypes` where they apply)
    so its keys are validated. See [operator-validation.md](operator-validation.md).
    Verify any new throw against a running `mongod` (HR3).
-8. Add a test case in `test/codegen.test.ts`.
-9. Update `docs/LANGUAGE.md` if the operator is user-facing.
+8. If the operator's result type is **invariant** — the same category whatever its arguments are — add an `OPERATOR_RETURNS` row. Read the category off a running `mongod` (`{ $type: { <op>: <args> } }`), never from the YAML's `type:` field; see § Operator return types below. Leave it out when the type depends on the arguments.
+9. Add a test case in `test/codegen.test.ts`.
+10. Update `docs/LANGUAGE.md` if the operator is user-facing.
+
+## Operator return types (`OPERATOR_RETURNS`)
+
+`OPERATOR_RETURNS` maps an operator to the one category its result always falls in — `string`, `number`, `bool`, `array`, `object` or `date`. It is the single source of truth for the three type-inference passes in codegen, which derive their name sets from it through `operatorsReturning(cat)` rather than keeping copies of their own: `STRING_OUTPUT_OPS` (string context, `+` → `$concat`), `ARRAY_OUTPUT_OPS` (`isArrayProducing`, which also drives `.length` → `$size` and the `$ = <array>` fan-out) and `BOOL_OUTPUT_OPS` (`isProvablyBool`, which elides a truthiness wrap). The chain type-check in [method-dispatch.md](method-dispatch.md) reads the table directly.
+
+**The vendored spec is not the authority for this field.** `definitions/expression/trunc.yaml` declares `type: [resolvesToString]`, and mongod returns a **double** — so a generated map would have made `$trunc(…)` string-producing and turned `$trunc($.n, 1) + 1` into a `$concat`. Every row is therefore verified with `{ $type: { <op>: <args> } }` against a running server.
+
+**Absence means "depends on the arguments", and that is load-bearing** — a chain rejection needs certainty, so anything uncertain must stay out: `$add` / `$subtract` (number **or** date), the element readers (`$min`, `$max`, `$first`, `$last`, `$arrayElemAt`, `$firstN`/`$lastN`/`$minN`/`$maxN`), the pass-throughs (`$ifNull`, `$cond`, `$switch`, `$let`, `$literal`, `$getField`, `$meta`, `$reduce`, `$convert`, `$function`, `$accumulator`), the non-scalar conversions (`$toObjectId`, `$createObjectId`, `$hash`), and the window operators that report a value read from another document (`$shift`, `$locf`, `$linearFill`, `$expMovingAvg`, `$derivative`, `$integral`, `$covariancePop`, `$covarianceSamp`, `$push`, `$addToSet`, `$top`/`$bottom`/`$topN`/`$bottomN`).
 
 ## Spec drift protection
 

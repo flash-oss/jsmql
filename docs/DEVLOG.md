@@ -10,6 +10,50 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: one operator-return table, and `$op(...)` receivers join the chain check
+
+```
+$concat($.a, $.b).map(x => x)
+// before: {"$map":{"input":{"$concat":…}}}    ← emitted; mongod refuses it
+// now:    '.map(...)' expects an array receiver, but '$concat(...)' returns a string.
+
+$strcasecmp($.a, $.b) + 1
+// before: { $concat: [{ $strcasecmp: … }, 1] }   ← it returns -1/0/1, not a string
+// now:    { $add: [{ $strcasecmp: … }, 1] }
+
+$toBool($.x) ? 1 : 2
+// before: { $cond: { if: { $and: [ …4 truthiness clauses… ] }, … } }
+// now:    { $cond: { if: { $toBool: "$x" }, then: 1, else: 2 } }
+```
+
+Three hand-kept Sets each answered a slice of one question — `STRING_OUTPUT_OPS`,
+`ARRAY_OUTPUT_OPS`, `BOOL_OUTPUT_OPS` — and nothing answered it for numbers, dates or
+objects, so an `$op(...)` receiver was invisible to the chain type-check. `OPERATOR_RETURNS`
+in [src/operators.ts](../src/operators.ts) is now the single table, and the three Sets derive
+from it through `operatorsReturning(cat)`. The registry was already the only place allowed to
+know operator shapes; a result type is the same kind of knowledge.
+
+**Every one of the 125 rows was read off a live mongod** with `{ $type: { <op>: <args> } }`,
+because the vendored spec cannot be trusted for this: `trunc.yaml` declares
+`type: [resolvesToString]` and mongod returns a **double**. A generated map would have made
+`$trunc($.n, 1) + 1` a string concatenation. The verification found no other surprise — 14
+string, 67 number, 18 bool, 14 array, 6 object, 6 date, zero mismatches.
+
+Consolidating fixed three inference bugs on the way. `$strcasecmp` sat in the string set
+though it returns an int, so `+` after it built a `$concat`; it is a number now. `$toBool` was
+missing from the bool set, so a truthiness wrap was emitted around an already-boolean value.
+`$regexFindAll` was missing from the array set, so `.length` after it emitted a runtime
+`$isArray` hedge instead of a plain `$size`. All three now emit leaner MQL, each confirmed on
+the server.
+
+Absence from the table is load-bearing, not an oversight: a rejection needs certainty, so
+`$add`/`$subtract` (number **or** date), the element readers (`$min`, `$max`, `$first`,
+`$arrayElemAt`, …), the pass-throughs (`$ifNull`, `$cond`, `$switch`, `$let`, `$getField`,
+`$reduce`, …) and the window operators that report another document's value all stay out —
+and `$add($.a, $.b).plus(1, "day")` keeps compiling because of it.
+
+---
+
 ## 2026-08-13 — fix: the chain type-check knows every type it can prove, not just five
 
 ```

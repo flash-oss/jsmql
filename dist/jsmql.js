@@ -3654,6 +3654,145 @@ var OPERATORS = {
     "default"
   )
 };
+var OPERATOR_RETURNS = {
+  // ── string ──
+  $concat: "string",
+  $dateToString: "string",
+  $ltrim: "string",
+  $replaceAll: "string",
+  $replaceOne: "string",
+  $rtrim: "string",
+  $substr: "string",
+  $substrBytes: "string",
+  $substrCP: "string",
+  $toLower: "string",
+  $toString: "string",
+  $toUpper: "string",
+  $trim: "string",
+  $type: "string",
+  // ── number ── ($strcasecmp belongs here, not with the string operators: it
+  // compares and returns -1/0/1, which mongod reports as an int.)
+  $abs: "number",
+  $acos: "number",
+  $acosh: "number",
+  $asin: "number",
+  $asinh: "number",
+  $atan: "number",
+  $atan2: "number",
+  $atanh: "number",
+  $avg: "number",
+  $binarySize: "number",
+  $bitAnd: "number",
+  $bitNot: "number",
+  $bitOr: "number",
+  $bitXor: "number",
+  $bsonSize: "number",
+  $ceil: "number",
+  $cmp: "number",
+  $cos: "number",
+  $cosh: "number",
+  $dateDiff: "number",
+  $dayOfMonth: "number",
+  $dayOfWeek: "number",
+  $dayOfYear: "number",
+  $degreesToRadians: "number",
+  $divide: "number",
+  $exp: "number",
+  $floor: "number",
+  $hour: "number",
+  $indexOfArray: "number",
+  $indexOfBytes: "number",
+  $indexOfCP: "number",
+  $isoDayOfWeek: "number",
+  $isoWeek: "number",
+  $isoWeekYear: "number",
+  $ln: "number",
+  $log: "number",
+  $log10: "number",
+  $millisecond: "number",
+  $minute: "number",
+  $mod: "number",
+  $month: "number",
+  $multiply: "number",
+  $pow: "number",
+  $radiansToDegrees: "number",
+  $rand: "number",
+  $round: "number",
+  $second: "number",
+  $sin: "number",
+  $sinh: "number",
+  $size: "number",
+  $sqrt: "number",
+  $stdDevPop: "number",
+  $stdDevSamp: "number",
+  $strcasecmp: "number",
+  $strLenBytes: "number",
+  $strLenCP: "number",
+  $sum: "number",
+  $tan: "number",
+  $tanh: "number",
+  $toDecimal: "number",
+  $toDouble: "number",
+  $toHashedIndexKey: "number",
+  $toInt: "number",
+  $toLong: "number",
+  $trunc: "number",
+  $tsIncrement: "number",
+  $tsSecond: "number",
+  $week: "number",
+  $year: "number",
+  // ── bool ──
+  $allElementsTrue: "bool",
+  $and: "bool",
+  $anyElementTrue: "bool",
+  $eq: "bool",
+  $gt: "bool",
+  $gte: "bool",
+  $in: "bool",
+  $isArray: "bool",
+  $isNumber: "bool",
+  $lt: "bool",
+  $lte: "bool",
+  $ne: "bool",
+  $not: "bool",
+  $or: "bool",
+  $regexMatch: "bool",
+  $setEquals: "bool",
+  $setIsSubset: "bool",
+  $toBool: "bool",
+  // ── array ──
+  $concatArrays: "array",
+  $filter: "array",
+  $map: "array",
+  $objectToArray: "array",
+  $percentile: "array",
+  $range: "array",
+  $regexFindAll: "array",
+  $reverseArray: "array",
+  $setDifference: "array",
+  $setIntersection: "array",
+  $setUnion: "array",
+  $slice: "array",
+  $split: "array",
+  $zip: "array",
+  // ── object ──
+  $arrayToObject: "object",
+  $dateToParts: "object",
+  $mergeObjects: "object",
+  $regexFind: "object",
+  $setField: "object",
+  $unsetField: "object",
+  // ── date ──
+  $dateAdd: "date",
+  $dateFromParts: "date",
+  $dateFromString: "date",
+  $dateSubtract: "date",
+  $dateTrunc: "date",
+  $toDate: "date"
+};
+function operatorsReturning(cat) {
+  return new Set(Object.keys(OPERATOR_RETURNS).filter((name) => OPERATOR_RETURNS[name] === cat));
+}
 var OPERATOR_ARG_RULES = {
   // ── Arity: fixed / bounded operand counts (array & flex shapes) ──
   // Only EXACT and BOUNDED-RANGE counts are declared — never an open min on a
@@ -5839,23 +5978,7 @@ function extendCtxFunctions(ctx, decl) {
 function withBindings(ctx, bindings) {
   return { ...ctx, bindings };
 }
-var STRING_OUTPUT_OPS = /* @__PURE__ */ new Set([
-  "$toLower",
-  "$toUpper",
-  "$trim",
-  "$ltrim",
-  "$rtrim",
-  "$concat",
-  "$substrCP",
-  "$substrBytes",
-  "$substr",
-  "$replaceOne",
-  "$replaceAll",
-  "$dateToString",
-  "$type",
-  "$strcasecmp",
-  "$toString"
-]);
+var STRING_OUTPUT_OPS = operatorsReturning("string");
 var METHODS = {
   // ── String ────────────────────────────────────────────────────────────────
   trim: { returns: "string", optional: "string" },
@@ -6066,20 +6189,7 @@ function methodsWhere(pred) {
   return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
 }
 var STRING_RETURNING_METHODS = methodsWhere((m) => m.returns === "string");
-var ARRAY_OUTPUT_OPS = /* @__PURE__ */ new Set([
-  "$split",
-  "$range",
-  "$reverseArray",
-  "$slice",
-  "$map",
-  "$filter",
-  "$concatArrays",
-  "$setUnion",
-  "$setIntersection",
-  "$setDifference",
-  "$zip",
-  "$objectToArray"
-]);
+var ARRAY_OUTPUT_OPS = operatorsReturning("array");
 var ARRAY_RETURNING_METHODS = methodsWhere((m) => m.returns === "array");
 function isArrayOfArrays(expr) {
   if (expr.type === "ArrayLiteral") {
@@ -6181,25 +6291,7 @@ function isStringProducing(expr) {
       return false;
   }
 }
-var BOOL_OUTPUT_OPS = /* @__PURE__ */ new Set([
-  "$eq",
-  "$ne",
-  "$gt",
-  "$gte",
-  "$lt",
-  "$lte",
-  "$and",
-  "$or",
-  "$not",
-  "$in",
-  "$regexMatch",
-  "$isNumber",
-  "$isArray",
-  "$allElementsTrue",
-  "$anyElementTrue",
-  "$setEquals",
-  "$setIsSubset"
-]);
+var BOOL_OUTPUT_OPS = operatorsReturning("bool");
 var BOOL_RETURNING_METHODS = methodsWhere((m) => m.returns === "bool");
 function isProvablyBool(expr) {
   switch (expr.type) {
@@ -6236,6 +6328,7 @@ function isProvablyBool(expr) {
   }
 }
 var NUMBER_RECEIVER_METHODS = /* @__PURE__ */ new Set(["round", "ceil", "floor", "inRange"]);
+var VALUE_MODE_OBJECT_METHODS = /* @__PURE__ */ new Set(["pick", "omit"]);
 var OBJECT_RECEIVER_METHODS = /* @__PURE__ */ new Set([
   "mapValues",
   "mapKeys",
@@ -6260,12 +6353,33 @@ function requiredReceiverFamily(method) {
 function certainReceiverType(o) {
   if (isProvablyBool(o)) return "bool";
   if (isArrayProducing(o)) return "array";
-  if (o.type === "MethodCall") {
-    if (o.method === "slice") return certainReceiverType(o.object);
-    const r = METHODS[o.method]?.returns;
-    if (r === "string" || r === "number" || r === "object") return r;
+  switch (o.type) {
+    case "MethodCall": {
+      if (o.method === "slice") return certainReceiverType(o.object);
+      const meta = METHODS[o.method];
+      if (meta === void 0) return null;
+      if (meta.returns === "string" || meta.returns === "number" || meta.returns === "object") return meta.returns;
+      if (meta.returns !== void 0) return null;
+      if (meta.receiver === "date") return "date";
+      return VALUE_MODE_OBJECT_METHODS.has(o.method) ? "object" : null;
+    }
+    case "OperatorCall":
+      return OPERATOR_RETURNS[o.name] ?? null;
+    case "NewDate":
+      return "date";
+    case "StringLiteral":
+      return o.value.startsWith("$") ? null : "string";
+    case "NumberLiteral":
+    case "BigIntLiteral":
+      return "number";
+    case "TemplateLiteral":
+    case "TypeofExpr":
+      return "string";
+    case "MemberAccess":
+      return o.member === "length" ? "number" : null;
+    default:
+      return null;
   }
-  return null;
 }
 var RECEIVER_NOUN = {
   bool: "a boolean",
@@ -6286,7 +6400,9 @@ function documentReceiverViolation(method) {
   return null;
 }
 function receiverPhrase(o) {
-  return o.type === "MethodCall" ? `'.${o.method}(...)'` : "the value before it";
+  if (o.type === "MethodCall") return `'.${o.method}(...)'`;
+  if (o.type === "OperatorCall") return `'${o.name}(...)'`;
+  return "the value before it";
 }
 function rejectIncompatibleChain(recv, method, object) {
   if (recv === "bool") {
@@ -6298,7 +6414,7 @@ function rejectIncompatibleChain(recv, method, object) {
   }
   const need = requiredReceiverFamily(method);
   if (need === null || need === recv) return;
-  const hint = recv === "array" && need === "object" ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.` : recv === "array" ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.` : recv === "object" && need === "array" ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.` : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
+  const hint = recv === "array" && need === "object" ? `Use it on a single document, or '.map(x => x.${method}(...))' to apply it per element.` : recv === "array" ? `Map over the array first, e.g. '.map(x => x.${method}(...))', or take one element with '.at(0)'.` : recv === "object" && need === "array" ? `Iterate its values with 'Object.values(...)' or its entries with 'Object.entries(...)' / '.toPairs()' first.` : recv === "date" && need === "string" ? `Render the date as a string first with '.format("%Y-%m-%d")' or '.toISOString()'.` : recv === "date" && need === "number" ? `Turn the date into a number first with '.getTime()' (epoch milliseconds), or read one part of it ('.getFullYear()', '.week()', \u2026).` : `Call '.${method}(...)' on ${RECEIVER_NOUN[need]} value instead.`;
   throw new CodegenError(
     `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
     object.pos
@@ -8141,7 +8257,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "getDate":
       return { $dayOfMonth: genObj };
     case "getDay":
-      return { $subtract: [{ $dayOfWeek: genObj }, 1] };
+      return { $dayOfWeek: genObj };
     case "getHours":
       return { $hour: genObj };
     case "getMinutes":
@@ -8158,7 +8274,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "getUTCDate":
       return { $dayOfMonth: utcDate(genObj) };
     case "getUTCDay":
-      return { $subtract: [{ $dayOfWeek: utcDate(genObj) }, 1] };
+      return { $dayOfWeek: utcDate(genObj) };
     case "getUTCHours":
       return { $hour: utcDate(genObj) };
     case "getUTCMinutes":
@@ -9700,9 +9816,11 @@ function generateObjectCall(method, args, ctx, pos) {
 }
 function evalConstDate(args) {
   if (args.length === 0) return null;
+  checkMonthBase(args);
   if (args.length === 1) {
     const arg = args[0];
     if (arg.type === "DateUTC") {
+      checkMonthBase(arg.args);
       const utc = constNumberArgs(arg.args);
       return utc === null ? null : new Date(utcMs(utc));
     }
@@ -9719,7 +9837,18 @@ function foldConstantDate(args) {
   return d !== null && !Number.isNaN(d.getTime()) ? d : null;
 }
 function utcMs(parts) {
-  return Date.UTC(...parts);
+  const jsParts = parts.length >= 2 ? [parts[0], parts[1] - 1, ...parts.slice(2)] : parts;
+  return Date.UTC(...jsParts);
+}
+function checkMonthBase(args) {
+  const monthAst = args[1];
+  if (monthAst === void 0) return;
+  const month = litNumber(monthAst);
+  if (month === null || month >= 1) return;
+  throw new CodegenError(
+    `Month ${month} is out of range \u2014 months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in ${month} means ${month === 0 ? "January there and December of the previous year here" : "an earlier year here"}. Write ${month === 0 ? "1 for January" : "a month from 1 to 12"}.`,
+    monthAst.pos
+  );
 }
 function constNumberArgs(args) {
   const out = [];
@@ -9767,15 +9896,9 @@ function generateDateUTC(args, ctx) {
   return { $toLong: generateDateFromParts(args, ctx, "UTC") };
 }
 function generateDateFromParts(args, ctx, timezone) {
+  checkMonthBase(args);
   const parts = { year: _generate(args[0], ctx) };
-  if (args.length >= 2) {
-    const monthAst = args[1];
-    if (monthAst.type === "NumberLiteral") {
-      parts.month = monthAst.value + 1;
-    } else {
-      parts.month = { $add: [_generate(monthAst, ctx), 1] };
-    }
-  }
+  if (args.length >= 2) parts.month = _generate(args[1], ctx);
   const slots = ["day", "hour", "minute", "second", "millisecond"];
   for (let i = 2; i < args.length && i - 2 < slots.length; i++) {
     parts[slots[i - 2]] = _generate(args[i], ctx);

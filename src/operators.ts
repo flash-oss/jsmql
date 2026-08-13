@@ -643,6 +643,175 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 };
 
+// ── Operator return types ────────────────────────────────────────────────────
+/** The BSON-ish category an operator's result always falls in. */
+export type OperatorReturn = "string" | "number" | "bool" | "array" | "object" | "date";
+
+/**
+ * The result category of every operator whose return type is **invariant** — the
+ * same whatever its arguments are. Single source of truth for the type-inference
+ * passes in codegen (string context, array-ness, boolean-ness) and for the chain
+ * type-check that rejects a JavaScript method on an incompatible receiver.
+ *
+ * **Every entry was read off a live mongod** with `{ $type: { <op>: <args> } }`,
+ * not lifted from the vendored spec: the spec's `type:` field is wrong in at
+ * least one place (`trunc.yaml` declares `resolvesToString`, while mongod returns
+ * a double), and one wrong category here would reject valid code.
+ *
+ * An operator is **absent** when its result type depends on its arguments or on
+ * the data, and absence is what keeps the chain check honest — a rejection needs
+ * certainty. The families that must stay out: `$add` / `$subtract` (number OR
+ * date), the element-returning accumulators and array readers (`$min`, `$max`,
+ * `$first`, `$last`, `$arrayElemAt`, `$firstN`/`$lastN`/`$minN`/`$maxN`), the
+ * pass-throughs (`$ifNull`, `$cond`, `$switch`, `$let`, `$literal`, `$getField`,
+ * `$meta`, `$reduce`, `$convert`, `$function`, `$accumulator`), the non-scalar
+ * conversions (`$toObjectId`, `$createObjectId`, `$hash`), and every window
+ * operator that reports a value read from another document (`$shift`, `$locf`,
+ * `$linearFill`, `$expMovingAvg`, `$derivative`, `$integral`, `$covariancePop`,
+ * `$covarianceSamp`, `$push`, `$addToSet`, `$top`/`$bottom`/`$topN`/`$bottomN`).
+ */
+export const OPERATOR_RETURNS: Record<string, OperatorReturn> = {
+  // ── string ──
+  $concat: "string",
+  $dateToString: "string",
+  $ltrim: "string",
+  $replaceAll: "string",
+  $replaceOne: "string",
+  $rtrim: "string",
+  $substr: "string",
+  $substrBytes: "string",
+  $substrCP: "string",
+  $toLower: "string",
+  $toString: "string",
+  $toUpper: "string",
+  $trim: "string",
+  $type: "string",
+  // ── number ── ($strcasecmp belongs here, not with the string operators: it
+  // compares and returns -1/0/1, which mongod reports as an int.)
+  $abs: "number",
+  $acos: "number",
+  $acosh: "number",
+  $asin: "number",
+  $asinh: "number",
+  $atan: "number",
+  $atan2: "number",
+  $atanh: "number",
+  $avg: "number",
+  $binarySize: "number",
+  $bitAnd: "number",
+  $bitNot: "number",
+  $bitOr: "number",
+  $bitXor: "number",
+  $bsonSize: "number",
+  $ceil: "number",
+  $cmp: "number",
+  $cos: "number",
+  $cosh: "number",
+  $dateDiff: "number",
+  $dayOfMonth: "number",
+  $dayOfWeek: "number",
+  $dayOfYear: "number",
+  $degreesToRadians: "number",
+  $divide: "number",
+  $exp: "number",
+  $floor: "number",
+  $hour: "number",
+  $indexOfArray: "number",
+  $indexOfBytes: "number",
+  $indexOfCP: "number",
+  $isoDayOfWeek: "number",
+  $isoWeek: "number",
+  $isoWeekYear: "number",
+  $ln: "number",
+  $log: "number",
+  $log10: "number",
+  $millisecond: "number",
+  $minute: "number",
+  $mod: "number",
+  $month: "number",
+  $multiply: "number",
+  $pow: "number",
+  $radiansToDegrees: "number",
+  $rand: "number",
+  $round: "number",
+  $second: "number",
+  $sin: "number",
+  $sinh: "number",
+  $size: "number",
+  $sqrt: "number",
+  $stdDevPop: "number",
+  $stdDevSamp: "number",
+  $strcasecmp: "number",
+  $strLenBytes: "number",
+  $strLenCP: "number",
+  $sum: "number",
+  $tan: "number",
+  $tanh: "number",
+  $toDecimal: "number",
+  $toDouble: "number",
+  $toHashedIndexKey: "number",
+  $toInt: "number",
+  $toLong: "number",
+  $trunc: "number",
+  $tsIncrement: "number",
+  $tsSecond: "number",
+  $week: "number",
+  $year: "number",
+  // ── bool ──
+  $allElementsTrue: "bool",
+  $and: "bool",
+  $anyElementTrue: "bool",
+  $eq: "bool",
+  $gt: "bool",
+  $gte: "bool",
+  $in: "bool",
+  $isArray: "bool",
+  $isNumber: "bool",
+  $lt: "bool",
+  $lte: "bool",
+  $ne: "bool",
+  $not: "bool",
+  $or: "bool",
+  $regexMatch: "bool",
+  $setEquals: "bool",
+  $setIsSubset: "bool",
+  $toBool: "bool",
+  // ── array ──
+  $concatArrays: "array",
+  $filter: "array",
+  $map: "array",
+  $objectToArray: "array",
+  $percentile: "array",
+  $range: "array",
+  $regexFindAll: "array",
+  $reverseArray: "array",
+  $setDifference: "array",
+  $setIntersection: "array",
+  $setUnion: "array",
+  $slice: "array",
+  $split: "array",
+  $zip: "array",
+  // ── object ──
+  $arrayToObject: "object",
+  $dateToParts: "object",
+  $mergeObjects: "object",
+  $regexFind: "object",
+  $setField: "object",
+  $unsetField: "object",
+  // ── date ──
+  $dateAdd: "date",
+  $dateFromParts: "date",
+  $dateFromString: "date",
+  $dateSubtract: "date",
+  $dateTrunc: "date",
+  $toDate: "date",
+};
+
+/** The operator names whose result is always of category `cat`. */
+export function operatorsReturning(cat: OperatorReturn): Set<string> {
+  return new Set(Object.keys(OPERATOR_RETURNS).filter((name) => OPERATOR_RETURNS[name] === cat));
+}
+
 // ── Argument-validation rules ────────────────────────────────────────────────
 // Per-operator ArgRules, attached to the OPERATORS entries above via withArgs at
 // module load (one reviewable block beats inline withArgs on 40+ multi-line
