@@ -3752,8 +3752,13 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
       },
     });
   });
-  it(".compact() → $filter by MQL truthiness", () => {
-    expect(jsmql.expr("$.a.compact()")).toEqual({ $filter: { input: "$a", as: "jsmqlItem", cond: "$$jsmqlItem" } });
+  it(".compact() → $filter by JS truthiness (same rule as `.filter(x => x)`)", () => {
+    expect(jsmql.expr("$.a.compact()")).toEqual({
+      $filter: { input: "$a", as: "jsmqlItem", cond: truthy("$$jsmqlItem") },
+    });
+    // `_.compact(["a", null, 0, "", false])` → `["a"]`: "" is dropped, so the
+    // cond must be the jsBool wrap, not raw MQL truthiness (which keeps "").
+    expect(jsmql.expr("$.a.compact()")).toEqual(jsmql.expr("$.a.filter(jsmqlItem => jsmqlItem)"));
   });
   it(".chunk(size) → $range/$slice; rejects a non-positive-int size", () => {
     expect(jsmql.expr("$.a.chunk(2)")).toEqual({
@@ -3781,10 +3786,19 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
   });
   it(".partition(pred) → [matches, non]; .reject(pred) → non (matches-object shorthand)", () => {
+    // The predicate reads under JS truthiness, exactly as in `.filter`/`.find`/
+    // `.some`/`.every` — so the two buckets are complements and an `ok: ""`
+    // element lands in the second one (lodash) rather than the first (raw MQL).
     expect(jsmql.expr("$.a.partition(o => o.ok)")).toEqual([
-      { $filter: { input: "$a", as: "o", cond: "$$o.ok" } },
-      { $filter: { input: "$a", as: "o", cond: { $not: ["$$o.ok"] } } },
+      { $filter: { input: "$a", as: "o", cond: truthy("$$o.ok") } },
+      { $filter: { input: "$a", as: "o", cond: { $not: [truthy("$$o.ok")] } } },
     ]);
+    expect(jsmql.expr("$.a.partition(o => o.ok)")[0]).toEqual(jsmql.expr("$.a.filter(o => o.ok)"));
+    expect(jsmql.expr("$.a.partition(o => o.ok)")[1]).toEqual(jsmql.expr("$.a.reject(o => o.ok)"));
+    // A provably-boolean predicate elides the wrap — no `$not` of an `$and` of `$ne`s.
+    expect(jsmql.expr("$.a.reject(o => o.n > 1)")).toEqual({
+      $filter: { input: "$a", as: "o", cond: { $not: [{ $gt: ["$$o.n", 1] }] } },
+    });
     // A single-key matches shorthand lowers to a bare `$eq` (the arrow-equivalent),
     // not an `$and`-wrapped one — same shape a hand-written `o => o.ok === true` gives.
     expect(jsmql.expr("$.a.reject({ ok: true })")).toEqual({

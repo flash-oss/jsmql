@@ -1293,7 +1293,7 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 
 ### Truthy and falsy
 
-`&&`, `||`, `!`, `?:`, `Boolean(x)`, and predicate-method bodies (`.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, `.every`) all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
+`&&`, `||`, `!`, `?:`, `Boolean(x)`, and **every** predicate position on an array-value method — the JavaScript predicate methods, the lodash predicate-run family, and `.compact()`, whichever spelling the predicate is written in (arrow, `_.matches` object, field-name string, `["field", value]` pair, bare `Boolean`) — all use **JavaScript** truthy/falsy semantics, not MongoDB's. The values treated as falsy are:
 
 | Value | Falsy? |
 |---|---|
@@ -1306,6 +1306,8 @@ $.nickname ?? $.name                // { $ifNull: ["$nickname", "$name"] }
 | everything else (`[]`, `{}`, `"0"`, `-1`, dates, …) | truthy |
 
 MongoDB's raw `$toBool` and bare `$cond` use a different rule (e.g. `""` is truthy in MQL). When you need raw MongoDB semantics — for example to match the behaviour of an existing aggregation — call the operator directly: `$toBool($.x)`, `$op($and, …)`. Those escapes are unaffected.
+
+One rule across every spelling means the pairs that ought to agree do agree: `.compact()` is `.filter(Boolean)`, `.reject(p)` is the exact complement of `.filter(p)`, and `.partition(p)` is `[filter(p), reject(p)]` — so no element can fall out of both halves.
 
 **Known limitation: `NaN` is treated as truthy.** Detecting `NaN` in MongoDB aggregation requires an expensive per-value `$convert` (its `$eq` treats `NaN == NaN` as true, so the cheap `$ne:[x,x]` self-comparison does not work). `NaN` values are vanishingly rare in MongoDB data; the divergence is documented rather than papered over.
 
@@ -1716,7 +1718,7 @@ $.items.partition(x => x.ok)                // [ [matches…], [non-matches…] 
 $.items.reject({ active: false })           // items NOT matching
 $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
 $.xs.flatten()                              // one level (with an $isArray guard)
-$.xs.compact()                              // drop MQL-falsy (false/null/0/missing; keeps ""/NaN)
+$.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(Boolean)
 $.a.difference($.b) / .intersection($.b) / .union($.b)   // order-preserving set ops
 $.a.without(2, 4)                           // exclude the given values (variadic)
 $.a.xor($.b)                                // symmetric difference (chain .xor(c) for more)
@@ -1733,7 +1735,7 @@ $.a.sample()                                // one random element ($rand)
 $.a.sampleSize(3)                           // 3 random elements, without replacement
 ```
 
-> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (MQL truthiness, as in `.filter`). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
+> Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (JS truthiness, as in `.filter` — see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
 
 > **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash); a missing/null key coerces to the string `"null"`, but an object/array key still *errors*. Group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
 

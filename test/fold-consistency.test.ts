@@ -268,6 +268,23 @@ for (const v of [
 ]) {
   arrayCases.push({ lit: JSON.stringify(v), val: v, call: ".compact()" });
 }
+// A predicate whose value is falsy-but-MQL-truthy ("" / 0) on every predicate-run
+// method — the case where raw MQL truthiness and JS truthiness disagree, so the
+// fold and the server lowering have to be checked against each other.
+const FALSY_PRED_ARRAY = [{ ok: "y" }, { ok: "" }, { ok: 0 }, { ok: false }, { ok: 1 }];
+for (const call of [
+  '.filter("ok")',
+  '.reject("ok")',
+  '.partition("ok")',
+  '.takeWhile("ok")',
+  '.dropWhile("ok")',
+  '.takeRightWhile("ok")',
+  '.dropRightWhile("ok")',
+  ".reject(x => x.ok)",
+  ".partition(x => x.ok)",
+]) {
+  arrayCases.push({ lit: JSON.stringify(FALSY_PRED_ARRAY), val: FALSY_PRED_ARRAY, call });
+}
 
 // Distinguishes "folded to a value" from "wasn't folded" (stayed a runtime
 // binding). A non-fold is a safe outcome — the server runs its own lowering —

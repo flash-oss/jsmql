@@ -4803,8 +4803,8 @@ function bsonEqual(a, b) {
   }
   return false;
 }
-function mqlTruthy(v) {
-  return !(v === false || v === null || v === void 0 || v === 0);
+function jsTruthy(v) {
+  return !(v === false || v === null || v === void 0 || v === 0 || v === "");
 }
 function mqlKeyString(v) {
   if (typeof v === "string") return v;
@@ -4854,7 +4854,7 @@ function uniq(arr) {
   return out;
 }
 function compact(arr) {
-  return arr.filter(mqlTruthy);
+  return arr.filter(jsTruthy);
 }
 function flatten(arr) {
   return arr.reduce((acc2, x) => acc2.concat(Array.isArray(x) ? x : [x]), []);
@@ -7379,11 +7379,13 @@ function resolveIteratee(iteratee, method, ctx) {
   if (iteratee === void 0) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
   if (iteratee.type === "Lambda" && iteratee.block === void 0 && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
-    return { as, elem: `$$${as}`, value: _generate(iteratee.body, extendCtx(ctx, [iteratee.params[0]])) };
+    const body = iteratee.body;
+    return { as, elem: `$$${as}`, value: _generate(body, extendCtx(ctx, [iteratee.params[0]])), src: body };
   }
   const lam = shorthandToLambda(iteratee, method, AS);
   if (lam !== null) {
-    return { as: AS, elem: `$$${AS}`, value: _generate(lam.body, extendCtx(ctx, [AS])) };
+    const body = lam.body;
+    return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body };
   }
   throw new CodegenError(
     `.${method}(iteratee) takes a field name ("id"), a matches object ({ active: true }), a ["field", value] pair, or a single-parameter arrow ('x => x.id').`,
@@ -7392,7 +7394,7 @@ function resolveIteratee(iteratee, method, ctx) {
 }
 function resolvePredicate(pred, method, ctx) {
   const it = resolveIteratee(pred, method, ctx);
-  return { as: it.as, cond: it.value };
+  return { as: it.as, cond: it.src ? jsBoolIfNeeded(it.src, it.value) : jsBool(it.value) };
 }
 function takeDropWhile(arrExpr, pred, drop2, ctx) {
   const [vArr, arr] = internalVar(ctx, "arr");
@@ -8249,7 +8251,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
       const [vItem, item] = internalVar(ctx, "item");
-      return { $filter: { input: genObj, as: vItem, cond: item } };
+      return { $filter: { input: genObj, as: vItem, cond: jsBool(item) } };
     }
     case "flatten": {
       checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);

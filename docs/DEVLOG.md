@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: every array-method predicate position reads under JS truthiness
+
+```
+$.xs.compact()
+// before: { $filter: { input: "$xs", as: "jsmqlItem", cond: "$$jsmqlItem" } }
+//         ← raw MQL truthiness, where "" is TRUE. `_.compact(["a", null, 0, "", false])`
+//           is `["a"]`, but jsmql returned `["a", ""]`.
+// now:    { $filter: { … cond: <jsBool of the element> } }   ← identical to .filter(Boolean)
+```
+
+`.compact()` read its elements under MongoDB's truthiness rule rather than
+JavaScript's, so it kept `""` — diverging from `_.compact` and from jsmql's own
+`.filter(Boolean)` / `.filter(x => x)`, which have always used `jsBool`. The same
+gap ran through `resolvePredicate` in [src/codegen.ts](src/codegen.ts), the shared
+entry point for the lodash predicate-run family (`.reject` / `.partition` /
+`.takeWhile` / `.dropWhile` / `.takeRightWhile` / `.dropRightWhile`): it read the
+resolved iteratee as a boolean without the wrap that `.filter` / `.find` / `.some` /
+`.every` apply. The user-visible damage was worse than a kept `""`, because `.reject`
+negates with `!` and therefore *did* get `jsBool` for free — so the two halves were
+computed under two different rules, and on `[{n:"keep",active:true},{n:"empty",active:""},{n:"off",active:false}]`
+(verified on a live mongod) `.filter("active")` returned `["keep"]` while
+`.reject("active")` returned `["off"]`: `"empty"` fell out of **both**, and
+`.partition("active")` put it in the match bucket that `.filter` excluded.
+
+The fix is one wrap at each choke point — `jsBool` on the `.compact()` `$filter`
+cond, and `jsBoolIfNeeded` on the `resolvePredicate` result — so one truthiness rule
+now covers every predicate position and every predicate spelling (arrow, matches
+object, field-name string, `["field", value]` pair, bare `Boolean`). `ResolvedIteratee`
+gained an optional `src` (the AST the value came from) purely so the elision check
+can still run: a provably-boolean predicate (`{ ok: true }`, `o => o.n > 1`) emits
+exactly the shape it did before, so only the cases that were wrong changed shape.
+The constant folder mirrors the lowering, so `mqlTruthy` in
+[src/lodash-fold.ts](src/lodash-fold.ts) became `jsTruthy`; the fold-consistency
+suite gained a falsy-predicate battery that checks each of these against mongod.
+`NaN` stays truthy — jsmql's one documented divergence from JS, unchanged here and
+still the reason `.compact()` is not *quite* `_.compact`. Rules:
+[docs/LANGUAGE.md](LANGUAGE.md) § Truthy and falsy, [docs/specs/grammar.md](specs/grammar.md),
+[docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-08-12 — fix: a computed `$getField` key is coerced, and the compiler's own slots carry their type
 
 ```

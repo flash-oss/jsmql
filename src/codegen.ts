@@ -3262,17 +3262,22 @@ export function shorthandToLambda(arg: Expr, method: string, param: string): Lam
 // a single-parameter arrow (`x => x.id`), one of the `shorthandToLambda` forms
 // (`"id"` / `{ active: true }` / `["a.b", v]`), or omitted (identity). Returns the
 // `$map`/`$filter` element var name and the iteratee expression evaluated against it.
-type ResolvedIteratee = { as: string; elem: string; value: unknown };
+// `src` is the AST the `value` was generated from — carried so a predicate
+// context can ask `isProvablyBool` whether the jsBool wrap can be elided.
+// Absent for the identity iteratee (an element value is never provably bool).
+type ResolvedIteratee = { as: string; elem: string; value: unknown; src?: Expr };
 function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: GenerateCtx): ResolvedIteratee {
   const AS = gensymInScope(ctx, exprVar("item"));
   if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
   if (iteratee.type === "Lambda" && iteratee.block === undefined && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
-    return { as, elem: `$$${as}`, value: _generate(iteratee.body as Expr, extendCtx(ctx, [iteratee.params[0]])) };
+    const body = iteratee.body as Expr;
+    return { as, elem: `$$${as}`, value: _generate(body, extendCtx(ctx, [iteratee.params[0]])), src: body };
   }
   const lam = shorthandToLambda(iteratee, method, AS);
   if (lam !== null) {
-    return { as: AS, elem: `$$${AS}`, value: _generate(lam.body as Expr, extendCtx(ctx, [AS])) };
+    const body = lam.body as Expr;
+    return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body };
   }
   throw new CodegenError(
     `.${method}(iteratee) takes a field name ("id"), a matches object ({ active: true }), a ["field", value] pair, or a single-parameter arrow ('x => x.id').`,
@@ -3283,9 +3288,14 @@ function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: Genera
 // A lodash *predicate* for `.partition` / `.reject` / `.takeWhile` / …: any of the
 // iteratee forms above, read as a boolean. Shares `resolveIteratee` so the shorthand
 // vocabulary and lowering stay identical to the value-producing methods.
+//
+// The result goes through jsBool, so a predicate reads the same here as it does in
+// `.filter` / `.find` / `.some` / `.every`. Raw MQL truthiness would make `.reject(p)`
+// stop being the complement of `.filter(p)` — an element whose predicate value is `""`
+// would fall out of BOTH halves — and put that element in the wrong `.partition` bucket.
 function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: string; cond: unknown } {
   const it = resolveIteratee(pred, method, ctx);
-  return { as: it.as, cond: it.value };
+  return { as: it.as, cond: it.src ? jsBoolIfNeeded(it.src, it.value) : jsBool(it.value) };
 }
 
 // `.takeWhile` / `.dropWhile` from the LEFT: find the first element whose predicate
@@ -4374,9 +4384,11 @@ function generateMethodCall(
     }
     case "compact": {
       checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
-      // MQL truthiness (drops false/null/0/missing; keeps ""/NaN — per project call).
+      // JS truthiness via jsBool, so `.compact()` drops exactly what `_.compact`
+      // drops and agrees with the equivalent `.filter(x => x)`. Raw MQL
+      // truthiness would keep "" — see the jsBool note for the NaN caveat.
       const [vItem, item] = internalVar(ctx, "item");
-      return { $filter: { input: genObj, as: vItem, cond: item } };
+      return { $filter: { input: genObj, as: vItem, cond: jsBool(item) } };
     }
     case "flatten": {
       checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
