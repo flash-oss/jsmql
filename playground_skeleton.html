@@ -1381,6 +1381,12 @@
       // above, so this file is self-sufficient with no fetches.
       const examples = new Map(); // slug → entry
       const itemEls = new Map(); // slug → button element
+      // Identifies the example set this page was generated with, injected onto
+      // the JSON block by sync-playground.mjs as a hash of the manifest. A
+      // saved session records it so a restore can tell whether the examples
+      // have moved on since — see `staleExampleSession`. The skeleton ships an
+      // empty list and no stamp, so this is "" until generation.
+      const EXAMPLES_STAMP = document.getElementById("examples-data").dataset.stamp ?? "";
       let orderedSlugs = []; // render order
       let visibleSlugs = []; // current filtered order (for ↑/↓ nav)
       let activeSlug = null;
@@ -1993,6 +1999,12 @@
           localStorage.setItem(
             STORAGE_KEY,
             JSON.stringify({
+              // Which example set was on the page when this was written, and
+              // which example the editor was holding unmodified (null once the
+              // user types anything of their own). `staleExampleSession` reads
+              // both to decide whether a restore would show outdated content.
+              stamp: EXAMPLES_STAMP,
+              slug: activeSlug,
               input: inputCm.getValue(),
               vars: varsCm.getValue(),
               mode: currentMode,
@@ -2009,6 +2021,36 @@
         } catch {
           return null;
         }
+      }
+      function dropState() {
+        try {
+          localStorage.removeItem(STORAGE_KEY);
+        } catch {}
+      }
+
+      // Was this session written against a different example set, AND does it
+      // only hold an example rather than the visitor's own work?
+      //
+      // Restoring beats showing the default example (rung 3 below outranks rung
+      // 4), and the very first visit already writes a session — so without this
+      // check a returning visitor never sees a newly shipped example again, and
+      // an edited example keeps rendering its superseded text. Both read as the
+      // page being stale.
+      //
+      // A session the visitor actually wrote is never discarded: a new example
+      // set is no reason to throw away their query. `slug` is the test — it is
+      // non-null only while the editor holds an example verbatim, and
+      // `clearActiveOnUserEdit` nulls it on the first keystroke that diverges.
+      // Sessions saved before the stamp existed carry neither field, so fall
+      // back to matching the text against the current set; anything that is not
+      // an example verbatim is treated as the visitor's own and kept.
+      function staleExampleSession(saved) {
+        if (saved.stamp === EXAMPLES_STAMP) return false;
+        if (typeof saved.slug === "string") return true;
+        if (saved.slug === null) return false; // theirs, saved by a stamped build
+        const text = typeof saved.input === "string" ? saved.input : "";
+        for (const ex of examples.values()) if (ex.query === text) return true;
+        return false;
       }
 
       // ── Shareable links ───────────────────────────────────────────────────
@@ -2284,6 +2326,10 @@
       //   2. a URL hash targeting a real example — a shared/explicit `#slug`
       //      link (only present when viewing an unmodified example; free editing
       //      clears it via clearActiveOnUserEdit);
+      //   2b. the example a superseded session was holding — reached only when
+      //      `staleExampleSession` discarded that session, so the visitor lands
+      //      on the same example with its CURRENT text rather than the copy
+      //      saved against an older example set;
       //   3. a saved free-form query — restored with the compile mode it was
       //      last rendered with, so the output matches what the user left;
       //   4. the first example — the default for a first visit.
@@ -2294,13 +2340,28 @@
       if (shared) {
         applySharedSession(shared);
       } else {
-        const saved = loadState();
+        let saved = loadState();
+        // A session that carries only an example, written against an older
+        // example set, would restore superseded text over the current examples
+        // at rung 3. Drop it, remembering which example it held so the ladder
+        // can land there again with that example's current text.
+        let revisit = null;
+        if (saved && staleExampleSession(saved)) {
+          revisit = typeof saved.slug === "string" && examples.has(saved.slug) ? saved.slug : null;
+          dropState();
+          // Keep the Variables value. It is edited separately from the query, so
+          // it can be the visitor's own even when the query was just an example.
+          // Dropping `input` is what stops rung 3 from firing.
+          saved = { vars: saved.vars };
+        }
         if (saved && typeof saved.vars === "string" && saved.vars !== "") {
           varsCm.setValue(saved.vars);
         }
         const initialSlug = orderedSlugs.length > 0 ? slugFromHash() : null;
         if (initialSlug && examples.has(initialSlug)) {
           selectExample(initialSlug, { scroll: true });
+        } else if (revisit) {
+          selectExample(revisit, { scroll: true });
         } else if (saved && typeof saved.input === "string" && saved.input.trim() !== "") {
           setMode(MODE_FNS[saved.mode] ? saved.mode : "auto", { rerender: false });
           inputCm.setValue(saved.input);

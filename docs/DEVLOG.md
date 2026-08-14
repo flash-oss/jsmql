@@ -39,6 +39,8 @@ feature, and [LANGUAGE.md](LANGUAGE.md#bare-built-in-callbacks) says so.
 built-in must mean what it reads as. `Date` called without `new` ignores its
 argument and returns a string, so `.map(Date)` would convert nothing.
 
+---
+
 ## 2026-08-14 — fix: the collaborative-filtering example casts countBy keys back to ObjectId
 
 The flagship example — first in [realistic.test.ts](../test/realistic.test.ts),
@@ -69,6 +71,45 @@ so in the footgun note for those three, with the cast to write instead, and
 compile time: it cannot know the type of a bare `$.field`, so the only available
 check would be a guess from the field's name, and a heuristic that changes output
 or emits noise on a name is exactly the opaque behaviour the language rejects.
+
+---
+
+## 2026-08-14 — fix: a saved playground session stops hiding newly shipped examples
+
+The playground restores a saved session from `localStorage` ahead of showing the
+default example, and the very first visit already writes one — the `setValue`
+calls on load fire the change hooks that call `saveState`. So from the second
+visit onward the default-example rung was unreachable. Ship a new example, or
+edit an existing one, and a returning visitor still opened the copy their browser
+had kept. The page was freshly generated every time; only the editor pane looked
+old, which is a convincing way to look stale.
+
+`sync-playground.mjs` now stamps the injected `<script id="examples-data">` with a
+short sha256 of the manifest, so the value changes when — and only when — an
+example's slug, title, query or metadata does. A saved session records the stamp
+it was written against, and a mismatch means the examples have moved on.
+
+A mismatch alone is not licence to delete someone's work. The session also records
+`activeSlug`, which is non-null only while the editor holds an example verbatim and
+which `clearActiveOnUserEdit` nulls on the first keystroke that diverges. Only an
+example-only session is discarded; a query the visitor wrote survives any number of
+example-set changes, and their Variables value is kept either way, since it is
+edited separately from the query. Sessions saved before the stamp existed carry
+neither field, so those fall back to matching the text against the current example
+set — anything that is not an example verbatim counts as theirs.
+
+When a discarded session named an example that still exists, the ladder re-selects
+that example rather than dropping to the first one, so the visitor stays where they
+were and simply gets the current text. That is a new rung between the `#slug` hash
+and the saved-query rung.
+
+Verified in the browser across the five cases that matter: stale stamp with a live
+slug lands on that example's current text and re-stamps; stale stamp with a
+hand-written query keeps it; a legacy session holding an example verbatim is
+dropped; a legacy hand-written query is kept; and a stale stamp naming a deleted
+example falls through to the default. `#s=` share links still outrank all of it.
+
+---
 
 ## 2026-08-14 — feat: the landing page ends on the collaborative-filtering example
 
