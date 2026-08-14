@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat(site): the flagship example reads the same on both published pages
+
+The collaborative-filtering example exists as two copies — the first `it()` in
+[realistic.test.ts](../test/realistic.test.ts), which the playground embeds, and
+a hand-authored copy as the last example on the landing page. The two had
+drifted: the test copy shows `.$sort(…)` / `.$limit(500)` with comments that name
+what each line does, the page copy still showed `.toSorted(…)` / `.take(500)`
+with older comments. A reader who followed "Open in playground" from the landing
+page landed on a different source for the same example, which reads as a bug in
+one of the two pages.
+
+The page copy is now character-identical to the test copy, and `playground.html`
+is regenerated so its embedded copy matches the test file it is generated from
+(one line: the examples JSON island and its stamp). The emitted MQL is unchanged
+— `.$sort` and `.toSorted` lower to the same `$sort`, `.$limit(500)` and
+`.take(500)` to the same `$limit` — so this changes what the pages *show*, not
+what the compiler produces.
+
+Two copies of one example is the underlying cost, and it stays: the landing page
+holds its JSMQL inline so the page reads with JavaScript off and so
+`site.test.ts` can compile what a reader actually sees. Nothing enforces that the
+two stay equal, which is why they drifted. See [specs/site.md](specs/site.md).
+
+---
+
 ## 2026-08-14 — feat(site): the landing page prints MQL with the playground's fit-or-break printer
 
 [index.html](../index.html) now formats every compiled document with the
