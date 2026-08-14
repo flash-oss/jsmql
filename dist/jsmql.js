@@ -2240,9 +2240,10 @@ var Parser = class {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
-        if (name === "ObjectId" && this.lexer.lookahead(1).type === TokenType.LParen) {
+        if (name === "ObjectId") {
           this.lexer.next();
-          return this.finishObjectIdConstruction(t.pos);
+          if (this.lexer.peek().type === TokenType.LParen) return this.finishObjectIdConstruction(t.pos);
+          return { type: "ObjectIdRef", pos: t.pos };
         }
         if (TYPE_CAST_NAMES.has(name)) {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
@@ -3108,6 +3109,8 @@ function describeUpdateTarget(target) {
       return `a '${target.cast}()' cast`;
     case "TypeCastRef":
       return `a bare '${target.cast}' reference`;
+    case "ObjectIdRef":
+      return "a bare 'ObjectId' reference";
     case "MemberAccess":
       return "a member access whose root is not a field path";
     case "Lambda":
@@ -6882,6 +6885,11 @@ function _generateBody(expr, ctx) {
         `'${expr.cast}' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.filter(${expr.cast})). To coerce a single value, write ${expr.cast}(value).`,
         expr.pos
       );
+    case "ObjectIdRef":
+      throw new CodegenError(
+        `'ObjectId' used as a value is only valid as a callback to a higher-order array method (e.g. $.ids.map(ObjectId)). To convert a single value, write ObjectId(value); for a constant id, write ObjectId("<24 hex>") or the 0x<24 hex> literal.`,
+        expr.pos
+      );
     case "MathCall":
       return generateMathCall(expr.method, expr.args, ctx, expr.pos);
     case "MathCallRef":
@@ -7509,6 +7517,17 @@ function escapeHtmlExpr(s) {
   for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
+function bareCallbackToLambda(arg, param) {
+  const pos = arg.pos;
+  const paramRef = { type: "ParamRef", name: param, pos };
+  const lambda = (body) => ({ type: "Lambda", params: [param], body, pos });
+  if (arg.type === "TypeCastRef") return lambda({ type: "TypeCast", cast: arg.cast, arg: paramRef, pos });
+  if (arg.type === "MathCallRef") return lambda({ type: "MathCall", method: arg.method, args: [paramRef], pos });
+  if (arg.type === "ObjectIdRef") {
+    return lambda({ type: "OperatorCall", name: "$toObjectId", style: "positional", args: [paramRef], pos });
+  }
+  return null;
+}
 function shorthandToLambda(arg, method, param) {
   const pos = arg.pos;
   const paramRef = { type: "ParamRef", name: param, pos };
@@ -7563,7 +7582,7 @@ function resolveIteratee(iteratee, method, ctx) {
     const body = iteratee.body;
     return { as, elem: `$$${as}`, value: _generate(body, extendCtx(ctx, [iteratee.params[0]])), src: body };
   }
-  const lam = shorthandToLambda(iteratee, method, AS);
+  const lam = bareCallbackToLambda(iteratee, AS) ?? shorthandToLambda(iteratee, method, AS);
   if (lam !== null) {
     const body = lam.body;
     return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body };
@@ -9579,31 +9598,9 @@ function foldedCompoundType(v) {
 }
 function requireLambda(args, method, callerPos, ctx) {
   const first = args[0];
-  if (first?.type === "TypeCastRef") {
-    return {
-      type: "Lambda",
-      params: ["v"],
-      body: {
-        type: "TypeCast",
-        cast: first.cast,
-        arg: { type: "ParamRef", name: "v", pos: first.pos },
-        pos: first.pos
-      },
-      pos: first.pos
-    };
-  }
-  if (first?.type === "MathCallRef") {
-    return {
-      type: "Lambda",
-      params: ["v"],
-      body: {
-        type: "MathCall",
-        method: first.method,
-        args: [{ type: "ParamRef", name: "v", pos: first.pos }],
-        pos: first.pos
-      },
-      pos: first.pos
-    };
+  if (first !== void 0) {
+    const bare = bareCallbackToLambda(first, "v");
+    if (bare !== null) return bare;
   }
   if (first !== void 0 && (first.type === "StringLiteral" || first.type === "ObjectLiteral" || first.type === "ArrayLiteral")) {
     const sh = shorthandToLambda(first, method, exprVar("item"));
@@ -10254,6 +10251,7 @@ function collectReadsInto(expr, out) {
     case "DateNow":
     case "ObjectIdLiteral":
     case "TypeCastRef":
+    case "ObjectIdRef":
       return;
     case "ArrayLiteral":
       for (const el of expr.elements) {
@@ -13597,6 +13595,7 @@ function mapChildren(expr, foreignParam, allocator, outerLets) {
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
+    case "ObjectIdRef":
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
@@ -14228,6 +14227,7 @@ function descendAndExtract(expr, outerCtx, allocSlot, lowerBlock2, enclosing = E
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
+    case "ObjectIdRef":
     case "MathConst":
     case "MathCallRef":
     case "DateNow":

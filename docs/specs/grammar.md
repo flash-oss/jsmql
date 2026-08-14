@@ -111,7 +111,7 @@ primary        = operator_call
                | math_call | math_const
                | object_call
                | type_cast | type_cast_ref | number_static
-               | new_date_or_set | objectid_literal | date_now | array_static
+               | new_date_or_set | objectid_literal | objectid_ref | date_now | array_static
                | regex_literal
                | template_literal
                | number | bigint
@@ -190,6 +190,8 @@ TYPE_CAST_NAME = (* see `TypeCastOp` in src/ast.ts *)
 
 type_cast_ref  = BARE_CAST_NAME                              (* bare callback shorthand, no `(` *)
 BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/ast.ts *)
+
+objectid_ref   = "ObjectId"                                  (* bare callback shorthand, no `(` *)
 
 number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
 NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
@@ -327,15 +329,15 @@ If `asFieldPath()` can't fold the chain into a single dotted-path string — e.g
 
 (For numeric array indices specifically, this is the supported replacement for the previously-accepted-but-not-valid-JS form `$.items.0.name`. See "Strict-JS-subset rule" above.)
 
-## Type-cast call vs bare reference
+## Built-in call vs bare reference
 
-`Boolean`, `Number`, `String` are ambiguous between `type_cast` (call form, `Boolean(x)`) and `type_cast_ref` (bare callback, `arr.filter(Boolean)`). The parser disambiguates by 1-token lookahead in `parsePrimary()`:
+A one-value-in/one-value-out built-in is ambiguous between its call form (`Boolean(x)`, `ObjectId(x)`) and a bare callback reference (`arr.filter(Boolean)`, `ids.map(ObjectId)`). The parser disambiguates by 1-token lookahead in `parsePrimary()`, one rule per name family:
 
-- If the cast name is followed by `(`, parse as `type_cast`.
-- Otherwise, if the name is in `BARE_CAST_NAMES` (`Boolean` / `Number` / `String`), parse as `type_cast_ref`.
-- `parseInt` / `parseFloat` are not in `BARE_CAST_NAMES` — without `(` they fall through to the existing `parseTypeCast()` "Expected LParen" error. This is intentional: real-JS `arr.map(parseInt)` has the index-as-radix footgun, so users must write `x => parseInt(x)` to opt in.
+- If the name is followed by `(`, parse the call form (`type_cast` / `object_id`).
+- Otherwise, if the name is bare-callable, emit its `*Ref` node — `type_cast_ref` for `BARE_CAST_NAMES` (`Boolean` / `Number` / `String`), `object_id_ref` for `ObjectId`. `Math.<unary>` reaches `math_call_ref` the same way, on the member-access path.
+- `parseInt` / `parseFloat` are not in `BARE_CAST_NAMES` — without `(` they fall through to the existing `parseTypeCast()` "Expected LParen" error. `Date` has no bare form either. This is intentional: real-JS `arr.map(parseInt)` has the index-as-radix footgun, and `Date` without `new` ignores its argument, so users must write the explicit arrow to opt in.
 
-A `type_cast_ref` is only meaningful as a callback to a higher-order array method. In any other position, codegen throws an actionable error directing the user to the call form.
+A `*Ref` node is only meaningful as a callback to a higher-order array method. In any other position, codegen throws an actionable error directing the user to the call form.
 
 ## Context-sensitive `/` (regex vs divide)
 

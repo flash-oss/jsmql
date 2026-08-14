@@ -68,7 +68,7 @@ const candidateProductIdCounts = $$$.orders
   .flatten()
   .filter(p => !myProductIds.includes(p))
   .countBy(); // { ID: count } map
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(id => ObjectId(id));
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
   .filter(pr => pr._id in candidateProductIds)
@@ -244,8 +244,8 @@ $ = candidateProductIds
                     in: "$$jsmqlKv.k",
                   },
                 },
-                as: "id",
-                in: { $toObjectId: "$$id" },
+                as: "v",
+                in: { $toObjectId: "$$v" },
               },
             },
           },

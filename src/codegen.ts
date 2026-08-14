@@ -2131,6 +2131,13 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
         expr.pos,
       );
 
+    case "ObjectIdRef":
+      // A bare `ObjectId` outside callback position — same rule as TypeCastRef.
+      throw new CodegenError(
+        `'ObjectId' used as a value is only valid as a callback to a higher-order array method (e.g. $.ids.map(ObjectId)). To convert a single value, write ObjectId(value); for a constant id, write ObjectId("<24 hex>") or the 0x<24 hex> literal.`,
+        expr.pos,
+      );
+
     case "MathCall":
       return generateMathCall(expr.method, expr.args, ctx, expr.pos);
 
@@ -3280,6 +3287,26 @@ function escapeHtmlExpr(s: unknown): unknown {
   return e;
 }
 
+// Desugar a bare BUILT-IN callback reference into the one-parameter arrow it stands
+// for, so the point-free spelling lowers to exactly what the explicit arrow does:
+// `.map(Number)` ≡ `.map(v => Number(v))`, `.map(ObjectId)` ≡ `.map(v => ObjectId(v))`,
+// `.map(Math.floor)` ≡ `.map(v => Math.floor(v))`. Returns null for anything else, so
+// callers keep their own handling. `parseInt`/`parseFloat` and `Date` are deliberately
+// absent: real-JS `.map(parseInt)` passes the index as the radix, and `Date` called
+// without `new` ignores its argument — a point-free spelling of either would mean
+// something other than what it reads as. See `BareCastOp` in ast.ts.
+export function bareCallbackToLambda(arg: Expr, param: string): Lambda | null {
+  const pos = arg.pos;
+  const paramRef: Expr = { type: "ParamRef", name: param, pos };
+  const lambda = (body: Expr): Lambda => ({ type: "Lambda", params: [param], body, pos });
+  if (arg.type === "TypeCastRef") return lambda({ type: "TypeCast", cast: arg.cast, arg: paramRef, pos });
+  if (arg.type === "MathCallRef") return lambda({ type: "MathCall", method: arg.method, args: [paramRef], pos });
+  if (arg.type === "ObjectIdRef") {
+    return lambda({ type: "OperatorCall", name: "$toObjectId", style: "positional", args: [paramRef], pos });
+  }
+  return null;
+}
+
 // Desugar a lodash iteratee / predicate SHORTHAND into a synthetic one-parameter
 // arrow, so every higher-order method accepts the same forms and lowers each to
 // exactly what the equivalent arrow would (whether the method reads the result as a
@@ -3289,6 +3316,10 @@ function escapeHtmlExpr(s: unknown): unknown {
 //   • property string   `"a.b"`       → `it => it.a.b`                    (_.property)
 //   • matches object    `{ a: 1, b }` → `it => it.a === 1 && it.b === b`  (_.matches, flat $eq per key)
 //   • matchesProperty   `["a.b", v]`  → `it => it.a.b === v`              (_.matchesProperty)
+// A bare built-in (`Number`, `ObjectId`) is deliberately NOT one of them: it reads
+// its element as a scalar, and the document-stream callers of this hub (stream
+// methods, `$lookup` predicates) always pass a whole document. `bareCallbackToLambda`
+// is applied by the value-mode entry points instead — see `resolveIteratee`.
 export function shorthandToLambda(arg: Expr, method: string, param: string): Lambda | null {
   const pos = arg.pos;
   const paramRef: Expr = { type: "ParamRef", name: param, pos };
@@ -3360,7 +3391,10 @@ function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: Genera
     const body = iteratee.body as Expr;
     return { as, elem: `$$${as}`, value: _generate(body, extendCtx(ctx, [iteratee.params[0]])), src: body };
   }
-  const lam = shorthandToLambda(iteratee, method, AS);
+  // A bare built-in (`.uniqBy(Number)`, `.map(ObjectId)`) reads the element as a
+  // scalar, which is what a value-mode array holds — so it belongs here rather than
+  // in `shorthandToLambda`, whose document-stream callers would misread it.
+  const lam = bareCallbackToLambda(iteratee, AS) ?? shorthandToLambda(iteratee, method, AS);
   if (lam !== null) {
     const body = lam.body as Expr;
     return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body };
@@ -6093,33 +6127,11 @@ function requireLambda(
   ctx?: GenerateCtx,
 ): { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number } {
   const first = args[0];
-  // Bare type-cast callback: `.filter(Boolean)` desugars to `.filter(v => Boolean(v))`.
-  if (first?.type === "TypeCastRef") {
-    return {
-      type: "Lambda",
-      params: ["v"],
-      body: {
-        type: "TypeCast",
-        cast: first.cast,
-        arg: { type: "ParamRef", name: "v", pos: first.pos },
-        pos: first.pos,
-      },
-      pos: first.pos,
-    };
-  }
-  // Bare unary-Math callback: `.map(Math.floor)` desugars to `.map(v => Math.floor(v))`.
-  if (first?.type === "MathCallRef") {
-    return {
-      type: "Lambda",
-      params: ["v"],
-      body: {
-        type: "MathCall",
-        method: first.method,
-        args: [{ type: "ParamRef", name: "v", pos: first.pos }],
-        pos: first.pos,
-      },
-      pos: first.pos,
-    };
+  // Bare built-in callback: `.filter(Boolean)` ≡ `.filter(v => Boolean(v))`,
+  // `.map(ObjectId)` ≡ `.map(v => ObjectId(v))`.
+  if (first !== undefined) {
+    const bare = bareCallbackToLambda(first, "v");
+    if (bare !== null) return bare;
   }
   // lodash iteratee/predicate shorthands: `"a.b"` / `{ active: true }` / `["a.b", v]`
   // desugar to the equivalent one-parameter arrow, so `.map`/`.filter`/`.find`/… all
@@ -7092,6 +7104,7 @@ function collectReadsInto(expr: Expr, out: Set<string>): void {
     case "DateNow":
     case "ObjectIdLiteral":
     case "TypeCastRef":
+    case "ObjectIdRef":
       return;
     case "ArrayLiteral":
       for (const el of expr.elements) {

@@ -2151,6 +2151,7 @@ function mapChildren(
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
+    case "ObjectIdRef":
     case "MathConst":
     case "MathCallRef":
     case "DateNow":
@@ -3200,6 +3201,7 @@ function descendAndExtract(
     case "RegexLiteral":
     case "ParamRef":
     case "TypeCastRef":
+    case "ObjectIdRef":
     case "MathConst":
     case "MathCallRef":
     case "DateNow":

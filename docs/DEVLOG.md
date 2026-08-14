@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat: `ObjectId` is bare-callable, and every iteratee method takes a bare built-in
+
+`ids.map(id => ObjectId(id))` now has the point-free spelling JavaScript gives it:
+`ids.map(ObjectId)`. `Boolean`/`Number`/`String` and the single-argument `Math`
+methods were already bare-callable; `ObjectId` is the same kind of thing — one
+value in, one value out — and it is the one a `countBy` key round trip needs, so
+its absence was arbitrary. It parses to a new `ObjectIdRef` node, exactly parallel
+to `TypeCastRef`, and desugars to the arrow it reads as.
+
+Adding it exposed a split worth closing. The bare forms were desugared inside
+`requireLambda`, which only the array methods go through — so `.map(Number)`
+worked while `.uniqBy(Number)` and `.reject(Boolean)` threw "takes a field name,
+a matches object, …". One vocabulary, two answers, depending on which method you
+reached for. The desugar is now one helper, `bareCallbackToLambda`, applied at
+both value-mode entry points (`requireLambda` and `resolveIteratee`), so the whole
+lodash iteratee/predicate family accepts what the array methods accept.
+
+It is deliberately *not* applied in `shorthandToLambda`, the shared shorthand hub,
+even though that would have been the shortest diff. The hub also serves the
+document-stream callers, and a stream element is a whole document: `$$.countBy(String)`
+would ask the server to stringify a document. Routed through the hub it produced a
+`$lookup`-internal message naming a gensym, which is worse than the clear form list
+it replaced. Stream methods keep their own rejection; the bare form is a value-mode
+feature, and [LANGUAGE.md](LANGUAGE.md#bare-built-in-callbacks) says so.
+
+`Date` stays excluded alongside `parseInt`/`parseFloat`, on one rule: a bare
+built-in must mean what it reads as. `Date` called without `new` ignores its
+argument and returns a string, so `.map(Date)` would convert nothing.
+
 ## 2026-08-14 — fix: the collaborative-filtering example casts countBy keys back to ObjectId
 
 The flagship example — first in [realistic.test.ts](../test/realistic.test.ts),

@@ -2448,7 +2448,61 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   });
 });
 
-describe("bare type-cast callbacks", () => {
+describe("bare built-in callbacks", () => {
+  it("map(ObjectId) converts each element", () => {
+    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual({ $map: { input: "$ids", as: "v", in: { $toObjectId: "$$v" } } });
+  });
+  it("map(ObjectId) is the point-free spelling of the arrow form", () => {
+    expect(jsmql.expr("$.ids.map(ObjectId)")).toEqual(jsmql.expr("$.ids.map(v => ObjectId(v))"));
+  });
+  // The lodash iteratee/predicate methods take the same bare callbacks the array
+  // methods above do — one vocabulary, whichever method you reach for. They bind
+  // the element to the iteratee gensym rather than an arrow's own parameter name.
+  it("sumBy(Number) coerces each element before summing", () => {
+    expect(jsmql.expr("$.xs.sumBy(Number)")).toEqual({
+      $sum: { $map: { input: "$xs", as: "jsmqlItem", in: { $toDouble: "$$jsmqlItem" } } },
+    });
+  });
+  it("keyBy(ObjectId) keys by the converted element", () => {
+    expect(jsmql.expr("$.xs.keyBy(ObjectId)")).toEqual({
+      $arrayToObject: {
+        $map: {
+          input: "$xs",
+          as: "jsmqlItem",
+          in: { k: { $ifNull: [{ $toString: { $toObjectId: "$$jsmqlItem" } }, "null"] }, v: "$$jsmqlItem" },
+        },
+      },
+    });
+  });
+  it("the whole iteratee/predicate family accepts a bare built-in", () => {
+    for (const src of [
+      "$.xs.uniqBy(Number)",
+      "$.xs.groupBy(String)",
+      "$.xs.countBy(String)",
+      "$.xs.maxBy(Number)",
+      "$.xs.reject(Boolean)",
+      "$.xs.takeWhile(Boolean)",
+      "$.xs.partition(Boolean)",
+    ]) {
+      expect(() => jsmql.expr(src), src).not.toThrow();
+    }
+  });
+  // `Date` and `parseInt` are excluded on purpose: called without `new`, `Date`
+  // ignores its argument, and `.map(parseInt)` passes the index as the radix. A
+  // point-free spelling would not mean what it reads as, so both must throw.
+  it("rejects the built-ins whose point-free form would mislead", () => {
+    expect(() => jsmql.expr("$.xs.map(Date)")).toThrow();
+    expect(() => jsmql.expr("$.xs.map(parseInt)")).toThrow();
+  });
+  it("a bare ObjectId outside callback position names the call forms", () => {
+    expect(() => jsmql.expr("$.a = ObjectId")).toThrow(/'ObjectId' used as a value.*ObjectId\(value\)/s);
+  });
+  // A stream element is a document, so a bare built-in is meaningless there. The
+  // rejection must stay the method's own form list — never an internal var name.
+  it("a stream method rejects a bare built-in with its own spelling list", () => {
+    expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).toThrow(/takes a field name/);
+    expect(() => jsmql.pipeline("$$ = $$.countBy(String)")).not.toThrow(/jsmql[A-Z]/);
+  });
   it("filter(Boolean) drops JS-falsy elements", () => {
     expect(jsmql.expr("$.items.filter(Boolean)")).toEqual({
       $filter: { input: "$items", as: "v", cond: truthy("$$v") },

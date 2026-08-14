@@ -1795,9 +1795,9 @@ $.xs.size()                                  // element count (array) or key cou
 
 > `take`/`drop`/`takeRight`/`dropRight` reject a **negative** count (the message points at the opposite-end method). `n` past the array length is fine — you get the whole array or an empty one, matching lodash. `head`/`first`/`last` on an empty array yield `null` (MongoDB's missing-value).
 
-### Bare type-cast callbacks
+### Bare built-in callbacks
 
-`Boolean`, `Number`, and `String` can be passed bare as the callback to any of the lambda-taking array methods, just like in plain JavaScript:
+A built-in that converts one value can be passed bare as the callback, just like in plain JavaScript — `Boolean`, `Number`, `String`, `ObjectId`, and the single-argument `Math` methods:
 
 ```js
 $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, missing)
@@ -1807,13 +1807,20 @@ $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, mis
 $.scores.map(Number)            // coerce strings to numbers
 // → { $map: { input: "$scores", as: "v", in: { $toDouble: "$$v" } } }
 
+Object.keys($.counts).map(ObjectId)   // object keys are strings — cast them back
+// → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
+
+$.scores.map(Math.floor)        // round each element down
+
 [$.first, $.middle, $.last].filter(Boolean).join(" ")
 // composed display name, skipping missing parts
 ```
 
-This is sugar for `x => Boolean(x)` / `x => Number(x)` / `x => String(x)`. Outside of a callback position the bare form errors at compile time — write `Boolean(x)` etc. to coerce a single value.
+Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and lowers to exactly what that arrow lowers to. Every method that takes a callback accepts them — the array methods and the lodash iteratee/predicate methods alike (`.uniqBy(Number)`, `.keyBy(ObjectId)`, `.reject(Boolean)`), so one vocabulary covers whichever method you reach for.
 
-**`parseInt` / `parseFloat` are intentionally not allowed bare.** In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]` because `parseInt` receives the array index as its second (radix) argument. Rather than replicate the footgun, jsmql requires the call form: write `x => parseInt(x)` or `x => parseFloat(x)`.
+The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document; the stream methods take a field name or an arrow instead ([Stream methods](#stream-methods-chained-after-the-rhs)). Outside of a callback position the bare form errors at compile time — write `Boolean(x)` / `ObjectId(x)` to convert a single value.
+
+**`parseInt`, `parseFloat` and `Date` are intentionally not allowed bare.** The rule is that a bare built-in must mean what it reads as. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]`, because `parseInt` receives the array index as its second (radix) argument; and `Date` called without `new` ignores its argument entirely and returns the current time as a string. Rather than replicate either footgun, jsmql requires the explicit form: `x => parseInt(x)`, `x => new Date(x)`.
 
 ### Set methods (ES2025)
 

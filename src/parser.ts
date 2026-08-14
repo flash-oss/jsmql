@@ -1666,9 +1666,11 @@ export class Parser {
         if (name === "Number" && this.lexer.lookahead(1).type === TokenType.Dot) {
           return this.parseNumberStaticCall();
         }
-        if (name === "ObjectId" && this.lexer.lookahead(1).type === TokenType.LParen) {
+        if (name === "ObjectId") {
           this.lexer.next(); // consume 'ObjectId'
-          return this.finishObjectIdConstruction(t.pos);
+          if (this.lexer.peek().type === TokenType.LParen) return this.finishObjectIdConstruction(t.pos);
+          // Bare `ObjectId` — a callback reference, like a bare `Number`.
+          return { type: "ObjectIdRef", pos: t.pos };
         }
         if (TYPE_CAST_NAMES.has(name)) {
           if (this.lexer.lookahead(1).type === TokenType.LParen) return this.parseTypeCast();
@@ -2751,6 +2753,8 @@ function describeUpdateTarget(target: Expr): string {
       return `a '${target.cast}()' cast`;
     case "TypeCastRef":
       return `a bare '${target.cast}' reference`;
+    case "ObjectIdRef":
+      return "a bare 'ObjectId' reference";
     case "MemberAccess":
       return "a member access whose root is not a field path";
     case "Lambda":

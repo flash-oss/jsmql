@@ -180,6 +180,9 @@ export type Expr =
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
   | { type: "TypeCast"; cast: TypeCastOp; arg: Expr; pos: number }
   | { type: "TypeCastRef"; cast: BareCastOp; pos: number }
+  // A bare `ObjectId` used as a callback (`ids.map(ObjectId)`), the point-free
+  // spelling of `ids.map(id => ObjectId(id))`.
+  | { type: "ObjectIdRef"; pos: number }
   | { type: "MathCall"; method: MathMethod; args: CallArg[]; pos: number }
   | { type: "MathCallRef"; method: MathMethod; pos: number }
   | { type: "MathConst"; name: MathConstant; pos: number }

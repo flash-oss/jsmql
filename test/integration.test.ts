@@ -789,7 +789,7 @@ const candidateProductIdCounts = $$$.orders
   .map("productId")
   .filter(p => !myProductIds.includes(p))
   .countBy();
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(id => ObjectId(id));
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
   .filter(pr => pr._id in candidateProductIds)
