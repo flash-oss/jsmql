@@ -98,9 +98,10 @@ export function bsonEqual(a: unknown, b: unknown): boolean {
   return false;
 }
 
-/** MQL truthiness (for `.compact`): false / null / undefined / 0 are falsy; "" and NaN are truthy. */
-export function mqlTruthy(v: unknown): boolean {
-  return !(v === false || v === null || v === undefined || v === 0);
+/** JS truthiness (for `.compact`), mirroring codegen's `jsBool`: false / null /
+ *  undefined / 0 / "" are falsy. NaN is truthy — jsmql's documented divergence. */
+export function jsTruthy(v: unknown): boolean {
+  return !(v === false || v === null || v === undefined || v === 0 || v === "");
 }
 
 /** `$toString` of a key value (for object-key building in keyBy/groupBy/invert/…). */
@@ -161,7 +162,7 @@ export function uniq(arr: unknown[]): unknown[] {
   return out;
 }
 export function compact(arr: unknown[]): unknown[] {
-  return arr.filter(mqlTruthy);
+  return arr.filter(jsTruthy);
 }
 export function flatten(arr: unknown[]): unknown[] {
   return arr.reduce<unknown[]>((acc, x) => acc.concat(Array.isArray(x) ? x : [x]), []);

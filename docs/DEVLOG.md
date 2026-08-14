@@ -10,6 +10,187 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
+
+Merging the date/chain-check work with the type-aware-dispatch work put two independent
+answers to "what type does this receiver have?" in the same function, and they compose: the
+structural cases (a date method, a literal, `.length`, an `$op(...)` in `OPERATOR_RETURNS`)
+and the recorded ones (`bindingTypeOf` reading `ctx.bindingTypes` / `ctx.slotTypes`) now sit in
+one `certainReceiverType`, so `const d = $.t.startOf("month"); d.plus(1, "month")` is typed
+through the binding exactly as the expression would be.
+
+One decision was superseded rather than merged. The chain check had gained a receiver-specific
+hint sending a string receiver of `.at` to `.charAt(index)`, on the premise that jsmql's `.at`
+was array-only. It no longer is: `.at` and `.nth` moved into the `"either"` family, because
+JavaScript has `String.prototype.at` and lodash's `_.nth` reads a string, and both now lower to
+`$substrCP` on a string receiver. `"abc".at(-1)` therefore *works*, the hint was unreachable,
+and it is gone along with its test. The dual-family list in the ungated-methods assertion gained
+both names with the reason recorded next to them.
+
+---
+
+## 2026-08-13 — feat!: `getDay()` / `getUTCDay()` return MongoDB's 1-based `$dayOfWeek`
+
+```
+$.t.getDay()
+// before: { $subtract: [{ $dayOfWeek: "$t" }, 1] }     ← 0-based, Sunday = 0
+// now:    { $dayOfWeek: "$t" }                          ← Sunday = 1 … Saturday = 7
+```
+
+The weekday was the last number in the language still translated into JavaScript's base, and
+the month change had already settled the argument: a base that exists only to satisfy one
+JavaScript getter makes the number a developer reads in JSMQL disagree with the number in the
+MQL printed beside it. `$dayOfWeek` now passes straight through, so Sunday is 1. For the ISO
+weekday (Monday = 1) `.isoWeekday()` → `$isoDayOfWeek` was already there.
+
+Auditing the rest of the week vocabulary against MQL found nothing else to change — every
+other week concept was already MongoDB's own and passes through untouched: `.week()` → `$week`
+(0–53, weeks begin Sunday), `.isoWeek()` → `$isoWeek` (1–53), `.isoWeekYear()`, the
+`startOfWeek` option and its Sunday default, `$dateTrunc` / `$dateDiff` on a `"week"` unit, and
+the `%U` / `%V` / `%u` / `%w` format specifiers. Weekday numbering was the single divergence,
+and it is closed.
+
+---
+
+## 2026-08-13 — feat!: one month base for the whole language — `new Date(y, m, d)` is 1-based
+
+```
+new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   — month 1 = January
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: "$m", day: "$d" } }
+Date.UTC(2024, 1, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, … } } }
+
+new Date(2024, 0, 15)
+// ✗ Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1,
+//   December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means
+//   January there and December of the previous year here. Write 1 for January.
+```
+
+Moving `.getMonth()` to MQL's base left the *input* side 0-based, which is worse than either
+base on its own: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` — the most natural thing a
+developer writes — was off by a month, and the `- 1` had to be documented as a workaround.
+Now every month slot in the language counts January as 1: the constructors, `Date.UTC`, the
+getters, `.set({ month })`, and the `$dateFromParts` a reader sees in the output. A month no
+longer changes meaning as a value moves through a query.
+
+The `$add: [month, 1]` offset is gone from `generateDateFromParts`, so a runtime month passes
+straight through. The constant fold still has to shift, since JS `Date.UTC` is 0-based — that
+lives in `utcMs` alone, and both engines roll a month outside 1–12 over into the neighbouring
+year identically, so the folded value stays byte-identical to what `$dateFromParts` computes
+(verified against mongod for months 0, 1, 12, 13 and −1).
+
+A **literal month below 1 is now rejected**, which is the part that matters. Both engines
+accept it — month 0 is December of the year before — so nothing downstream would ever
+complain, and a pasted-in JS `new Date(2024, 0, 15)` would silently shift a query by a year.
+`checkMonthBase` guards every site that reads a month argument (the runtime lowering, the
+constant fold, and `Date.UTC`), is literal-gated so a runtime month passes, and catches the
+unary-minus form too. A month above 12 is deliberately left alone: `new Date($.y, 13, 1)` is
+next January in both engines and `m + 1` arithmetic legitimately produces it.
+
+---
+
+## 2026-08-13 — fix: a `$match` / Filter predicate reads under JS truthiness too
+
+```
+$$.filter(o => o.active)
+// before: [{ $match: { $expr: "$active" } }]
+//         ← MQL truthiness. `$$.reject(o => o.active)` negated with `!`, which HAS
+//           always used jsBool, so a doc with `active: ""` fell out of BOTH halves.
+// now:    [{ $match: { $expr: <jsBool of "$active"> } }]
+
+$.a && $.b                                  // Filter
+// before: { $expr: { $cond: { if: <jsBool "$a">, then: "$b", else: "$a" } } }
+// now:    { $expr: { $and: [ …jsBool "$a", …jsBool "$b" ] } }
+```
+
+Extends the value-mode rule (see *every array-method predicate position reads under JS
+truthiness*, same date) to the remaining predicate positions: the `$match` stage body, a
+stream `$$.filter` / `$$.reject`, a `$$$.<coll>` lookup predicate, and a bare-expression
+Filter. The `$expr` residual is a boolean position — a `$match` decides which documents
+survive, the same question `.filter` asks — so it now lowers through the same wrap. Only
+the residual takes it: the index-friendly `query` half is comparisons, already boolean,
+so `$.age > 18` still emits `{ age: { $gt: 18 } }`. `$match({ $expr: … })` written as an
+object literal skips the translator entirely and stays raw MQL, which is the escape
+hatch for MongoDB's own truthiness.
+
+Naively wrapping the residual made the most common Filter shape explode: `&&` lowers to
+the operand-preserving `$cond`, and `jsBool` of that repeats the whole chain once per
+falsy-value clause (`$.a && $.b` went from 233 to 684 bytes, with four evaluations of
+the chain per document). So boolean position is now its own lowering — `generateBool` in
+[src/codegen.ts](src/codegen.ts) — and a `&&` / `||` chain in it becomes `$and` / `$or`
+of the boolified operands, spliced flat, which is the same answer without the `$cond`
+nothing there can observe. Value position keeps the `$cond`. Every boolean position
+routes through it (`?:` test, `!`, `Boolean()`, `assert`, predicate lambda bodies,
+`resolvePredicate`, `.compact()`, the `$match` residual), so the rule is stated once.
+
+Two elision gaps surfaced while checking the new output for redundant wraps, both fixed
+rather than papered over: `.match()` and `/re/.test()` lower to `$regexMatch` — a boolean,
+unlike JS's array-or-null result — and were missing `returns: "bool"` in the `METHODS`
+registry; and a construct that becomes boolean only *after* lowering (an inlined
+reusable function, `$match(isBig($.amount))` → a `$let` around a `$gt`; a `jsmql.compile`
+param bound to `true`) has no bool-shaped AST for `isProvablyBool` to inspect, so
+`isBoolValued` now asks the same question of the generated value. A block-bodied
+predicate also moved its wrap inside the `$let`, around the `return`, so the bindings are
+evaluated once instead of once per clause. `NaN` remains truthy, and that is now a
+priced decision rather than an assumption: `{$toDouble: "NaN"}` yields a genuine double
+NaN on the server, and since MongoDB's `$eq` treats `NaN == NaN` as true — the very
+property that defeats the cheap `$ne:[x,x]` — comparing against it is an *exact* test
+(true for `double` and `decimal` NaN, false for ±Infinity, ±0, the string `"NaN"`, null,
+missing, `[]`, `{}`). It is just expensive: a fifth `jsBool` clause of that shape measured
+at +41% on a `$match` over 300k documents and +22% on a per-document `$filter`, against a
++15% floor for *any* fifth clause, and binding the constant in a `$let` does not help
+(the `$convert` re-runs per document). The cheap alternative — emitting a real BSON NaN
+literal — is closed off because jsmql's output must stay JSON-serialisable and
+`JSON.stringify(NaN)` is `null`. Paying a whole-language cost for a value that is
+vanishingly rare in MongoDB data is the wrong trade, so the divergence stands and
+`docs/LANGUAGE.md` now names the explicit `$ne($.x, $toDouble("NaN"))` spelling for
+anyone who does need the check. The same finding corrects DEF-022's blocker list. The `jsBool` mirror the suites assert against moved to
+[test/truthy.ts](../test/truthy.ts) so the rule has one home on the test side too. Rules:
+[docs/LANGUAGE.md](LANGUAGE.md) § Truthy and falsy, [docs/specs/grammar.md](specs/grammar.md),
+[docs/specs/match-query-translation.md](specs/match-query-translation.md).
+
+---
+
+## 2026-08-13 — fix: every array-method predicate position reads under JS truthiness
+
+```
+$.xs.compact()
+// before: { $filter: { input: "$xs", as: "jsmqlItem", cond: "$$jsmqlItem" } }
+//         ← raw MQL truthiness, where "" is TRUE. `_.compact(["a", null, 0, "", false])`
+//           is `["a"]`, but jsmql returned `["a", ""]`.
+// now:    { $filter: { … cond: <jsBool of the element> } }   ← identical to .filter(Boolean)
+```
+
+`.compact()` read its elements under MongoDB's truthiness rule rather than
+JavaScript's, so it kept `""` — diverging from `_.compact` and from jsmql's own
+`.filter(Boolean)` / `.filter(x => x)`, which have always used `jsBool`. The same
+gap ran through `resolvePredicate` in [src/codegen.ts](src/codegen.ts), the shared
+entry point for the lodash predicate-run family (`.reject` / `.partition` /
+`.takeWhile` / `.dropWhile` / `.takeRightWhile` / `.dropRightWhile`): it read the
+resolved iteratee as a boolean without the wrap that `.filter` / `.find` / `.some` /
+`.every` apply. The user-visible damage was worse than a kept `""`, because `.reject`
+negates with `!` and therefore *did* get `jsBool` for free — so the two halves were
+computed under two different rules, and on `[{n:"keep",active:true},{n:"empty",active:""},{n:"off",active:false}]`
+(verified on a live mongod) `.filter("active")` returned `["keep"]` while
+`.reject("active")` returned `["off"]`: `"empty"` fell out of **both**, and
+`.partition("active")` put it in the match bucket that `.filter` excluded.
+
+The fix is one wrap at each choke point — `jsBool` on the `.compact()` `$filter`
+cond, and `jsBoolIfNeeded` on the `resolvePredicate` result — so one truthiness rule
+now covers every predicate position and every predicate spelling (arrow, matches
+object, field-name string, `["field", value]` pair, bare `Boolean`). `ResolvedIteratee`
+gained an optional `src` (the AST the value came from) purely so the elision check
+can still run: a provably-boolean predicate (`{ ok: true }`, `o => o.n > 1`) emits
+exactly the shape it did before, so only the cases that were wrong changed shape.
+The constant folder mirrors the lowering, so `mqlTruthy` in
+[src/lodash-fold.ts](src/lodash-fold.ts) became `jsTruthy`; the fold-consistency
+suite gained a falsy-predicate battery that checks each of these against mongod.
+`NaN` stays truthy — jsmql's one documented divergence from JS, unchanged here and
+still the reason `.compact()` is not *quite* `_.compact`. Rules:
+[docs/LANGUAGE.md](LANGUAGE.md) § Truthy and falsy, [docs/specs/grammar.md](specs/grammar.md),
+[docs/specs/method-dispatch.md](specs/method-dispatch.md).
+
+---
+
 ## 2026-08-13 — fix: every single-type method declares the receiver family it needs
 
 ```
@@ -154,181 +335,75 @@ MQL is the developer's own and outside this check.
 
 ---
 
-## 2026-08-13 — feat!: `getDay()` / `getUTCDay()` return MongoDB's 1-based `$dayOfWeek`
+## 2026-08-12 — feat: `.diff(other, unit)` and one trailing options argument for every date method
 
 ```
-$.t.getDay()
-// before: { $subtract: [{ $dayOfWeek: "$t" }, 1] }     ← 0-based, Sunday = 0
-// now:    { $dayOfWeek: "$t" }                          ← Sunday = 1 … Saturday = 7
+$.end.diff($.start, "day")
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
+
+$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
+// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",
+//                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
 ```
 
-The weekday was the last number in the language still translated into JavaScript's base, and
-the month change had already settled the argument: a base that exists only to satisfy one
-JavaScript getter makes the number a developer reads in JSMQL disagree with the number in the
-MQL printed beside it. `$dayOfWeek` now passes straight through, so Sunday is 1. For the ISO
-weekday (Monday = 1) `.isoWeekday()` → `$isoDayOfWeek` was already there.
+`$dateDiff` was reachable only through the `$dateDiff(…)` operator form. `.diff` is the
+name Moment, Luxon and date-fns all use, and the receiver goes in the operator's `endDate`
+slot so the result is `receiver − other` — the direction all three libraries (and
+Temporal's `.since`) agree on. `other` and the receiver may be a date, a BSON timestamp or
+an ObjectId, so `new Date().diff($._id, "day")` reports a document's age from its `_id`.
 
-Auditing the rest of the week vocabulary against MQL found nothing else to change — every
-other week concept was already MongoDB's own and passes through untouched: `.week()` → `$week`
-(0–53, weeks begin Sunday), `.isoWeek()` → `$isoWeek` (1–53), `.isoWeekYear()`, the
-`startOfWeek` option and its Sunday default, `$dateTrunc` / `$dateDiff` on a `"week"` unit, and
-the `%U` / `%V` / `%u` / `%w` format specifiers. Weekday numbering was the single divergence,
-and it is closed.
+Two things the docs now say out loud rather than paper over. `$dateDiff` counts **unit
+boundaries crossed**, not elapsed time: 23:00 → 01:00 the next morning is 1 day, and 00:30
+→ 23:30 the same day is 0. Moment reports the opposite in both cases. The semantics stay
+MongoDB's — jsmql compensating for them would mean a `$dateDiff` that doesn't behave like
+`$dateDiff`. For raw elapsed milliseconds, `$.end - $.start` already lowers to
+`{ $subtract: [...] }`, which mongod returns as a long.
+
+`$dateDiff` also brought the second field-bearing slot to the family (`startOfWeek`
+alongside `timezone`), and `$dateTrunc` will bring a third (`binSize`), so a third and
+fourth positional argument per method was not going to scale. One rule instead, applied
+across the family: the last optional argument is a timezone string **or** an object literal
+whose keys are that operator's remaining fields. `dateOptions` in
+[src/codegen.ts](../src/codegen.ts) resolves both forms, rejects a key the operator has no
+slot for (with a `didYouMean` over the valid set), emits keys in the operators' own field
+order, and gates each value with the same helpers the operator path uses — so
+`.diff(…, { startOfWeek: "moonday" })` and `$dateDiff({ startOfWeek: "moonday" })` produce
+the same message. `.plus` / `.minus` route through it too and now take `{ timezone }`.
+
+The options form has to be written out as a literal, and a spread or computed key is
+rejected: MongoDB reads these fields by *name* out of the operator document, so the key set
+must exist in source. The values are unrestricted — `{ timezone: $.tz }` passes a path
+through. That also settles what a bare non-object argument means: it is always the timezone.
 
 ---
 
-## 2026-08-13 — feat!: one month base for the whole language — `new Date(y, m, d)` is 1-based
+## 2026-08-12 — feat: `.endOf(unit)` — the inclusive end of a bucket
 
 ```
-new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   — month 1 = January
-new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: "$m", day: "$d" } }
-Date.UTC(2024, 1, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, … } } }
-
-new Date(2024, 0, 15)
-// ✗ Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1,
-//   December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means
-//   January there and December of the previous year here. Write 1 for January.
+$.createdAt.endOf("month")
+// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt",
+//                                                                       unit: "month" } },
+//                                            unit: "month", amount: 1 } },
+//                    unit: "millisecond", amount: 1 } }
+//                                     → 2026-08-31T23:59:59.999Z
 ```
 
-Moving `.getMonth()` to MQL's base left the *input* side 0-based, which is worse than either
-base on its own: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` — the most natural thing a
-developer writes — was off by a month, and the `- 1` had to be documented as a workaround.
-Now every month slot in the language counts January as 1: the constructors, `Date.UTC`, the
-getters, `.set({ month })`, and the `$dateFromParts` a reader sees in the output. A month no
-longer changes meaning as a value moves through a query.
+MongoDB has no date ceiling, so `.endOf` is the first date method that composes more than
+one operator: truncate, add one unit, step back a millisecond. That lands on Moment's
+`23:59:59.999` exactly, which is what a developer reaching for `endOf` expects.
 
-The `$add: [month, 1]` offset is gone from `generateDateFromParts`, so a runtime month passes
-straight through. The constant fold still has to shift, since JS `Date.UTC` is 0-based — that
-lives in `utcMs` alone, and both engines roll a month outside 1–12 over into the neighbouring
-year identically, so the folded value stays byte-identical to what `$dateFromParts` computes
-(verified against mongod for months 0, 1, 12, 13 and −1).
+Three details make the composition correct rather than merely plausible, each verified on a
+live mongod. `binSize` becomes the `$dateAdd` amount, so `.endOf("minute", { binSize: 15 })`
+on `15:47` gives `15:59:59.999` — the end of the *bin*, not of the minute. Only `timezone`
+carries to the `$dateAdd`; `$dateAdd` has no `binSize` or `startOfWeek` field and mongod
+rejects an unknown one, so those stay on the `$dateTrunc`. And the timezone genuinely has to
+carry, or the addition would not be DST-aware: `.endOf("day", "America/New_York")` returns
+`2026-08-13T03:59:59.999Z`, which is local `23:59:59.999`.
 
-A **literal month below 1 is now rejected**, which is the part that matters. Both engines
-accept it — month 0 is December of the year before — so nothing downstream would ever
-complain, and a pasted-in JS `new Date(2024, 0, 15)` would silently shift a query by a year.
-`checkMonthBase` guards every site that reads a month argument (the runtime lowering, the
-constant fold, and `Date.UTC`), is literal-gated so a runtime month passes, and catches the
-unary-minus form too. A month above 12 is deliberately left alone: `new Date($.y, 13, 1)` is
-next January in both engines and `m + 1` arithmetic legitimately produces it.
-
----
-
-## 2026-08-12 — test: the date vocabulary runs against a live MongoDB
-
-The date methods were each probed against a local `mongod` as they landed, but three of them
-compose more than one operator and that is precisely the class a `toEqual` on emitted MQL
-cannot validate. `.endOf` is truncate + add + −1 ms, `.set` reads the parts back through a
-`$let`, and `.quarter` needs its `$toInt` or it returns a double. So the composition now has
-a permanent case in [test/integration.test.ts](../test/integration.test.ts), asserted on the
-documents the fixture server returns rather than on what jsmql emits.
-
-The expected values come from a live run, not from reasoning: for Ada Lovelace (createdAt
-2025-01-15, expiresAt 2026-12-01) the case pins `.endOf("month")` to
-`2026-12-31T23:59:59.999Z`, `.diff` to 685 days in the receiver-minus-argument direction,
-`.quarter()` to `4`, `.isoWeek()` to `49`, and `.set({ month: 1, day: 1 })` to
-`2026-01-01T00:00:00Z` — which is also the 1-based month base, checked by the server rather
-than asserted about.
-
----
-
-## 2026-08-12 — feat: `.set({ parts })` rebuilds a date, 1-based months
-
-```
-$.t.set({ year: 2030 })
-// { $let: { vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
-//           in: { $dateFromParts: { year: 2030, month: "$$jsmqlParts.month",
-//                                   day: "$$jsmqlParts.day", hour: "$$jsmqlParts.hour",
-//                                   minute: "$$jsmqlParts.minute", second: "$$jsmqlParts.second",
-//                                   millisecond: "$$jsmqlParts.millisecond" } } } }
-
-// Every part overridden → nothing to read back, so the $let goes away:
-$.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 })
-// { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
-```
-
-Luxon's `.set` (Temporal's `.with`), and immutable like every jsmql method. `$dateFromParts`
-needs every part it will use, so overriding one means reading the rest back — a `$let` binds
-`$dateToParts` once and each unnamed part reads `$$jsmqlParts.<key>`. The variable comes from
-`internalVar`, so a lambda parameter spelled `jsmqlParts` is gensymed around
-(`$.items.map(jsmqlParts => jsmqlParts.t.set({ year: 2030 }))` binds `jsmqlParts2`).
-
-**Months are 1-based**, matching `.getMonth()` and `$month`. That was the open question when
-this method was proposed: Luxon is 1-based, Moment 0-based, JavaScript 0-based, MQL 1-based.
-Picking MQL's base and moving `.getMonth()` to match it (see the earlier entry) means JSMQL
-now has exactly one month base rather than a per-method one.
-
-`$dateFromParts` has two mutually-exclusive key families and mongod refuses a document that
-mixes them ("does not allow mixing natural dates with ISO dates"), so `.set` follows whichever
-family the call names — `year`/`month`/`day` or `isoWeekYear`/`isoWeek`/`isoDayOfWeek`, either
-with the four time parts — and a mix is a compile-time error naming both offending keys. The
-ISO family also needs `iso8601: true` on the `$dateToParts` read, or the read returns calendar
-parts the rebuild has no slot for.
-
-The timezone is the second argument rather than a part, and it applies to both the read and
-the rebuild, so the parts are interpreted in that zone. A `timezone` key inside the parts
-object gets a message naming the second-argument form — it is a reasonable thing to try, so it
-earns better than a generic unknown-key error.
-
-Part values are gated to integers, and `$dateFromParts` gained the same `keyTypes` in the
-operator registry: mongod rejects a string or a fractional double in **any** part ("'year'
-must evaluate to an integer, found double with value 2030.5"), so both spellings now reject it
-with the same wording instead of the method inventing a restriction of its own.
-
----
-
-## 2026-08-12 — feat: `.isSame` / `.isBefore` / `.isAfter` compare at a granularity
-
-```
-$.a.isSame($.b, "day")
-// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
-//         { $dateTrunc: { date: "$b", unit: "day" } }] }
-
-$.a.isSame($.b)
-// ✗ .isSame(other) without a unit is just '===' — write 'a === b'. Pass a unit to
-//   compare at that granularity instead: .isSame(other, "day").
-```
-
-Moment's three predicates, and the **unit is what earns them**: truncate both sides, then
-compare. "Same day" ignoring the time of day has no one-operator spelling in MQL, and
-writing it out by hand is two `$dateTrunc`s a developer has to keep in sync.
-
-Without a unit all three are `===`, `<` and `>`, which JSMQL already lowers — so a
-one-argument call is refused with the operator named, ahead of the generic arity check,
-because "requires 2 or 3 arguments" would not tell the user what is actually wrong. This is
-deliberately not a second spelling of comparison; it is the granularity that is new.
-
-The options reach both truncations. A timezone or `startOfWeek` on one side only would
-compare two different calendars, which is a silently wrong answer rather than an error — the
-kind of bug this method exists to prevent.
-
----
-
-## 2026-08-12 — feat: the date parts JavaScript has no getter for
-
-```
-$.t.week()        // { $week: "$t" }          → 32     (Sunday-based, 0–53)
-$.t.isoWeek()     // { $isoWeek: "$t" }       → 33
-$.t.isoWeekday()  // { $isoDayOfWeek: "$t" }  → 3      (1 = Monday … 7 = Sunday)
-$.t.dayOfYear()   // { $dayOfYear: "$t" }     → 224
-$.t.quarter()     // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
-```
-
-`$week`, `$isoWeek`, `$isoWeekYear`, `$isoDayOfWeek` and `$dayOfYear` are ordinary MongoDB
-date accessors that had no JavaScript spelling, because JavaScript's `Date` has no
-counterpart to any of them. That absence makes the naming easy — there is no JS convention
-to honour, so these take Moment's method names and MQL's own numbering, which for the ISO
-parts is the same thing (`.isoWeekday()` is 1 = Monday, exactly like Moment's).
-
-`.quarter()` is the one derived value: MongoDB has no `$quarter`, so it is
-`ceil(month / 3)`. The `$toInt` is load-bearing rather than decorative — mongod returns a
-**double** from `$ceil` of a `$divide`, which would have made `.quarter()` the only date
-getter whose result isn't an integer. `$type` on a live server confirms `"int"` with the
-wrap and `"double"` without. For grouping *by* quarter, `.startOf("quarter")` is still the
-better shape: one operator, and it sorts as a date.
-
-All six take the same optional timezone, which switches the operator to its
-`{ date, timezone }` form. The bare-date form is kept when no timezone is passed, so the
-output stays the shape a developer would have written by hand.
+[docs/LANGUAGE.md](LANGUAGE.md) recommends the half-open range for date *filtering* —
+`>= .startOf(u) && < .startOf(u).plus(1, u)` — which is two operators against four and has
+no millisecond edge to reason about. `.endOf` is for when the last instant is the value you
+actually want.
 
 ---
 
@@ -377,33 +452,75 @@ the operator form, and the spec says why.
 
 ---
 
-## 2026-08-12 — feat: `.endOf(unit)` — the inclusive end of a bucket
+## 2026-08-12 — feat: `.isSame` / `.isBefore` / `.isAfter` compare at a granularity
 
 ```
-$.createdAt.endOf("month")
-// { $dateSubtract: { startDate: { $dateAdd: { startDate: { $dateTrunc: { date: "$createdAt",
-//                                                                       unit: "month" } },
-//                                            unit: "month", amount: 1 } },
-//                    unit: "millisecond", amount: 1 } }
-//                                     → 2026-08-31T23:59:59.999Z
+$.a.isSame($.b, "day")
+// { $eq: [{ $dateTrunc: { date: "$a", unit: "day" } },
+//         { $dateTrunc: { date: "$b", unit: "day" } }] }
+
+$.a.isSame($.b)
+// ✗ .isSame(other) without a unit is just '===' — write 'a === b'. Pass a unit to
+//   compare at that granularity instead: .isSame(other, "day").
 ```
 
-MongoDB has no date ceiling, so `.endOf` is the first date method that composes more than
-one operator: truncate, add one unit, step back a millisecond. That lands on Moment's
-`23:59:59.999` exactly, which is what a developer reaching for `endOf` expects.
+Moment's three predicates, and the **unit is what earns them**: truncate both sides, then
+compare. "Same day" ignoring the time of day has no one-operator spelling in MQL, and
+writing it out by hand is two `$dateTrunc`s a developer has to keep in sync.
 
-Three details make the composition correct rather than merely plausible, each verified on a
-live mongod. `binSize` becomes the `$dateAdd` amount, so `.endOf("minute", { binSize: 15 })`
-on `15:47` gives `15:59:59.999` — the end of the *bin*, not of the minute. Only `timezone`
-carries to the `$dateAdd`; `$dateAdd` has no `binSize` or `startOfWeek` field and mongod
-rejects an unknown one, so those stay on the `$dateTrunc`. And the timezone genuinely has to
-carry, or the addition would not be DST-aware: `.endOf("day", "America/New_York")` returns
-`2026-08-13T03:59:59.999Z`, which is local `23:59:59.999`.
+Without a unit all three are `===`, `<` and `>`, which JSMQL already lowers — so a
+one-argument call is refused with the operator named, ahead of the generic arity check,
+because "requires 2 or 3 arguments" would not tell the user what is actually wrong. This is
+deliberately not a second spelling of comparison; it is the granularity that is new.
 
-[docs/LANGUAGE.md](LANGUAGE.md) recommends the half-open range for date *filtering* —
-`>= .startOf(u) && < .startOf(u).plus(1, u)` — which is two operators against four and has
-no millisecond edge to reason about. `.endOf` is for when the last instant is the value you
-actually want.
+The options reach both truncations. A timezone or `startOfWeek` on one side only would
+compare two different calendars, which is a silently wrong answer rather than an error — the
+kind of bug this method exists to prevent.
+
+---
+
+## 2026-08-12 — feat: `.set({ parts })` rebuilds a date, 1-based months
+
+```
+$.t.set({ year: 2030 })
+// { $let: { vars: { jsmqlParts: { $dateToParts: { date: "$t" } } },
+//           in: { $dateFromParts: { year: 2030, month: "$$jsmqlParts.month",
+//                                   day: "$$jsmqlParts.day", hour: "$$jsmqlParts.hour",
+//                                   minute: "$$jsmqlParts.minute", second: "$$jsmqlParts.second",
+//                                   millisecond: "$$jsmqlParts.millisecond" } } } }
+
+// Every part overridden → nothing to read back, so the $let goes away:
+$.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 })
+// { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
+```
+
+Luxon's `.set` (Temporal's `.with`), and immutable like every jsmql method. `$dateFromParts`
+needs every part it will use, so overriding one means reading the rest back — a `$let` binds
+`$dateToParts` once and each unnamed part reads `$$jsmqlParts.<key>`. The variable comes from
+`internalVar`, so a lambda parameter spelled `jsmqlParts` is gensymed around
+(`$.items.map(jsmqlParts => jsmqlParts.t.set({ year: 2030 }))` binds `jsmqlParts2`).
+
+**Months are 1-based**, matching `.getMonth()` and `$month`. That was the open question when
+this method was proposed: Luxon is 1-based, Moment 0-based, JavaScript 0-based, MQL 1-based.
+Picking MQL's base and moving `.getMonth()` to match it (see the earlier entry) means JSMQL
+now has exactly one month base rather than a per-method one.
+
+`$dateFromParts` has two mutually-exclusive key families and mongod refuses a document that
+mixes them ("does not allow mixing natural dates with ISO dates"), so `.set` follows whichever
+family the call names — `year`/`month`/`day` or `isoWeekYear`/`isoWeek`/`isoDayOfWeek`, either
+with the four time parts — and a mix is a compile-time error naming both offending keys. The
+ISO family also needs `iso8601: true` on the `$dateToParts` read, or the read returns calendar
+parts the rebuild has no slot for.
+
+The timezone is the second argument rather than a part, and it applies to both the read and
+the rebuild, so the parts are interpreted in that zone. A `timezone` key inside the parts
+object gets a message naming the second-argument form — it is a reasonable thing to try, so it
+earns better than a generic unknown-key error.
+
+Part values are gated to integers, and `$dateFromParts` gained the same `keyTypes` in the
+operator registry: mongod rejects a string or a fractional double in **any** part ("'year'
+must evaluate to an integer, found double with value 2030.5"), so both spellings now reject it
+with the same wording instead of the method inventing a restriction of its own.
 
 ---
 
@@ -438,45 +555,32 @@ option exists, so the example is the one place it shows.
 
 ---
 
-## 2026-08-12 — feat: `.diff(other, unit)` and one trailing options argument for every date method
+## 2026-08-12 — feat: the date parts JavaScript has no getter for
 
 ```
-$.end.diff($.start, "day")
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
-
-$.end.diff($.start, "week", { startOfWeek: "monday", timezone: "Europe/Kyiv" })
-// { $dateDiff: { startDate: "$start", endDate: "$end", unit: "week",
-//                timezone: "Europe/Kyiv", startOfWeek: "monday" } }
+$.t.week()        // { $week: "$t" }          → 32     (Sunday-based, 0–53)
+$.t.isoWeek()     // { $isoWeek: "$t" }       → 33
+$.t.isoWeekday()  // { $isoDayOfWeek: "$t" }  → 3      (1 = Monday … 7 = Sunday)
+$.t.dayOfYear()   // { $dayOfYear: "$t" }     → 224
+$.t.quarter()     // { $toInt: { $ceil: { $divide: [{ $month: "$t" }, 3] } } }   → 3
 ```
 
-`$dateDiff` was reachable only through the `$dateDiff(…)` operator form. `.diff` is the
-name Moment, Luxon and date-fns all use, and the receiver goes in the operator's `endDate`
-slot so the result is `receiver − other` — the direction all three libraries (and
-Temporal's `.since`) agree on. `other` and the receiver may be a date, a BSON timestamp or
-an ObjectId, so `new Date().diff($._id, "day")` reports a document's age from its `_id`.
+`$week`, `$isoWeek`, `$isoWeekYear`, `$isoDayOfWeek` and `$dayOfYear` are ordinary MongoDB
+date accessors that had no JavaScript spelling, because JavaScript's `Date` has no
+counterpart to any of them. That absence makes the naming easy — there is no JS convention
+to honour, so these take Moment's method names and MQL's own numbering, which for the ISO
+parts is the same thing (`.isoWeekday()` is 1 = Monday, exactly like Moment's).
 
-Two things the docs now say out loud rather than paper over. `$dateDiff` counts **unit
-boundaries crossed**, not elapsed time: 23:00 → 01:00 the next morning is 1 day, and 00:30
-→ 23:30 the same day is 0. Moment reports the opposite in both cases. The semantics stay
-MongoDB's — jsmql compensating for them would mean a `$dateDiff` that doesn't behave like
-`$dateDiff`. For raw elapsed milliseconds, `$.end - $.start` already lowers to
-`{ $subtract: [...] }`, which mongod returns as a long.
+`.quarter()` is the one derived value: MongoDB has no `$quarter`, so it is
+`ceil(month / 3)`. The `$toInt` is load-bearing rather than decorative — mongod returns a
+**double** from `$ceil` of a `$divide`, which would have made `.quarter()` the only date
+getter whose result isn't an integer. `$type` on a live server confirms `"int"` with the
+wrap and `"double"` without. For grouping *by* quarter, `.startOf("quarter")` is still the
+better shape: one operator, and it sorts as a date.
 
-`$dateDiff` also brought the second field-bearing slot to the family (`startOfWeek`
-alongside `timezone`), and `$dateTrunc` will bring a third (`binSize`), so a third and
-fourth positional argument per method was not going to scale. One rule instead, applied
-across the family: the last optional argument is a timezone string **or** an object literal
-whose keys are that operator's remaining fields. `dateOptions` in
-[src/codegen.ts](../src/codegen.ts) resolves both forms, rejects a key the operator has no
-slot for (with a `didYouMean` over the valid set), emits keys in the operators' own field
-order, and gates each value with the same helpers the operator path uses — so
-`.diff(…, { startOfWeek: "moonday" })` and `$dateDiff({ startOfWeek: "moonday" })` produce
-the same message. `.plus` / `.minus` route through it too and now take `{ timezone }`.
-
-The options form has to be written out as a literal, and a spread or computed key is
-rejected: MongoDB reads these fields by *name* out of the operator document, so the key set
-must exist in source. The values are unrestricted — `{ timezone: $.tz }` passes a path
-through. That also settles what a bare non-object argument means: it is always the timezone.
+All six take the same optional timezone, which switches the operator to its
+`{ date, timezone }` form. The bare-date form is kept when no timezone is passed, so the
+output stays the shape a developer would have written by hand.
 
 ---
 
@@ -505,26 +609,76 @@ which [docs/LANGUAGE.md](LANGUAGE.md) now states next to the getter table.
 
 ---
 
-## 2026-08-11 — fix: a forbidden stage inside an `.aggregate` block names its container (closes DEF-024)
+## 2026-08-12 — fix: `obj[<int>]` covers all three JavaScript readings; a negative bracket index is rejected
 
 ```
-$ = { k: $$.aggregate(o => { $collStats({}); }) };
-// before: [{ $facet: { k: [{ $collStats: {} }] } }]        ← emitted; mongod refuses it
-// now:    '$collStats' is not allowed inside a '$facet' sub-pipeline. Move it to the
-//         outer (top-level) pipeline.
+$set({ v: $.name[0] });
+// before: $cond: { if: { $isArray: "$name" }, then: { $arrayElemAt: ["$name", 0] },
+//                 else: { $getField: { field: 0, input: "$name" } } }
+//         ← mongod ABORTS on any non-array: "$getField requires 'field' to evaluate
+//           to type String, but got int". Only the array branch ever worked.
+// now:    array → $arrayElemAt, string → $substrCP (the character), else → $getField
+//         with the STRING "0". All three verified on a live server.
 
-$.t = $$$.orders.aggregate(o => { $out("archive"); });
-// before: '$out' is not allowed inside a sub-pipeline — MongoDB only accepts it as …
-// now:    '$out' is not allowed inside a '$lookup' sub-pipeline. Move it to the outer …
+$.items[-1]   // now a compile error naming `.at(-1)`
+"abc".at(-1)  // now works — was rejected as "expects an array receiver"
 ```
 
-Two halves, one carrier. A stage forbidden in *every* container (`$out`, `$merge`) needed no label and was already caught by `GenerateCtx.inSubPipeline`. A stage forbidden in a *single* one (`$collStats`, `$facet`, `$geoNear`, `$indexStats`, `$planCacheStats`, `$search`, `$searchMeta`, `$vectorSearch` — all `forbiddenIn: ["facet"]`) cannot be judged without a container name, and inside an `.aggregate` block the assembly-loop validator never sees the stage. So it emitted.
+An integer bracket key has three live JavaScript meanings — an array position, a string character, and a document field whose name is that digit (`({ 0: "z" })[0] === "z"`, since a property key coerces to a string) — and each lowers to a different MongoDB operator. jsmql emitted a two-way array-or-object guard whose else-branch was **invalid MQL**: `$getField.field` must evaluate to a String, and passing the raw integer is an *executor*-time error, so the whole command died for every non-array receiver. Nine assertions across three test files were endorsing that shape. `generateNumericIndexAccess` now owns the case: one place, so the string branch and the negative-index rejection can't be forgotten at one of the call sites.
 
-DEF-024's blocker was that `lowerBlock` is one shared lowerer, used both for real sub-pipeline bodies and for lowerings that emit TOP-LEVEL stages, so binding a container to it would mislabel the second kind. The row itself named the answer — the carrier `GenerateCtx.enclosingLookup` already uses — and that is what shipped: `GenerateCtx.subPipelineContainer`, stamped by the ctx builders (`freshSubPipelineCtx(outer, container)`, `freshFacetCtx`) rather than threaded through `generateImplicitPipeline`. Every position that builds a sub-pipeline ctx now labels it, so all four containers report by name in *both* spellings, and `generateStageBody` reuses `forbiddenInContextMessage` — the same wording `checkStageLinkPlacement` produces for a chain link. The unlabelled all-container check stays as the fallback.
+Negative bracket indices are rejected for **every** receiver type. `arr[-1]` is `undefined` in JavaScript — only `.at(-1)` counts from the end — so all three candidate lowerings are wrong answers: `$arrayElemAt` would silently return the last element, `$substrCP` would be refused by the server, and `$getField` would read a field named `"-1"`. The error names `.at()` instead. Literal-gated, per the rule the rest of the compiler follows: a computed index (`arr[$.i]`) can't be proven either way, so it passes through and MongoDB decides.
 
-Verified against the registry rather than assumed: mongod *does* accept `$collStats` as the first stage of a `$lookup.pipeline`, so `forbiddenIn: ["facet"]` is right and `$.t = $$$.orders.aggregate(o => { $collStats({}); })` still compiles. The check is only as strict as the registry.
+`.at()` became dual-type to make that redirect honest. JS has `String.prototype.at`, but jsmql's registry declared `.at` array-only, so `"abc".at(-1)` was rejected outright (and on a bare field it emitted `$arrayElemAt`, which mongod refuses on a string — the same HR3 class). It now sits in the `"either"` family with `.slice`/`.includes`/`.indexOf`/`.concat`. The two branches need *different* index expressions: `$arrayElemAt` takes a negative natively, while `$substrCP` refuses one ("the starting index must be nonnegative integer"), so the string side resolves the index against the length through `normaliseSliceIndex`.
 
-Probing the fix surfaced a second, pre-existing hole in the same family, closed here too. `$$$.dest = $$.aggregate(o => { $out("x"); })` emitted `[{ $out: "x" }, { $out: "dest" }]` — two terminal stages, which mongod refuses with "$out can only be the final stage". The `$out` write chain's stages land at the *top* level with its own `$out` appended after them, so the applicable rule is must-be-last, not forbidden-in-sub-pipeline; the stage-link spelling already got it from `checkStageLinkPlacement(…, isLastInContainer: false, "top")` and only the block spelling escaped. `GenerateCtx.beforeTerminalStage`, set for the whole write-chain RHS, carries the same rule with the same `mustBeLastMessage`.
+Its lodash spelling `.nth` had the identical hole and now shares the lowering (`generateIndexFromEitherEnd`): `_.nth("abc", 1)` is `"b"` in lodash, so array-only was wrong there too, and a bare `$arrayElemAt` aborted the query on a string. Moving both into the `"either"` family broke `returnsReceiverElement`, which derived "returns an element of its receiver" from `optional: "array"` — and that derivation can no longer work, because `.at`/`.nth` read one element while `.slice`/`.concat` return a container of the receiver's own type, yet all four now carry `optional: "either"` with no invariant `returns`. Hence the explicit `ELEMENT_READING_EITHER_METHODS`, which is what keeps `$$$.orders.nth(1).map(…)` rejected (a stream of documents means `.nth(1)` is a document).
+
+One subtlety only a live run caught. The first `.at()` dispatch treated "not an array" as "string", and `$substrCP` of a *missing* value is `""` — which is not null, so it poisoned an enclosing `??`: the `$.aliases.at(0) ?? "anonymous"` example in [test/realistic.test.ts](test/realistic.test.ts) returned `""` instead of the fallback. The `else` now tests `isStringType` explicitly and falls to `$$REMOVE`, because JS has no `.at()` on a number or a document and missing is how MQL spells an absent result. A new [test/integration.test.ts](test/integration.test.ts) case runs both spellings against arrays, strings, documents, and an absent field and compares each value with what JavaScript returns — a `toEqual` could not have caught either bug. Two documented divergences remain on string receivers, both from `$substrCP` clamping: an index past the end gives `""` and `.at(-99)` gives the first character, where JS gives `undefined` for both. See [src/codegen.ts](src/codegen.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/LANGUAGE.md](docs/LANGUAGE.md).
+
+---
+
+## 2026-08-12 — fix: a computed `$getField` key is coerced, and the compiler's own slots carry their type
+
+```
+$set({ v: $.doc[$.k] });
+// before: { $getField: { field: "$k", input: "$doc" } }
+//         ← on any document where `k` is ABSENT, mongod kills the whole command:
+//           "$getField requires 'field' to evaluate to type String, but got null"
+// now:    { $getField: { field: { $toString: { $ifNull: ["$k", ""] } }, … } }
+
+$.u = $$$.users.filter(u => u._id === $._id).at(0);
+// before: $cond on $isArray over `__jsmql.tmp.1` — a slot jsmql itself filled
+// now:    { $arrayElemAt: ["$__jsmql.tmp.1", 0] }
+
+$set({ v: { 0: 1, 0x10: 2 } });   // now the fields "0" and "16", as JavaScript builds them
+```
+
+Three findings from the bracket-index pass, each its own hole.
+
+**The String requirement isn't only about integer literals.** Stringifying an integer *key* fixed `$.name[0]`, but a key jsmql can't prove is a string hit the same wall — and the case that bites is not an exotic numeric key, it is a key field that is simply **absent**, which reaches `$getField` as null. `$.doc[$.k]` therefore aborted the entire command on ordinary data. `coerceFieldKey` emits `{ $toString: { $ifNull: [k, ""] } }`: `$toString` is the faithful lowering rather than a workaround (a JS property key is always coerced, so `obj[0]` *is* `obj["0"]`), and the `$ifNull` is the load-bearing half — `""` names a field no document has, so an absent key reads as missing, like `obj[undefined]` in JS. Provably-string keys skip it, so the coercion appears only where the type is genuinely open. It changed 15 expected outputs, which is the honest measure of how often that shape occurs — and of how often the abort was reachable.
+
+**jsmql didn't know its own slots.** A method chained onto a materialised lookup has a plain `__jsmql.tmp.<N>` field path as its receiver, which no structural predicate can type even though the compiler wrote it — so `$$$.users.filter(p).at(0)` guarded against `$isArray` over jsmql's own scratch, and `.includes` / `[n]` / `.size` did the same (that pair predates the `.at` dispatch). `GenerateCtx.slotTypes` closes it: `noteSlotType` records what a lowering wrote, `bindingTypeOf` reads it for a `FieldRef`. It is a **mutable** map shared by reference — deliberately, as the sibling of `slotAllocator` and pipeline-global for the same reason — which is what avoids threading a return value through `extractLookupCalls`' seventeen call sites and works through the update-op buffer, since every caller extracts and then generates under the same ctx object. Recorded only where the contents are certain: a `.filter`/`.aggregate` `$lookup.as` array, or the single object a collapsing terminal unwraps. `.find` / `.length` / `.reduce` record nothing and keep the conservative dispatch.
+
+**A numeric object key is valid JavaScript that jsmql rejected.** `({ 0: 1 })` parses in JS and builds the field `"0"`; jsmql said "Expected an object key". Now accepted, using the numeric *value* stringified — so `{ 0x10: 1 }` is `"16"`, matching JS rather than the source text. This is the write-side counterpart of reading `doc[0]`, and a user who can read one will reach for the other. A 24-hex `0x…` is an ObjectId in jsmql and an ObjectId is not a field name, so it is rejected as a key with a pointer at the quoted spelling.
+
+Two new [test/integration.test.ts](test/integration.test.ts) cases run all three against the live fixture — a missing key field, a numeric key, a digit-keyed object literal, and four methods chained onto a lookup slot — because a `toEqual` proves none of it. See [src/codegen.ts](src/codegen.ts), [src/parser.ts](src/parser.ts), [src/lookup-translation.ts](src/lookup-translation.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/specs/grammar.md](docs/specs/grammar.md).
+
+---
+
+## 2026-08-12 — test: the date vocabulary runs against a live MongoDB
+
+The date methods were each probed against a local `mongod` as they landed, but three of them
+compose more than one operator and that is precisely the class a `toEqual` on emitted MQL
+cannot validate. `.endOf` is truncate + add + −1 ms, `.set` reads the parts back through a
+`$let`, and `.quarter` needs its `$toInt` or it returns a double. So the composition now has
+a permanent case in [test/integration.test.ts](../test/integration.test.ts), asserted on the
+documents the fixture server returns rather than on what jsmql emits.
+
+The expected values come from a live run, not from reasoning: for Ada Lovelace (createdAt
+2025-01-15, expiresAt 2026-12-01) the case pins `.endOf("month")` to
+`2026-12-31T23:59:59.999Z`, `.diff` to 685 days in the receiver-minus-argument direction,
+`.quarter()` to `4`, `.isoWeek()` to `49`, and `.set({ month: 1, day: 1 })` to
+`2026-01-01T00:00:00Z` — which is also the 1-based month base, checked by the server rather
+than asserted about.
 
 ---
 
@@ -563,6 +717,29 @@ Also fixed alongside: a `$.<field>` read inside `$$.aggregate` was rejected by a
 
 ---
 
+## 2026-08-11 — fix: a forbidden stage inside an `.aggregate` block names its container (closes DEF-024)
+
+```
+$ = { k: $$.aggregate(o => { $collStats({}); }) };
+// before: [{ $facet: { k: [{ $collStats: {} }] } }]        ← emitted; mongod refuses it
+// now:    '$collStats' is not allowed inside a '$facet' sub-pipeline. Move it to the
+//         outer (top-level) pipeline.
+
+$.t = $$$.orders.aggregate(o => { $out("archive"); });
+// before: '$out' is not allowed inside a sub-pipeline — MongoDB only accepts it as …
+// now:    '$out' is not allowed inside a '$lookup' sub-pipeline. Move it to the outer …
+```
+
+Two halves, one carrier. A stage forbidden in *every* container (`$out`, `$merge`) needed no label and was already caught by `GenerateCtx.inSubPipeline`. A stage forbidden in a *single* one (`$collStats`, `$facet`, `$geoNear`, `$indexStats`, `$planCacheStats`, `$search`, `$searchMeta`, `$vectorSearch` — all `forbiddenIn: ["facet"]`) cannot be judged without a container name, and inside an `.aggregate` block the assembly-loop validator never sees the stage. So it emitted.
+
+DEF-024's blocker was that `lowerBlock` is one shared lowerer, used both for real sub-pipeline bodies and for lowerings that emit TOP-LEVEL stages, so binding a container to it would mislabel the second kind. The row itself named the answer — the carrier `GenerateCtx.enclosingLookup` already uses — and that is what shipped: `GenerateCtx.subPipelineContainer`, stamped by the ctx builders (`freshSubPipelineCtx(outer, container)`, `freshFacetCtx`) rather than threaded through `generateImplicitPipeline`. Every position that builds a sub-pipeline ctx now labels it, so all four containers report by name in *both* spellings, and `generateStageBody` reuses `forbiddenInContextMessage` — the same wording `checkStageLinkPlacement` produces for a chain link. The unlabelled all-container check stays as the fallback.
+
+Verified against the registry rather than assumed: mongod *does* accept `$collStats` as the first stage of a `$lookup.pipeline`, so `forbiddenIn: ["facet"]` is right and `$.t = $$$.orders.aggregate(o => { $collStats({}); })` still compiles. The check is only as strict as the registry.
+
+Probing the fix surfaced a second, pre-existing hole in the same family, closed here too. `$$$.dest = $$.aggregate(o => { $out("x"); })` emitted `[{ $out: "x" }, { $out: "dest" }]` — two terminal stages, which mongod refuses with "$out can only be the final stage". The `$out` write chain's stages land at the *top* level with its own `$out` appended after them, so the applicable rule is must-be-last, not forbidden-in-sub-pipeline; the stage-link spelling already got it from `checkStageLinkPlacement(…, isLastInContainer: false, "top")` and only the block spelling escaped. `GenerateCtx.beforeTerminalStage`, set for the whole write-chain RHS, carries the same rule with the same `mustBeLastMessage`.
+
+---
+
 ## 2026-08-11 — fix: a pipeline stage name is rejected where a value is expected
 
 ```
@@ -580,6 +757,31 @@ All 44 stage-only names were accepted in value position and emitted MQL the serv
 This is inside the pre-flight validators' narrow exemption, not a violation of it: the exemption covers shapes **universally** invalid on every deployment, and no deployment has a `$limit` expression operator — unlike the cross-database `$lookup` namespace, which Atlas Data Federation does accept and which jsmql must therefore pass through.
 
 One test changed rather than being added to. `jsmql.expr("$match($.a === 0)")` asserted `{ $match: { $eq: ["$a", 0] } }`, described as useful for a hand-written sub-pipeline literal. mongod refuses that document in *both* readings — there is no `$match` expression operator, and as a stage body a bare `$eq` is "unknown top level operator" — so the suite was endorsing an invalid shape, which `test/CLAUDE.md` forbids. `jsmql.pipeline("$match($.a === 0)")` → `[{ $match: { a: 0 } }]` is where a stage document comes from, and `jsmql.expr("$.a === 0")` where the expression does.
+
+---
+
+## 2026-08-11 — fix: receiver-type dispatch reads `const` binding types, so a known array stops asking `$isArray`
+
+```
+const ids = $.tags.uniq();                                  // provably an array
+const hits = $$$.orders.filter(o => ids.includes(o.pid));
+// before: $cond: { if: { $isArray: "$$jsmql_v0_ids" },
+//                  then: { $in: ["$pid", "$$jsmql_v0_ids"] },
+//                  else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_ids", "$pid"] }, 0] } }
+// now:    $in: ["$pid", "$$jsmql_v0_ids"]
+
+const a = $.tags.uniq(); $set({ s: a.toString() });
+// before: { $toString: "$__jsmql.var.a" }   ← mongod: "Unsupported conversion from array to string"
+// now:    the $reduce join form, matching JS `[…].toString()`
+```
+
+The compiler already recorded a `const`'s provable static type in `ctx.bindingTypes`, but only three sites read it (`IndexAccess`, `.length`, and the `.reduce` accumulator narrowing), each with its own bespoke `ParamRef` lookup. Every *other* receiver-type dispatch consulted the structural predicates alone, so a binding it had itself proven to be an array still got the runtime `$cond` on `$isArray` — a guard whose `$indexOfCP` string branch can never run. `.toString()` was worse than verbose: it fell through to `$toString` of an array, which mongod rejects outright, so this was a latent HR3 break hiding behind a green `toEqual`.
+
+The fix is one concept instead of N special cases: `bindingTypeOf(expr, ctx)` folded into `isArrayProducing` / `isStringProducing` / `isObjectProducing`, each now taking an optional trailing `ctx` — a binding of known type is exactly as provable as a literal or an invariant-`returns` chain. Threading `ctx` then upgrades every consumer at once (`.includes`, `.indexOf`, `.slice`, `.concat`, `.toString`, `.size`, `.length`, `IndexAccess`, string-context `+`, template interpolation, the optional-chain neutral, `isArrayOfArrays`, and `certainReceiverType` — so `const s = $.name.trim(); s.map(f)` is now a compile-time error rather than a server one), and it *deletes* the three bespoke lookups. Two `lambdaResult(lambda)` inference sites deliberately stay ctx-free: that expression comes from inside a lambda whose params shadow the outer scope, so the outer types don't apply to it. `let` remains untracked — it can be reassigned, so the conservative dispatch is the honest lowering there.
+
+Two gaps in the *producer* side went with it. A direct `$$$.<coll>` lookup binding called `extendCtxLets` without the declaration's `kind`, which both lost the type (`extendCtxLets` only records one for `const`, since a `let` can drift) and silently let a `const` be reassigned; passing `stmt.kind` with `lookupSlotType(direct)` fixes both — `.filter`/`.aggregate` keep the `$lookup.as` array, `.find` stays untyped because its `$first` yields `null` on no match. And a `$lookup.pipeline` had no way to know its correlation var *was* a captured binding: `correlatedBindingTypes` now derives that by joining `letVars` (var → outer field path) against `ctx.pipelineLets` (binding → field path) — two records that already existed, no new plumbing through the let-extractor — and seeds it as the sub-pipeline's `bindingTypes`. A sub-path capture (`user._id`) stays untyped on purpose: the type of `user` says nothing about the type of `user._id`. Nested lookups inherit through `EnclosingLookupContext.letVarTypes`, which is load-bearing rather than defensive — MQL `$$` vars are lexically scoped through sub-pipeline boundaries, so a deeper level reading an ancestor's var allocates no `let` of its own and would otherwise lose the type exactly where the var still resolves.
+
+Verified on a live mongod, not just by `toEqual`: the full co-purchase recommendation pipeline returns identical documents before and after (same semantics, leaner MQL), the depth-1 correlated `$in` runs and filters correctly, and the old array-`$toString` shape is confirmed server-rejected. See [src/codegen.ts](src/codegen.ts), [src/lookup-translation.ts](src/lookup-translation.ts), [src/pipeline.ts](src/pipeline.ts), [docs/specs/method-dispatch.md](docs/specs/method-dispatch.md), [docs/specs/lookup-stage.md](docs/specs/lookup-stage.md), [docs/specs/let-bindings.md](docs/specs/let-bindings.md).
 
 ---
 

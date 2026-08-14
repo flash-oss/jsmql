@@ -69,6 +69,17 @@ A bare reference to the foreign param itself (`o` alone, no member access) is **
 
 The MongoDB-native `$lookup.let` is wholly distinct from jsmql's pipeline-scoped `let` (`__jsmql.var.x`): lookup-pipeline lets live only inside one `$lookup.pipeline` and are read as `$$letVar`, while pipeline-scoped lets are materialised as document fields under `__jsmql.var.<name>` and read as `"$__jsmql.var.x"`. See [`let-bindings.md`](./let-bindings.md).
 
+### Correlation-var types
+
+A correlation var that captures a **whole** outer binding holds exactly what that binding holds, so the sub-pipeline inherits its static type. `correlatedBindingTypes` derives the mapping by joining the two records that already exist — `letVars` (var → outer field path) against `ctx.pipelineLets` (binding name → field path) — and hands the result to `makeSubPipelineCtx`, which seeds it as the sub-pipeline's `bindingTypes` (the one `bindingTypes` slice a `$lookup` body inherits; `freshSubPipelineCtx` drops the rest). The payoff is a receiver-typed lowering inside the predicate: for `const ids = $.tags.uniq()`, a `ids.includes(p)` in the predicate emits a plain `$in` on `$$jsmql_v0_ids` rather than a runtime `$cond` on `$isArray` whose `$indexOfCP` string branch can never run. See [method-dispatch.md § `bindingTypes`](method-dispatch.md).
+
+Two cases stay deliberately untyped, per the literal-gating rule:
+
+- a **sub-path** capture (`user._id` → `"$__jsmql.var.user._id"`) matches no binding slot — the type of `user` says nothing about the type of `user._id`;
+- a `$.<field>` / system capture — nothing about a document field is provable at compile time.
+
+Nested lookups inherit through `EnclosingLookupContext.letVarTypes`, alongside `inScopeLetNames`. This is load-bearing rather than belt-and-braces: MQL `$$` vars are lexically scoped *through* sub-pipeline boundaries, so a deeper level reading an ancestor's var allocates no `let` of its own, and without the inherited slice the type would be lost exactly where the var still resolves.
+
 ## Chained-terminal materialisation
 
 `extractLookupCalls` recognises three chained patterns explicitly:
@@ -82,6 +93,8 @@ The MongoDB-native `$lookup.let` is wholly distinct from jsmql's pipeline-scoped
 In each case, the returned `rewritten` expression is a `FieldRef` pointing at the slot, so the surrounding stage's codegen runs over the materialised result. Member access (`<lookup>.find(p).name`) and arithmetic operations fall into the generic "direct lookup" branch — the slot ends up holding either a scalar or an array (per the `.find` / `.filter` distinction), and the existing `MemberAccess` / arithmetic codegen handles it.
 
 Patterns not specifically recognised (`<lookup>.map(fn)`, `<lookup>.at(idx)`, second `.filter`) still work — they go through the direct-lookup branch and the existing array-method codegen runs over the materialised slot. The output is slightly more verbose (one extra stage) than a dedicated optimisation, but correct.
+
+The slot's **type** travels with it: `noteSlotType` records that a `.filter`/`.aggregate` slot holds the `$lookup.as` array (and that a collapsing terminal's slot holds the unwrapped object), so a method chained onto it dispatches at compile time rather than guarding over jsmql's own scratch — see [method-dispatch.md § Compiler-owned slots are typed](method-dispatch.md).
 
 A chained terminal that doesn't carry its own predicate (`<lookup>.length`, `.reduce`, `.map`) **requires** a `.find/.filter(pred)` first — bare `$$$.coll.reduce(...)` cannot be reached because `$$$.coll` alone is not a `MethodCall` and `detectLookupCall` won't match. The bare-reference codegen error then fires with the actionable "must be followed by `.find/.filter`" message.
 

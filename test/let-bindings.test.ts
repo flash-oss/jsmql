@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 
 describe("let bindings — basic shape", () => {
   it("a single let materialises under __jsmql, with a trailing $unset", () => {
@@ -40,7 +41,7 @@ describe("let bindings — basic shape", () => {
   it("a let referenced inside $match wraps in $expr automatically", () => {
     expect(jsmql("let big = $.x > 100; $match(big)")).toEqual([
       { $set: { "__jsmql.var.big": { $gt: ["$x", 100] } } },
-      { $match: { $expr: "$__jsmql.var.big" } },
+      { $match: { $expr: truthy("$__jsmql.var.big") } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -115,7 +116,7 @@ describe("let bindings — template-tag form", () => {
     const threshold = 42;
     expect(jsmql`let big = $.score > ${threshold}; $match(big)`).toEqual([
       { $set: { "__jsmql.var.big": { $gt: ["$score", 42] } } },
-      { $match: { $expr: "$__jsmql.var.big" } },
+      { $match: { $expr: truthy("$__jsmql.var.big") } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -209,7 +210,7 @@ describe("let bindings — sub-pipeline boundaries", () => {
           let: { uid: "$_id" },
           pipeline: [
             { $set: { "__jsmql.var.recent": { $gt: ["$createdAt", "2026-01-01"] } } },
-            { $match: { $expr: "$__jsmql.var.recent" } },
+            { $match: { $expr: truthy("$__jsmql.var.recent") } },
             { $unset: "__jsmql" },
           ],
           as: "userOrders",
@@ -411,8 +412,9 @@ describe("let bindings — member / method / index access", () => {
   });
 
   it("index access on a let resolves the receiver to its field path", () => {
-    // The let's value type is unknown at compile time, so codegen emits the
-    // standard runtime array-vs-object dispatch for `xs[0]`.
+    // A `let` is never statically typed (it can be reassigned), and `$.items`
+    // isn't provable anyway, so `xs[0]` emits the runtime three-way dispatch for
+    // an integer key: array position, string character, field named "0".
     expect(jsmql("let xs = $.items; $project({ first: xs[0] })")).toEqual([
       { $set: { "__jsmql.var.xs": "$items" } },
       {
@@ -421,7 +423,14 @@ describe("let bindings — member / method / index access", () => {
             $cond: {
               if: { $isArray: "$__jsmql.var.xs" },
               then: { $arrayElemAt: ["$__jsmql.var.xs", 0] },
-              else: { $getField: { field: 0, input: "$__jsmql.var.xs" } },
+              else: {
+                $cond: {
+                  if: { $eq: [{ $type: "$__jsmql.var.xs" }, "string"] },
+                  then: { $substrCP: ["$__jsmql.var.xs", 0, 1] },
+                  // The STRING "0" — mongod refuses `field: 0` outright.
+                  else: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
+                },
+              },
             },
           },
         },
@@ -438,7 +447,7 @@ describe("let bindings — interaction with update ops", () => {
     expect(jsmql("let big = $.x > 100; $.flag = big; $match($.flag)")).toEqual([
       { $set: { "__jsmql.var.big": { $gt: ["$x", 100] } } },
       { $set: { flag: "$__jsmql.var.big" } },
-      { $match: { $expr: "$flag" } },
+      { $match: { $expr: truthy("$flag") } },
       { $unset: "__jsmql" },
     ]);
   });

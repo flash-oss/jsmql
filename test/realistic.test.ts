@@ -23,9 +23,6 @@ import "../src/ops.ts";
 declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?: string; features?: string[] } }
 
 // JS-truthiness coercion jsmql emits for `&&`/`||`/ternary conditions.
-const truthy = (v: unknown) => ({
-  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
-});
 
 // "Recommended products" for one user — the classic collaborative-filtering
 // query, in a handful of lines of JavaScript. It's the playground's default
@@ -145,13 +142,11 @@ $ = candidateProductIds
                       $map: {
                         input: "$productIds",
                         as: "p",
-                        in: {
-                          $cond: {
-                            if: { $isArray: "$$jsmql_v0_myProductIds" },
-                            then: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
-                            else: { $gte: [{ $indexOfCP: ["$$jsmql_v0_myProductIds", "$$p"] }, 0] },
-                          },
-                        },
+                        // `myProductIds` is a `const` bound to `.uniq()` — provably an
+                        // array — and the `$lookup.let` var captures the whole binding,
+                        // so `.includes` is a plain `$in`: no `$isArray` guard, no dead
+                        // `$indexOfCP` string branch.
+                        in: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
                       },
                     },
                   },
@@ -189,15 +184,7 @@ $ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: {
-                                $not: {
-                                  $cond: {
-                                    if: { $isArray: "$__jsmql.var.myProductIds" },
-                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
-                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
-                                  },
-                                },
-                              },
+                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
                             },
                           },
                           as: "jsmqlItem",
@@ -230,15 +217,7 @@ $ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: {
-                                $not: {
-                                  $cond: {
-                                    if: { $isArray: "$__jsmql.var.myProductIds" },
-                                    then: { $in: ["$$p", "$__jsmql.var.myProductIds"] },
-                                    else: { $gte: [{ $indexOfCP: ["$__jsmql.var.myProductIds", "$$p"] }, 0] },
-                                  },
-                                },
-                              },
+                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
                             },
                           },
                           as: "jsmqlItem",
@@ -288,7 +267,12 @@ $ = candidateProductIds
                             $cond: {
                               if: { $isArray: "$__jsmql.var.candidateProductIdCounts" },
                               then: { $arrayElemAt: ["$__jsmql.var.candidateProductIdCounts", "$$id"] },
-                              else: { $getField: { field: "$$id", input: "$__jsmql.var.candidateProductIdCounts" } },
+                              else: {
+                                $getField: {
+                                  field: { $toString: { $ifNull: ["$$id", ""] } },
+                                  input: "$__jsmql.var.candidateProductIdCounts",
+                                },
+                              },
                             },
                           },
                           name: {
@@ -504,7 +488,19 @@ $project({
                       [
                         {
                           k: "$$this",
-                          v: { $add: [{ $ifNull: [{ $getField: { field: "$$this", input: "$$value" } }, 0] }, 1] },
+                          v: {
+                            $add: [
+                              {
+                                $ifNull: [
+                                  {
+                                    $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" },
+                                  },
+                                  0,
+                                ],
+                              },
+                              1,
+                            ],
+                          },
                         },
                       ],
                     ],
@@ -874,7 +870,14 @@ $ = ["sender", "recipient"].map(party => {
                           vars: { score: "$$leg.riskScore" },
                           in: {
                             $cond: {
-                              if: truthy("$$score"),
+                              if: {
+                                $and: [
+                                  { $ne: [{ $ifNull: ["$$score", null] }, null] },
+                                  { $ne: ["$$score", false] },
+                                  { $ne: ["$$score", ""] },
+                                  { $ne: ["$$score", 0] },
+                                ],
+                              },
                               then: {
                                 party: "$$party",
                                 score: "$$score",
@@ -890,7 +893,14 @@ $ = ["sender", "recipient"].map(party => {
                 },
               },
               as: "v",
-              cond: truthy("$$v"),
+              cond: {
+                $and: [
+                  { $ne: [{ $ifNull: ["$$v", null] }, null] },
+                  { $ne: ["$$v", false] },
+                  { $ne: ["$$v", ""] },
+                  { $ne: ["$$v", 0] },
+                ],
+              },
             },
           },
         },
@@ -1236,7 +1246,7 @@ describe(
         $cond: {
           if: { $isArray: "$cart.field" },
           then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
-          else: { $getField: { field: "$mainSide", input: "$cart.field" } },
+          else: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
         },
       });
     });
@@ -1820,8 +1830,30 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
+      // `.at()` reads from either end of an array OR a string in JS, and `$.aliases`
+      // is a bare field — no provable type — so the middle term dispatches at query
+      // time. Pin the type (a `const` with an array-producing initialiser, or a
+      // chained `.map`/`.uniq`) to get a bare `$arrayElemAt`.
       expect(jsmql.expr(`$.firstName ?? $.aliases.at(0) ?? "anonymous"`)).toEqual({
-        $ifNull: ["$firstName", { $arrayElemAt: ["$aliases", 0] }, "anonymous"],
+        $ifNull: [
+          "$firstName",
+          {
+            $cond: {
+              if: { $isArray: "$aliases" },
+              then: { $arrayElemAt: ["$aliases", 0] },
+              else: {
+                $cond: {
+                  if: { $eq: [{ $type: "$aliases" }, "string"] },
+                  then: { $substrCP: ["$aliases", 0, 1] },
+                  // Missing must stay MISSING, not become "" — otherwise it is not
+                  // null and the "anonymous" fallback below never fires.
+                  else: "$$REMOVE",
+                },
+              },
+            },
+          },
+          "anonymous",
+        ],
       });
     },
   );
@@ -2777,18 +2809,16 @@ $$$$.exports.email_contacts = $$;
           {
             $match: {
               $expr: {
-                $cond: {
-                  if: {
-                    $and: [
-                      { $ne: [{ $ifNull: ["$active", null] }, null] },
-                      { $ne: ["$active", false] },
-                      { $ne: ["$active", ""] },
-                      { $ne: ["$active", 0] },
-                    ],
-                  },
-                  then: "$contactDetails.email",
-                  else: "$active",
-                },
+                $and: [
+                  { $ne: [{ $ifNull: ["$active", null] }, null] },
+                  { $ne: ["$active", false] },
+                  { $ne: ["$active", ""] },
+                  { $ne: ["$active", 0] },
+                  { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
+                  { $ne: ["$contactDetails.email", false] },
+                  { $ne: ["$contactDetails.email", ""] },
+                  { $ne: ["$contactDetails.email", 0] },
+                ],
               },
             },
           },

@@ -2,6 +2,7 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { OPERATORS, type OperatorDef } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
+import { truthy } from "./truthy.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The rule under test (HR1 — see docs/LANG_RULES.md):
@@ -296,13 +297,10 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
           pipeline: [
             {
               $match: {
-                $expr: {
-                  $cond: {
-                    if: { $eq: ["$refId", "$$jsmql_f0__id"] },
-                    then: "$active",
-                    else: { $eq: ["$refId", "$$jsmql_f0__id"] },
-                  },
-                },
+                // A `&&` in predicate position is `$and` of its boolified operands —
+                // the operand-preserving `$cond` says nothing where only truthiness
+                // is read, and repeating the chain inside a jsBool would be worse.
+                $expr: { $and: [{ $eq: ["$refId", "$$jsmql_f0__id"] }, ...truthy("$active").$and] },
               },
             },
           ],

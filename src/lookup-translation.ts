@@ -34,7 +34,8 @@ import {
   type StageRewrite,
 } from "./callback-block.ts";
 import {
-  generateExprBlockWithCtx,
+  generateExprBlockPredicate,
+  noteSlotType,
   internalError,
   CodegenError,
   documentReceiverViolation,
@@ -120,6 +121,14 @@ export type EnclosingLookupContext = {
    * `$lookup.let`. `.aggregate`-block path only.
    */
   parentHandles?: ReadonlyMap<string, number>;
+  /**
+   * Static type of those enclosing let-vars that captured a whole outer binding
+   * of provable type — the `bindingTypes` slice a deeper level inherits along
+   * with `inScopeLetNames`. Built by `correlatedBindingTypes`; empty at the top
+   * level and for every var whose capture proves nothing (a `$.<field>` read, a
+   * sub-path of a binding).
+   */
+  letVarTypes?: ReadonlyMap<string, "object" | "array" | "string">;
 };
 
 export const EMPTY_ENCLOSING: EnclosingLookupContext = { foreignParams: [], inScopeLetNames: new Set() };
@@ -1317,6 +1326,7 @@ export function translatePredicate(
     const innerEnclosing: EnclosingLookupContext = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+      letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing),
     };
     const localAllocSlot = createSlotAllocator();
     const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
@@ -1329,7 +1339,7 @@ export function translatePredicate(
 
     // Codegen context: our own letVar names PLUS enclosing-in-scope names
     // are all `lambdaParams` so codegen emits `$$<name>` correctly.
-    const subCtxBase = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtxBase = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     // `$$.length` (ROOT count) in the predicate, at the top level → capture into
     // `$lookup.let` so the residual `$expr` codegen reads it as `$$v0_length`.
     const subCtx = captureRootStreamLength(
@@ -1373,21 +1383,71 @@ export function translatePredicate(
       outerLets,
       enclosing.foreignParams.length,
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     return {
       kind: "pipeline",
       letVars,
-      pipeline: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }],
+      pipeline: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }],
     };
   }
 
   return internalError(`.${call.method}(predicate) lambda has no body, block, or exprBlock`, lambda.pos);
 }
 
-function makeSubPipelineCtx(outerCtx: GenerateCtx, letVarNames: string[]): GenerateCtx {
+/**
+ * Ctx for a `$lookup.pipeline` body. The correlation vars this level allocated
+ * (`letVars`) plus every ancestor's in-scope var join `lambdaParams`, so codegen
+ * emits `$$<name>` for a reference to one.
+ */
+function makeSubPipelineCtx(
+  outerCtx: GenerateCtx,
+  letVars: Record<string, string>,
+  enclosing: EnclosingLookupContext,
+): GenerateCtx {
   const fresh = freshSubPipelineCtx(outerCtx, "lookup");
-  if (letVarNames.length === 0) return fresh;
-  return { ...fresh, lambdaParams: new Set([...fresh.lambdaParams, ...letVarNames]) };
+  const names = [...Object.keys(letVars), ...enclosing.inScopeLetNames];
+  if (names.length === 0) return fresh;
+  const bindingTypes = correlatedBindingTypes(outerCtx, letVars, enclosing);
+  return {
+    ...fresh,
+    lambdaParams: new Set([...fresh.lambdaParams, ...names]),
+    ...(bindingTypes !== undefined && { bindingTypes }),
+  };
+}
+
+/**
+ * The `bindingTypes` a `$lookup.pipeline` inherits through its correlation vars.
+ *
+ * A var that captures a WHOLE outer binding (`jsmql_v0_ids = "$__jsmql.var.ids"`)
+ * holds exactly what that binding holds, so it carries the binding's static type
+ * inward and a receiver-typed lowering inside the predicate keeps its precise
+ * form — `ids.includes(p)` stays `$in` instead of a runtime `$cond` on `$isArray`
+ * whose string branch can never run. Derived by joining `letVars` (var → outer
+ * field path) against `pipelineLets` (binding name → field path), the two records
+ * that already exist; a sub-path capture (`user._id` → `"$__jsmql.var.user._id"`)
+ * matches nothing and stays untyped, because the type of `user` says nothing
+ * about the type of `user._id`.
+ *
+ * Ancestor vars (`enclosing.letVarTypes`) merge in first so a deeper level keeps
+ * what shallower ones proved; this level's own captures win on a name clash.
+ */
+function correlatedBindingTypes(
+  outerCtx: GenerateCtx,
+  letVars: Record<string, string>,
+  enclosing: EnclosingLookupContext,
+): ReadonlyMap<string, "object" | "array" | "string"> | undefined {
+  const outerTypes = outerCtx.bindingTypes;
+  const out = new Map(enclosing.letVarTypes ?? []);
+  if (outerTypes !== undefined && outerTypes.size > 0) {
+    const bindingByPath = new Map<string, string>();
+    for (const [name, path] of outerCtx.pipelineLets ?? []) bindingByPath.set(path, name);
+    for (const [letVar, value] of Object.entries(letVars)) {
+      const binding = bindingByPath.get(value.slice(1)); // drop the leading "$"
+      const t = binding === undefined ? undefined : outerTypes.get(binding);
+      if (t !== undefined) out.set(letVar, t);
+    }
+  }
+  return out.size > 0 ? out : undefined;
 }
 
 /**
@@ -1470,13 +1530,14 @@ export function lowerCallbackBlock(
   const innerEnclosing: EnclosingLookupContext = {
     foreignParams: [...enclosing.foreignParams, foreignParam],
     inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+    letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing),
     parentAllocators: [...parents, allocator],
     // This level's 3rd-param handle becomes an ANCESTOR handle for nested lookups,
     // recorded at this scope's depth so they can capture its `.length`.
     parentHandles: opts.collParam !== undefined ? new Map([...parentHandles, [opts.collParam, depth]]) : parentHandles,
   };
   const subCtx: GenerateCtx = {
-    ...makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]),
+    ...makeSubPipelineCtx(outerCtx, letVars, enclosing),
     enclosingLookup: innerEnclosing,
     // `$$.length` (the ROOT stream count) captured by an enclosing chain stays
     // in scope inside this block — preserve the var `makeSubPipelineCtx`/
@@ -1532,6 +1593,7 @@ export function buildPipelineFormPredicate(
     const innerEnclosing: EnclosingLookupContext = {
       foreignParams: [...enclosing.foreignParams, foreignParam],
       inScopeLetNames: new Set([...enclosing.inScopeLetNames, ...Object.keys(letVars)]),
+      letVarTypes: correlatedBindingTypes(outerCtx, letVars, enclosing),
     };
     const localAllocSlot = createSlotAllocator();
     const { stages: nestedStages, rewritten: lookupFree } = extractLookupCalls(
@@ -1541,7 +1603,7 @@ export function buildPipelineFormPredicate(
       lowerBlock,
       innerEnclosing,
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
     // Index-friendly translation — see the matching note in `translatePredicate`.
     const t = translateMatchBody(lookupFree, { bindings: subCtx.bindings });
     return { letVars, pipelineBody: [...nestedStages, ...matchStagesFromTranslation(t, subCtx)] };
@@ -1560,8 +1622,8 @@ export function buildPipelineFormPredicate(
       outerLets,
       enclosing.foreignParams.length,
     );
-    const subCtx = makeSubPipelineCtx(outerCtx, [...Object.keys(letVars), ...enclosing.inScopeLetNames]);
-    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }] };
+    const subCtx = makeSubPipelineCtx(outerCtx, letVars, enclosing);
+    return { letVars, pipelineBody: [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }] };
   }
   return internalError("predicate lambda has no body, block, or exprBlock", lambda.pos);
 }
@@ -1900,7 +1962,7 @@ export function lowerLambdaPredicate(
     const { rewritten, letVars } = extractLetsFromExprBlock(lambda.exprBlock, param);
     if (Object.keys(letVars).length > 0) opts.onLocalRef(letVars, param, lambda.pos);
     const subCtx = opts.freshCtx(outerCtx);
-    return [{ $match: { $expr: generateExprBlockWithCtx(rewritten, subCtx) } }];
+    return [{ $match: { $expr: generateExprBlockPredicate(rewritten, subCtx) } }];
   }
 
   return opts.missingBody();
@@ -2386,6 +2448,17 @@ export function lowerLookup(
 }
 
 /**
+ * The static type of the slot `lowerLookup` fills, for `staticBindingType`'s
+ * `const`-typing. `.filter` / `.aggregate` leave the `$lookup.as` array in place,
+ * so a binding of one is provably an array. `.find` is deliberately untyped: its
+ * `$first` overwrite yields a document on a match and `null` on none, and `null`
+ * is not an object.
+ */
+export function lookupSlotType(call: LookupCall): "array" | undefined {
+  return call.method === "find" ? undefined : "array";
+}
+
+/**
  * Assemble a pipeline-form `$lookup` body, **omitting `let` when nothing was
  * correlated** — an empty `let: {}` is pure noise, and the server treats
  * `let` as optional.
@@ -2552,6 +2625,11 @@ export function extractLookupCalls(
   if (direct !== null) {
     const slot = allocSlot();
     const stages = lowerLookup(direct, slot, outerCtx, lowerBlock, enclosing);
+    // The slot IS the `$lookup.as` array for `.filter`/`.aggregate`, so a method
+    // chained onto the rewritten `FieldRef` needs no runtime type guard. `.find`
+    // records nothing — `lookupSlotType` leaves it untyped because its `$first`
+    // overwrite is `null` on no match.
+    noteSlotType(outerCtx, slot, lookupSlotType(direct));
     return { stages, rewritten: { type: "FieldRef", path: slot, pos: expr.pos } };
   }
   // Chained stream methods on a `.filter` lookup (e.g.,
@@ -3085,9 +3163,13 @@ function tryExtractChainedLookup(
   // the slot holds `[obj]`. Unwrap it to the single object (mirrors lowerLookup's
   // `.find` $first); `$ifNull(…, {})` makes an empty foreign match yield `{}`
   // (lodash `_.countBy([]) === {}`) rather than a missing field.
-  if (isCollapsingTerminal(methods[methods.length - 1])) {
+  const collapsed = isCollapsingTerminal(methods[methods.length - 1]);
+  if (collapsed) {
     stages.push({ $set: { [slot]: { $ifNull: [{ $first: `$${slot}` }, {}] } } });
   }
+  // Either way the slot's type is certain: the unwrapped single object, or the
+  // `$lookup.as` array the chain's stages transformed.
+  noteSlotType(outerCtx, slot, collapsed ? "object" : "array");
   return { stages, rewritten };
 }
 

@@ -89,12 +89,27 @@ keyword in `errors[0].pos`.
 
 ### `let` vs `const`
 
-Both keywords declare a pipeline-scoped binding; they differ only in **reassignment**.
-The three dispatch sites (`collectStatement()`, `parseArrayLiteral()`, and the
-object-key branch in `parseObjectEntry()`) accept either keyword. `parseLetDecl()`
-records which one was written in `LetDecl.kind` (`"let" | "const"`); declaration,
-read, scope-tracking, and cleanup are otherwise keyword-agnostic. The keyword is
-echoed in the re-declaration / shadow / parser error wording.
+Both keywords declare a pipeline-scoped binding; they differ in **reassignment**
+and, following from that, in **static typing**. The three dispatch sites
+(`collectStatement()`, `parseArrayLiteral()`, and the object-key branch in
+`parseObjectEntry()`) accept either keyword. `parseLetDecl()` records which one was
+written in `LetDecl.kind` (`"let" | "const"`); declaration, read, scope-tracking,
+and cleanup are otherwise keyword-agnostic. The keyword is echoed in the
+re-declaration / shadow / parser error wording.
+
+### Static typing (`const` only)
+
+`extendCtxLets` records a `const`'s provable static type (`staticBindingType` of
+the initialiser, or `lookupSlotType` for a direct `$$$.<coll>` lookup RHS) in
+`ctx.bindingTypes`, and every receiver-type dispatch downstream reads it — so
+`const ids = $.tags.uniq(); … ids.includes(x)` emits a plain `$in` instead of a
+runtime `$cond` on `$isArray`. A `let` is left untracked on purpose: a later
+reassignment can change its type, so the recorded one would be a lie and the
+conservative runtime dispatch is the honest lowering. Both the type and the
+read-only flag come from the same `kind` argument, which is why the two travel
+together. See [method-dispatch.md § `bindingTypes`](method-dispatch.md) for the
+consumers and [lookup-stage.md § Correlation-var types](lookup-stage.md) for how a
+type crosses into a `$lookup.pipeline`.
 
 ### Reassignment
 
@@ -261,6 +276,13 @@ For chained-on-lookup RHSes (`let n = $$$.coll.filter(p).length`,
 into an internal `__jsmql.tmp.<N>` slot first; the let machinery then
 materialises `__jsmql.var.<name>` from that slot in the standard way. See
 [`lookup-stage.md`](./lookup-stage.md) for the chained-terminal lowering table.
+
+Both routes carry the declaration's `kind` (so a `const` lookup binding rejects
+reassignment) and its static type: the direct route types the slot with
+`lookupSlotType` — `.filter` / `.aggregate` leave the `$lookup.as` array in place,
+while `.find` stays untyped because its `$first` overwrite yields `null` on no
+match — and the chained route types the rewritten RHS with `staticBindingType`, so
+a `.uniq()`-terminated chain is an array.
 
 ## Deferred
 

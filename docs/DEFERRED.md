@@ -169,8 +169,8 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 - **What's blocked.** `Number.isFinite($.x)` is rejected because jsmql has no syntax for `Infinity` / `NaN` literals to compare against.
 - **Target lowering.** Would need both literal-Infinity / literal-NaN escape hatches in the parser and a translation table for the resulting comparisons.
-- **Why blocked.** Three-way blocker: no Infinity/NaN literal in jsmql source; MongoDB's `$eq` treats `NaN == NaN` as true (unlike JS); the lowering would touch every numeric comparison helper.
-- **Attempted approaches.** None — the existing error message names three workarounds (`$type`, `$convert` sentinel, range guard).
+- **Why blocked.** No Infinity/NaN literal in jsmql source, and the lowering would touch every numeric comparison helper. jsmql's output must stay JSON-serialisable, so an emitted literal cannot be a real BSON `NaN` / `±Infinity` (`JSON.stringify(NaN)` is `null`, which would silently become a different comparison) — it has to be synthesised server-side.
+- **Attempted approaches.** The comparison half is solved and verified on a live mongod: `{$toDouble: "NaN"}` yields a genuine double NaN, and because MongoDB's `$eq` treats `NaN == NaN` as true (unlike JS), `{$eq: [x, {$toDouble: "NaN"}]}` is an exact NaN test — true for `double` and `decimal` NaN, false for ±Infinity, ±0, the string `"NaN"`, null, missing, `[]`, `{}`. `{$toDouble: "-Infinity"}` gives the other bound (NaN sorts below it, so `{$gt: [x, -Infinity]}` also isolates NaN among numbers). What remains is the source-syntax half and the cost: the same clause measured at +41% on a `$match` when added to `jsBool`, which is why the truthiness rule does not carry it (see the NaN note in `docs/LANGUAGE.md`) — a one-off `Number.isFinite` call would not pay that whole-language price. The existing error message names three workarounds (`$type`, `$convert` sentinel, range guard).
 - **Success criteria.** TBD with the literal-escape design.
 - **Rejection site(s).** `src/codegen.ts:3309`.
 - **Spec.** None — would need `docs/specs/numeric-edges.md` or similar.

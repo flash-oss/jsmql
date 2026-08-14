@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 import { assertNoWriteStageInSubPipeline } from "../src/pipeline.ts";
 
 describe("pipeline detection", () => {
@@ -513,7 +514,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("non-translatable predicate residual rides in `$expr`", () => {
     expect(jsmql(`$ = { active: $$.filter(o => o.active) };`)).toEqual([
-      { $facet: { active: [{ $match: { $expr: "$active" } }] } },
+      { $facet: { active: [{ $match: { $expr: truthy("$active") } }] } },
     ]);
   });
 
@@ -597,7 +598,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
     expect(jsmql(`[ $$ = $$.filter(t => t.x > 0) ]`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
     expect(jsmql(`[ $$ = $$$.users.filter(u => u.active) ]`)).toEqual([
       { $match: { $expr: false } },
-      { $unionWith: { coll: "users", pipeline: [{ $match: { $expr: "$active" } }] } },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { $expr: truthy("$active") } }] } },
     ]);
   });
 

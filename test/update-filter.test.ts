@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 
 describe("update filters: simple assignment (=)", () => {
   // `jsmql()` always returns an aggregation-pipeline array for update-filter
@@ -119,7 +120,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
 
   it("inc/dec inside a pipeline", () => {
     expect(jsmql("[$match($.active), $.views++, $sort({views: -1})]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { views: { $add: ["$views", 1] } } },
       { $sort: { views: -1 } },
     ]);
@@ -135,7 +136,7 @@ describe("update filters: increment/decrement (++x, x++, --x, x--)", () => {
 
   it("parens around inc/dec inside pipeline arrays work", () => {
     expect(jsmql("[$match($.active), ($.views++), (--$.lives)]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { views: { $add: ["$views", 1] }, lives: { $subtract: ["$lives", 1] } } },
     ]);
   });
@@ -290,7 +291,7 @@ describe("update filters: realistic mixed (user-supplied)", () => {
 describe("update filters: in pipelines", () => {
   it("pipeline with assignment between stages", () => {
     expect(jsmql("[$match($.active), $.score += 1, $sort({score: -1})]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { score: { $add: ["$score", 1] } } },
       { $sort: { score: -1 } },
     ]);
@@ -298,7 +299,7 @@ describe("update filters: in pipelines", () => {
 
   it("consecutive update op elements coalesce inside a pipeline", () => {
     expect(jsmql("[$match($.active), $.a = 1, $.b = 2, $sort({c: 1})]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { a: 1, b: 2 } },
       { $sort: { c: 1 } },
     ]);
@@ -314,7 +315,7 @@ describe("update filters: in pipelines", () => {
 
   it("delete inside a pipeline", () => {
     expect(jsmql("[$match($.active), delete $.tmp, $sort({a: 1})]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $unset: "tmp" },
       { $sort: { a: 1 } },
     ]);
@@ -341,7 +342,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
 
   it("parens around assignments as pipeline elements coalesce normally", () => {
     expect(jsmql("[$match($.active), ($.a = 1), ($.b = 2), $sort({c: 1})]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { a: 1, b: 2 } },
       { $sort: { c: 1 } },
     ]);
@@ -349,7 +350,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
 
   it("parens around assignments mixed with bare assignments work", () => {
     expect(jsmql("[$match($.active), ($.a = 1), $.b = 2]")).toEqual([
-      { $match: { $expr: "$active" } },
+      { $match: { $expr: truthy("$active") } },
       { $set: { a: 1, b: 2 } },
     ]);
   });

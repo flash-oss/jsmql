@@ -18,7 +18,7 @@
 
 import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
-import { isOpaqueBsonValue, generateWithCtx, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
+import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -39,11 +39,18 @@ export type MatchTranslation = {
  * consumer of `translateMatchBody` (the top-level Filter in index.ts, the
  * `$match` stage body in pipeline.ts, and `matchStagesFromTranslation` for the
  * sub-pipeline translators) routes through it so the emitted shape can't drift.
+ *
+ * The residual sits in boolean position, so it takes the JS-truthiness wrap every
+ * other predicate position takes — raw `$expr` truthiness would keep a `""` that
+ * `.filter(x => x.f)` drops, and would stop `.reject` being `.filter`'s complement.
+ * Only the residual is wrapped: the translated `query` half is comparisons, which
+ * are boolean already, so the index-friendly shape is untouched. `$match({ $expr: … })`
+ * written as an object literal skips this function entirely and stays raw MQL.
  */
 export function mergeTranslatedQuery(t: MatchTranslation, ctx: GenerateCtx): Record<string, unknown> | null {
   const queryEmpty = Object.keys(t.query).length === 0;
   if (t.residual === null) return queryEmpty ? null : t.query;
-  const exprBody = generateWithCtx(t.residual, ctx);
+  const exprBody = generateBool(t.residual, ctx);
   if (queryEmpty) return { $expr: exprBody };
   return { ...t.query, $expr: exprBody };
 }

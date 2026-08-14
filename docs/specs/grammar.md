@@ -154,6 +154,10 @@ object_literal = "{" object_entries? "}"
 object_entries = object_entry ("," object_entry)* ","?
 object_entry   = "..." expression
                | (IDENT | STRING) ":" expression
+               | NUMBER ":" expression                       (* numeric key → its stringified VALUE:
+                                                                { 0: 1 } is the field "0", { 0x10: 1 } is "16",
+                                                                matching JS property-key coercion. A 24-hex
+                                                                ObjectId literal is rejected — not a field name. *)
                | "$" IDENT ":" expression                    (* dollar-prefixed key, e.g. { $match: ... } *)
                | "[" expression "]" ":" expression           (* computed key *)
                | IDENT                                       (* shorthand: name → name: name *)
@@ -407,10 +411,13 @@ When any operand of a `+` chain is **string-producing**, the entire chain emits 
 
 ## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
 
-The codegen helpers `jsBool(value)` and `isProvablyBool(expr)` (in `src/codegen.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
+The codegen helpers `jsBool(value)`, `isProvablyBool(expr)`, and `generateBool(expr, ctx)` (in `src/codegen.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
 
 - `jsBool(value)` emits `{ $and: [{$ne:[{$ifNull:[v,null]},null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)` so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing → null first, matching JS where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing") and rely on type-bracketed comparison for the cross-type checks (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
+- `generateBool(expr, ctx)` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `method-dispatch.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `match-query-translation.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
+- A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. Same answer (`jsBool(a && b)` is "a truthy AND b truthy"), but the `$cond` is invisible where nothing reads the returned operand, and wrapping it instead would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
 - `isProvablyBool(expr)` returns true when an AST node always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
+- `isBoolValued(value)` asks the same of the **generated** value, for constructs that are boolean only after lowering and so have no bool-shaped AST to inspect: an inlined reusable function or IIFE (a `$let` whose body is a comparison), and a `jsmql.compile` parameter bound to a boolean. A sole key in `BOOL_OUTPUT_OPS`, a JS boolean, or a `$let` whose `in` is itself bool-valued all elide the wrap.
 
 **Codegen rules:**
 

@@ -4,6 +4,7 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { truthy } from "./truthy.ts";
 
 describe("$$.push — bare collection (short form)", () => {
   it("spread of $$$.<coll> with no method lowers to the bare-string $unionWith short form", () => {
@@ -22,7 +23,7 @@ describe("$$.push — bare collection (short form)", () => {
 describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
   it("expression-body filter lowers to a $match-only sub-pipeline", () => {
     expect(jsmql("$$.push(...$$$.archive_users.filter(u => u.active))")).toEqual([
-      { $unionWith: { coll: "archive_users", pipeline: [{ $match: { $expr: "$active" } }] } },
+      { $unionWith: { coll: "archive_users", pipeline: [{ $match: { $expr: truthy("$active") } }] } },
     ]);
   });
 
