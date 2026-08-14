@@ -10,6 +10,45 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat(site): the landing page paints JSMQL and MQL with the playground's highlighter
+
+Both panes of every example on [index.html](../index.html) now carry syntax
+colours, and they are the playground's colours exactly: the same pinned
+CodeMirror release, the same JavaScript mode in the same two configurations
+(plain for JSMQL, `json: true` for MQL), and the same `neo` theme. The page
+made the weaker version of its own argument until now — it claims JSMQL *is*
+JavaScript, then showed it as two columns of flat monospace while the editor one
+click away coloured it. A hand-rolled highlighter would have made that worse, not
+better: a second tokeniser drifts from the editor's, and then the two surfaces
+disagree about what a token is.
+
+The tool that makes this cheap is `CodeMirror.runMode` — the tokeniser with no
+editor around it. It fills an element with the same `cm-*` spans an editor holds,
+which the `neo` stylesheet then colours, so parity is by construction rather than
+by a second set of hand-picked hexes. The page loads it as
+`runmode-standalone.min.js`, 5.5 KB against the 170 KB editor core, because a
+landing page has no editor to put on screen. That substitution is only safe if
+the small loader tokenises identically, so it was checked rather than assumed:
+both loaders were run over the page's own corpus (every JSMQL source it shows
+plus MQL documents, in both modes) and emit a byte-identical `[text, style]`
+stream.
+The rendered spans and their computed colours were then compared against the live
+playground for the same source, token for token.
+
+Two details are worth knowing before someone edits this. The markup still holds
+each JSMQL source as plain text and the script rewrites the block in place —
+that keeps the source readable with JavaScript off, keeps it selectable, and
+keeps it in the single shape that both the page and the `pre.src > code`
+extraction in [site.test.ts](../test/site.test.ts) read. And the page states one
+colour of its own, `#2e383c`: `neo` keeps its base text colour behind
+`.cm-s-neo.CodeMirror`, a selector only a live editor matches, so without that
+line every operator, brace and comma would stay the page's darker `--fg` while
+the tokens moved. Failures stay plain: no CodeMirror (a blocked CDN) means text
+with no colours, and a compile error is prose rather than JavaScript, so it keeps
+the red `pre.out.failed` styling. See [specs/site.md](specs/site.md).
+
+---
+
 ## 2026-08-14 — feat: `ObjectId` is bare-callable, and every iteratee method takes a bare built-in
 
 `ids.map(id => ObjectId(id))` now has the point-free spelling JavaScript gives it:

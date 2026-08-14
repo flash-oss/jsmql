@@ -8,7 +8,7 @@ Three files reach the browser, all from the repository root:
 
 | Path | Source | Role |
 | --- | --- | --- |
-| `index.html` | hand-authored | The landing page. What JSMQL is, how to install it, six compiled examples, links out. |
+| `index.html` | hand-authored | The landing page. What JSMQL is, how to install it, the compiled examples, links out. |
 | `playground.html` | generated from `playground_skeleton.html` | The interactive editor. See [scripts/CLAUDE.md](../../scripts/CLAUDE.md). |
 | `dist/jsmql.js` | generated from `src/index.ts` | The pure-ESM library bundle both pages import. |
 
@@ -69,6 +69,30 @@ in the playground with its source and mode intact.
 When the bundle fails to load (the page opened over `file://`, say), the script
 reveals a notice instead of leaving empty output blocks. The prose, the JSMQL
 inputs and every link stay readable with JavaScript off.
+
+## The page paints both languages with the playground's highlighter
+
+A JSMQL input and an MQL document carry the same colours here as they do in the
+editor, because the same three files from the pinned CodeMirror release do the
+work:
+
+| File | Role |
+| --- | --- |
+| `theme/neo.min.css` | The token colours. The theme keeps its base text colour on `.cm-s-neo.CodeMirror`, a selector only a live editor matches, so the page states that one colour itself for the `<pre>` that stands in for an editor. |
+| `addon/runmode/runmode-standalone.min.js` | `CodeMirror.runMode`: the tokeniser with no editor around it. It fills an element with the same `cm-*` spans an editor holds, at a thirtieth of the core's weight. |
+| `mode/javascript/javascript.min.js` | The JavaScript mode, in the two configurations the playground's editors use — plain for JSMQL, `json: true` for MQL. |
+
+The markup holds each JSMQL source as plain text and the script rewrites the
+block in place, so the source stays readable with JavaScript off, stays
+selectable as text, and stays in the one shape both the page and the drift guard
+below read. The script paints the inputs before it imports the bundle, because
+their text is already on the page, and paints each MQL document as it compiles
+it.
+
+Two cases stay plain text. Where the CDN does not answer, `paint` writes the
+text and returns, so the page loses the colours and nothing else. Where an
+example fails to compile, the message is prose rather than JavaScript, and the
+red `pre.out.failed` styling already carries it.
 
 ## Drift guards
 

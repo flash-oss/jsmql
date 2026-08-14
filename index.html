@@ -34,6 +34,17 @@
       href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a6df4'/><text x='16' y='24' font-family='ui-monospace,monospace' font-size='21' font-weight='700' fill='%23fff' text-anchor='middle'>$</text></svg>"
     />
 
+    <!-- The playground's highlighter, in read-only form. Same pinned CodeMirror
+         release, same JavaScript mode, same `neo` theme, so a block here and the
+         same block in the editor carry identical colours. `runmode-standalone`
+         is that tokeniser without the editor around it — a thirtieth of the
+         core's weight, and this page shows code rather than editing it. The
+         page works without all three: the module script below leaves every
+         block as plain text when the CDN does not answer. -->
+    <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/neo.min.css" />
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/runmode/runmode-standalone.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+
     <style>
       :root {
         --fg: #1a1a1a;
@@ -342,6 +353,16 @@
 
       pre.out {
         background: #fff;
+      }
+
+      /* A highlighted block. The `neo` stylesheet paints the `cm-*` spans the
+         highlighter emits, but keeps its base text colour on a selector only a
+         live editor matches (`.cm-s-neo.CodeMirror`), so name that colour here
+         for the punctuation and operators no token class covers. The class
+         arrives from the script, so a block it never reached keeps the page's
+         own text colour, and `.pending` / `.failed` below outrank it anyway. */
+      pre.cm-s-neo {
+        color: #2e383c;
       }
 
       /* One example compiles a whole recommendation engine. Its MQL runs to
@@ -875,6 +896,34 @@ $ = candidateProductIds
         return JSON.stringify(x);
       }
 
+      // The two languages the page shows, named as the playground's editors name
+      // them: JSMQL is JavaScript, and an MQL document is JSON.
+      const JSMQL_MODE = { name: "javascript" };
+      const MQL_MODE = { name: "javascript", json: true };
+
+      // Highlight one block. `runMode` is CodeMirror's tokeniser without an
+      // editor: it fills the element with the same `cm-*` spans the playground's
+      // editors carry, which the `neo` stylesheet colours. With no CodeMirror on
+      // the page — a blocked CDN — the text still lands, just uncoloured.
+      function paint(codeEl, mode, text = codeEl.textContent) {
+        if (typeof CodeMirror === "undefined") {
+          codeEl.textContent = text;
+          return;
+        }
+        codeEl.closest("pre").classList.add("cm-s-neo");
+        CodeMirror.runMode(text, mode, codeEl);
+      }
+
+      // Read every JSMQL source before anything rewrites its block, and paint it
+      // now: it is already on the page, so it does not wait on the bundle that
+      // the MQL side needs.
+      const sources = new Map();
+      for (const el of examples) {
+        const code = el.querySelector(".src code");
+        sources.set(el, code.textContent.trim());
+        paint(code, JSMQL_MODE);
+      }
+
       let entries;
       try {
         const { jsmql } = await import("./dist/jsmql.js");
@@ -891,7 +940,7 @@ $ = candidateProductIds
 
       for (const el of examples) {
         const mode = el.dataset.mode || "auto";
-        const source = el.querySelector(".src code").textContent.trim();
+        const source = sources.get(el);
 
         el.querySelector("[data-play]").href =
           "playground.html#s=" + toB64Url(JSON.stringify({ v: 1, input: source, vars: "", mode }));
@@ -902,7 +951,7 @@ $ = candidateProductIds
         out.classList.remove("pending");
         try {
           const mql = formatMql(entries[mode](source));
-          out.querySelector("code").textContent = mql;
+          paint(out.querySelector("code"), MQL_MODE, mql);
 
           // Where the example asks for it, state the size gap in its own terms.
           // Counted from the rendered text so the figures cannot go stale.
