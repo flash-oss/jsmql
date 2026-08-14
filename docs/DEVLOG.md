@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
+
+Three places sold JSMQL partly on `--noscripting`: the README headline, the
+landing-page hero, and the `$function` passthrough note in
+[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
+run `mongod` with it learns nothing from the mention and has to stop and look it
+up, which costs more attention than the point is worth.
+
+The surrounding claims all stand on their own without it. JSMQL compiles ahead
+of time, so the server evaluates no JavaScript at query time — that is the whole
+argument, and it needs no flag name to land. Where the point was that operators
+often cannot run at all, the text now says deployments refuse server-side
+JavaScript, which is the fact that matters to the reader and does not depend on
+knowing how an administrator spelled it.
+
+The general rule this follows: name a server flag only when the reader must set
+or unset it. Nobody has to touch this one to use JSMQL.
+
+---
+
 ## 2026-08-14 — fix: a lone `$$ = <stream>` compiles without a trailing `;`
 
 ```
@@ -50,25 +70,6 @@ user typed the trailing `;`** — is now stated in
 with the reroute sites a future statement-shaped sugar has to register with. Every
 `$$ = …` shape was re-run against a live `mongod` per HR3, including the correlated
 `$lookup` pivot, which returns the same documents from both entry points.
-
----
-
-## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
-
-Merging the date/chain-check work with the type-aware-dispatch work put two independent
-answers to "what type does this receiver have?" in the same function, and they compose: the
-structural cases (a date method, a literal, `.length`, an `$op(...)` in `OPERATOR_RETURNS`)
-and the recorded ones (`bindingTypeOf` reading `ctx.bindingTypes` / `ctx.slotTypes`) now sit in
-one `certainReceiverType`, so `const d = $.t.startOf("month"); d.plus(1, "month")` is typed
-through the binding exactly as the expression would be.
-
-One decision was superseded rather than merged. The chain check had gained a receiver-specific
-hint sending a string receiver of `.at` to `.charAt(index)`, on the premise that jsmql's `.at`
-was array-only. It no longer is: `.at` and `.nth` moved into the `"either"` family, because
-JavaScript has `String.prototype.at` and lodash's `_.nth` reads a string, and both now lower to
-`$substrCP` on a string receiver. `"abc".at(-1)` therefore *works*, the hint was unreachable,
-and it is gone along with its test. The dual-family list in the ungated-methods assertion gained
-both names with the reason recorded next to them.
 
 ---
 
@@ -128,6 +129,25 @@ complain, and a pasted-in JS `new Date(2024, 0, 15)` would silently shift a quer
 constant fold, and `Date.UTC`), is literal-gated so a runtime month passes, and catches the
 unary-minus form too. A month above 12 is deliberately left alone: `new Date($.y, 13, 1)` is
 next January in both engines and `m + 1` arithmetic legitimately produces it.
+
+---
+
+## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
+
+Merging the date/chain-check work with the type-aware-dispatch work put two independent
+answers to "what type does this receiver have?" in the same function, and they compose: the
+structural cases (a date method, a literal, `.length`, an `$op(...)` in `OPERATOR_RETURNS`)
+and the recorded ones (`bindingTypeOf` reading `ctx.bindingTypes` / `ctx.slotTypes`) now sit in
+one `certainReceiverType`, so `const d = $.t.startOf("month"); d.plus(1, "month")` is typed
+through the binding exactly as the expression would be.
+
+One decision was superseded rather than merged. The chain check had gained a receiver-specific
+hint sending a string receiver of `.at` to `.charAt(index)`, on the premise that jsmql's `.at`
+was array-only. It no longer is: `.at` and `.nth` moved into the `"either"` family, because
+JavaScript has `String.prototype.at` and lodash's `_.nth` reads a string, and both now lower to
+`$substrCP` on a string receiver. `"abc".at(-1)` therefore *works*, the hint was unreachable,
+and it is gone along with its test. The dual-family list in the ungated-methods assertion gained
+both names with the reason recorded next to them.
 
 ---
 
