@@ -878,22 +878,62 @@ $ = candidateProductIds
       const isObjectId = (x) =>
         !!x && typeof x === "object" && x._bsontype === "ObjectId" && typeof x.toHexString === "function";
 
-      function formatMql(x, indent = "") {
-        if (x instanceof Date) return `new Date(${JSON.stringify(x.toISOString())})`;
-        if (isObjectId(x)) return `ObjectId(${JSON.stringify(x.toHexString())})`;
-        const inner = indent + "  ";
-        if (Array.isArray(x)) {
-          if (!x.length) return "[]";
-          const items = x.map((v) => inner + formatMql(v, inner));
-          return `[\n${items.join(",\n")}\n${indent}]`;
-        }
-        if (x && typeof x === "object") {
-          const keys = Object.keys(x);
-          if (!keys.length) return "{}";
-          const items = keys.map((k) => `${inner}${JSON.stringify(k)}: ${formatMql(x[k], inner)}`);
-          return `{\n${items.join(",\n")}\n${indent}}`;
-        }
+      function encodeScalar(x) {
+        if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
+        if (isObjectId(x)) return "ObjectId(" + JSON.stringify(x.toHexString()) + ")";
         return JSON.stringify(x);
+      }
+
+      // Single-line JS-source form of any value. `pretty` renders every node that
+      // fits its budget through this, so a date reads the same at any depth.
+      function compact(x) {
+        if (x instanceof Date || isObjectId(x)) return encodeScalar(x);
+        if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
+        if (x && typeof x === "object")
+          return Object.keys(x).length
+            ? "{ " +
+                Object.keys(x)
+                  .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
+                  .join(", ") +
+                " }"
+            : "{}";
+        return encodeScalar(x);
+      }
+
+      // Fit-or-break JS pretty-printer: keep nodes on one line up to 80 cols,
+      // only expanding when the compact form would overflow. This is the
+      // playground's printer at the playground's budget, so the MQL a reader sees
+      // here and the MQL the "Open in playground" link shows are the same text.
+      // The shape is what a reader reads in MQL, and one stage per line shows the
+      // shape that one brace per line buries.
+      function pretty(root) {
+        const go = (v, i, c) => {
+          // A Date / ObjectId never expands — keep it on one line regardless of
+          // column budget, else the object branch below would walk its keys.
+          if (v instanceof Date || isObjectId(v)) return compact(v);
+          const s = compact(v);
+          if (c + s.length <= 80) return s;
+          // A scalar (string / number / boolean / null) can't be broken across
+          // lines — its compact form IS its only form. Without this guard a
+          // long string falls into the object branch below and `Object.keys`
+          // walks its character indices, rendering "abc" as { "0": "a", … }.
+          if (v === null || typeof v !== "object") return s;
+          const pad = " ".repeat(i + 2);
+          const close = "\n" + " ".repeat(i);
+          if (Array.isArray(v)) return "[\n" + v.map((x) => pad + go(x, i + 2, i + 2)).join(",\n") + close + "]";
+          return (
+            "{\n" +
+            Object.keys(v)
+              .map((k) => {
+                const p = JSON.stringify(k) + ": ";
+                return pad + p + go(v[k], i + 2, i + 2 + p.length);
+              })
+              .join(",\n") +
+            close +
+            "}"
+          );
+        };
+        return go(root, 0, 0);
       }
 
       // The two languages the page shows, named as the playground's editors name
@@ -950,7 +990,7 @@ $ = candidateProductIds
         const out = el.querySelector(".out");
         out.classList.remove("pending");
         try {
-          const mql = formatMql(entries[mode](source));
+          const mql = pretty(entries[mode](source));
           paint(out.querySelector("code"), MQL_MODE, mql);
 
           // Where the example asks for it, state the size gap in its own terms.

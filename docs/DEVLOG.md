@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat(site): the landing page prints MQL with the playground's fit-or-break printer
+
+[index.html](../index.html) now formats every compiled document with the
+playground's `pretty` / `compact` pair instead of its own always-expand printer,
+at the same 80-column budget. A node stays on one line while it fits. The first
+filter example is the case that shows why: it went from six lines of one-brace-
+per-line to the single line `{ "age": { "$gt": 18 }, "status": "active" }`,
+directly opposite the single line of JSMQL that produced it. That equivalence is
+the page's whole argument, and the old printer buried it under vertical
+structure. The recommender example drops from 414 rendered lines to 297, and the
+`data-loc` counter reports the new figure by itself because it measures the text
+it has just rendered.
+
+Two printers for one job was the real defect. The page and the editor showed the
+same document in two different shapes, so an example and the "Open in playground"
+link under it disagreed on sight. One printer, one shape. The trade it carries is
+width: a pane is about 60 columns at the page's 1080px column, so the widest
+lines scroll inside their own `pre` — 21 of the recommender's 297 lines, none to
+one line in every other example. A narrower budget for this page alone would fix
+the scroll and re-open the disagreement, which is the worse of the two.
+
+The printer stays copied rather than shared, as `isObjectId` and the old
+formatter already were: both pages are standalone HTML that share only
+`dist/jsmql.js`, and neither can import from the other. A formatter on the public
+API (`jsmql.format`) would let both import one copy, and would give library users
+the same pasteable-source output — worth its own decision, not a side effect of
+this change. See [specs/site.md](specs/site.md).
+
+---
+
 ## 2026-08-14 — feat(site): the landing page paints JSMQL and MQL with the playground's highlighter
 
 Both panes of every example on [index.html](../index.html) now carry syntax

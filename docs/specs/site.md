@@ -58,8 +58,17 @@ The script writes output as **pasteable JavaScript source, not JSON**.
 strings — and a string does not match an `ObjectId` `_id`, so output copied off
 the page would silently return nothing. Both therefore render as the
 `new Date(…)` / `ObjectId(…)` calls the driver accepts, for the same reason the
-playground does it. Every other value keeps JSON's spelling, so the plain
-examples read exactly as `JSON.stringify(…, null, 2)` writes them.
+playground does it. Every other value keeps JSON's spelling.
+
+The printer is the playground's `pretty` / `compact` pair, at the playground's
+80-column budget: a node stays on one line while it fits, and expands only when
+it does not. One printer for both surfaces is what makes an example and its
+"Open in playground" link show the same text. It is also the shape a reader can
+read — one stage per line, rather than one brace per line — and the page has the
+strongest reason of the two to be legible at a glance. A pane is narrower than
+80 columns at the page's 1080px column, so the widest lines scroll inside their
+own `pre`; parity with the editor is worth that over a budget that would make
+the two surfaces disagree.
 
 The module script also builds each "Open in playground" link. It encodes
 `{ v: 1, input, vars, mode }` as base64url into a `#s=` fragment — the share
