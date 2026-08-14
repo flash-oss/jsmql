@@ -49,12 +49,12 @@ describe("recommended products (collaborative filtering)", { features: ["Pipelin
       expect(
         jsmql`
 const userId = 0x507f1f77bcf86cd799439011;
-$$.filter({ _id: userId });
+$$.filter({ _id: userId }); // limit the whole pipeline down to one pass
 assert($$.length === 1, "More than one user with such ID found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
-  .toSorted({ createdAt: -1 })
+  .$sort({ createdAt: -1 }) // same as _.sort()
   .take(10)
   .map("productIds")
   .flatten()
@@ -63,7 +63,7 @@ const myProductIds = $$$.orders
 const candidateProductIdCounts = $$$.orders
   .filter(o => o.productIds.some(p => myProductIds.includes(p)))
   .toSorted({ createdAt: -1 })
-  .take(100) // co-purchase orders, recent, capped
+  .take(100) // a pipeline of co-purchase orders, most recent 100
   .map("productIds")
   .flatten()
   .filter(p => !myProductIds.includes(p))
@@ -71,8 +71,8 @@ const candidateProductIdCounts = $$$.orders
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
-  .filter(pr => pr._id in candidateProductIds)
-  .take(500);
+  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator
+  .$limit(500); // same as .take(500)
 
 $ = candidateProductIds
   .map(id => ({
