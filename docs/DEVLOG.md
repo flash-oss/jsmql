@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
+
+Three places sold JSMQL partly on `--noscripting`: the README headline, the
+landing-page hero, and the `$function` passthrough note in
+[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
+run `mongod` with it learns nothing from the mention and has to stop and look it
+up, which costs more attention than the point is worth.
+
+The surrounding claims all stand on their own without it. JSMQL compiles ahead
+of time, so the server evaluates no JavaScript at query time — that is the whole
+argument, and it needs no flag name to land. Where the point was that operators
+often cannot run at all, the text now says deployments refuse server-side
+JavaScript, which is the fact that matters to the reader and does not depend on
+knowing how an administrator spelled it.
+
+The general rule this follows: name a server flag only when the reader must set
+or unset it. Nobody has to touch this one to use JSMQL.
+
+---
+
 ## 2026-08-14 — feat: the site moves to jsmql.js.org and gains a landing page
 
 The published site was one file: `playground.html`. The root of the Pages site,
