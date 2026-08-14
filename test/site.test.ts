@@ -12,7 +12,7 @@
  * suite instead.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, resolve } from "node:path";
 import { jsmql } from "../src/index.ts";
@@ -58,7 +58,11 @@ interface Example {
  */
 function readExamples(): Example[] {
   const out: Example[] = [];
-  const article = /<article class="example" data-example data-mode="([a-z]+)">([\s\S]*?)<\/article>/g;
+  // `class="example[^"]*"` so a presentational modifier (`class="example tall"`)
+  // cannot drop an example out of the extraction — that failure is silent, and
+  // silently reviewing fewer examples than the page shows is the one outcome
+  // this file exists to prevent. `countMarkupExamples()` is the backstop.
+  const article = /<article class="example[^"]*" data-example data-mode="([a-z]+)">([\s\S]*?)<\/article>/g;
   for (const [, mode, body] of INDEX.matchAll(article)) {
     const chip = /<span class="chip ([a-z]+)">/.exec(body);
     const source = /<pre class="src"><code>([\s\S]*?)<\/code><\/pre>/.exec(body);
@@ -68,13 +72,20 @@ function readExamples(): Example[] {
   return out;
 }
 
+/** How many examples the markup declares, counted independently of the parse above. */
+function countMarkupExamples(): number {
+  return (INDEX.match(/<article[^>]*\bdata-example\b/g) ?? []).length;
+}
+
 const EXAMPLES = readExamples();
 
 describe("site: landing-page examples", () => {
-  it("finds every example in index.html", () => {
-    // A markup change that stops the extraction must fail loudly here rather
-    // than turn the cases below into a silent no-op.
-    expect(EXAMPLES.length).toBeGreaterThanOrEqual(6);
+  it("extracts every example the markup declares", () => {
+    // Counted two ways on purpose. A lower bound alone passes while an example
+    // slips out of the parse, which leaves the cases below reviewing a page
+    // that is not the published one.
+    expect(EXAMPLES.length).toBe(countMarkupExamples());
+    expect(EXAMPLES.length).toBeGreaterThanOrEqual(7);
   });
 
   it.each(EXAMPLES.map((e, i) => [i, e.chip, e.source.split("\n")[0]] as const))(
@@ -115,10 +126,15 @@ describe("site: GitHub Pages invariants", () => {
     expect(INDEX).not.toMatch(/\{\{|\{%/);
   });
 
-  it("binds the site to the domain package.json advertises", () => {
-    const cname = readFileSync(resolve(ROOT, "CNAME"), "utf8").trim();
+  it("binds the site to the domain package.json advertises, whenever CNAME is present", () => {
+    // GitHub Pages redirects the github.io URL to whatever CNAME names, so the
+    // file has to be absent while the domain does not resolve yet — otherwise
+    // there is nowhere to review the site. Hold the binding when the file is
+    // there, and stay quiet when it is deliberately not.
+    const cnamePath = resolve(ROOT, "CNAME");
+    if (!existsSync(cnamePath)) return;
     const pkg = JSON.parse(readFileSync(resolve(ROOT, "package.json"), "utf8"));
-    expect(cname).toBe(new URL(pkg.homepage).host);
+    expect(readFileSync(cnamePath, "utf8").trim()).toBe(new URL(pkg.homepage).host);
   });
 
   it("publishes both pages and the bundle they import", () => {

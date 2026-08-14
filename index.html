@@ -344,6 +344,13 @@
         background: #fff;
       }
 
+      /* One example compiles a whole recommendation engine. Its MQL runs to
+         hundreds of lines, so give that pair a taller window — the size gap is
+         the point it makes, and a 320px box hides almost all of it. */
+      .example.tall pre {
+        max-height: 520px;
+      }
+
       pre.out.failed {
         background: var(--error-bg);
         border-color: var(--error);
@@ -648,6 +655,63 @@ $.status = "done";</code></pre>
             <a class="play" data-play href="playground.html">Open in playground →</a>
           </footer>
         </article>
+        <article class="example tall" data-example data-mode="pipeline">
+          <h3><span class="chip pipeline">Pipeline</span> A recommendation engine, in one query</h3>
+          <p class="blurb">
+            Collaborative filtering end to end: narrow to the signed-in user, assert the match is unique, collect what
+            they bought, tally what co-buyers bought that they do not own, then join the product documents and emit the
+            top ten by score. Every scan of the large collections is recency-sorted and capped, so the work stays
+            bounded.
+            <span data-loc></span>
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>const userId = 0x507f1f77bcf86cd799439011;
+$$.filter({ _id: userId });
+assert($$.length === 1, "More than one user with such ID found");
+
+const myProductIds = $$$.orders
+  .filter({ userId })
+  .toSorted({ createdAt: -1 })
+  .take(10)
+  .map("productIds")
+  .flatten()
+  .uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o =&gt; o.productIds.some(p =&gt; myProductIds.includes(p)))
+  .toSorted({ createdAt: -1 })
+  .take(100) // co-purchase orders, recent, capped
+  .map("productIds")
+  .flatten()
+  .filter(p =&gt; !myProductIds.includes(p))
+  .countBy(); // { ID: count } map
+const candidateProductIds = Object.keys(candidateProductIdCounts);
+
+const candidateProducts = $$$.products
+  .filter(pr =&gt; pr._id in candidateProductIds)
+  .take(500);
+
+$ = candidateProductIds
+  .map(id =&gt; ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name:  candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1 })
+  .take(10);</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.users.aggregate( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
       </div>
     </section>
 
@@ -784,6 +848,33 @@ $.status = "done";</code></pre>
         return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
       }
 
+      // Render a compiled document as pasteable JavaScript source, not as JSON.
+      // `JSON.stringify` is wrong for two BSON types jsmql emits: a Date has a
+      // toJSON, and so does an ObjectId, so both collapse to plain strings — and
+      // a string does not match an ObjectId `_id`. Copying that output into a
+      // shell would silently return nothing, so spell both as the constructor
+      // calls the driver accepts. Everything else keeps JSON's own spelling.
+      const isObjectId = (x) =>
+        !!x && typeof x === "object" && x._bsontype === "ObjectId" && typeof x.toHexString === "function";
+
+      function formatMql(x, indent = "") {
+        if (x instanceof Date) return `new Date(${JSON.stringify(x.toISOString())})`;
+        if (isObjectId(x)) return `ObjectId(${JSON.stringify(x.toHexString())})`;
+        const inner = indent + "  ";
+        if (Array.isArray(x)) {
+          if (!x.length) return "[]";
+          const items = x.map((v) => inner + formatMql(v, inner));
+          return `[\n${items.join(",\n")}\n${indent}]`;
+        }
+        if (x && typeof x === "object") {
+          const keys = Object.keys(x);
+          if (!keys.length) return "{}";
+          const items = keys.map((k) => `${inner}${JSON.stringify(k)}: ${formatMql(x[k], inner)}`);
+          return `{\n${items.join(",\n")}\n${indent}}`;
+        }
+        return JSON.stringify(x);
+      }
+
       let entries;
       try {
         const { jsmql } = await import("./dist/jsmql.js");
@@ -810,7 +901,17 @@ $.status = "done";</code></pre>
         const out = el.querySelector(".out");
         out.classList.remove("pending");
         try {
-          out.querySelector("code").textContent = JSON.stringify(entries[mode](source), null, 2);
+          const mql = formatMql(entries[mode](source));
+          out.querySelector("code").textContent = mql;
+
+          // Where the example asks for it, state the size gap in its own terms.
+          // Counted from the rendered text so the figures cannot go stale.
+          const loc = el.querySelector("[data-loc]");
+          if (loc) {
+            const from = source.split("\n").length;
+            const to = mql.split("\n").length;
+            loc.textContent = `${from} lines of JSMQL compile to ${to} lines of MQL.`;
+          }
         } catch (err) {
           out.classList.add("failed");
           out.querySelector("code").textContent = String(err && err.message ? err.message : err);

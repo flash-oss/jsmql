@@ -47,6 +47,19 @@ Each example is one `<article>` carrying:
 - a chip (`<span class="chip …">`) naming the output shape for the reader.
 - the JSMQL source in `pre.src > code`.
 - an empty `pre.out` that the page's module script fills.
+- optionally the `tall` modifier (`class="example tall"`), which raises the
+  height of both panes for an example whose MQL runs to hundreds of lines.
+- optionally an empty `<span data-loc>`, which the script fills with the
+  source-to-output line counts, measured from the text it has just rendered.
+
+The script writes output as **pasteable JavaScript source, not JSON**.
+`JSON.stringify` is wrong for the two BSON types jsmql emits as live values: a
+`Date` and an `ObjectId` each carry a `toJSON`, so both collapse to plain
+strings — and a string does not match an `ObjectId` `_id`, so output copied off
+the page would silently return nothing. Both therefore render as the
+`new Date(…)` / `ObjectId(…)` calls the driver accepts, for the same reason the
+playground does it. Every other value keeps JSON's spelling, so the plain
+examples read exactly as `JSON.stringify(…, null, 2)` writes them.
 
 The module script also builds each "Open in playground" link. It encodes
 `{ v: 1, input, vars, mode }` as base64url into a `#s=` fragment — the share
@@ -62,14 +75,25 @@ inputs and every link stay readable with JavaScript off.
 [test/site.test.ts](../../test/site.test.ts) compiles each example through the
 entry its `data-mode` names, and asserts:
 
+- the extraction found as many examples as the markup declares, counted a
+  second way — a lower bound alone stays green while an example slips out of the
+  parse, which would review a page that is not the published one;
 - every example compiles — a syntax change that breaks one fails the suite
   rather than putting an error message on the page;
 - the output shape matches the chip (array for `pipeline` / `update`, object
   for `filter` / `expression`);
 - the chip matches `data-mode`, except under `auto`, where the entry chooses
   the shape and the chip reports it;
-- `CNAME` matches the host in `package.json#homepage`;
+- `CNAME` matches the host in `package.json#homepage` **when the file is
+  present**. It has to be absent while the domain does not resolve yet, because
+  Pages redirects the github.io URL to whatever `CNAME` names, leaving nowhere
+  to review the site;
 - `_config.yml` publishes both pages, and the page imports the bundle.
+
+What these guards cannot see is whether an example's MQL *does the right thing*
+on real data — they assert what the compiler emits, never what the server
+returns. An example whose behaviour matters belongs in
+[test/integration.test.ts](../../test/integration.test.ts) as well.
 
 The extraction fails loudly when the markup changes shape, so the cases cannot
 quietly become a no-op.

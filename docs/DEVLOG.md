@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat: the landing page ends on the collaborative-filtering example
+
+The landing page's six examples each made one point in a few lines. None showed
+what the language is actually for: a query too long to enjoy writing by hand. The
+first example in [realistic.test.ts](../test/realistic.test.ts) — the
+collaborative-filtering recommender that is also the playground's default — is
+that query, so the page now closes on it. Its 34 lines of JSMQL compile to 406
+lines of MQL, and the page states that ratio from the text it has just rendered
+rather than from a number someone typed.
+
+Adding it exposed two things the page had got away with while every example was
+small. First, output went through `JSON.stringify`, and both BSON types jsmql
+emits as live values defeat it: `Date` and `ObjectId` each carry a `toJSON`, so
+each collapses to a plain string. This example matches on an `ObjectId` `_id`, so
+the page would have shown `"_id": "507f…"` — a string, which matches no ObjectId.
+Copied into a shell, that returns nothing, quietly. Output is now written as
+pasteable JavaScript source, with `ObjectId(…)` and `new Date(…)` spelled the way
+the driver accepts them, the same choice `playground_skeleton.html` made for the
+same reason. Plain values keep JSON's spelling, so the other six examples are
+unchanged byte for byte.
+
+Second, the new example carries a `tall` modifier so its long output gets a taller
+window — and `class="example tall"` did not match the extraction in
+`test/site.test.ts`, which pinned `class="example"`. The suite stayed green while
+reviewing six of seven examples: the exact vacuous pass that file exists to
+prevent. The extraction now tolerates modifiers, and the count is checked a second
+way against the number of examples the markup declares, so a parse that drops one
+fails instead of shrinking quietly.
+
+The `CNAME` guard became conditional in the same pass. That file has to be absent
+while `jsmql.js.org` does not resolve, because Pages redirects the github.io URL to
+whatever `CNAME` names, which leaves nowhere to review the site. The binding is
+asserted whenever the file is present.
+
+One thing this does not fix. Run against real data, the example returns its
+`score` but no `name`: `.countBy()` builds a MongoDB object, object keys are always
+strings, so `Object.keys(…)` yields hex strings that never match an `ObjectId`
+`_id` in the two joins that follow. The server accepts the pipeline, and a
+compile-time `toEqual` cannot see it — precisely the gap
+[test/CLAUDE.md](../test/CLAUDE.md) warns about. Casting both join sites with
+`ObjectId(id)` restores the name. That change rewrites `realistic.test.ts` and its
+asserted MQL, and wants an integration case guarding the returned documents rather
+than the emitted one, so it is tracked on its own instead of riding along here.
+
+---
+
 ## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
 
 Three places sold JSMQL partly on `--noscripting`: the README headline, the
@@ -65,26 +111,6 @@ files is full of JavaScript and MQL braces.
 
 Detail lives in [docs/specs/site.md](specs/site.md), including the
 `cnames_active.js` entry JS.ORG needs.
-
----
-
-## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
-
-Three places sold JSMQL partly on `--noscripting`: the README headline, the
-landing-page hero, and the `$function` passthrough note in
-[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
-run `mongod` with it learns nothing from the mention and has to stop and look it
-up, which costs more attention than the point is worth.
-
-The surrounding claims all stand on their own without it. JSMQL compiles ahead
-of time, so the server evaluates no JavaScript at query time — that is the whole
-argument, and it needs no flag name to land. Where the point was that operators
-often cannot run at all, the text now says deployments refuse server-side
-JavaScript, which is the fact that matters to the reader and does not depend on
-knowing how an administrator spelled it.
-
-The general rule this follows: name a server flag only when the reader must set
-or unset it. Nobody has to touch this one to use JSMQL.
 
 ---
 
