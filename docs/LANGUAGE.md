@@ -4477,7 +4477,7 @@ jsmql(`$function({ body: "function(x) { return x * 2; }", args: [$.qty], lang: "
 // → { $function: { body: "...", args: ["$qty"], lang: "js" } }
 ```
 
-This is unchanged for backwards compatibility. We don't recommend it on MongoDB 8.0+ — deprecation eventually means removal, and many setups already turn server-side JavaScript off with `--noscripting`. If you do reach for it, leave a comment explaining why, and check whether `$reduce` or a custom pipeline can do the same job.
+This is unchanged for backwards compatibility. We don't recommend it on MongoDB 8.0+ — deprecation eventually means removal, and many deployments already refuse server-side JavaScript outright. If you do reach for it, leave a comment explaining why, and check whether `$reduce` or a custom pipeline can do the same job.
 
 ## Language Grammar (EBNF, simplified)
 

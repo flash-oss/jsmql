@@ -42,7 +42,7 @@ let expr = jsmql.expr(({ $ }) => $.items.map((i) => i.price * i.qty).reduce((a, 
 //   initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
-**MongoDB 8.0 deprecated server-side JavaScript via `$function`, `$accumulator`, and `$where`.** The JSMQL is the replacement: native MQL, no `--noscripting` issues, index-friendly, IDE-aware, testable as plain JS.
+**MongoDB 8.0 deprecated server-side JavaScript via `$function`, `$accumulator`, and `$where`.** The JSMQL is the replacement: native MQL, index-friendly, IDE-aware, testable as plain JS.
 
 ## Install
 
