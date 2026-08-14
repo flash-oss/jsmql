@@ -21,6 +21,8 @@ User-facing reference: [docs/LANGUAGE.md → Output dispatch](../LANGUAGE.md#out
 
 The previous default for the last bucket was `generateWithCtx(ast)`, which emitted an aggregation expression (`{ $gt: ["$x", 1] }`). The new default emits a Filter document instead.
 
+**The `UpdateFilter` row has exceptions, and they are a closed rule rather than a list.** A statement-shaped *sugar* whose LHS isn't a field path — `$ = …`, `$$ = …`, `$$$.<coll> = …` — parses into an `UpdateFilter` when the user writes it without a trailing `;`, because a lone statement has no `;` to dispatch on. Each such sugar is a Pipeline statement, not an update op, so `lowerProgram` detects it (`updateFilterHasReplaceRoot`, `updateFilterHasReplaceStream`, `containsOutAssign`, …) and reroutes it through `generateImplicitPipeline` as a synthetic one-statement `Pipeline`. The invariant: **a sugar's output never depends on whether the user typed the trailing `;`.** When you add a statement-shaped sugar with a non-field-path LHS, add its detector to those reroute sites — and to the matching site in `lowerToPipelineStages`, so `jsmql.pipeline()` / `jsmql.update()` agree with `jsmql()`. Each sugar's own spec owns the lowering; see [replace-stream-stage.md](replace-stream-stage.md) § Single statement with no trailing `;` for the worked example.
+
 ## `generateFilter`
 
 Lives in [src/index.ts](../../src/index.ts). Reuses [`translateMatchBody`](../../src/match-translation.ts) — the same translator the `$match` stage already runs — so the Filter and `$match` paths produce the same shapes for the same input.

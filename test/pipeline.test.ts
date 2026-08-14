@@ -722,6 +722,57 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 });
 
+// A lone `$$ = <expr>` with no trailing `;` parses as a one-op UpdateFilter, not
+// a Pipeline, so it reaches the update-op lowerer — which has no write path for a
+// `CollectionRef` target. `updateFilterHasReplaceStream` reroutes it to the
+// pipeline lowerer at every entry, exactly as the sister `$ = <expr>` sugar does,
+// so the no-`;` form is byte-identical to the `;`-terminated one.
+describe("replace stream (`$$ = <expr>`) — single statement without a trailing `;`", () => {
+  it("`$$ = $$.filter(p)` lowers to `$match`, same as the `;` form", () => {
+    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: 1 } }]);
+    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual(jsmql(`$$ = $$.filter({ a: 1 });`));
+  });
+
+  it("every stream-method head reaches its stage — not just `.filter`", () => {
+    expect(jsmql(`$$ = $$.map(t => ({ x: t.x }))`)).toEqual([{ $replaceWith: { x: "$x" } }]);
+    expect(jsmql(`$$ = $$.take(3)`)).toEqual([{ $limit: 3 }]);
+    expect(jsmql(`$$ = []`)).toEqual([{ $match: { $expr: false } }]);
+  });
+
+  it("`$$ = $$$.<coll>.filter(<correlatedPred>)` lowers to the `$lookup` pivot", () => {
+    expect(jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id)`)).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+  });
+
+  it("a comma-grouped chain around the assignment keeps update-op flush order", () => {
+    // Same `$set`-flush rule the `;` form documents: the buffer flushes on either
+    // side of `$$ = …`, never one merged `$set` straddling it.
+    expect(jsmql(`$.a = 1, $$ = $$.filter({ b: 2 })`)).toEqual([{ $set: { a: 1 } }, { $match: { b: 2 } }]);
+    expect(jsmql(`$$ = $$.filter({ b: 2 }), $.a = 1`)).toEqual([{ $match: { b: 2 } }, { $set: { a: 1 } }]);
+  });
+
+  it("an unsupported RHS reaches its actionable rejection with a real `.pos`", () => {
+    // Before the reroute this hit `internalError` (pos 0) instead of the
+    // `rejectInvalidReplaceStream` catalogue, so `.validate()` had nothing to
+    // underline. Both spellings must land on the same message and offset.
+    const noSemi = jsmql.validate(`$$ = 5`);
+    expect(noSemi.valid).toBe(false);
+    expect(noSemi.errors[0].message).toMatch(/'\$\$ = …' RHS must be '\$\$\.<streamMethod>…'/);
+    expect(noSemi.errors[0].pos).toBe(5);
+    expect(noSemi.errors).toEqual(jsmql.validate(`$$ = 5;`).errors);
+  });
+
+  it("never reaches the internal-error path", () => {
+    for (const src of [`$$ = $$.filter({ a: 1 })`, `$$ = $$.map(x => x.a)`, `$$ = []`, `$$ = 5`, `$$ = $$$.t`]) {
+      const r = jsmql.validate(src);
+      for (const e of r.errors) expect(e.message).not.toMatch(/internal error/);
+    }
+  });
+});
+
 describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dispatch", () => {
   it("predicate referencing $.<field> + single === → basic-form $lookup + $unwind + $replaceWith", () => {
     // The simplest correlated-source-switch shape. Predicate

@@ -15,6 +15,10 @@ statement (including inside a comma-separated update-filter chain). Using
 it inside a Filter / `jsmql.expr` goes through the normal
 pipeline-mode-required gate.
 
+The trailing `;` is optional: a lone `$$ = <expr>` is Pipeline evidence on its
+own, so it emits the same stages either way. See § Single statement with no
+trailing `;`.
+
 See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream)
 for the user-facing reference.
 
@@ -75,6 +79,38 @@ matching the two assignment-loop sites used by `isReplaceRootAssign`:
 Stream-replace is checked *before* root-replace at each site — the two
 never overlap (different target types), so order doesn't matter for
 correctness; placing stream-replace first keeps the structure readable.
+
+### Single statement with no trailing `;`
+
+A lone `$$ = <expr>` parses as a one-op `UpdateFilter`, **not** a `Pipeline` —
+the top-level `;` that dispatches to Pipeline mode (see
+[filter-mode.md](filter-mode.md)) isn't there. So it never reaches either
+assignment-loop site above, and lands in `generateUpdateFilter`, which has no
+write path for a `CollectionRef` target.
+
+`updateFilterHasReplaceStream(uf)` (in `src/pipeline.ts`) detects that
+`UpdateFilter` — the `$$`-target twin of `updateFilterHasReplaceRoot` — and
+`index.ts` reroutes it as a synthetic one-statement `Pipeline`, so the no-`;`
+form emits exactly what the `;`-terminated form emits. Two reroute sites, one
+per dispatcher, which is what keeps the polymorphic and strict entries in
+agreement:
+
+- `lowerProgram` — reached by `jsmql()` and `jsmql.expr()`
+- `lowerToPipelineStages` — reached by `jsmql.pipeline()` and `jsmql.update()`
+
+`$$ = <expr>` **is** Pipeline evidence (the same way `$$$` is for a lookup), so
+the reroute is the fix rather than a rejection — the documented bare-statement
+sugar `$$.<chain>` already auto-wraps to Pipeline with no `;`, and rejecting its
+own desugared spelling would contradict that.
+
+`jsmql.filter()` is the one entry that still throws, as it must — but on a
+dedicated branch naming the stream-replace and pointing at the predicate the
+narrowing form was reaching for, not on the generic update-op-chain message (a
+`$$ =` LHS is not an update op, and jsmql.update() would reject it too).
+
+The RHS rejections below are unaffected by the spelling: an unsupported RHS
+reaches the same `rejectInvalidReplaceStream` message, with the same `.pos`,
+with or without the `;`.
 
 `lowerReplaceStream(el, ctx, lowerBlock)` returns `{ stages, clearLets }`.
 Form B preserves the let scope; form A clears it via
@@ -182,9 +218,14 @@ src/
                    No new tokens, no new AST nodes.
   pipeline.ts      Updated. Adds isReplaceStreamAssign, lowerReplaceStream,
                    lowerStreamFilterPredicate, rejectLocalRefInStreamFilter,
-                   rejectInvalidReplaceStream. Wires the interception into
-                   generatePipeline and lowerUpdateFilterWithLookups before the
-                   existing isReplaceRootAssign branch.
+                   rejectInvalidReplaceStream, updateFilterHasReplaceStream.
+                   Wires the interception into generatePipeline and
+                   lowerUpdateFilterWithLookups before the existing
+                   isReplaceRootAssign branch.
+  index.ts         Updated. lowerProgram and lowerToPipelineStages reroute an
+                   `updateFilterHasReplaceStream` UpdateFilter (the no-`;` form)
+                   through the pipeline lowerer; lowerFilterStrict rejects it on
+                   its own branch. See § Single statement with no trailing ';'.
   codegen.ts       Updated. The bare-`$$` CollectionRef rejection message now
                    mentions '$$ = <expr>' alongside '.push(...)' and the facet
                    pattern, for DX consistency with the new surface.

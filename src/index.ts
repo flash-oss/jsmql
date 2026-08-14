@@ -17,6 +17,7 @@ import {
   generatePipeline,
   generateImplicitPipeline,
   updateFilterHasReplaceRoot,
+  updateFilterHasReplaceStream,
   isAssertCall,
   containsStreamLength,
 } from "./pipeline.ts";
@@ -736,12 +737,15 @@ type ExprLowering = (ast: Expr, ctx: GenerateCtx) => object;
 function lowerProgram(ast: Program, ctx: GenerateCtx, lowerExpr: ExprLowering): JsmqlOutput {
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx);
   if (ast.type === "UpdateFilter") {
-    // A bare `$ = <expr>` (root-replace sugar) written without a `;` parses as a
-    // one-op UpdateFilter, not a Pipeline, so it skips `tryLowerAssignSugar`.
-    // Reroute it through the pipeline lowerer so it emits `$replaceWith` —
-    // identical to the `;`-terminated form — rather than a meaningless `$set` on
-    // the "" field path. Same reroute the `$out` sugar uses (`containsOutAssign`).
-    if (updateFilterHasReplaceRoot(ast)) {
+    // A bare `$ = <expr>` (root-replace sugar) or `$$ = <expr>` (stream-replace
+    // sugar) written without a `;` parses as a one-op UpdateFilter, not a
+    // Pipeline, so it skips `tryLowerAssignSugar`.
+    // Reroute it through the pipeline lowerer so it emits the same stages the
+    // `;`-terminated form does — `$replaceWith` for `$ =`, the stream chain's own
+    // stages for `$$ =` — rather than a meaningless `$set` on the "" field path
+    // (`$ =`) or a `CollectionRef` target `generateUpdateFilter` can't write to
+    // (`$$ =`). Same reroute the `$out` sugar uses (`containsOutAssign`).
+    if (updateFilterHasReplaceRoot(ast) || updateFilterHasReplaceStream(ast)) {
       return generateImplicitPipeline({ type: "Pipeline", stmts: [ast], pos: ast.pos }, ctx);
     }
     return generateUpdateFilter(ast, ctx);
@@ -943,6 +947,14 @@ function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
         ast.pos,
       );
     }
+    if (updateFilterHasReplaceStream(ast)) {
+      throw new CodegenError(
+        "jsmql.filter() expects a Filter, but received a stream-replace `$$ = <expr>` (which compiles to the pipeline stages its stream chain describes). " +
+          "Call jsmql.pipeline() or jsmql() for Pipeline output — or, to narrow a `find()`, pass the predicate to jsmql.filter() directly " +
+          "(`$.a === 1` rather than `$$ = $$.filter(t => t.a === 1)`).",
+        ast.pos,
+      );
+    }
     throw new CodegenError(
       "jsmql.filter() expects a Filter, but received an update-op chain (e.g. `$.x = …`, `delete $.x`). " +
         "Update-op chains compile to `$set` / `$unset` stages — call jsmql.update() or jsmql() for the Pipeline form.",
@@ -1086,12 +1098,18 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
   ({ ast, ctx } = foldProgram(ast, ctx));
   if (ast.type === "Pipeline") return generateImplicitPipeline(ast, ctx) as object[];
   if (ast.type === "UpdateFilter") {
-    // `$out` sugar (`$$$.<coll> = …`) and the bare `$ = <expr>` root-replace
-    // sugar inside an UpdateFilter must go through pipeline lowering —
-    // `generateUpdateFilter` knows about neither (the latter would emit a `$set`
-    // on the "" field path). Reroute the same way `lowerWithCtx` / `lowerProgram`
-    // do for the implicit `jsmql()` entry.
-    if (containsOutAssign(ast) || updateFilterHasReplaceRoot(ast) || containsStreamLength(ast)) {
+    // `$out` sugar (`$$$.<coll> = …`) and the bare `$ = <expr>` / `$$ = <expr>`
+    // replace sugars inside an UpdateFilter must go through pipeline lowering —
+    // `generateUpdateFilter` knows about none of them (`$ =` would emit a `$set`
+    // on the "" field path; `$$ =` has no write path for its `CollectionRef`
+    // target at all). Reroute the same way `lowerWithCtx` / `lowerProgram` do for
+    // the implicit `jsmql()` entry, so both entries agree on every sugar.
+    if (
+      containsOutAssign(ast) ||
+      updateFilterHasReplaceRoot(ast) ||
+      updateFilterHasReplaceStream(ast) ||
+      containsStreamLength(ast)
+    ) {
       const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx) as object[];
     }

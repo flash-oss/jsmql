@@ -79,10 +79,11 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 |---|---|---|
 | **Stage call** (`$match(...)`, `$project(...)`, `{ $match: ... }`, …) | a **Pipeline** `[…stages…]` (one stage) | `db.coll.aggregate(pipeline)` |
 | **Update filter** (`$.x = …`, `delete $.x`) | a **Pipeline** `[{ $set: … }]` / `[{ $unset: … }]` | `db.coll.updateOne(filter, update)` |
+| **Statement sugar** whose target is a destination rather than a field (e.g. `$$ = …`, `$$.<chain>`) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
 | **`;`-separated statements** (even a single trailing `;`) | a **Pipeline** `[…stages…]` | `db.coll.aggregate(pipeline)` |
 | **Anything else** (predicate, expression) | a **Filter** (single document) | `db.coll.find(filter)` |
 
-The first three rows all produce arrays — `jsmql()` is "would the driver call site need an array here?" → yes, give it an array. The `;` is only required to compose **multiple** stages; a single stage written naturally (with or without `;`) works.
+The first four rows all produce arrays — `jsmql()` is "would the driver call site need an array here?" → yes, give it an array. The `;` is only required to compose **multiple** stages; a single stage written naturally (with or without `;`) works.
 
 ### No semicolons → Filter
 
@@ -2926,7 +2927,7 @@ For filtering the current stream as a top-level stage (one $match, not split int
 
 ### Replace stream via `$$ = <expr>`
 
-Sister to `$ = <expr>` at the *stream* level. Assigning to bare `$$` replaces the pipeline's document stream. Two RHS shapes are accepted:
+Sister to `$ = <expr>` at the *stream* level. Assigning to bare `$$` replaces the pipeline's document stream. The trailing `;` below is optional — a lone `$$ = <expr>` is already a Pipeline, per [Output dispatch](#output-dispatch-filter-vs-pipeline). Two RHS shapes are accepted:
 
 ```js
 // Narrow the current stream (equivalent to $match($.client === 156 && $.createdAt >= "2026-01-01"))

@@ -68,22 +68,66 @@ Detail lives in [docs/specs/site.md](specs/site.md), including the
 
 ---
 
-## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
+## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
 
-Merging the date/chain-check work with the type-aware-dispatch work put two independent
-answers to "what type does this receiver have?" in the same function, and they compose: the
-structural cases (a date method, a literal, `.length`, an `$op(...)` in `OPERATOR_RETURNS`)
-and the recorded ones (`bindingTypeOf` reading `ctx.bindingTypes` / `ctx.slotTypes`) now sit in
-one `certainReceiverType`, so `const d = $.t.startOf("month"); d.plus(1, "month")` is typed
-through the binding exactly as the expression would be.
+Three places sold JSMQL partly on `--noscripting`: the README headline, the
+landing-page hero, and the `$function` passthrough note in
+[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
+run `mongod` with it learns nothing from the mention and has to stop and look it
+up, which costs more attention than the point is worth.
 
-One decision was superseded rather than merged. The chain check had gained a receiver-specific
-hint sending a string receiver of `.at` to `.charAt(index)`, on the premise that jsmql's `.at`
-was array-only. It no longer is: `.at` and `.nth` moved into the `"either"` family, because
-JavaScript has `String.prototype.at` and lodash's `_.nth` reads a string, and both now lower to
-`$substrCP` on a string receiver. `"abc".at(-1)` therefore *works*, the hint was unreachable,
-and it is gone along with its test. The dual-family list in the ungated-methods assertion gained
-both names with the reason recorded next to them.
+The surrounding claims all stand on their own without it. JSMQL compiles ahead
+of time, so the server evaluates no JavaScript at query time — that is the whole
+argument, and it needs no flag name to land. Where the point was that operators
+often cannot run at all, the text now says deployments refuse server-side
+JavaScript, which is the fact that matters to the reader and does not depend on
+knowing how an administrator spelled it.
+
+The general rule this follows: name a server flag only when the reader must set
+or unset it. Nobody has to touch this one to use JSMQL.
+
+---
+
+## 2026-08-14 — fix: a lone `$$ = <stream>` compiles without a trailing `;`
+
+```
+$$ = $$.filter({ a: 1 })
+// before: CodegenError: jsmql internal error … update op target is not a field path
+// now:    [{ $match: { a: 1 } }]     ← identical to the `;`-terminated form
+```
+
+`$$ = <expr>` written as a single statement has no top-level `;`, so it parsed as a
+one-op `UpdateFilter` rather than a `Pipeline` and reached `generateUpdateFilter`,
+which has no write path for a `CollectionRef` target. It fell out the bottom at
+`internalError` — a message reserved for invariants unreachable in valid programs,
+reached here from ordinary source. Four of the five entry points hit it
+(`jsmql()`, `jsmql.expr()`, `jsmql.pipeline()`, `jsmql.update()`); the source-switch
+spelling `$$ = $$$.orders.filter(…)` hit it on `jsmql.pipeline()` alone, because
+`jsmql()`'s reroute for a lookup-bearing `UpdateFilter` happened to cover it.
+
+`$$ = <expr>` dispatches to Pipeline rather than being rejected, because the
+alternative contradicts a shipped surface: the bare-statement sugar `$$.<chain>`
+already auto-wraps to Pipeline with no `;`, and it is *defined* as sugar for
+`$$ = $$.<chain>`, so rejecting the desugared spelling would mean the shorthand
+compiles and the thing it stands for does not. `updateFilterHasReplaceStream` (the
+`$$`-target twin of `updateFilterHasReplaceRoot`) now reroutes that `UpdateFilter`
+through the pipeline lowerer at both dispatchers — `lowerProgram` for `jsmql()` /
+`jsmql.expr()`, `lowerToPipelineStages` for `jsmql.pipeline()` / `jsmql.update()` —
+so every entry treats the two spellings as one input. An unsupported RHS now reaches
+the `rejectInvalidReplaceStream` catalogue with a real `.pos` instead of `pos = 0`.
+
+`jsmql.filter()` still throws, as it must, but on its own branch. It had been
+answering "received an update-op chain … call jsmql.update()" — a `$$ =` LHS is not
+an update op, and jsmql.update() rejects it too, so the advice was a dead end. It
+now names the stream-replace and offers the predicate the narrowing form was reaching
+for (`$.a === 1` rather than `$$ = $$.filter(t => t.a === 1)`).
+
+The invariant this generalises to — **a sugar's output never depends on whether the
+user typed the trailing `;`** — is now stated in
+[docs/specs/filter-mode.md](specs/filter-mode.md) next to the dispatch table, along
+with the reroute sites a future statement-shaped sugar has to register with. Every
+`$$ = …` shape was re-run against a live `mongod` per HR3, including the correlated
+`$lookup` pivot, which returns the same documents from both entry points.
 
 ---
 
@@ -143,6 +187,25 @@ complain, and a pasted-in JS `new Date(2024, 0, 15)` would silently shift a quer
 constant fold, and `Date.UTC`), is literal-gated so a runtime month passes, and catches the
 unary-minus form too. A month above 12 is deliberately left alone: `new Date($.y, 13, 1)` is
 next January in both engines and `m + 1` arithmetic legitimately produces it.
+
+---
+
+## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
+
+Merging the date/chain-check work with the type-aware-dispatch work put two independent
+answers to "what type does this receiver have?" in the same function, and they compose: the
+structural cases (a date method, a literal, `.length`, an `$op(...)` in `OPERATOR_RETURNS`)
+and the recorded ones (`bindingTypeOf` reading `ctx.bindingTypes` / `ctx.slotTypes`) now sit in
+one `certainReceiverType`, so `const d = $.t.startOf("month"); d.plus(1, "month")` is typed
+through the binding exactly as the expression would be.
+
+One decision was superseded rather than merged. The chain check had gained a receiver-specific
+hint sending a string receiver of `.at` to `.charAt(index)`, on the premise that jsmql's `.at`
+was array-only. It no longer is: `.at` and `.nth` moved into the `"either"` family, because
+JavaScript has `String.prototype.at` and lodash's `_.nth` reads a string, and both now lower to
+`$substrCP` on a string receiver. `"abc".at(-1)` therefore *works*, the hint was unreachable,
+and it is gone along with its test. The dual-family list in the ungated-methods assertion gained
+both names with the reason recorded next to them.
 
 ---
 

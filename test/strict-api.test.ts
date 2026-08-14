@@ -45,6 +45,19 @@ describe("jsmql.filter() — strict Filter shape", () => {
     );
   });
 
+  it("throws on a stream-replace `$$ = <expr>` and names the shape, not 'update-op chain'", () => {
+    // A `$$ =` LHS is a `CollectionRef`, so it parses into the same UpdateFilter
+    // node an update-op chain does — but calling it one would send the user to
+    // jsmql.update(), which rejects it too. Name the stream-replace, and offer the
+    // Filter the narrowing form was reaching for.
+    for (const src of ["$$ = $$.filter(t => t.a === 1)", "$$ = $$.filter(t => t.a === 1);"]) {
+      expect(() => jsmql.filter(src)).toThrow(/jsmql\.filter\(\) expects a Filter/);
+    }
+    expect(() => jsmql.filter("$$ = $$.filter(t => t.a === 1)")).toThrow(
+      /stream-replace `\$\$ = <expr>`.*jsmql\.pipeline\(\).*pass the predicate to jsmql\.filter\(\) directly/s,
+    );
+  });
+
   it("throws on a top-level stage call with the offending stage name", () => {
     expect(() => jsmql.filter("$match($.age > 18)")).toThrow(
       /jsmql\.filter\(\) expects a Filter.*top-level '\$match' stage call/s,
@@ -108,6 +121,34 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
     ).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } }]);
   });
 
+  it("lowers a stream-replace `$$ = <expr>` with or without a trailing `;`", () => {
+    // Both spellings must reach the pipeline lowerer here exactly as they do
+    // under `jsmql()` — a strict entry that agrees with the polymorphic one on
+    // the `;` form but not on the no-`;` form is the mis-dispatch this entry exists
+    // to prevent.
+    for (const src of ["$$ = $$.filter({ a: 1 })", "$$ = $$.filter({ a: 1 });"]) {
+      expect(jsmql.pipeline(src)).toEqual([{ $match: { a: 1 } }]);
+      expect(jsmql.pipeline(src)).toEqual(jsmql(src));
+    }
+  });
+
+  it("lowers a no-`;` source-switch `$$ = $$$.<coll>.filter(...)` like jsmql() does", () => {
+    const src = "$$ = $$$.orders.filter({ userId: $._id })";
+    expect(jsmql.pipeline(src)).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id" },
+          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.1" },
+      { $replaceWith: "$__jsmql.tmp.1" },
+    ]);
+    expect(jsmql.pipeline(src)).toEqual(jsmql(src));
+  });
+
   it("throws on a bare predicate that would lower to a Filter", () => {
     expect(() => jsmql.pipeline("$.age > 18")).toThrow(
       /jsmql\.pipeline\(\) expects a Pipeline.*bare expression that would lower to a Filter.*jsmql\.filter\(\).*wrap the predicate as `\$match/s,
@@ -156,6 +197,18 @@ describe("jsmql.update() — strict aggregation-pipeline update", () => {
 
   it("throws on a bare predicate (same error as jsmql.pipeline)", () => {
     expect(() => jsmql.update("$.age > 18")).toThrow(/jsmql\.update\(\) expects a Pipeline.*bare expression/);
+  });
+
+  it("judges a no-`;` stream-replace on the stage it emits, not on its spelling", () => {
+    // `$$ = <expr>` reaches the whitelist like any other stage source: the
+    // `$replaceWith` a `.map` head emits is allowed, the `$match` a `.filter`
+    // head emits is not — and the verdict must not change with the trailing `;`.
+    for (const src of ["$$ = $$.map(t => ({ x: t.x }))", "$$ = $$.map(t => ({ x: t.x }));"]) {
+      expect(jsmql.update(src)).toEqual([{ $replaceWith: { x: "$x" } }]);
+    }
+    for (const src of ["$$ = $$.filter({ a: 1 })", "$$ = $$.filter({ a: 1 });"]) {
+      expect(() => jsmql.update(src)).toThrow(/jsmql\.update\(\) rejected '\$match' \(stage 0\)/);
+    }
   });
 
   it("accepts the template-tag form with an interpolated literal", () => {
