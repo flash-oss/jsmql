@@ -137,6 +137,9 @@ Note: `.keyBy` / `.groupBy` / `.countBy` build their object keys through the sha
 `String(null)`) instead of feeding `$arrayToObject` a null key, which the server
 rejects. The identical helper is used by the value-mode forms, so both modes agree.
 `$toString` still errors on an object/array key — a separate, documented footgun.
+Because the key is a string, code that reads it back (`Object.keys(...)`) and joins
+on it must cast it to the field's own type first — see the `keyBy`/`groupBy`/`countBy`
+footgun in [LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
 
 **`.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, which
 MongoDB requires to be an object root. `rejectNonDocumentMapBody` literal-gates the

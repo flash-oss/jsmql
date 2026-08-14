@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — fix: the collaborative-filtering example casts countBy keys back to ObjectId
+
+The flagship example — first in [realistic.test.ts](../test/realistic.test.ts),
+the playground's default, and the last example on the landing page — returned
+documents with no `name` field on real data. `.countBy()` tallies into a MongoDB
+object, and an object has string keys, so `Object.keys()` handed back hex strings.
+Both joins then compared a string to an `ObjectId` `_id`: `candidateProducts` came
+back empty, every `name` resolved to missing, and the key dropped out of the
+document. `productId` came out as a hex string too. The example now casts once, at
+the point where the strings appear — `Object.keys(counts).map(id => ObjectId(id))`
+— which repairs both joins and makes `productId` a real id. The `[id]` score
+lookup is unaffected, because it already stringifies its key.
+
+The server accepts the pipeline either way, so this was never an invalid-MQL bug,
+and the `toEqual(<MQL>)` in realistic.test.ts could not see it: that assertion
+proves what jsmql emits, never what mongod returns. The guard that does see it is
+a new case in [integration.test.ts](../test/integration.test.ts), which runs the
+same shape against the fixture and asserts the rows — `name` present, `productId`
+an `ObjectId`. Without the cast that case fails on both. This is the second time in
+one day that an `ObjectId` silently degraded to a string; the entry below fixed the
+same class in the landing page's *output*, this one fixes it in the *query*.
+
+The trap is general: any key read back out of `keyBy`/`groupBy`/`countBy` is a
+string, whatever went in. [LANGUAGE.md](LANGUAGE.md#lodash-array-methods) now says
+so in the footgun note for those three, with the cast to write instead, and
+[stream-methods.md](specs/stream-methods.md) points at it from the
+`stringKeyExpr` note that owns the mechanism. jsmql does **not** warn about this at
+compile time: it cannot know the type of a bare `$.field`, so the only available
+check would be a guess from the field's name, and a heuristic that changes output
+or emits noise on a name is exactly the opaque behaviour the language rejects.
+
 ## 2026-08-14 — feat: the landing page ends on the collaborative-filtering example
 
 The landing page's six examples each made one point in a few lines. None showed

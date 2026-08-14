@@ -34,9 +34,11 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 //      then value-mode .map/.flatten/.uniq).
 //   3) products co-purchased by everyone who bought those, minus what the user
 //      already owns, tallied into a { productId: count } map with .countBy().
-//   4) join the product docs (indexed `pr._id in [...]` lookup) and emit the
-//      top-10 scored recommendations as a *stream of documents* (`$ = <array>`
-//      fans the array out via $unwind + $replaceWith).
+//   4) cast the tally's keys back to ObjectIds — an object keys by string, and a
+//      string never equals an `_id` — then join the product docs (indexed
+//      `pr._id in [...]` lookup) and emit the top-10 scored recommendations as a
+//      *stream of documents* (`$ = <array>` fans the array out via $unwind +
+//      $replaceWith).
 // Every scan of the massive `orders` / `products` collections is recency-sorted
 // (.toSorted) and capped (.take) so the work stays bounded at scale.
 describe("recommended products (collaborative filtering)", { features: ["Pipelines"] }, () => {
@@ -66,7 +68,7 @@ const candidateProductIdCounts = $$$.orders
   .flatten()
   .filter(p => !myProductIds.includes(p))
   .countBy(); // { ID: count } map
-const candidateProductIds = Object.keys(candidateProductIdCounts);
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(id => ObjectId(id));
 
 const candidateProducts = $$$.products
   .filter(pr => pr._id in candidateProductIds)
@@ -235,9 +237,15 @@ $ = candidateProductIds
           $set: {
             "__jsmql.var.candidateProductIds": {
               $map: {
-                input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
-                as: "jsmqlKv",
-                in: "$$jsmqlKv.k",
+                input: {
+                  $map: {
+                    input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
+                    as: "jsmqlKv",
+                    in: "$$jsmqlKv.k",
+                  },
+                },
+                as: "id",
+                in: { $toObjectId: "$$id" },
               },
             },
           },

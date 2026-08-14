@@ -754,4 +754,66 @@ $ = { lines };`,
     );
     expect(rows).toEqual([{ lines: [{ _id: null, qty: 55 }] }]);
   });
+
+  // The collaborative-filtering shape from test/realistic.test.ts, on fixture data.
+  // The value here is the ROUND TRIP through an object key: `.countBy()` tallies
+  // into a MongoDB object, whose keys are STRINGS, so `Object.keys()` hands back
+  // hex — and `ObjectId(id)` ($toObjectId) casts each one back before it meets an
+  // ObjectId `_id`. Both joins below depend on that cast. Without it the server
+  // still runs the pipeline and still returns rows, but `_id` never equals a
+  // string: `candidateProducts` comes back empty, every `name` resolves to
+  // missing, and the key drops out of the document. An emitted-MQL `toEqual` sees
+  // none of that — only a live run does, which is why this case lives here.
+  it("pipeline: collaborative filtering — countBy keys cast back to ObjectId join the product docs", async () => {
+    const rows = await aggregate(
+      "users",
+      `const userId = 0x6500000000000000000000a2;
+$$.filter({ _id: userId });
+assert($$.length === 1, "More than one user with such ID found");
+
+const myProductIds = $$$.orders
+  .filter({ userId })
+  .toSorted({ placedAt: -1 })
+  .take(10)
+  .map("items")
+  .flatten()
+  .map("productId")
+  .uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o => o.items.some(i => myProductIds.includes(i.productId)))
+  .toSorted({ placedAt: -1 })
+  .take(100)
+  .map("items")
+  .flatten()
+  .map("productId")
+  .filter(p => !myProductIds.includes(p))
+  .countBy();
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(id => ObjectId(id));
+
+const candidateProducts = $$$.products
+  .filter(pr => pr._id in candidateProductIds)
+  .take(500);
+
+$ = candidateProductIds
+  .map(id => ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name: candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1, name: 1 })
+  .take(10);`,
+    );
+    // Bo owns the headphones, laptop stand, notebook and desk lamp. Two other
+    // orders pair a keyboard with something Bo owns, so the keyboard scores 2;
+    // the rest score 1 and the `name: 1` sort key breaks the tie. Every
+    // `productId` is an ObjectId, not the hex string the tally was keyed by —
+    // `toEqual` fails on a string here, so the cast is what this asserts.
+    expect(rows).toEqual([
+      { productId: ID.product(1), score: 2, name: "Mechanical Keyboard" },
+      { productId: ID.product(7), score: 1, name: "4K Monitor" },
+      { productId: ID.product(5), score: 1, name: "Ergonomic Chair" },
+      { productId: ID.product(2), score: 1, name: "USB-C Cable" },
+    ]);
+  });
 });
