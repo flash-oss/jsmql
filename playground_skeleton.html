@@ -1983,7 +1983,7 @@
       // sessions. localStorage is already origin-scoped by the browser (so
       // :1234 and :4321 never collide), but it is NOT path-scoped — without the
       // pathname, every playground under the same origin (e.g.
-      // flash-oss.github.io/jsmql/ and a dev copy at .../experiment/) would
+      // jsmql.js.org/playground.html and a dev copy at .../experiment/) would
       // share one session and clobber each other. Including the origin too keeps
       // the key self-documenting as "state depends on the whole URL".
       const STORAGE_KEY =

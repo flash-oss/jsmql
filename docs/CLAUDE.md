@@ -53,6 +53,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/assert.md` | `assert(condition[, message])` → conditional-error `$match` guard (`$convert` "Unknown type name") |
 | `specs/stream-length.md` | `$$.length` → stream-cardinality value via lazily-materialised `$setWindowFields` `$count` (`__jsmql.length`) |
 | `specs/cli.md` | The `jsmql` command-line bin (`src/cli.ts` → `dist/cjs/cli.cjs`) |
+| `specs/site.md` | The published site at jsmql.js.org: what GitHub Pages serves, the Jekyll passthrough rule, and the JS.ORG subdomain binding |
 
 Items still on the roadmap live in [docs/DEFERRED.md](DEFERRED.md) — that file is their single source of truth. Add a spec file when the work begins.
 

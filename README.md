@@ -173,7 +173,7 @@ jsmql.validate(({ $ }) => $.age > 18)
 // → { valid: true, errors: [] }
 ```
 
-The **[live playground](https://flash-oss.github.io/jsmql/playground.html)** is the best place to see dozens of other JSMQL examples.
+The **[live playground](https://jsmql.js.org/playground.html)** is the best place to see dozens of other JSMQL examples.
 
 ## Why the arrow form
 
@@ -287,7 +287,8 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 
 ## Try it & learn more
 
-- **[Live playground](https://flash-oss.github.io/jsmql/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
+- **[jsmql.js.org](https://jsmql.js.org)** — the project site: what JSMQL is, how it compiles, and where to go next. Every MQL document on it is compiled in your browser by the same bundle npm ships.
+- **[Live playground](https://jsmql.js.org/playground.html)** — write jsmql, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
 - **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the strict-shape entry points (`jsmql.filter` / `jsmql.pipeline` / `jsmql.update`), the `@koresar/jsmql/ops` import, error catalogue, server-side-JS migration guide.
 - **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind them.
 

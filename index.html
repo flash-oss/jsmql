@@ -1,0 +1,822 @@
+<!doctype html>
+<!--
+  The jsmql.js.org landing page. Hand-authored and static: GitHub Pages copies
+  it verbatim because it carries no YAML front matter, so Jekyll never runs
+  Liquid over it and JS-syntax brace blocks survive untouched (same reason
+  playground.html and dist/jsmql.js pass through unrendered — see _config.yml).
+
+  Every MQL block on this page is computed in the browser at load time by the
+  same dist/jsmql.js bundle the playground imports. Nothing here restates an
+  emitted document, so the page cannot drift from the compiler. The examples
+  are checked by test/site.test.ts, which compiles each one and asserts the
+  output shape the surrounding prose claims.
+-->
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>JSMQL — write MongoDB aggregation queries in JavaScript</title>
+    <meta
+      name="description"
+      content="JSMQL is a strict JavaScript subset that compiles to MongoDB MQL JSON. Write queries, aggregation pipelines and updates in the syntax you already know."
+    />
+    <link rel="canonical" href="https://jsmql.js.org/" />
+    <meta property="og:type" content="website" />
+    <meta property="og:url" content="https://jsmql.js.org/" />
+    <meta property="og:title" content="JSMQL — write MongoDB aggregation queries in JavaScript" />
+    <meta
+      property="og:description"
+      content="A strict JavaScript subset that compiles to MongoDB MQL JSON. Filters, pipelines, expressions and updates in the syntax you already know."
+    />
+    <meta name="twitter:card" content="summary" />
+    <link
+      rel="icon"
+      href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'><rect width='32' height='32' rx='7' fill='%232a6df4'/><text x='16' y='24' font-family='ui-monospace,monospace' font-size='21' font-weight='700' fill='%23fff' text-anchor='middle'>$</text></svg>"
+    />
+
+    <style>
+      :root {
+        --fg: #1a1a1a;
+        --muted: #6b6b6b;
+        --subtle: #94a3b8;
+        --bg: #fafafa;
+        --panel: #fff;
+        --sidebar-bg: #f6f7f9;
+        --border: #e3e6ea;
+        --border-strong: #d4d9e0;
+        --accent: #2a6df4;
+        --accent-soft: rgba(42, 109, 244, 0.1);
+        --expr: #2a6df4;
+        --expr-soft: rgba(42, 109, 244, 0.1);
+        --pipe: #b45309;
+        --pipe-soft: rgba(217, 119, 6, 0.12);
+        --filter: #047857;
+        --filter-soft: rgba(4, 120, 87, 0.12);
+        --update: #7c3aed;
+        --update-soft: rgba(124, 58, 237, 0.12);
+        --error: #c0392b;
+        --error-bg: #fdf3f2;
+        --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      * {
+        box-sizing: border-box;
+      }
+
+      body {
+        margin: 0;
+        background: var(--bg);
+        color: var(--fg);
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+        font-size: 15px;
+        line-height: 1.6;
+        -webkit-font-smoothing: antialiased;
+      }
+
+      a {
+        color: var(--accent);
+        text-decoration: none;
+      }
+
+      a:hover {
+        text-decoration: underline;
+      }
+
+      code {
+        font-family: var(--mono);
+      }
+
+      .wrap {
+        max-width: 1080px;
+        margin: 0 auto;
+        padding: 0 20px;
+      }
+
+      /* ── Header ──────────────────────────────────────────────────────────── */
+      header.bar {
+        padding: 10px 16px;
+        padding-right: 60px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+        font-size: 13px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+      }
+
+      header.bar strong {
+        font-size: 14px;
+      }
+
+      header.bar .tag {
+        color: var(--muted);
+      }
+
+      header.bar nav {
+        margin-left: auto;
+        display: flex;
+        gap: 14px;
+      }
+
+      .github-corner {
+        position: absolute;
+        top: 0;
+        right: 0;
+        color: var(--panel);
+        fill: var(--fg);
+      }
+
+      .github-corner svg {
+        display: block;
+      }
+
+      /* ── Hero ────────────────────────────────────────────────────────────── */
+      .hero {
+        padding: 56px 0 40px;
+        border-bottom: 1px solid var(--border);
+        background: var(--panel);
+      }
+
+      .hero h1 {
+        margin: 0;
+        font-size: 44px;
+        line-height: 1.1;
+        letter-spacing: -0.02em;
+      }
+
+      .hero .lede {
+        margin: 14px 0 0;
+        font-size: 20px;
+        line-height: 1.45;
+        max-width: 40em;
+      }
+
+      .hero .sub {
+        margin: 14px 0 0;
+        color: var(--muted);
+        max-width: 46em;
+      }
+
+      .cta {
+        margin-top: 26px;
+        display: flex;
+        gap: 10px;
+        flex-wrap: wrap;
+        align-items: center;
+      }
+
+      .btn {
+        display: inline-block;
+        padding: 9px 16px;
+        border-radius: 7px;
+        border: 1px solid var(--border-strong);
+        background: var(--panel);
+        color: var(--fg);
+        font-size: 14px;
+        font-weight: 500;
+      }
+
+      .btn:hover {
+        text-decoration: none;
+        border-color: var(--accent);
+        color: var(--accent);
+      }
+
+      .btn.primary {
+        background: var(--accent);
+        border-color: var(--accent);
+        color: #fff;
+      }
+
+      .btn.primary:hover {
+        background: #1f5ad4;
+        border-color: #1f5ad4;
+        color: #fff;
+      }
+
+      .install {
+        margin-top: 22px;
+        display: inline-block;
+        padding: 10px 14px;
+        border: 1px solid var(--border);
+        border-radius: 7px;
+        background: var(--sidebar-bg);
+        font-family: var(--mono);
+        font-size: 13.5px;
+      }
+
+      .install .prompt {
+        color: var(--subtle);
+        user-select: none;
+      }
+
+      .hero .meta {
+        margin: 12px 0 0;
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+
+      /* ── Sections ────────────────────────────────────────────────────────── */
+      section {
+        padding: 44px 0;
+        border-bottom: 1px solid var(--border);
+      }
+
+      section > .wrap > h2 {
+        margin: 0 0 6px;
+        font-size: 24px;
+        letter-spacing: -0.01em;
+      }
+
+      section > .wrap > .section-intro {
+        margin: 0 0 26px;
+        color: var(--muted);
+        max-width: 46em;
+      }
+
+      /* ── Examples ────────────────────────────────────────────────────────── */
+      .example {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 18px;
+        margin-bottom: 18px;
+      }
+
+      .example h3 {
+        margin: 0;
+        font-size: 16px;
+        display: flex;
+        align-items: center;
+        gap: 10px;
+        flex-wrap: wrap;
+      }
+
+      .example .blurb {
+        margin: 6px 0 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .chip {
+        display: inline-block;
+        padding: 1px 8px;
+        border-radius: 999px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
+      }
+
+      .chip.filter {
+        color: var(--filter);
+        background: var(--filter-soft);
+      }
+
+      .chip.pipeline {
+        color: var(--pipe);
+        background: var(--pipe-soft);
+      }
+
+      .chip.expression {
+        color: var(--expr);
+        background: var(--expr-soft);
+      }
+
+      .chip.update {
+        color: var(--update);
+        background: var(--update-soft);
+      }
+
+      .io {
+        margin-top: 14px;
+        display: grid;
+        grid-template-columns: 1fr 1fr;
+        gap: 14px;
+      }
+
+      /* A grid item defaults to `min-width: auto`, which lets a long line
+         inside the <pre> push the column — and the page — wider than the
+         viewport. Zero the minimum so the <pre> scrolls on its own instead. */
+      .io > * {
+        min-width: 0;
+      }
+
+      @media (max-width: 760px) {
+        .io {
+          grid-template-columns: 1fr;
+        }
+
+        .hero h1 {
+          font-size: 34px;
+        }
+
+        .hero .lede {
+          font-size: 17px;
+        }
+      }
+
+      .io-label {
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--subtle);
+        margin-bottom: 5px;
+      }
+
+      pre {
+        margin: 0;
+        padding: 12px 14px;
+        border: 1px solid var(--border);
+        border-radius: 8px;
+        background: var(--sidebar-bg);
+        font-family: var(--mono);
+        font-size: 13px;
+        line-height: 1.55;
+        overflow: auto;
+        max-height: 320px;
+        tab-size: 2;
+      }
+
+      pre.out {
+        background: #fff;
+      }
+
+      pre.out.failed {
+        background: var(--error-bg);
+        border-color: var(--error);
+        color: var(--error);
+      }
+
+      pre.out.pending {
+        color: var(--subtle);
+      }
+
+      .example footer {
+        margin-top: 12px;
+        display: flex;
+        align-items: center;
+        gap: 14px;
+        flex-wrap: wrap;
+        font-size: 13px;
+      }
+
+      .example .call {
+        color: var(--muted);
+        font-family: var(--mono);
+        font-size: 12.5px;
+      }
+
+      .example .play {
+        margin-left: auto;
+      }
+
+      /* ── Feature grid ────────────────────────────────────────────────────── */
+      .grid {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+        padding: 16px 18px;
+      }
+
+      .card h3 {
+        margin: 0 0 6px;
+        font-size: 15px;
+      }
+
+      .card p {
+        margin: 0;
+        color: var(--muted);
+        font-size: 14px;
+      }
+
+      .card code {
+        font-size: 12.5px;
+        background: var(--sidebar-bg);
+        border: 1px solid var(--border);
+        border-radius: 4px;
+        padding: 0 4px;
+      }
+
+      /* ── Notices + footer ────────────────────────────────────────────────── */
+      .notice {
+        margin-bottom: 22px;
+        padding: 11px 14px;
+        border: 1px solid var(--border-strong);
+        border-radius: 8px;
+        background: var(--sidebar-bg);
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+
+      footer.site {
+        padding: 32px 0 48px;
+        color: var(--muted);
+        font-size: 13.5px;
+      }
+
+      footer.site ul {
+        margin: 0 0 18px;
+        padding: 0;
+        list-style: none;
+        display: flex;
+        gap: 18px;
+        flex-wrap: wrap;
+      }
+    </style>
+  </head>
+
+  <body>
+    <header class="bar">
+      <strong>JSMQL</strong>
+      <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
+      <nav>
+        <a href="playground.html">Playground</a>
+        <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Syntax</a>
+        <a href="https://www.npmjs.com/package/@koresar/jsmql">npm</a>
+      </nav>
+    </header>
+
+    <a
+      href="https://github.com/flash-oss/jsmql"
+      class="github-corner"
+      aria-label="View source on GitHub"
+      title="View source on GitHub"
+    >
+      <svg width="48" height="48" viewBox="0 0 250 250" aria-hidden="true">
+        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
+        <path
+          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
+          fill="currentColor"
+          style="transform-origin: 130px 106px"
+        ></path>
+        <path
+          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.6 141.8,141.5 Z"
+          fill="currentColor"
+        ></path>
+      </svg>
+    </a>
+
+    <div class="hero">
+      <div class="wrap">
+        <h1>Write MongoDB queries in JavaScript</h1>
+        <p class="lede">
+          JSMQL is a strict subset of JavaScript that compiles to MongoDB MQL JSON. Filters, aggregation pipelines,
+          expressions and updates — in the syntax you already know.
+        </p>
+        <p class="sub">
+          MongoDB 8.0 deprecated server-side JavaScript through <code>$function</code>, <code>$accumulator</code> and
+          <code>$where</code>. JSMQL is the replacement: it compiles ahead of time to native MQL, so the server runs
+          ordinary operators. Nothing is evaluated as JavaScript at query time, <code>--noscripting</code> stays
+          irrelevant, and indexes still apply.
+        </p>
+
+        <div class="cta">
+          <a class="btn primary" href="playground.html">Try the playground</a>
+          <a class="btn" href="https://github.com/flash-oss/jsmql">GitHub</a>
+          <a class="btn" href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a>
+        </div>
+
+        <div class="install"><span class="prompt">$</span> npm install @koresar/jsmql</div>
+        <p class="meta">ESM and CJS, runs in browsers, zero dependencies. Node 14+, Deno and Bun.</p>
+      </div>
+    </div>
+
+    <section>
+      <div class="wrap">
+        <h2>How it compiles</h2>
+        <p class="section-intro">
+          Every MQL document below is compiled in your browser, right now, by the same build of the library that npm
+          ships. Edit any of them in the playground to see the output change as you type.
+        </p>
+
+        <div class="notice" id="live-notice" hidden>
+          The compiler bundle could not be loaded, so the MQL output is not shown. Open this page over http(s) rather
+          than from a local file, or read the compiled examples in the
+          <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">realistic test suite</a>.
+        </div>
+        <noscript>
+          <div class="notice">
+            The MQL output on this page is compiled by JavaScript in your browser. With JavaScript off you can still
+            read every JSMQL input below; their compiled output is spelled out in the
+            <a href="https://github.com/flash-oss/jsmql/blob/master/README.md">README</a>.
+          </div>
+        </noscript>
+
+        <article class="example" data-example data-mode="filter">
+          <h3><span class="chip filter">Filter</span> Comparisons stay index-friendly</h3>
+          <p class="blurb">
+            A query with no <code>;</code> at the top level compiles to the plain document <code>find()</code> takes. No
+            <code>$expr</code> wrapper, so your indexes still apply.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$.age &gt; 18 &amp;&amp; $.status === "active"</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.users.find( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+
+        <article class="example" data-example data-mode="filter">
+          <h3><span class="chip filter">Filter</span> Spread and optional chaining</h3>
+          <p class="blurb">
+            Write <code>?.</code> where a field might be missing and you get an <code>$ifNull</code> guard in exactly
+            that position — nowhere else.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>[...$.mods, ...$.room?.mods, "root"].includes($.userId)</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.rooms.find( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+
+        <article class="example" data-example data-mode="pipeline">
+          <h3><span class="chip pipeline">Pipeline</span> Stages are statements</h3>
+          <p class="blurb">
+            One <code>;</code> at the top level flips the output to the array <code>aggregate()</code> takes. Stage
+            names are the MongoDB ones, so what you know transfers.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$match($.age &gt;= 18 &amp;&amp; $.region === "AU");
+$group({ _id: $.shopId, total: $sum($.amount) });
+$sort({ total: -1 });</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.orders.aggregate( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+
+        <article class="example" data-example data-mode="expression">
+          <h3><span class="chip expression">Expression</span> Array work reads like JavaScript</h3>
+          <p class="blurb">
+            <code>.map()</code> and <code>.reduce()</code> lower to <code>$map</code> and <code>$reduce</code>, arrow
+            parameters included. Use these anywhere an aggregation expression is allowed.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$.items.map(i =&gt; i.price * i.qty).reduce((a, x) =&gt; a + x, 0)</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">{ $addFields: { total: … } }</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+
+        <article class="example" data-example data-mode="update">
+          <h3><span class="chip update">Update</span> Assignment, <code>+=</code> and <code>delete</code></h3>
+          <p class="blurb">
+            Mutating statements compile to an update pipeline of <code>$set</code> and <code>$unset</code> stages — the
+            second argument of <code>updateOne()</code>.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$.score += 1;
+delete $.tempToken;
+$.status = "done";</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.users.updateOne(filter, … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+
+        <article class="example" data-example data-mode="auto">
+          <h3><span class="chip pipeline">Pipeline</span> Joins without hand-writing <code>$lookup</code></h3>
+          <p class="blurb">
+            Read another collection the way you would read an array. The correlated
+            <code>$lookup</code>, its sub-pipeline and the unwind that follows are all generated for you.
+          </p>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$$ = $$$.orders
+  .filter({ userId: $._id })
+  .toSorted({ placedAt: -1 })
+  .take(5)</code></pre>
+            </div>
+            <div>
+              <div class="io-label">MongoDB MQL</div>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </div>
+          </div>
+          <footer>
+            <span class="call">db.users.aggregate( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Why JSMQL</h2>
+        <p class="section-intro">
+          MQL is a fine thing for a machine to read and an awkward thing for a person to write. JSMQL keeps the output —
+          it is still MQL, and still the same MQL for the same input — and changes only what you type.
+        </p>
+        <div class="grid">
+          <div class="card">
+            <h3>Your editor already understands it</h3>
+            <p>
+              It is JavaScript syntax, so highlighting, bracket matching and formatting work with no plugin. Import
+              <code>@koresar/jsmql/ops</code> and the MongoDB operators autocomplete as well.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Indexes keep working</h3>
+            <p>
+              A comparison against a field lowers to a query document, not to
+              <code>$expr</code>. JSMQL reaches for <code>$expr</code> only when the query genuinely needs server-side
+              evaluation.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Errors tell you what to write</h3>
+            <p>
+              An unsupported construct is rejected with the JavaScript form that does work, and a misspelled method is
+              met with the closest name. Every error carries a source position.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Parameters bind once</h3>
+            <p>
+              <code>jsmql.compile()</code> parses a parameterised arrow once and returns a function that binds arguments
+              per call. The output stays a literal document, so it stays index-friendly.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Values interpolate safely</h3>
+            <p>
+              The <code>jsmql``</code> template tag places runtime values as literals rather than as source text, so a
+              value can never be read as syntax.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Drop it in where you are</h3>
+            <p>
+              Use the library, the mongoose plugin, or the <code>jsmql</code> command line, which reads source and
+              writes MQL JSON the way <code>jq</code> does.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>Learn more</h2>
+        <div class="grid">
+          <div class="card">
+            <h3><a href="playground.html">Playground</a></h3>
+            <p>
+              Write JSMQL and watch the MQL update as you type. Loaded with real recipes: tiered discounts, slug
+              generation, audit logs, pivot tables, parameterised reports.
+            </p>
+          </div>
+          <div class="card">
+            <h3>
+              <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a>
+            </h3>
+            <p>
+              The canonical description of the syntax: what is supported, what each construct compiles to, and where the
+              behaviour departs from JavaScript.
+            </p>
+          </div>
+          <div class="card">
+            <h3>
+              <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">Worked examples</a>
+            </h3>
+            <p>
+              A test suite of complete, real-world queries, each asserted against the exact MQL it produces. The
+              examples in the playground come from this file.
+            </p>
+          </div>
+          <div class="card">
+            <h3>
+              <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANG_RULES.md">Language rules</a>
+            </h3>
+            <p>
+              The invariants the compiler holds to — including that JSMQL never knowingly emits MQL the server would
+              refuse.
+            </p>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <footer class="site">
+      <div class="wrap">
+        <ul>
+          <li><a href="https://github.com/flash-oss/jsmql">Source</a></li>
+          <li><a href="https://www.npmjs.com/package/@koresar/jsmql">npm</a></li>
+          <li><a href="https://github.com/flash-oss/jsmql/issues">Issues</a></li>
+          <li>
+            <a href="https://github.com/flash-oss/jsmql/blob/master/docs/DEVLOG.md">Devlog</a>
+          </li>
+        </ul>
+        <p>
+          JSMQL is open source, from
+          <a href="https://github.com/flash-oss">flash-oss</a>. MongoDB is a trademark of MongoDB, Inc., which is not
+          affiliated with this project.
+        </p>
+      </div>
+    </footer>
+
+    <script type="module">
+      // Compile every example on the page with the real library, so no MQL on
+      // this page is a hand-copied snapshot of what the compiler used to emit.
+      // `data-mode` names the entry point, using the same mode keys the
+      // playground uses, so one value drives both the compile below and the
+      // share link that opens the example in the playground.
+      const examples = document.querySelectorAll("[data-example]");
+
+      // The playground restores a session from a `#s=<base64url>` fragment
+      // holding { v, input, vars, mode } — see playground_skeleton.html. Build
+      // the same payload here so "Open in playground" carries the example.
+      function toB64Url(str) {
+        const bytes = new TextEncoder().encode(str);
+        let bin = "";
+        for (const b of bytes) bin += String.fromCharCode(b);
+        return btoa(bin).replace(/\+/g, "-").replace(/\//g, "_").replace(/=+$/, "");
+      }
+
+      let entries;
+      try {
+        const { jsmql } = await import("./dist/jsmql.js");
+        entries = {
+          auto: jsmql,
+          filter: jsmql.filter,
+          update: jsmql.update,
+          expression: jsmql.expr,
+          pipeline: jsmql.pipeline,
+        };
+      } catch {
+        document.getElementById("live-notice").hidden = false;
+      }
+
+      for (const el of examples) {
+        const mode = el.dataset.mode || "auto";
+        const source = el.querySelector(".src code").textContent.trim();
+
+        el.querySelector("[data-play]").href =
+          "playground.html#s=" + toB64Url(JSON.stringify({ v: 1, input: source, vars: "", mode }));
+
+        if (!entries) continue;
+
+        const out = el.querySelector(".out");
+        out.classList.remove("pending");
+        try {
+          out.querySelector("code").textContent = JSON.stringify(entries[mode](source), null, 2);
+        } catch (err) {
+          out.classList.add("failed");
+          out.querySelector("code").textContent = String(err && err.message ? err.message : err);
+        }
+      }
+    </script>
+  </body>
+</html>

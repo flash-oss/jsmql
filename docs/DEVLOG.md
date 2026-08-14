@@ -10,6 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-14 — feat: the site moves to jsmql.js.org and gains a landing page
+
+The published site was one file: `playground.html`. The root of the Pages site,
+`flash-oss.github.io/jsmql/`, returned 404. That was tolerable while the
+playground *was* the site, but it blocked the move to a real domain — JS.ORG
+grants a subdomain only to a GitHub Pages site with substantive content behind
+its `CNAME`, and rejects placeholder pages outright.
+
+So the root now holds a hand-authored `index.html`: what JSMQL is, the
+server-side-JavaScript deprecation it answers, an install line, six worked
+examples, and links to the playground, the language reference and the worked-example
+suite. `CNAME` carries `jsmql.js.org`, which `package.json#homepage` already
+advertised, and `_config.yml` publishes the page alongside the playground and the
+`dist/jsmql.js` bundle both import.
+
+The landing page states no MQL of its own. Each example is JSMQL source and an
+empty output block; a module script imports the same `dist/jsmql.js` the
+playground uses and fills the blocks in the reader's browser. A page that quotes
+the compiler cannot drift from it, which is the single-source-of-truth rule
+applied to the website — and it means a visitor watches the real library run
+rather than reading a snapshot of what it once emitted. The same script builds
+each "Open in playground" link out of the `#s=` share format the playground
+already defines, so an example carries its source and compile mode across.
+
+What can still rot is the JSMQL *input*: a syntax change would make an example
+throw and put an error message where a document belongs. `test/site.test.ts`
+closes that by extracting every example from the markup, compiling it through
+the entry its `data-mode` names, and asserting the output shape matches the label
+the page shows the reader. It also pins the invariant that makes the whole
+arrangement work: none of the published files may carry YAML front matter,
+because Jekyll renders Liquid only in files that have it, and every one of these
+files is full of JavaScript and MQL braces.
+
+Detail lives in [docs/specs/site.md](specs/site.md), including the
+`cnames_active.js` entry JS.ORG needs.
+
+---
+
 ## 2026-08-13 — fix: `.at` / `.nth` are dual-type, so the chain check drops its string hint
 
 Merging the date/chain-check work with the type-aware-dispatch work put two independent

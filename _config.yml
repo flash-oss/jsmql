@@ -1,13 +1,16 @@
-# GitHub Pages publishes two artefacts: playground.html and the library bundle
-# it imports, dist/jsmql.js. Only dist/jsmql.js is git-tracked under dist/ (see
-# .gitignore), so the Pages checkout's dist/ holds just that one static .js file
-# — copied verbatim (no front matter → no Liquid).
+# GitHub Pages publishes the site at https://jsmql.js.org (CNAME): the landing
+# page index.html, the playground.html editor, and the library bundle both pages
+# import, dist/jsmql.js. Only dist/jsmql.js is git-tracked under dist/ (see
+# .gitignore), so the Pages checkout's dist/ holds just that one static .js file.
+# None of the three carries YAML front matter, so Jekyll copies each verbatim and
+# never runs Liquid over the JS-syntax brace blocks inside them.
 #
 # Everything else (Markdown docs, TypeScript sources, configs, dotfiles) is
 # excluded so Jekyll doesn't try to render it as Liquid — JS-syntax `{{ ... }}`
 # blocks inside docs/LANGUAGE.md and docs/DEVLOG.md crash the build.
 
 include:
+  - index.html
   - playground.html
 
 exclude:
