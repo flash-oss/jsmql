@@ -1022,6 +1022,21 @@ function isReplaceStreamAssign(op: AssignExpr): boolean {
 }
 
 /**
+ * Does this UpdateFilter contain a bare `$$ = <expr>` stream-replace op? The
+ * `$$`-target twin of `updateFilterHasReplaceRoot`, and it exists for the same
+ * reason: a single top-level `$$ = <expr>` written **without** a trailing `;`
+ * parses as a one-op `UpdateFilter` (not a `Pipeline`), so it never reaches
+ * `tryLowerAssignSugar`. `index.ts` uses this to reroute such an UpdateFilter
+ * through the pipeline lowerer, so the no-`;` form emits the same stages the
+ * `;`-terminated form does instead of reaching `generateUpdateFilter` with a
+ * `CollectionRef` target it has no write path for. See
+ * docs/specs/replace-stream-stage.md.
+ */
+export function updateFilterHasReplaceStream(uf: UpdateFilter): boolean {
+  return uf.ops.some((op) => op.type === "AssignExpr" && isReplaceStreamAssign(op));
+}
+
+/**
  * Lower `$$ = <expr>` to the stage(s) it represents.
  *
  * Two RHS shapes are accepted; anything else throws an actionable error:
