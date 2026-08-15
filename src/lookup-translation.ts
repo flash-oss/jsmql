@@ -757,102 +757,16 @@ export function aggregateArgToLambda(arg: CallArg): Lambda | null {
  * ctx, the binding can't resolve and the detection silently fails.
  */
 export function containsLookupCall(node: Expr | Pipeline | UpdateFilter, ctx: GenerateCtx = EMPTY_CTX): boolean {
-  return walkContainsLookup(node, ctx);
-}
-
-function walkContainsLookup(node: Expr | Pipeline | UpdateFilter | PipelineStmt | UpdateOp, ctx: GenerateCtx): boolean {
-  if (node.type === "Pipeline") {
-    return node.stmts.some((s) => walkContainsLookup(s, ctx));
-  }
-  if (node.type === "UpdateFilter") {
-    return node.ops.some((op) => walkContainsLookup(op, ctx));
-  }
-  if (node.type === "AssignExpr") return walkContainsLookup(node.value, ctx);
-  if (node.type === "DeleteStmt") return false;
-  if (node.type === "LetDecl") return walkContainsLookup(node.value, ctx);
-  if (node.type === "FuncDecl") return false; // compile-time decl; expanded at call sites, not here
-  // Expr branches that could contain nested expressions
-  const expr = node;
-  if (detectLookupCall(expr, ctx) !== null) return true;
-  if (expr.type === "MethodCall") {
-    // ANY method on a `$$$.<coll>` / `$$$$.<db>.<coll>` receiver heads a lookup
-    // chain — not just the `detectLookupCall` heads. Every lodash stream method
-    // and every chained stage call (`.$match(...)`) does too, so the mode gates
-    // must see `$$$.orders.toSorted(...).take(...)` as lookup syntax as well.
-    // (`extractLookupTarget` needs the collection hop, so a bare `$$$` / `$$$$`
-    // receiver — the `$$$$.currentOp(...)` diagnostics — stays out.)
-    if (extractLookupTarget(expr.object, ctx) !== null) return true;
-    if (walkContainsLookup(expr.object, ctx)) return true;
-    return walkArgsContainLookup(expr.args, ctx);
-  }
-  if (expr.type === "CallExpression") {
-    if (walkContainsLookup(expr.callee, ctx)) return true;
-    return walkArgsContainLookup(expr.args, ctx);
-  }
-  if (expr.type === "OperatorCall") return walkArgsContainLookup(expr.args, ctx);
-  if (expr.type === "MathCall" || expr.type === "ObjectCall") return walkArgsContainLookup(expr.args, ctx);
-  if (expr.type === "MemberAccess") return walkContainsLookup(expr.object, ctx);
-  if (expr.type === "IndexAccess") return walkContainsLookup(expr.object, ctx) || walkContainsLookup(expr.index, ctx);
-  if (expr.type === "BinaryExpr") return walkContainsLookup(expr.left, ctx) || walkContainsLookup(expr.right, ctx);
-  if (expr.type === "UnaryExpr") return walkContainsLookup(expr.operand, ctx);
-  if (expr.type === "TernaryExpr") {
-    return (
-      walkContainsLookup(expr.condition, ctx) ||
-      walkContainsLookup(expr.consequent, ctx) ||
-      walkContainsLookup(expr.alternate, ctx)
-    );
-  }
-  if (expr.type === "Lambda") {
-    if (expr.body !== undefined) return walkContainsLookup(expr.body, ctx);
-    if (expr.exprBlock !== undefined) {
-      return (
-        expr.exprBlock.decls.some((d) => walkContainsLookup(d.value, ctx)) ||
-        walkContainsLookup(expr.exprBlock.ret, ctx)
-      );
-    }
-    if (expr.block !== undefined) return walkContainsLookup(expr.block, ctx);
-    return false;
-  }
-  if (expr.type === "ArrayLiteral") {
-    for (const el of expr.elements) {
-      if (el.type === "SpreadElement") {
-        if (walkContainsLookup(el.argument, ctx)) return true;
-      } else if (walkContainsLookup(el as Expr | UpdateOp | LetDecl | FuncDecl, ctx)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  if (expr.type === "ObjectLiteral") {
-    for (const entry of expr.entries) {
-      if (entry.type === "SpreadElement") {
-        if (walkContainsLookup(entry.argument, ctx)) return true;
-      } else {
-        if (entry.key.kind === "computed" && walkContainsLookup(entry.key.expr, ctx)) return true;
-        if (walkContainsLookup(entry.value, ctx)) return true;
-      }
-    }
-    return false;
-  }
-  if (expr.type === "TemplateLiteral") return expr.expressions.some((e) => walkContainsLookup(e, ctx));
-  if (expr.type === "TypeofExpr") return walkContainsLookup(expr.operand, ctx);
-  if (expr.type === "NewDate") return expr.args.some((a) => walkContainsLookup(a, ctx));
-  if (expr.type === "NewSet") return expr.arg ? walkContainsLookup(expr.arg, ctx) : false;
-  if (expr.type === "TypeCast") return walkContainsLookup(expr.arg, ctx);
-  if (expr.type === "ArrayFrom")
-    return walkContainsLookup(expr.input, ctx) || (expr.mapFn ? walkContainsLookup(expr.mapFn, ctx) : false);
-  if (expr.type === "NumberStatic") return walkContainsLookup(expr.arg, ctx);
-  if (expr.type === "DateUTC") return expr.args.some((a) => walkContainsLookup(a, ctx));
-  return false;
-}
-
-function walkArgsContainLookup(args: CallArg[], ctx: GenerateCtx): boolean {
-  for (const a of args) {
-    if (a.type === "SpreadElement") {
-      if (walkContainsLookup(a.argument, ctx)) return true;
-    } else if (walkContainsLookup(a, ctx)) return true;
-  }
-  return false;
+  // ANY method on a `$$$.<coll>` / `$$$$.<db>.<coll>` receiver heads a lookup chain —
+  // not just the `detectLookupCall` heads. Every stream method and every chained stage
+  // call does too, so the mode gates must see `$$$.orders.toSorted(...).take(...)` as
+  // lookup syntax as well. (`extractLookupTarget` needs the collection hop, so a bare
+  // `$$$` / `$$$$` receiver — the `$$$$.currentOp(...)` diagnostics — stays out.)
+  const isLookup = (e: Expr): boolean =>
+    detectLookupCall(e, ctx) !== null || (e.type === "MethodCall" && extractLookupTarget(e.object, ctx) !== null);
+  if (node.type === "Pipeline") return node.stmts.some((s) => someStmt(s, isLookup));
+  if (node.type === "UpdateFilter") return someStmt(node, isLookup);
+  return someExpr(node, isLookup);
 }
 
 // ── Validation ────────────────────────────────────────────────────────────────

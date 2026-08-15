@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the hand-rolled tree walks are gone
+
+With the child-list table in place, the private walkers that predate it have
+nothing left to do. `walkContainsLookup` and its argument helper — 85 lines
+re-deriving the `Expr` union so `containsLookupCall` could ask one question —
+collapse into that question: a predicate handed to `someExpr`. The gate behaves
+identically across every callback shape, including the `ExprBlock` body that its
+sibling walker used to miss.
+
+Two dead things go with them. `findFirstLookupInElement` and
+`findFirstLookupInExpr` (107 lines) call only each other; no caller exists, and
+their doc comment names one that does not. `isExprVar` has none either. Both were
+reported by the audit and both check out.
+
+198 lines net removed from `src/`, no output change across 2 519 corpus sources,
+and one fewer place for the next node kind to be forgotten.
+
+---
+
 ## 2026-08-16 — refactor: every AST walk derives from one child-list table
 
 `ast-walk.ts` exists so a traversal is written once. Its own walk ended in

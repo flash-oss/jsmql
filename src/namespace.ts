@@ -152,15 +152,6 @@ export function exprVar(base: string): string {
 }
 
 /**
- * Does `name` sit in the expression-variable namespace? True for a user param
- * that happens to spell one, which is exactly the case `internalVar` gensyms
- * around — so this answers "is a collision possible", not "did we emit this".
- */
-export function isExprVar(name: string): boolean {
-  return /^jsmql[A-Z]/.test(name);
-}
-
-/**
  * Is `name` one of the `$lookup.let` correlation vars above? Used to catch a
  * hoisted var that has landed in a QUERY-document slot, where MongoDB does not
  * evaluate `$$vars` and the match would silently return nothing.
