@@ -117,7 +117,7 @@ class of failure the grid removes everywhere else.
 | grid completeness | every applicable cell of every declaration holds a lowering or `unsupported` |
 | family assembly | every family file reaches the registry |
 | signature agreement | the generated TypeScript signature matches the `args` rule it came from |
-| value/stream parity | for a dual-declared feature, the two cells agree on which elements and what shape |
+| value/stream parity | for a dual-declared feature, the two cells agree on which elements and what shape (`test/parity.test.ts`) |
 | spec reconciliation | every difference from the vendored MQL spec is explicitly marked |
 
 Parity is contracted on element identity and shape, **not on order**. Where a

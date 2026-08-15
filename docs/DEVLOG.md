@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — test: a value/stream parity gate
+
+21 method names carry two lowerings — a value form over an array inside a
+document, and a stream form over the pipeline's documents. They live in
+different files and share no code, so nothing structural keeps them meaning the
+same thing, and nothing compared them. `.uniqBy("t")` returned `[1,2,4]` in
+value position and `[2,1,4]` in stream position under a fully green suite.
+
+`test/parity.test.ts` runs both forms over the same documents on a real mongod
+and compares what comes back. The comparison is deliberately order-insensitive,
+because order is the one thing parity does NOT contract: SR2 says an ordering
+guarantee the developer never wrote gives way to MongoDB's behaviour, and
+`$group` is unordered. So `.uniqBy` passes on its differing order and would fail
+the moment an element appeared or vanished — verified both ways before the gate
+was trusted.
+
+Two coverage floors come with it, because a comparison suite that quietly stops
+comparing is worse than none. One asserts every case names a genuinely
+dual-declared method; the other fails if the shared surface grows without cases
+joining it. The suite self-skips when no mongod is reachable, matching
+`fold-consistency.test.ts`.
+
+---
+
 ## 2026-08-16 — test: a differential harness against a reference checkout
 
 The suite proves the working tree is self-consistent. It cannot prove the working
