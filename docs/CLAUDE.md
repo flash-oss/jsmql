@@ -28,6 +28,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/architecture.md` | End-to-end pipeline, the three targets and two receiver kinds, pass order, module responsibilities |
 | `specs/lowering-grid.md` | One declaration per feature: the cells, derived applicability, the four feature kinds, file-per-family layout, the tests that hold it up |
 | `specs/predicate-ir.md` | The predicate vocabulary shared by the Query and Expr targets, and the automatic `$expr` fallback |
+| `specs/differential-harness.md` | `npm run diff:compilers`: the reference-vs-working-tree comparison, the no-unclassified-divergence rule, and the corpus |
 | `specs/desugar-pass.md` | Sugar → explicit nodes before any lowering runs; the load-bearing precedence between overlapping forms |
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | Operator-shape registry: how it works, how to add/modify entries |

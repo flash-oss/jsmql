@@ -1,0 +1,364 @@
+{
+  "rows": {
+    "expr\u0000$$ = $$.countBy(String)": {
+      "entry": "expr",
+      "src": "$$ = $$.countBy(String)",
+      "kind": "message",
+      "was": ".countBy(key) takes a field name ('.countBy(\"status\")'), a bare-path arrow ('.countBy(d => d.status)'), a computed iteratee ('.countBy(d => d.status.toLowerCase())'), or a lodash matches shorthand ('{ active: true }' / '",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = { a: 1 }": {
+      "entry": "expr",
+      "src": "$ = { a: 1 }",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":{\"a\":1}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = $.profile": {
+      "entry": "expr",
+      "src": "$ = $.profile",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":\"$profile\"}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = { a: $.b }": {
+      "entry": "expr",
+      "src": "$ = { a: $.b }",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":{\"a\":\"$b\"}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$$ = $$.filter(d => d.x === 1)": {
+      "entry": "expr",
+      "src": "$$ = $$.filter(d => d.x === 1)",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"x\":1}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = { a: $$.filter(d => d.x === 1) }": {
+      "entry": "expr",
+      "src": "$ = { a: $$.filter(d => d.x === 1) }",
+      "kind": "now-rejected",
+      "was": "[{\"$facet\":{\"a\":[{\"$match\":{\"x\":1}}]}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = 5": {
+      "entry": "expr",
+      "src": "$ = 5",
+      "kind": "message",
+      "was": "Cannot replace root with a number \u2014 the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$ = [1, 2]": {
+      "entry": "expr",
+      "src": "$ = [1, 2]",
+      "kind": "message",
+      "was": "Cannot fan out an array of number \u2014 each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?",
+      "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$$ = $$.filter({ status: \"CLOSED\" }).sort({ createdAt: -1 }).take(10)": {
+      "entry": "expr",
+      "src": "$$ = $$.filter({ status: \"CLOSED\" }).sort({ createdAt: -1 }).take(10)",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"status\":\"CLOSED\"}},{\"$sort\":{\"createdAt\":-1}},{\"$limit\":10}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "expr\u0000$$ = $$.filter(t => t.a === 1)": {
+      "entry": "expr",
+      "src": "$$ = $$.filter(t => t.a === 1)",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"a\":1}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
+    },
+    "jsmql\u0000$.a.take(1.5)": {
+      "entry": "jsmql",
+      "src": "$.a.take(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[\"$a\",1.5]},null]},null]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},false]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},\"\"]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},0]}]}}",
+      "now": ".take(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.take(1.5)": {
+      "entry": "expr",
+      "src": "$.a.take(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$slice\":[\"$a\",1.5]}",
+      "now": ".take(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.take(1.5)": {
+      "entry": "filter",
+      "src": "$.a.take(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[\"$a\",1.5]},null]},null]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},false]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},\"\"]},{\"$ne\":[{\"$slice\":[\"$a\",1.5]},0]}]}}",
+      "now": ".take(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$.a.drop(1.5)": {
+      "entry": "jsmql",
+      "src": "$.a.drop(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$",
+      "now": ".drop(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.drop(1.5)": {
+      "entry": "expr",
+      "src": "$.a.drop(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}",
+      "now": ".drop(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.drop(1.5)": {
+      "entry": "filter",
+      "src": "$.a.drop(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$",
+      "now": ".drop(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$.a.slice(0.5)": {
+      "entry": "jsmql",
+      "src": "$.a.slice(0.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",0.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},\"else\":{\"$substrCP\":[\"$a\",0.5,{\"$ma",
+      "now": ".slice(start[, end]) needs a whole number, but got 0.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.slice(0.5)": {
+      "entry": "expr",
+      "src": "$.a.slice(0.5)",
+      "kind": "now-rejected",
+      "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",0.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},\"else\":{\"$substrCP\":[\"$a\",0.5,{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":{\"$if",
+      "now": ".slice(start[, end]) needs a whole number, but got 0.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.slice(0.5)": {
+      "entry": "filter",
+      "src": "$.a.slice(0.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",0.5,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},\"else\":{\"$substrCP\":[\"$a\",0.5,{\"$ma",
+      "now": ".slice(start[, end]) needs a whole number, but got 0.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$.a.slice(0, 2.5)": {
+      "entry": "jsmql",
+      "src": "$.a.slice(0, 2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$cond\":[{\"$lt\":[2.5,0]},{\"$max\":[{\"$add\":[2.5,{\"$size\":\"$$jsmqlArr\"}]},0]},{\"",
+      "now": ".slice(start[, end]) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.slice(0, 2.5)": {
+      "entry": "expr",
+      "src": "$.a.slice(0, 2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$cond\":[{\"$lt\":[2.5,0]},{\"$max\":[{\"$add\":[2.5,{\"$size\":\"$$jsmqlArr\"}]},0]},{\"$min\":[2.5,{\"$size\":\"$$jsmqlArr\"}]}]}]",
+      "now": ".slice(start[, end]) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.slice(0, 2.5)": {
+      "entry": "filter",
+      "src": "$.a.slice(0, 2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$a\"},\"then\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$cond\":[{\"$lt\":[2.5,0]},{\"$max\":[{\"$add\":[2.5,{\"$size\":\"$$jsmqlArr\"}]},0]},{\"",
+      "now": ".slice(start[, end]) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$.a.sampleSize(1.5)": {
+      "entry": "jsmql",
+      "src": "$.a.sampleSize(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlShuffled\":{\"$sortArray\":{\"input\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"k\":{\"$rand\":{}},\"v\":\"$$jsmqlItem\"}}},\"sortBy\":{\"k\":1}}}},\"in\":{\"$map\":{\"input\":{",
+      "now": ".sampleSize(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.sampleSize(1.5)": {
+      "entry": "expr",
+      "src": "$.a.sampleSize(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlShuffled\":{\"$sortArray\":{\"input\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"k\":{\"$rand\":{}},\"v\":\"$$jsmqlItem\"}}},\"sortBy\":{\"k\":1}}}},\"in\":{\"$map\":{\"input\":{\"$slice\":[\"$$jsmqlShuffled\",1.5]},\"as\"",
+      "now": ".sampleSize(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.sampleSize(1.5)": {
+      "entry": "filter",
+      "src": "$.a.sampleSize(1.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlShuffled\":{\"$sortArray\":{\"input\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"k\":{\"$rand\":{}},\"v\":\"$$jsmqlItem\"}}},\"sortBy\":{\"k\":1}}}},\"in\":{\"$map\":{\"input\":{",
+      "now": ".sampleSize(n) needs a whole number, but got 1.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$.a.takeRight(2.5)": {
+      "entry": "jsmql",
+      "src": "$.a.takeRight(2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[\"$a\",-2.5]},null]},null]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},false]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},\"\"]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},0]}]}}",
+      "now": ".takeRight(n) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "expr\u0000$.a.takeRight(2.5)": {
+      "entry": "expr",
+      "src": "$.a.takeRight(2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$slice\":[\"$a\",-2.5]}",
+      "now": ".takeRight(n) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "filter\u0000$.a.takeRight(2.5)": {
+      "entry": "filter",
+      "src": "$.a.takeRight(2.5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[\"$a\",-2.5]},null]},null]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},false]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},\"\"]},{\"$ne\":[{\"$slice\":[\"$a\",-2.5]},0]}]}}",
+      "now": ".takeRight(n) needs a whole number, but got 2.5.",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles."
+    },
+    "jsmql\u0000$year({ date: $.d, timezone: \"UTC\" })": {
+      "entry": "jsmql",
+      "src": "$year({ date: $.d, timezone: \"UTC\" })",
+      "kind": "now-accepted",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$year\"",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "expr\u0000$year({ date: $.d, timezone: \"UTC\" })": {
+      "entry": "expr",
+      "src": "$year({ date: $.d, timezone: \"UTC\" })",
+      "kind": "now-accepted",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "filter\u0000$year({ date: $.d, timezone: \"UTC\" })": {
+      "entry": "filter",
+      "src": "$year({ date: $.d, timezone: \"UTC\" })",
+      "kind": "now-accepted",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$year\"",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "jsmql\u0000$hour({ date: $.d })": {
+      "entry": "jsmql",
+      "src": "$hour({ date: $.d })",
+      "kind": "now-accepted",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$d\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},\"\"]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},0]}]}}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "expr\u0000$hour({ date: $.d })": {
+      "entry": "expr",
+      "src": "$hour({ date: $.d })",
+      "kind": "now-accepted",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$hour\":{\"date\":\"$d\"}}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "filter\u0000$hour({ date: $.d })": {
+      "entry": "filter",
+      "src": "$hour({ date: $.d })",
+      "kind": "now-accepted",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$d\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},\"\"]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},0]}]}}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
+    },
+    "jsmql\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
+      "entry": "jsmql",
+      "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "expr\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
+      "entry": "expr",
+      "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "pipeline\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
+      "entry": "pipeline",
+      "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "update\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
+      "entry": "update",
+      "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
+      "kind": "message",
+      "was": "jsmql.update() rejected '$lookup' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "jsmql\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
+      "entry": "jsmql",
+      "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
+      "kind": "now-rejected",
+      "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "expr\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
+      "entry": "expr",
+      "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
+      "kind": "now-rejected",
+      "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "pipeline\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
+      "entry": "pipeline",
+      "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
+      "kind": "now-rejected",
+      "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "update\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
+      "entry": "update",
+      "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
+      "kind": "message",
+      "was": "jsmql.update() rejected '$unionWith' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
+      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
+    },
+    "expr\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
+      "entry": "expr",
+      "src": "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });",
+      "kind": "message",
+      "was": "'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write `$$.push({...})`, `$$.push(...$$$.<coll>[.filter(pred)])`, or",
+      "now": "jsmql.expr() does not allow '$$.push(...)' \u2014 collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
+      "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
+    },
+    "filter\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
+      "entry": "filter",
+      "src": "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() does not allow '$$.push(...)' \u2014 collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
+      "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
+    },
+    "update\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
+      "entry": "update",
+      "src": "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });",
+      "kind": "message",
+      "was": "'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write `$$.push({...})`, `$$.push(...$$$.<coll>[.filter(pred)])`, or",
+      "now": "jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the union in a regular aggregat",
+      "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
+    }
+  }
+}

@@ -68,7 +68,8 @@
     "fixture:seed": "node test/fixtures/instance.ts seed",
     "fixture:status": "node test/fixtures/instance.ts status",
     "fixture:down": "node test/fixtures/instance.ts down",
-    "fixture:reset": "node test/fixtures/instance.ts reset"
+    "fixture:reset": "node test/fixtures/instance.ts reset",
+    "diff:compilers": "node scripts/diff-compilers.mjs"
   },
   "devDependencies": {
     "@types/js-yaml": "^4.0.9",

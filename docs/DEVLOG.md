@@ -10,6 +10,41 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — test: a differential harness against a reference checkout
+
+The suite proves the working tree is self-consistent. It cannot prove the working
+tree still *means* what it meant, because a refactor rewrites the assertions
+along with the code — a suite goes green on a changed behaviour as soon as
+someone changes the expectation. That is exactly the failure a large
+restructuring is prone to, and the one nothing here could catch.
+
+`npm run diff:compilers` runs a reference compiler and this one over a shared
+corpus and reports every disagreement. The reference is a separate checkout, so
+it is not editable from the branch doing the changing. The rule the command
+enforces is that **no divergence may stay unclassified**: each is either a
+regression to fix, or a row in `test/accepted-divergences.json` carrying the
+before value, the after value, and the reason the change is correct. It exits
+non-zero while anything is unclassified or still marked TODO, so it gates like a
+test.
+
+The corpus comes from two places because either alone has a blind spot. Most of
+it is harvested from the test suite — every `jsmql(…)` string literal in
+`test/*.test.ts`, which inherits every input anyone thought worth testing and
+grows on its own. The rest is generated, including a hand-kept `EDGES` list, and
+that list earns its place immediately: the first run found the six pre-freeze
+fixes contributed only one visible divergence, because the suite spells
+`.take(2)` and never spelled `.take(1.5)`. A corpus harvested from tests inherits
+the tests' blind spots.
+
+It also tags BSON values rather than stringifying them. `JSON.stringify` collapses
+`RegExp`, `Date` and `ObjectId` to `{}`, which would let two different regexes
+compare equal — the same trap that makes the CLI unable to show them.
+
+Current state: 2 518 sources across five entry points, 45 divergences, all 45
+classified against the six fixes that produced them.
+
+---
+
 ## 2026-08-16 — fix: the date accessors accept the `{ date, timezone }` object form
 
 All 13 date-component accessors — `$year`, `$hour`, `$isoWeekYear` and their
