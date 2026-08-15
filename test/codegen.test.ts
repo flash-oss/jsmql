@@ -2592,6 +2592,20 @@ describe("date methods", () => {
   it("getMilliseconds", () => {
     expect(jsmql.expr("$.ts.getMilliseconds()")).toEqual({ $millisecond: "$ts" });
   });
+
+  // The accessors read the whole date, so an argument has nowhere to go — it
+  // used to be dropped in silence, which is the one error a user can't see in
+  // the output. `.week("UTC")` & co. DO take a timezone; only these don't.
+  it("rejects an argument on a zero-argument accessor", () => {
+    expect(() => jsmql.expr('$.ts.getFullYear("UTC")')).toThrow(".getFullYear() takes no arguments, got 1");
+    expect(() => jsmql.expr("$.ts.getMonth(1, 2, 3)")).toThrow(".getMonth() takes no arguments, got 3");
+    expect(() => jsmql.expr('$.ts.getUTCHours("UTC")')).toThrow(".getUTCHours() takes no arguments, got 1");
+    expect(() => jsmql.expr("$.ts.getTime(1)")).toThrow(".getTime() takes no arguments, got 1");
+    expect(() => jsmql.expr('$.ts.toISOString("UTC")')).toThrow(".toISOString() takes no arguments, got 1");
+  });
+  it("still accepts the timezone argument on the methods that take one", () => {
+    expect(jsmql.expr('$.ts.week("UTC")')).toEqual({ $week: { date: "$ts", timezone: "UTC" } });
+  });
 });
 
 describe("date arithmetic (.plus / .minus)", () => {

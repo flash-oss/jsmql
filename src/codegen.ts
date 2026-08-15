@@ -746,6 +746,36 @@ const METHODS: Record<string, MethodMeta> = {
   exec: {},
 };
 
+/**
+ * The date methods JavaScript's own `Date` already carries — the accessors plus
+ * `.getTime()` / `.toISOString()`. Two consumers, one list: `generateMethodCall`
+ * arity-checks them as zero-argument (their lowerings read the receiver and
+ * nothing else, so an argument would vanish in silence), and
+ * `scripts/generate-globals.mjs` skips them when augmenting `interface Date`,
+ * because lib.d.ts types them already.
+ */
+export const NATIVE_DATE_METHODS: readonly string[] = [
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "getMilliseconds",
+  "getUTCFullYear",
+  "getUTCMonth",
+  "getUTCDate",
+  "getUTCDay",
+  "getUTCHours",
+  "getUTCMinutes",
+  "getUTCSeconds",
+  "getUTCMilliseconds",
+  "getTime",
+  "toISOString",
+];
+const ZERO_ARG_DATE_METHODS = new Set(NATIVE_DATE_METHODS);
+
 function methodsWhere(pred: (m: MethodMeta) => boolean): ReadonlySet<string> {
   return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
 }
@@ -3796,6 +3826,15 @@ function generateMethodCall(
   // a certain-wrong literal like "2020-01-01".getFullYear() throws.
   const receiverType = METHODS[method]?.receiver;
   if (receiverType !== undefined) checkArgType(`.${method}`, "", object, receiverType);
+
+  // The date accessors read the whole date and take nothing — their `case`s
+  // return the operator straight from the receiver, so an argument would be
+  // dropped in silence. Checked here rather than in eighteen `case`s: they all
+  // share one arity, and a silently-ignored argument is the one error shape a
+  // user can't see in the output.
+  if (ZERO_ARG_DATE_METHODS.has(method)) {
+    checkArity(method, { sig: "", none: true }, args.length, callPos);
+  }
 
   // Chain type-check: reject a method chained on a receiver of a provably
   // incompatible type (`.every(...).map(...)`, `s.toUpperCase().map(...)`,

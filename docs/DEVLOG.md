@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — fix: the zero-argument date accessors reject an argument instead of dropping it
+
+`$.ts.getFullYear("UTC")` compiled to `{ "$year": "$ts" }` — the argument was
+read, discarded, and never mentioned. So did `.getMonth(1, 2, 3)`,
+`.getTime(1)`, `.toISOString("UTC")` and the rest of the accessor family. A
+dropped argument is the worst error shape jsmql has: the output looks right, so
+nothing in the emitted MQL tells the user their timezone was ignored.
+
+The cause was structural rather than an oversight in any one place. Each of the
+eighteen `case`s returns its operator straight from the receiver
+(`return { $year: genObj }`), so none of them ever looked at `args` — and every
+*other* date method arity-checks at its own `case`. The check now runs once
+before the dispatch switch, keyed on the new `NATIVE_DATE_METHODS` list in
+[codegen.ts](../src/codegen.ts): the methods JavaScript's own `Date` already
+carries, which are exactly the ones that take nothing. The date methods that DO
+take a timezone (`.week([timezone])`, `.startOf(unit[, timezone])`, …) are
+untouched.
+
+That list has a second consumer, which is why it is exported rather than
+file-local: `scripts/generate-globals.mjs` skips exactly those names when
+augmenting `interface Date`, since lib.d.ts types them already. One list, both
+uses. See [specs/method-dispatch.md](specs/method-dispatch.md) § Zero-argument
+accessors.
+
+---
+
 ## 2026-08-15 — fix: the terminal-stage guard fires between chain links, not just between statements
 
 `$$.filter(d => d.a).$out("archive").$limit(1);` emitted
