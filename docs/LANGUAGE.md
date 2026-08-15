@@ -3188,7 +3188,7 @@ jsmql(`
 // → [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id", name: "$name" } }]
 ```
 
-Every stream method works this way (`.filter`, `.map`, `.slice`, `.concat`, `.toSorted`, `.toReversed`, `.flatMap`). Chaining and splitting are interchangeable — these three forms all produce the same MQL:
+Every stream method works this way (e.g. `.filter`, `.map`, `.toSorted`). Chaining and splitting are interchangeable — these three forms all produce the same MQL:
 
 ```js
 $$.filter(p).map(f);        // chained
@@ -3196,7 +3196,7 @@ $$.filter(p); $$.map(f);    // split across statements
 $$ = $$.filter(p).map(f);   // explicit assignment
 ```
 
-This holds even for `.toReversed()`, which flips a preceding `$sort`: in the bare form the sort can come from an earlier statement, so `$$.toSorted((a, b) => a.age - b.age); $$.toReversed();` flips the sort from the previous line just as the chained `$$.toSorted(...).toReversed();` does.
+It holds for the chained stage calls too, so a chain may mix them freely: `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
 
 > **Note.** In plain JS, `arr.filter(...)` as a bare statement throws the result away. In a jsmql pipeline a bare `$$.filter(...)` statement *transforms the running stream* — each statement is a stage. (Same spirit as `$$.push(...)`.) The bare `$$` receiver is required; for source-switches keep the explicit `$$ = $$$.<coll>.<chain>;` head.
 

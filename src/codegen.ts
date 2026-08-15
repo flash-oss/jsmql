@@ -653,7 +653,7 @@ const METHODS: Record<string, MethodMeta> = {
   isAfter: { returns: "bool", receiver: "date" },
   set: { receiver: "date" },
   endOf: { receiver: "date" },
-  // ── lodash array methods (Phase 1) ──────────────────────────────────────────
+  // ── lodash array methods ────────────────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
   max: { optional: "array" }, // returns the max ELEMENT (unknown type), not a number
@@ -703,7 +703,7 @@ const METHODS: Record<string, MethodMeta> = {
   countBy: { returns: "object", optional: "array" },
   partition: { returns: "array", optional: "array" },
   reject: { returns: "array", optional: "array" },
-  // ── lodash object methods (Phase 1) ─────────────────────────────────────────
+  // ── lodash object methods ───────────────────────────────────────────────────
   mapValues: { returns: "object" },
   mapKeys: { returns: "object" },
   pick: {}, // context-dependent (value → object, stream → $project doc-stream)
@@ -713,7 +713,7 @@ const METHODS: Record<string, MethodMeta> = {
   invert: { returns: "object" },
   toPairs: { returns: "array" },
   fromPairs: { returns: "object", optional: "array" },
-  // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
+  // ── lodash string methods (ASCII-only) ──────────────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
   lowerFirst: { returns: "string", optional: "string" },
@@ -724,7 +724,7 @@ const METHODS: Record<string, MethodMeta> = {
   camelCase: { returns: "string", optional: "string" },
   escape: { returns: "string", optional: "string" },
   truncate: { returns: "string", optional: "string" },
-  // ── lodash number methods (Phase 1) ─────────────────────────────────────────
+  // ── lodash number methods ───────────────────────────────────────────────────
   clamp: {}, // result type follows the receiver/args (number OR date) — no invariant return
   inRange: { returns: "bool" },
   round: { returns: "number" },
@@ -3274,7 +3274,7 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 
 // ── Method calls ──────────────────────────────────────────────────────────────
 
-// Shared expression builders for the lodash string methods (Phase 1). ASCII-only
+// Shared expression builders for the lodash string methods. ASCII-only
 // by design: `$toUpper`/`$toLower` are ASCII, and word splitting matches ASCII
 // alphanumerics (accented text passes through / is treated as separators).
 function strTail(s: unknown, from: number): unknown {
@@ -4840,7 +4840,7 @@ function generateMethodCall(
         callPos,
       );
 
-    // ── lodash array methods (Phase 1 value vocabulary) ──────────────────────
+    // ── lodash array methods (value vocabulary) ──────────────────────────────
     case "sum":
     case "mean":
     case "max":
@@ -5280,7 +5280,7 @@ function generateMethodCall(
       return method === "reject" ? no : [yes, no];
     }
 
-    // ── lodash object methods (Phase 1 value vocabulary) ─────────────────────
+    // ── lodash object methods (value vocabulary) ─────────────────────────────
     case "mapValues":
     case "mapKeys": {
       const exprArgs = exprArgsOnly(args, method);
@@ -5348,7 +5348,7 @@ function generateMethodCall(
       };
     }
 
-    // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────
+    // ── lodash string methods (value vocabulary; ASCII-only) ─────────────────
     case "capitalize":
     case "upperFirst":
     case "lowerFirst":
@@ -5433,7 +5433,7 @@ function generateMethodCall(
       };
     }
 
-    // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
+    // ── lodash number methods (value vocabulary) ─────────────────────────────
     case "clamp": {
       const exprArgs = exprArgsOnly(args, "clamp");
       checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);

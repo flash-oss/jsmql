@@ -34,7 +34,7 @@ import yaml from "js-yaml";
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
 import { streamMethodNames, VALUE_TERMINAL_METHODS } from "../src/stream-methods.ts";
-import { NATIVE_DATE_METHODS, valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
+import { NATIVE_DATE_METHODS, requiredReceiverFamily, valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
 import { TIME_UNIT } from "../src/operator-validation.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
@@ -688,6 +688,29 @@ function valueMethodAugmentationBlock() {
     // T[] / any[] / any[][] / string[] — and the `.partition` tuple `[T[], T[]]`.
     array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
   };
+  // Receiver drift guard. The METHODS registry already declares which receiver
+  // family a single-receiver method needs — that's what gates the chain
+  // type-check at runtime — so hanging a signature on a different interface here
+  // would advertise a method on a type jsmql itself rejects. Methods with no
+  // declared family (`requiredReceiverFamily` → null) are the documented
+  // dual/universal ones (`.clamp`, `.nth`, `.size`); they choose their own
+  // receivers, which is exactly what the multi-receiver `recv` form is for.
+  const familyInterface = { array: "Array", string: "String", number: "Number", date: "Date", object: "Object" };
+  const wrongRecv = [];
+  for (const name of augmentable) {
+    const family = requiredReceiverFamily(name);
+    if (family === null) continue;
+    const recvs = recvsOf(VALUE_METHOD_SIGNATURES[name]);
+    if (!recvs.includes(familyInterface[family])) {
+      wrongRecv.push(`.${name}(): registry needs a ${family} receiver but the signature augments ${recvs.join(" + ")}`);
+    }
+  }
+  if (wrongRecv.length > 0) {
+    throw new Error(
+      `generate-globals: value-method receivers drifted from the METHODS registry:\n  ${wrongRecv.sort().join("\n  ")}`,
+    );
+  }
+
   // Note: the date-RETURNING methods (`.plus` / `.minus` / `.startOf` / `.endOf` /
   // `.set`) are unprotected here by construction, not by omission. `MethodReturn`
   // has no `"date"` member — those methods return "same as the receiver", so the

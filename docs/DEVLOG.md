@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — chore: a receiver drift guard, and the docs the removed stream methods left behind
+
+Two kinds of rot, both surfaced by typing the completion surface.
+
+**A guard the generator was missing.** `VALUE_METHOD_SIGNATURES` chose each
+method's receiver interface by hand, while the `METHODS` registry *already*
+declares the receiver family that method needs — that is what gates the chain
+type-check at runtime. Nothing kept the two agreeing, so a signature could
+advertise `.uniq()` on `String` while the compiler rejects it there. The
+generator now asserts `recv` against `requiredReceiverFamily()` for every method
+that declares one; the documented dual/universal three (`.clamp`, `.nth`,
+`.size`) return `null` and choose their own, which is what the multi-receiver
+`recv` form exists for.
+
+**Prose describing a vocabulary that changed.** The from-the-end stream methods
+were removed on 2026-08-01, and `docs/specs/stream-methods.md` says so plainly —
+but an example three sections earlier still chained `.toReversed()`, and
+`docs/LANGUAGE.md` still listed it as a stream method and spent a paragraph on
+how it flips a preceding `$sort`. A reader met the feature and its removal in
+one file. Both are rewritten to the surviving spelling
+(`.toSorted((a, b) => b.age - a.age)`), and the replacement paragraph makes the
+chained/split equivalence point with stage links instead — verified byte-equal.
+A corrupted table row in the same spec (a leftover `.toReversed()` row merged
+into `.aggregate`'s) is repaired, and an error-message sample in
+`union-stage.md` that enumerated the registry now points at the message for the
+live list.
+
+The pattern behind all of it is the rule the repo already states: prose that
+pins down the current membership of an evolving set goes stale on the next
+change. Each site now names the rule and its source of truth instead of listing
+members. In the same spirit, `src/codegen.ts` lost nine `(Phase 1)` banner
+comments — a work-batch label is development history, which belongs here and
+nowhere else.
+
+---
+
 ## 2026-08-15 — feat: a block-bodied arrow narrows `jsmql()`'s return type to `object[]` (closes DEF-018)
 
 `jsmql(({ $ }) => { $match($.age > 18); $limit(5); })` is now typed `object[]`
