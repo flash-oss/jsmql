@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: `$$.push(...)` is detected in every callback body shape
+
+`jsmql.update()` pre-rejects the statement-only union syntax with a message that
+names it. That gate walked the tree through a private copy of the traversal,
+and the copy handled a lambda's expression body and its statement block but not
+its `ExprBlock` — the `{ const q = …; return q }` shape. So the same buried
+`$$.push(...)` produced the actionable message from one callback spelling and a
+misdirecting downstream error from another. The sibling gate for lookup syntax
+walked all four forms and behaved correctly, which is what made the difference
+visible.
+
+The private walker is deleted. `containsUnionPush` now runs `someExpr` /
+`someStmt` from `ast-walk.ts` — the module that exists so a traversal is written
+once and is complete over the `Expr` union by construction. That removes about
+seventy lines and the whole class of divergence, since the two gates now share
+one walk instead of agreeing by inspection.
+
+---
+
 ## 2026-08-16 — docs: the target architecture for MQL code generation
 
 The compiler has a clean front end and no back end. The lexer and parser are one

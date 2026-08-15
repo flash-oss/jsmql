@@ -248,3 +248,18 @@ describe("chain errors only ever name syntax that works here", () => {
     expect(() => jsmql("$$ = $$.pop();")).toThrow(/Did you mean '\.drop'\?/);
   });
 });
+
+describe("$$.push detection reaches every lambda body form", () => {
+  // The gate walks the whole tree, so a `$$.push(...)` buried in any callback
+  // body shape gets the purpose-built rejection rather than a downstream one.
+  const cases: [string, string][] = [
+    ["expression body", "$.x = $.a.map(d => $$.push({n:d}));"],
+    ["block body with a const", "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });"],
+    ["nested two deep", "$.x = $.a.map(d => d.b.map(e => { const q = $$.push({n:e}); return q; }));"],
+  ];
+  for (const [name, src] of cases) {
+    it(`rejects a buried push — ${name}`, () => {
+      expect(() => jsmql.update(src)).toThrow(/does not allow '\$\$\.push\(\.\.\.\)'/);
+    });
+  }
+});

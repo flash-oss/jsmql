@@ -6,7 +6,8 @@
 // Spread rules, inline-doc `$documents` batching, the no-`let`-slot predicate
 // rejection, and the error catalog are owned by docs/specs/union-stage.md.
 
-import type { Expr, CallArg, Pipeline, PipelineStmt, UpdateFilter, UpdateOp } from "./ast.ts";
+import type { Expr, CallArg, Pipeline, UpdateFilter } from "./ast.ts";
+import { someExpr, someStmt } from "./ast-walk.ts";
 import { CodegenError, EMPTY_CTX, freshSubPipelineCtx, generateWithCtx, type GenerateCtx } from "./codegen.ts";
 import {
   detectLookupCall,
@@ -61,83 +62,10 @@ export function detectUnionPush(expr: Expr): UnionPushCall | null {
  * shapes later.
  */
 export function containsUnionPush(node: Expr | Pipeline | UpdateFilter, _ctx: GenerateCtx = EMPTY_CTX): boolean {
-  return walkContainsPush(node);
-}
-
-function walkContainsPush(node: Expr | Pipeline | UpdateFilter | PipelineStmt | UpdateOp): boolean {
-  if (node.type === "Pipeline") return node.stmts.some(walkContainsPush);
-  if (node.type === "UpdateFilter") return node.ops.some(walkContainsPush);
-  if (node.type === "AssignExpr") return walkContainsPush(node.value);
-  if (node.type === "DeleteStmt") return false;
-  if (node.type === "LetDecl") return walkContainsPush(node.value);
-  if (node.type === "FuncDecl") return false;
-  const expr = node;
-  if (detectUnionPush(expr) !== null) return true;
-  if (expr.type === "MethodCall") {
-    if (walkContainsPush(expr.object)) return true;
-    return walkArgsContainPush(expr.args);
-  }
-  if (expr.type === "CallExpression") {
-    if (walkContainsPush(expr.callee)) return true;
-    return walkArgsContainPush(expr.args);
-  }
-  if (expr.type === "OperatorCall" || expr.type === "MathCall" || expr.type === "ObjectCall") {
-    return walkArgsContainPush(expr.args);
-  }
-  if (expr.type === "MemberAccess") return walkContainsPush(expr.object);
-  if (expr.type === "IndexAccess") return walkContainsPush(expr.object) || walkContainsPush(expr.index);
-  if (expr.type === "BinaryExpr") return walkContainsPush(expr.left) || walkContainsPush(expr.right);
-  if (expr.type === "UnaryExpr") return walkContainsPush(expr.operand);
-  if (expr.type === "TernaryExpr") {
-    return walkContainsPush(expr.condition) || walkContainsPush(expr.consequent) || walkContainsPush(expr.alternate);
-  }
-  if (expr.type === "Lambda") {
-    if (expr.body !== undefined) return walkContainsPush(expr.body);
-    if (expr.block !== undefined) return walkContainsPush(expr.block);
-    return false;
-  }
-  if (expr.type === "ArrayLiteral") {
-    for (const el of expr.elements) {
-      if (el.type === "SpreadElement") {
-        if (walkContainsPush(el.argument)) return true;
-      } else if (walkContainsPush(el)) {
-        return true;
-      }
-    }
-    return false;
-  }
-  if (expr.type === "ObjectLiteral") {
-    for (const entry of expr.entries) {
-      if (entry.type === "SpreadElement") {
-        if (walkContainsPush(entry.argument)) return true;
-      } else {
-        if (entry.key.kind === "computed" && walkContainsPush(entry.key.expr)) return true;
-        if (walkContainsPush(entry.value)) return true;
-      }
-    }
-    return false;
-  }
-  if (expr.type === "TemplateLiteral") return expr.expressions.some(walkContainsPush);
-  if (expr.type === "TypeofExpr") return walkContainsPush(expr.operand);
-  if (expr.type === "NewDate") return expr.args.some(walkContainsPush);
-  if (expr.type === "NewSet") return expr.arg ? walkContainsPush(expr.arg) : false;
-  if (expr.type === "TypeCast") return walkContainsPush(expr.arg);
-  if (expr.type === "ArrayFrom")
-    return walkContainsPush(expr.input) || (expr.mapFn ? walkContainsPush(expr.mapFn) : false);
-  if (expr.type === "NumberStatic") return walkContainsPush(expr.arg);
-  if (expr.type === "DateUTC") return expr.args.some(walkContainsPush);
-  return false;
-}
-
-function walkArgsContainPush(args: CallArg[]): boolean {
-  for (const a of args) {
-    if (a.type === "SpreadElement") {
-      if (walkContainsPush(a.argument)) return true;
-    } else if (walkContainsPush(a)) {
-      return true;
-    }
-  }
-  return false;
+  const isPush = (e: Expr): boolean => detectUnionPush(e) !== null;
+  if (node.type === "Pipeline") return node.stmts.some((s) => someStmt(s, isPush));
+  if (node.type === "UpdateFilter") return someStmt(node, isPush);
+  return someExpr(node, isPush);
 }
 
 // ── Lowering ──────────────────────────────────────────────────────────────────
