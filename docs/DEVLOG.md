@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix!: `jsmql.expr()` refuses root- and stream-replace instead of returning stages
+
+`jsmql.expr()` returns one aggregation expression — the shape that goes inside a
+stage body or an `updateOne` update document. It gated three sugar forms that
+lower to stages (`$lookup`, `$unionWith`, `$out`) and missed the other three.
+`$ = <expr>`, `$$ = <expr>` and the facet-shaped `$ = { k: $$.filter(…) }` fell
+through to the pipeline lowerer, so the expression-only entry point handed back
+a stage ARRAY.
+
+The cause is shared machinery doing the right thing for the wrong caller:
+`lowerProgram` reroutes a one-op `UpdateFilter` whose target is `$` or `$$`
+through `generateImplicitPipeline`, because a bare `$ = { a: 1 }` with no `;` is
+still a root replacement. That reroute is correct for `jsmql()` and
+`jsmql.pipeline()`, and wrong for the two entry points that cannot hold stages.
+`jsmql.filter()` already guarded against it; `jsmql.expr()` now does the same,
+with a message that names both ways out — drop the `$ = ` to build the
+expression alone, or move to a Pipeline entry.
+
+This changes an accepted input into a rejected one, so it is breaking. The test
+that asserted `jsmql.expr("$ = $.profile")` returned `[{ $replaceWith: … }]` was
+asserting the defect; it now asserts the rejection, alongside a case confirming
+the ordinary `$.a = 1` update-op form still returns its bare `{ $set: … }`
+building block.
+
+---
+
 ## 2026-08-16 — fix: assignment sugar inside a literal sub-pipeline no longer emits an empty field path
 
 Three loops assemble pipeline elements. Two of them route an assignment through

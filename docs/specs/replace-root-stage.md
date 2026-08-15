@@ -31,11 +31,17 @@ so the parser yields a one-op `UpdateFilter` rather than a `Pipeline`) is still
 root-replace — `index.ts` reroutes such an UpdateFilter through
 `generateImplicitPipeline` (via `updateFilterHasReplaceRoot`, parallel to the
 `$out` sugar's `containsOutAssign`) so it emits `$replaceWith`, identical to the
-`;`-terminated form. This holds across `jsmql()`, `jsmql.expr()`,
-`jsmql.pipeline()`, and `jsmql.update()` (where `$replaceWith` is whitelisted);
-`jsmql.filter()` rejects it with a root-replace-specific message. Without this
-reroute, `generateUpdateFilter` would treat the bare `$` target as a field path
-and emit `{ $set: { "": … } }` — invalid/meaningless MQL.
+`;`-terminated form. This holds across `jsmql()`, `jsmql.pipeline()`, and
+`jsmql.update()` (where `$replaceWith` is whitelisted). Without this reroute,
+`generateUpdateFilter` would treat the bare `$` target as a field path and emit
+`{ $set: { "": … } }` — invalid/meaningless MQL.
+
+The two entry points that cannot hold stages reject it instead, each with a
+root-replace-specific message: `jsmql.filter()` returns a Filter, and
+`jsmql.expr()` returns one aggregation expression. The rejection names both ways
+out — drop the `$ = ` to build the expression alone, or move to a Pipeline
+entry. A literal sub-pipeline array rejects it too, and names `$replaceWith({ … })`
+— see [aggregation-stages.md](aggregation-stages.md).
 
 See [`docs/LANGUAGE.md#replace-root`](../LANGUAGE.md#replace-root) for the
 user-facing reference.

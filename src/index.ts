@@ -928,6 +928,27 @@ function lowerExprWithCtx(ast: Program, ctx: GenerateCtx): JsmqlOutput {
   rejectLookupOutsidePipeline(ast, "jsmql.expr", ctx);
   rejectUnionPushOutsidePipeline(ast, "jsmql.expr");
   rejectOutOutsidePipeline(ast, "jsmql.expr");
+  // Root- and stream-replacing sugar lowers to stages, and `lowerProgram` reroutes
+  // both through the pipeline lowerer whichever entry point called it. Without
+  // these two guards `jsmql.expr` would hand back a stage ARRAY — the one shape
+  // this entry point exists not to produce.
+  if (ast.type === "UpdateFilter") {
+    if (updateFilterHasReplaceRoot(ast)) {
+      throw new CodegenError(
+        "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` " +
+          "(which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, " +
+          "or call jsmql.pipeline() / jsmql() for Pipeline output.",
+        ast.pos,
+      );
+    }
+    if (updateFilterHasReplaceStream(ast)) {
+      throw new CodegenError(
+        "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` " +
+          "(which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+        ast.pos,
+      );
+    }
+  }
   // No array-wrap for update-filter output (see `lowerWithCtx` comment): the
   // caller asked for a raw building block, the bare `{ $set: … }` shape is
   // exactly what fits inside a hand-written `$set` / `$addFields` stage or

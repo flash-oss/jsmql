@@ -350,8 +350,20 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   it("single-statement `$ = <expr>` (no `;`) reroutes across every Pipeline entry", () => {
     const expected = [{ $replaceWith: "$profile" }];
     expect(jsmql("$ = $.profile")).toEqual(expected);
-    expect(jsmql.expr("$ = $.profile")).toEqual(expected);
     expect(jsmql.pipeline("$ = $.profile")).toEqual(expected);
+  });
+
+  it("`$ = <expr>` is refused by the expression entry, which returns no stages", () => {
+    // `jsmql.expr()` returns one aggregation expression. Root-replace lowers to a
+    // `$replaceWith` STAGE, so it belongs to a Pipeline entry — the rejection names
+    // both ways out rather than handing back an array from the expression surface.
+    expect(() => jsmql.expr("$ = $.profile")).toThrow(/returns one aggregation expression/);
+    expect(() => jsmql.expr("$ = { a: $.b }")).toThrow(/Drop the `\$ = `/);
+    expect(() => jsmql.expr("$$ = $$.filter(d => d.x === 1)")).toThrow(/stream-replace/);
+    // A facet-shaped RHS is still a root replacement, so it takes the same route.
+    expect(() => jsmql.expr("$ = { a: $$.filter(d => d.x === 1) }")).toThrow(/root-replace/);
+    // The ordinary update-op form is untouched — it IS an expression building block.
+    expect(jsmql.expr("$.a = 1")).toEqual({ $set: { a: 1 } });
   });
 
   it("single-statement `$ = <expr>` still reuses the full replace-root machinery (non-document reject)", () => {
