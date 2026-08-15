@@ -6117,7 +6117,7 @@ var METHODS = {
   isAfter: { returns: "bool", receiver: "date" },
   set: { receiver: "date" },
   endOf: { receiver: "date" },
-  // ── lodash array methods (Phase 1) ──────────────────────────────────────────
+  // ── lodash array methods ────────────────────────────────────────────────────
   sum: { returns: "number", optional: "array" },
   mean: { returns: "number", optional: "array" },
   max: { optional: "array" },
@@ -6173,7 +6173,7 @@ var METHODS = {
   countBy: { returns: "object", optional: "array" },
   partition: { returns: "array", optional: "array" },
   reject: { returns: "array", optional: "array" },
-  // ── lodash object methods (Phase 1) ─────────────────────────────────────────
+  // ── lodash object methods ───────────────────────────────────────────────────
   mapValues: { returns: "object" },
   mapKeys: { returns: "object" },
   pick: {},
@@ -6185,7 +6185,7 @@ var METHODS = {
   invert: { returns: "object" },
   toPairs: { returns: "array" },
   fromPairs: { returns: "object", optional: "array" },
-  // ── lodash string methods (Phase 1; ASCII-only) ─────────────────────────────
+  // ── lodash string methods (ASCII-only) ──────────────────────────────────────
   capitalize: { returns: "string", optional: "string" },
   upperFirst: { returns: "string", optional: "string" },
   lowerFirst: { returns: "string", optional: "string" },
@@ -6196,7 +6196,7 @@ var METHODS = {
   camelCase: { returns: "string", optional: "string" },
   escape: { returns: "string", optional: "string" },
   truncate: { returns: "string", optional: "string" },
-  // ── lodash number methods (Phase 1) ─────────────────────────────────────────
+  // ── lodash number methods ───────────────────────────────────────────────────
   clamp: {},
   // result type follows the receiver/args (number OR date) — no invariant return
   inRange: { returns: "bool" },
@@ -8663,7 +8663,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
         callPos
       );
-    // ── lodash array methods (Phase 1 value vocabulary) ──────────────────────
+    // ── lodash array methods (value vocabulary) ──────────────────────────────
     case "sum":
     case "mean":
     case "max":
@@ -9052,7 +9052,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
       const no = { $filter: { input: genObj, as: p.as, cond: { $not: [p.cond] } } };
       return method === "reject" ? no : [yes, no];
     }
-    // ── lodash object methods (Phase 1 value vocabulary) ─────────────────────
+    // ── lodash object methods (value vocabulary) ─────────────────────────────
     case "mapValues":
     case "mapKeys": {
       const exprArgs = exprArgsOnly(args, method);
@@ -9115,7 +9115,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       };
     }
-    // ── lodash string methods (Phase 1 value vocabulary; ASCII-only) ─────────
+    // ── lodash string methods (value vocabulary; ASCII-only) ─────────────────
     case "capitalize":
     case "upperFirst":
     case "lowerFirst":
@@ -9195,7 +9195,7 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
         }
       };
     }
-    // ── lodash number methods (Phase 1 value vocabulary) ─────────────────────
+    // ── lodash number methods (value vocabulary) ─────────────────────────────
     case "clamp": {
       const exprArgs = exprArgsOnly(args, "clamp");
       checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);
