@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: every AST walk derives from one child-list table
+
+`ast-walk.ts` exists so a traversal is written once. Its own walk ended in
+`default: return false`, and its header asked future contributors to extend the
+switch when a child-bearing node kind is added — an invariant held by a comment,
+which is the same shape as every other drift this codebase has produced.
+
+The table replaces it. `CHILDREN: Record<Expr["type"], readonly ChildRef[]>`
+declares how each of the 39 node kinds reaches its children, and the `Record`
+makes TypeScript demand an entry for every one — kind 40 fails the build until
+its children are declared. `someExpr`, `someStmt`, `someElement`, `foldExpr` and
+`flattenExpr` all read that one table, so traversal shapes cannot drift from each
+other. A leaf declares `[]` rather than being omitted, because "this node has no
+children" is worth asserting and an omission would be indistinguishable from an
+oversight.
+
+Presence is not correctness, though: an entry naming the wrong field type-checks
+perfectly and silently hides a sub-tree. So `test/ast-walk.test.ts` buries a
+marker in each of the 32 child slots in turn and asserts the walk reaches it,
+and the test was checked by deleting `IndexAccess.index` from the table until it
+failed.
+
+One behaviour change fell out. Statement nodes reach these walks — the parser can
+surface an `AssignExpr` through an Expr-typed slot — and the old `default` treated
+them as childless leaves. They now route through the statement child-list, which
+is what a walk of a statement should always have done; that omission is the same
+one that let a buried `$$.push` escape its gate. The differential harness reports
+no output change across 2 519 sources.
+
+---
+
 ## 2026-08-16 — fix: a `let` tombstone survives every lambda depth
 
 `extendCtx` built its result by naming fields — nineteen of `GenerateCtx`'s
