@@ -33,7 +33,7 @@ import yaml from "js-yaml";
 
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
-import { streamMethodNames } from "../src/stream-methods.ts";
+import { streamMethodNames, VALUE_TERMINAL_METHODS } from "../src/stream-methods.ts";
 import { NATIVE_DATE_METHODS, valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
 import { TIME_UNIT } from "../src/operator-validation.ts";
 
@@ -129,6 +129,11 @@ const CONTEXT_REFS = {
 // collapsed to `any`.
 const COLLECTION_REF_TYPE = "JsmqlCollectionRef";
 
+// Name of the ambient interface a FOREIGN collection (`$$$.<coll>`) is typed as,
+// and the base the collection ref extends. It holds the read surface both refs
+// share; the collection ref adds only what is unique to the current stream.
+const FOREIGN_REF_TYPE = "JsmqlForeignRef";
+
 // Each stream method's JSDoc + parameter list. The return type is appended by
 // `streamMethodMembers` (always the chainable ref) — kept out of the table so
 // the chaining contract lives in one place.
@@ -146,7 +151,7 @@ const STREAM_METHOD_SIGNATURES = {
     params: "(transform: ((doc: any) => any) | string)",
   },
   aggregate: {
-    doc: "Run a sub-pipeline against a foreign collection → `$lookup`. Only valid on `$$$.<coll>` (a foreign collection), not the current stream.",
+    doc: "Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages.",
     params: "(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[])",
   },
   slice: { doc: "Take a window of the stream → `$skip` / `$limit`.", params: "(start: number, end?: number)" },
@@ -155,7 +160,6 @@ const STREAM_METHOD_SIGNATURES = {
     doc: "Order the stream → `$sort` (equivalent to `.sort` on a stream).",
     params: '(sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number))',
   },
-  toReversed: { doc: "Reverse the preceding sort — flips the preceding `$sort`.", params: "()" },
   flatMap: {
     doc: 'Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`).',
     params: "(transform: ((doc: any) => any) | string)",
@@ -175,12 +179,6 @@ const STREAM_METHOD_SIGNATURES = {
     doc: "Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort.",
     params: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
   },
-  takeRight: {
-    doc: "Last `n` documents → reverse-sort + `$limit` + restore (reverses a preceding `$sort`, else orders by `_id`).",
-    params: "(n: number)",
-  },
-  dropRight: { doc: "All but the last `n` documents → reverse-sort + `$skip` + restore.", params: "(n: number)" },
-  initial: { doc: "All but the last document → `.dropRight(1)`.", params: "()" },
   shuffle: { doc: "Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`).", params: "()" },
   sampleSize: { doc: "`n` random documents → `$sample`.", params: "(n: number)" },
   sort: {
@@ -214,16 +212,20 @@ const STREAM_METHOD_SIGNATURES = {
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 
-// Registry methods that are NOT valid on the current stream (`$$`) — they only
-// work against a foreign collection (`$$$.<coll>`), which reaches them via the
-// permissive tail. They keep a signature (below) to document their shape and to
-// satisfy the completeness check, but are not emitted as `$$.<method>()` members
-// (jsmql rejects them there, so offering completion would mislead).
-const STREAM_METHODS_FOREIGN_ONLY = new Set(["aggregate"]);
+// Stream methods that are NOT in the STREAM_METHODS registry, so they can't be
+// derived from it: `.filter` / `.reject` are special-cased chain heads (their
+// predicate translation is shared with `$unionWith` / `$facet`), and `.push` is
+// the statement-level `$unionWith`. `.push` belongs to the current stream alone;
+// the other two are valid on a foreign collection too.
+const NON_REGISTRY_STREAM_METHODS = ["filter", "reject"];
+const COLLECTION_ONLY_STREAM_METHODS = ["push"];
 
-// Emission order for the `$$` stream methods (registry order, then the two
-// non-registry entries). Asserts every registered stream method has a signature.
-function streamMethodMembers() {
+// Emission order for the chainable stream methods (registry order, then the
+// non-registry entries). Drift-protected in BOTH directions: every registered
+// stream method must have a signature, and every signature must be a live
+// registry name — the second check is what stops a method that jsmql has since
+// dropped from lingering here as a phantom completion.
+function streamMethodMembers(returnType, names) {
   const registry = streamMethodNames();
   const missing = registry.filter((n) => STREAM_METHOD_SIGNATURES[n] === undefined);
   if (missing.length > 0) {
@@ -232,12 +234,63 @@ function streamMethodMembers() {
         `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
     );
   }
-  const order = [...registry.filter((n) => !STREAM_METHODS_FOREIGN_ONLY.has(n)), "filter", "reject", "push"];
+  const known = new Set([...registry, ...NON_REGISTRY_STREAM_METHODS, ...COLLECTION_ONLY_STREAM_METHODS]);
+  const stray = Object.keys(STREAM_METHOD_SIGNATURES).filter((n) => !known.has(n));
+  if (stray.length > 0) {
+    throw new Error(
+      `generate-globals: STREAM_METHOD_SIGNATURES has entries jsmql no longer accepts on a stream: ` +
+        `${stray.sort().join(", ")}. Drop them, or add them back to the STREAM_METHODS registry.`,
+    );
+  }
   const members = [];
-  for (const name of order) {
+  for (const name of names) {
     const { doc, params } = STREAM_METHOD_SIGNATURES[name];
     members.push(`/** ${doc} */`);
-    members.push(`${name}${params}: ${COLLECTION_REF_TYPE};`);
+    members.push(`${name}${params}: ${returnType};`);
+  }
+  return members;
+}
+
+// `.$<stage>(body)` chain links. Every stage in the registry is a legal link
+// EXCEPT the diagnostic source stages: those are source stages, so a link form
+// can never be first, and they already appear under their own non-`$` spelling
+// (`$$.indexStats()`) with a different arity. The body is typed `any` rather than
+// the stage's args object: several stages accept a bare string as well
+// (`.$unwind("$items")`, `.$merge("coll")`), and a named member has no `any`
+// escape hatch, so a narrower type would reject valid JSMQL. Argument-key
+// completion lives on the statement form (`$group({ … })`), which is generated
+// from the spec.
+function stageLinkMembers(spec, returnType) {
+  const members = [];
+  for (const name of Object.keys(STAGES).sort()) {
+    if (STAGES[name].diagnostic !== undefined) continue;
+    members.push(jsdocFor(name, spec.stage[name], STAGES[name]));
+    members.push(`${name}(body: any): ${returnType};`);
+  }
+  return members;
+}
+
+// The value terminals — `.head()`, `.sum()`, `.size()`, … — end a chain with a
+// value rather than a stream. Names come from the `VALUE_TERMINAL_METHODS`
+// registry in src/stream-methods.ts; the return types are `any` because the
+// result is a document or a field of one, except the numeric aggregates.
+const VALUE_TERMINAL_RETURNS = { size: "number", sum: "number", mean: "number", sumBy: "number", meanBy: "number" };
+const VALUE_TERMINAL_PARAMS = {
+  nth: "(n?: number)",
+  every: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
+  some: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
+  includes: "(value: any)",
+  partition: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
+  sumBy: "(iteratee: ((doc: any) => any) | string)",
+  meanBy: "(iteratee: ((doc: any) => any) | string)",
+  minBy: "(iteratee: ((doc: any) => any) | string)",
+  maxBy: "(iteratee: ((doc: any) => any) | string)",
+};
+function valueTerminalMembers() {
+  const members = [];
+  for (const name of [...VALUE_TERMINAL_METHODS].sort()) {
+    members.push(`/** Ends the chain with a value — valid in value position (\`$.f = …\`, \`const x = …\`). */`);
+    members.push(`${name}${VALUE_TERMINAL_PARAMS[name] ?? "()"}: ${VALUE_TERMINAL_RETURNS[name] ?? "any"};`);
   }
   return members;
 }
@@ -922,9 +975,7 @@ function contextRefBlock(spec) {
     methodsByScope[def.diagnostic.scope].push(stageName);
   }
 
-  const blocks = [];
-  for (const scope of ["collection", "database", "cluster"]) {
-    const ref = CONTEXT_REFS[scope];
+  const diagnosticMembers = (scope) => {
     const members = [];
     for (const stageName of methodsByScope[scope].sort()) {
       const def = STAGES[stageName];
@@ -935,34 +986,77 @@ function contextRefBlock(spec) {
       members.push(jsdocFor(stageName, spec.stage.get(stageName), def));
       members.push(sig);
     }
-    // The collection ref also carries the stream vocabulary (`$$.filter(...)`,
-    // `$$.map(...)`, …) as typed members so they get completion; the other scopes
-    // reach their methods via member access on the permissive tail.
-    if (scope === "collection") {
-      members.push(...streamMethodMembers());
-    }
-    // The permissive tail — keeps every non-diagnostic ref form type-checking.
-    // (Typing `$$$.<coll>` as a chainable ref to complete foreign-collection
-    // chains was prototyped and reverted — it regresses either `.find(pred)`
-    // callbacks (noImplicitAny) or the `$out` write assignment. It needs the
-    // schema/collection-name threading tracked by DEF-013/DEF-015.)
-    members.push("[key: string]: any;");
-    const refJsdoc = `/**\n * ${ref.doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
-    // The collection ref is emitted as a named interface so its stream methods
-    // can return it (chaining), and as `var` (not `const`) because `$$` is
-    // reassigned wholesale by the `$$ = …` replace-stream / `$facet` sugar —
-    // `declare const $$` would make TS reject that valid jsmql. The other two
-    // refs stay inline anonymous `const`s: they only ever take *property* writes
-    // (`$$$.coll = …`, `$$$$.db.coll = …` → `$out`), which `const` already
-    // permits, while still flagging the invalid `$$$ = …` whole-reassignment.
-    if (scope === "collection") {
-      blocks.push(
-        `interface ${COLLECTION_REF_TYPE} {\n${members.join("\n")}\n}\n${refJsdoc}\nvar ${ref.name}: ${COLLECTION_REF_TYPE};`,
-      );
-    } else {
-      blocks.push(`${refJsdoc}\nconst ${ref.name}: {\n${members.join("\n")}\n};`);
-    }
-  }
+    return members;
+  };
+  const refJsdoc = (scope) =>
+    `/**\n * ${CONTEXT_REFS[scope].doc}\n *\n * @see https://github.com/koresar/jsmql/blob/master/docs/specs/context-references.md\n */`;
+
+  // Everything a chain link can be: the stream vocabulary plus the `.$<stage>()`
+  // links. Emitted once per ref with that ref as the return type, because a chain
+  // keeps the identity of its ROOT — that is the rule jsmql enforces. `.find` is
+  // legal at ANY position of a foreign chain and at NO position of a current-stream
+  // chain, so `$$$.<coll>.filter(p).find(q)` compiles and `$$.filter(p).find(q)`
+  // does not. A single shared return type can't express that; two can.
+  const chainableMembers = (returnType) => [
+    ...streamMethodMembers(returnType, [...streamMethodNames(), ...NON_REGISTRY_STREAM_METHODS]),
+    ...stageLinkMembers(spec, returnType),
+  ];
+
+  // ── A foreign collection (`$$$.<coll>`) ────────────────────────────────────
+  const foreignMembers = [
+    "/** Join and take the FIRST match → `$lookup` + `$first`. One document or null, not an array. */",
+    "find(predicate: ((doc: any) => any) | Record<string, any> | string): any;",
+    ...chainableMembers(FOREIGN_REF_TYPE),
+    "/** The stream's document count. Always the ROOT stream, at any nesting depth. */",
+    "readonly length: number;",
+    ...valueTerminalMembers(),
+    // A stream spreads into `$$.push(...$$$.other)`, so it has to be iterable as
+    // far as TypeScript is concerned; without this the spread is TS2488.
+    "[Symbol.iterator](): Iterator<any>;",
+    // The permissive tail. The refs carry more syntax than the named members —
+    // `$$ = …` replace-stream, `$$$.coll = …` → `$out`, member access on a
+    // materialised result — and typing all of it needs the schema threading
+    // tracked by DEF-013. The index signature keeps every such form `any` rather
+    // than an error: a named member has no escape hatch, so a missing name here
+    // would reject valid JSMQL, which costs more than a missed typo.
+    "[key: string]: any;",
+  ];
+
+  // ── The current stream (`$$`) ──────────────────────────────────────────────
+  // Extends the foreign ref, which is what lets ONE index type on `$$$` serve
+  // both the read head and the `$out` write target: TypeScript resolves a
+  // target's named members against the source's declared members and never
+  // through its index signature, so `$$$.<coll> = $$` needs `$$` to really
+  // declare them. Re-declares every chainable to return the collection ref, and
+  // adds what only the current collection has — its diagnostic source stages and
+  // the statement-level `.push` → `$unionWith`.
+  const collectionMembers = [
+    ...diagnosticMembers("collection"),
+    ...streamMethodMembers(COLLECTION_REF_TYPE, COLLECTION_ONLY_STREAM_METHODS),
+    ...chainableMembers(COLLECTION_REF_TYPE),
+    // Declared so the member exists for the assignment above, but uncallable:
+    // jsmql rejects `.find` anywhere in a `$$` chain, whatever its position.
+    "/** @deprecated Not a stream method — a pipeline is an array. Use `.filter(p).slice(0, 1)`. */",
+    "find(...args: never[]): never;",
+  ];
+
+  const blocks = [
+    `interface ${FOREIGN_REF_TYPE} {\n${foreignMembers.join("\n")}\n}`,
+    `interface ${COLLECTION_REF_TYPE} extends ${FOREIGN_REF_TYPE} {\n${collectionMembers.join("\n")}\n}`,
+    // `$$` is `var`, not `const`: the `$$ = …` replace-stream / `$facet` sugar
+    // reassigns it wholesale, and `const` would reject that valid jsmql (TS2588).
+    `${refJsdoc("collection")}\nvar ${CONTEXT_REFS.collection.name}: ${COLLECTION_REF_TYPE};`,
+    // `$$$` / `$$$$` stay `const` — they only ever take *property* writes
+    // (`$$$.coll = …` → `$out`), which `const` permits, while `const` still flags
+    // the invalid `$$$ = …` whole-reassignment. `$$$` indexes to the foreign ref,
+    // which is what gives `$$$.orders.filter(…)` completion; the key stays a plain
+    // string because a collection name is arbitrary.
+    `${refJsdoc("database")}\nconst ${CONTEXT_REFS.database.name}: { [collection: string]: ${FOREIGN_REF_TYPE} };`,
+    // The cluster ref keeps its own shape: its second level is a DATABASE, and
+    // typing that would either advertise the cross-database reads jsmql rejects
+    // or re-open the `$out` write-assignability problem one level down.
+    `${refJsdoc("cluster")}\nconst ${CONTEXT_REFS.cluster.name}: {\n${[...diagnosticMembers("cluster"), "[key: string]: any;"].join("\n")}\n};`,
+  ];
   return blocks.join("\n");
 }
 

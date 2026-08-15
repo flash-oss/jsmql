@@ -18,21 +18,62 @@ import "../../src/globals.ts";
 const _stream = $$.filter((d) => d.active)
   .reject((d) => d.hidden)
   .sortBy("createdAt")
-  .takeRight(3)
+  .take(3)
   .map("userId")
   .uniqBy("x");
 void _stream;
 // Note: a *typo* on a stream method (`$$.rejct(...)`) does NOT error here — the
-// `JsmqlCollectionRef` interface ends in a `[key: string]: any` permissive tail
-// (it carries far more syntax than its named members; see globals-generation.md), so
-// unknown members resolve to `any`. jsmql's parser catches the typo at compile
-// time instead. Value-method interfaces below have no such tail, so their typo
-// negatives DO fire.
+// ref interfaces end in a `[key: string]: any` permissive tail (they carry more
+// syntax than their named members — `$$ = …`, `$out` writes, member access on a
+// materialised result; see globals-generation.md), so unknown members resolve to
+// `any`. jsmql's parser catches the typo at compile time instead. Value-method
+// interfaces below have no such tail, so their typo negatives DO fire.
 
-// Note: foreign-collection chains on the database ref (`$$$.orders.filter(...)`)
-// do NOT get stream-method completion — `$$$.<coll>` rides an `[key: string]: any`
-// tail. Typing it as a chainable ref does not work (it regresses `.find(pred)`
-// callbacks or the `$out` write); it's gated on DEF-013/DEF-015.
+// ── Chained stage calls ──────────────────────────────────────────────────────
+// Every non-diagnostic stage is a chain member returning the ref, so stage links
+// and stream methods interleave and the chain stays completable throughout.
+const _staged = $$.filter((d) => d.active)
+  .$sort({ score: -1 })
+  .$limit(10)
+  .map((d) => d.userId);
+void _staged;
+$$.$sort({ score: -1 }).$out("archive");
+
+// The document root is NOT an ambient global — it reaches the body through the
+// arrow's toolbox destructure (`({ $ }) => …`), typed `any` there. Stand in for
+// that here so the correlated forms below read the way real source does.
+declare const $: any;
+
+// ── A stream is also an array where it genuinely is one ──────────────────────
+// `$$.length` is the stream's document count, and a foreign chain in value
+// position materialises into a real array, so its value terminals carry types.
+const _count: number = $$.length;
+const _orderCount: number = $$$.orders.filter((o) => o.userId === $._id).length;
+const _revenue: number = $$$.orders.filter((o) => o.ok).sum();
+const _newest = $$$.orders.filter((o) => o.userId === $._id).head();
+void [_count, _orderCount, _revenue, _newest];
+
+// ── The foreign ref: reads complete, and the `$out` write still assigns ──────
+// `$$$.<coll>` is both a read head and an `$out` write target. The collection ref
+// EXTENDS the foreign ref, which is what lets one index type serve both — TS
+// resolves a target's named members against the source's declared members, never
+// through its index signature, so the shared base is load-bearing, not cosmetic.
+const _user = $$$.users.find((u) => u.id === $._id);
+const _email = $$$.users.find((u) => u.id === $._id).email;
+// A chain keeps the identity of its ROOT, which is the rule jsmql enforces:
+// `.find` is legal at ANY position of a foreign chain, and at NO position of a
+// current-stream chain (the negative for that is at the bottom of this file).
+const _biggest = $$$.orders.filter((o) => o.ok).find((o) => o.big);
+void _biggest;
+const _byRegion = $$$.orders
+  .$match({ ok: true })
+  .$group({ _id: "$region" })
+  .map((g) => g._id);
+void [_user, _email, _byRegion];
+$$$.archive = $$;
+$$$.archive = $$.filter((d) => d.active);
+// A stream spreads into `.push`, so the refs are iterable as far as TS is concerned.
+$$.push(...$$$.other);
 
 // ── Value methods on concretely-typed receivers → completion + chaining ──────
 // This is the whole point: once a value has a real (array/string/number) type,
@@ -114,6 +155,10 @@ placedAt.startOf("fortnight");
 placedAt.getFullYear("UTC");
 // @ts-expect-error — a date method must not exist on a string result.
 placedAt.format("%Y").quarter();
+// @ts-expect-error — `.find` is not a stream method; a pipeline is an array.
+$$.find((d) => d.a);
+// @ts-expect-error — and not at any later position of a `$$` chain either.
+$$.filter((d) => d.a).find((d) => d.b);
 
 // ── Permissiveness intact: a bare `any` receiver still type-checks ────────────
 // jsmql keeps `$.field` as `any` so operator forms work; value methods on it are

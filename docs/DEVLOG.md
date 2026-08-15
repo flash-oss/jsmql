@@ -10,6 +10,63 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — feat: pipelines complete — chained stages, foreign chains, and the stream as an array (closes DEF-015)
+
+`@koresar/jsmql/globals` now types the pipeline surface instead of letting it
+ride the `[key: string]: any` tail. Three things gained completion: chained
+stage calls (`$$.filter(d => …).$sort({ … }).$limit(10)`), foreign-collection
+chains (`$$$.orders.filter(…)`, previously untyped entirely), and the places a
+stream genuinely **is** an array — `$$.length`, and the value terminals on a
+materialised lookup (`.length`, `.sum()`, `.head()`).
+
+**The DEF-015 blocker turned out to be solvable.** The row recorded that typing
+`$$$.<coll>` regresses either the `.find(pred)` callback or the `$out` write
+(`$$$.coll = $$`). The second half is real and the cause is precise: TypeScript
+resolves a target's named members against the source's **declared** members and
+never through the source's index signature, so a permissive tail on `$$` can
+never satisfy an interface that names `.find`. Inheritance can.
+`JsmqlCollectionRef extends JsmqlForeignRef` makes one `$$$` index type serve
+both roles the database ref has — read head and write target. Verified by
+compiling the shape under `strict` + `noImplicitAny`: the union-index and
+optional-member alternatives both fail, this one is clean.
+
+**Each ref re-declares the chainable vocabulary with itself as the return type**,
+because a chain keeps the identity of its **root** — which is exactly the rule
+jsmql enforces. `.find` is legal at any position of a foreign chain and at no
+position of a current-stream chain, so `$$$.orders.filter(p).find(q)` compiles
+and `$$.filter(p).find(q)` does not. One shared return type can't say that; the
+duplicated member list buys the distinction. `.find` on the collection ref is a
+`(...args: never[]): never` shim with a `@deprecated` note naming
+`.filter(p).slice(0, 1)` — the member must exist for the `$out` assignment, but
+calling it must fail.
+
+Three smaller decisions. Stage links cover every stage **except** the nine
+diagnostic ones: those are source stages, jsmql rejects `$$.$indexStats({})`
+outright, and they already have their own non-`$` spelling. A stage-link body is
+typed `any`, not the stage's args object — several stages also take a bare
+string (`.$unwind("$items")`), and a named member has no `any` escape hatch, so
+a narrower type would reject valid JSMQL; key completion stays on the statement
+form. And `extends Array<any>` was tried for the array-shaped members and does
+not compile (`push` return types conflict, TS2430), so `length`, the value
+terminals, and `[Symbol.iterator]` are declared directly — the iterator is what
+makes `$$.push(...$$$.other)` spread.
+
+Two corrections fell out. `STREAM_METHODS_FOREIGN_ONLY` claimed `.aggregate` was
+invalid on the current stream; it isn't (`$$.aggregate(o => { … })` compiles),
+so the exclusion is gone. And `streamMethodMembers()` now drift-checks its
+signature table in both directions — the new stray check immediately found four
+entries (`takeRight`, `dropRight`, `initial`, `toReversed`) for methods removed
+from streams on 2026-08-01 and still advertised here. They are gone; their
+value-position forms on a real array are untouched.
+
+Docs: [specs/globals-generation.md](specs/globals-generation.md) § Context
+references, [specs/context-references.md](specs/context-references.md),
+[LANGUAGE.md](LANGUAGE.md) § Operator autocomplete. DEF-015 is closed; the
+document values are still `any`, which is DEF-013's schema threading, not this
+row's remit.
+
+---
+
 ## 2026-08-15 — feat: `interface Date` completes jsmql's date vocabulary
 
 `@koresar/jsmql/globals` now augments `Date` alongside `Array<T>` / `String` /

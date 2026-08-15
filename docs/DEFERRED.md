@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 29. Decided-against: 9. As of 2026-07-10.
+**Counts.** Open: 28. Decided-against: 9. As of 2026-08-15.
 
 ---
 
@@ -104,18 +104,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** `docs/specs/lookup-stage.md` § Future work bullet 5.
 - **Status.** design-only
 - **Effort.** M
-
-### DEF-015 — Ambient TS types for `$$` / `$$$` / `$$$$`
-
-- **What's blocked.** **Partially shipped.** All three prefixes are now declared as ambient `const`s in `src/globals.ts`, so arrow-form context-ref code (`({ $ }) => $$$.coll.find(...)`, `({ $ }) => $$.indexStats()`) type-checks instead of erroring on an undeclared identifier. The collection-/cluster-scoped diagnostic source stages (`$$.collStats(...)`, `$$$$.currentOp(...)`, …) are typed precisely with annotated option objects + JSDoc. **Still open:** every non-diagnostic ref form (`.push`, `.filter`, `.coll.find(...)`, `$out`, stream methods, member access) rides a permissive `[key: string]: any` tail and is therefore `any` — narrowing it to real collection/document types is the remaining work.
-- **Target lowering.** No MQL change. The remaining work narrows the permissive `[key: string]: any` tail to schema-aware types.
-- **Why blocked.** Precise typing of the lookup/out/find chains needs collection-name + document-schema threading, which is DEF-013. The diagnostic-ops typing (independently shippable) is done.
-- **Attempted approaches.** Shipped the ambient-globals scaffold + diagnostic-op completion via `contextRefBlock()` in `scripts/generate-globals.mjs`, deriving methods from the `STAGES[…].diagnostic` field and a hardcoded option-shape map. Prototyped typing the `$$$` index as a chainable collection ref (so `$$$.orders.filter(...).sortBy(...)` gets stream-method completion) and reverted it: with a real-typed receiver the canonical `.find(pred)` callback trips `noImplicitAny`, and adding explicit `.find`/`.aggregate` signatures to fix that makes a bare `$$` stream no longer assignable to the `$out` write target (`$$$.coll = $$…`). `$$$.<coll>` is both a read head and a write target, so one index type can't serve both — it needs the document/collection typing this row + DEF-013 track.
-- **Success criteria.** ~~`jsmql(({ $ }) => $$$.users.find(u => u.id === $._id))` type-checks without `any`.~~ Now type-checks, but the `find` chain is `any` pending DEF-013. Remaining criterion: that chain resolves to the joined collection's document type.
-- **Rejection site(s).** `docs/specs/context-references.md` (Future-work bullet — now "partially shipped"), `lookup-stage.md`, `system-stages.md`.
-- **Spec.** `docs/specs/globals-generation.md` § Context references (hosts the shipped generation); remaining narrowing tracked under DEF-013.
-- **Status.** partial — diagnostic ops typed; lookup/out/find chains permissive `any`, gated on DEF-013.
-- **Effort.** M (remaining)
 
 ### DEF-016 — Per-operator return-type narrowing in `globals.ts`
 

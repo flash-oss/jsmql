@@ -4097,7 +4097,30 @@ jsmql(({ $ }) => $$$$.currentOp({ allUsers: true }));
 //                      ╰── autocomplete: currentOp, listSessions, shardedDataDistribution, …
 ```
 
-The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.reports = …`, stream methods) type-check too, but as `any` for now — precise per-collection typing is future work `[DEF-015]`.
+Pipelines complete as well. Stream methods, chained stage calls, and foreign-collection
+chains are all typed members that return the stream, so a chain stays completable from end
+to end — and where a stream genuinely *is* an array, it reads as one:
+
+```ts
+import "@koresar/jsmql/globals";
+
+jsmql(({ $ }) => {
+  $set({ orderCount: $$$.orders.filter((o) => o.userId === $._id).length });
+  //                     ╰── autocomplete: find, filter, aggregate, map, sortBy, $match, $group, …
+  //                                                                  ╰── typed `number`
+  $$.filter((d) => d.orderCount > 0).$sort({ orderCount: -1 }).take(3);
+  //                                    ╰── every stage chains: $sort, $group, $unwind, $out, …
+});
+```
+
+The document values themselves stay `any` — the interfaces give chaining and completion,
+not per-collection document typing, which needs schema threading `[DEF-013]`. Two other
+limits are worth knowing. A typo of an *unlisted* member (`$$.pus(...)`) still doesn't
+error: the refs keep a permissive index signature so the forms that carry no named type
+(`$$ = …`, `$out` writes, a field read off a materialised lookup) stay legal — jsmql's own
+parser catches the typo instead. And completion needs the ref used **un-destructured**:
+naming `$$` in the toolbox destructure (`({ $, $$ }) => …`) shadows the ambient declaration
+with `any`.
 
 #### Value-method completion on typed values
 
