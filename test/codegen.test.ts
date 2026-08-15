@@ -2604,7 +2604,14 @@ describe("date methods", () => {
     expect(() => jsmql.expr('$.ts.toISOString("UTC")')).toThrow(".toISOString() takes no arguments, got 1");
   });
   it("still accepts the timezone argument on the methods that take one", () => {
+    // A timezone the developer TYPED is kept, even when it names the default — the
+    // object form is what carries it. Only the implicit UTC that `.getUTCxxx()` names
+    // through its own method name collapses to the single-argument form.
     expect(jsmql.expr('$.ts.week("UTC")')).toEqual({ $week: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr('$.ts.week("America/New_York")')).toEqual({
+      $week: { date: "$ts", timezone: "America/New_York" },
+    });
+    expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({ $hour: "$ts" });
   });
 });
 
@@ -3114,28 +3121,28 @@ describe("date methods (UTC variants)", () => {
   // Verified against a live mongod (t = 2023-03-15T18:45:30.123Z, a Wednesday):
   // → { y:2023, mo:3, d:15, dow:4, h:18, mi:45, s:30, ms:123 }.
   it("getUTCFullYear", () => {
-    expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({ $year: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCFullYear()")).toEqual({ $year: "$ts" });
   });
   it("getUTCMonth (1-based, matching MongoDB's $month)", () => {
-    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({ $month: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCMonth()")).toEqual({ $month: "$ts" });
   });
   it("getUTCDate", () => {
-    expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({ $dayOfMonth: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCDate()")).toEqual({ $dayOfMonth: "$ts" });
   });
   it("getUTCDay (1-based, Sunday = 1, matching MongoDB's $dayOfWeek)", () => {
-    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({ $dayOfWeek: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCDay()")).toEqual({ $dayOfWeek: "$ts" });
   });
   it("getUTCHours", () => {
-    expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({ $hour: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCHours()")).toEqual({ $hour: "$ts" });
   });
   it("getUTCMinutes", () => {
-    expect(jsmql.expr("$.ts.getUTCMinutes()")).toEqual({ $minute: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCMinutes()")).toEqual({ $minute: "$ts" });
   });
   it("getUTCSeconds", () => {
-    expect(jsmql.expr("$.ts.getUTCSeconds()")).toEqual({ $second: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCSeconds()")).toEqual({ $second: "$ts" });
   });
   it("getUTCMilliseconds", () => {
-    expect(jsmql.expr("$.ts.getUTCMilliseconds()")).toEqual({ $millisecond: { date: "$ts", timezone: "UTC" } });
+    expect(jsmql.expr("$.ts.getUTCMilliseconds()")).toEqual({ $millisecond: "$ts" });
   });
 });
 
@@ -6278,9 +6285,7 @@ describe("date .getTime / .toISOString", () => {
     expect(jsmql.expr("$.ts.getTime()")).toEqual({ $toLong: "$ts" });
   });
   it("toISOString", () => {
-    expect(jsmql.expr("$.ts.toISOString()")).toEqual({
-      $dateToString: { date: "$ts", format: "%Y-%m-%dT%H:%M:%S.%LZ" },
-    });
+    expect(jsmql.expr("$.ts.toISOString()")).toEqual({ $dateToString: { date: "$ts" } });
   });
 });
 

@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the date accessors stop restating MongoDB's defaults
+
+Two lowerings named a default and paid for it in every emitted document.
+
+`.getUTCHours()` and its twelve siblings emitted
+`{ $hour: { date: X, timezone: "UTC" } }`. UTC is what `$hour` does with a bare
+argument, and the method name is where the developer already said UTC, so the
+object form restated it: 40 characters to say what 14 says. `.toISOString()`
+spelled out `%Y-%m-%dT%H:%M:%S.%LZ`, which is `$dateToString`'s own default
+format: 64 characters to say what 31 says. Both verified identical on a live
+mongod across ordinary dates, the epoch, and a missing field (null on both
+sides).
+
+A timezone the developer **types** is untouched — `.week("America/New_York")`
+and `.quarter({ timezone: "UTC" })` keep the object form, including when the
+value they typed happens to be the default. That is the WROTE / NEVER-WROTE line
+from SR2: the method name naming UTC is jsmql's own restatement, an argument is
+an instruction.
+
+`new Date()` was on the same list and is deliberately **not** changed. `$$NOW` is
+already a date, so `{ $toDate: "$$NOW" }` is a no-op on the value — but
+`jsmql.expr` hands back a bare update document, and MongoDB's non-pipeline
+`updateOne(filter, update)` treats every value as a literal. A bare `"$$NOW"`
+there would silently store the eight-character string, where the wrapper fails
+visibly. Twelve characters is not worth a silent wrong write.
+
+---
+
 ## 2026-08-16 — refactor: `.padStart` / `.padEnd` drop a guard that never fired
 
 Both carried a `$cond` on `$strLenCP >= targetLength`, returning the receiver

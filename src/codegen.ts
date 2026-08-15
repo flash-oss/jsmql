@@ -3569,8 +3569,13 @@ function pickKeys(arg: Expr, method: string): string[] {
 // The local getters pass the bare date (extraction uses the server process zone);
 // the UTC variants pass `{ date, timezone: "UTC" }` so the result is UTC-anchored,
 // mirroring JS's `getHours()` (local) vs `getUTCHours()` (UTC) split.
-function utcDate(date: unknown): { date: unknown; timezone: string } {
-  return { date, timezone: "UTC" };
+function utcDate(date: unknown): unknown {
+  // `.getUTCHours()` names the timezone the operator already defaults to, so the
+  // single-argument form says the same thing in a third of the characters. Verified
+  // identical on a live mongod across ordinary dates, the epoch, and a missing field.
+  // (The object form stays reachable by hand — `$hour({ date, timezone })` — for a
+  // timezone that is NOT UTC.)
+  return date;
 }
 
 // ── The trailing options argument of a date method ────────────────────────────
@@ -4545,7 +4550,9 @@ function generateMethodCall(
       // Match JS: ms since epoch (already UTC; no getUTCTime exists in JS)
       return { $toLong: genObj };
     case "toISOString":
-      return { $dateToString: { date: genObj, format: "%Y-%m-%dT%H:%M:%S.%LZ" } };
+      // `%Y-%m-%dT%H:%M:%S.%LZ` IS `$dateToString`'s default format, so naming it
+      // restates the default. Verified identical on a live mongod.
+      return { $dateToString: { date: genObj } };
     case "plus":
     case "minus": {
       // Date arithmetic: `d.plus(amount, unit[, timezone])` → $dateAdd,
@@ -6758,6 +6765,11 @@ function generateNewDate(args: Expr[], ctx: GenerateCtx): unknown {
     if (Number.isNaN(constEval.getTime())) throw invalidConstDateError(args);
     return constEval;
   }
+  // `$$NOW` is already a date, so `$toDate` is a no-op on the value — but it is NOT
+  // redundant. `jsmql.expr` hands back a bare update document, and MongoDB's
+  // non-pipeline `updateOne(filter, update)` treats every value as a LITERAL. A bare
+  // "$$NOW" would silently store the eight-character string; the wrapper fails visibly
+  // instead. Twelve characters is not worth that.
   if (args.length === 0) return { $toDate: "$$NOW" };
   if (args.length === 1) {
     // Peephole: `new Date(Date.UTC(y, m, d, …))` with a runtime part is the

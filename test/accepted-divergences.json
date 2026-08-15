@@ -783,6 +783,222 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\"",
       "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.ts.getUTCHours()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCHours()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$ho",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":\"$ts\"},null]},null]},{\"$ne\":[{\"$hour\":\"$ts\"},false]},{\"$ne\":[{\"$hour\":\"$ts\"},\"\"]},{\"$ne\":[{\"$hour\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCHours()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCHours()",
+      "kind": "output",
+      "was": "{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$hour\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCHours()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCHours()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$ho",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":\"$ts\"},null]},null]},{\"$ne\":[{\"$hour\":\"$ts\"},false]},{\"$ne\":[{\"$hour\":\"$ts\"},\"\"]},{\"$ne\":[{\"$hour\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCFullYear()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCFullYear()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$ye",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":\"$ts\"},null]},null]},{\"$ne\":[{\"$year\":\"$ts\"},false]},{\"$ne\":[{\"$year\":\"$ts\"},\"\"]},{\"$ne\":[{\"$year\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCFullYear()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCFullYear()",
+      "kind": "output",
+      "was": "{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$year\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCFullYear()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCFullYear()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$ye",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":\"$ts\"},null]},null]},{\"$ne\":[{\"$year\":\"$ts\"},false]},{\"$ne\":[{\"$year\":\"$ts\"},\"\"]},{\"$ne\":[{\"$year\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCMonth()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCMonth()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$month\":\"$ts\"},null]},null]},{\"$ne\":[{\"$month\":\"$ts\"},false]},{\"$ne\":[{\"$month\":\"$ts\"},\"\"]},{\"$ne\":[{\"$month\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCMonth()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCMonth()",
+      "kind": "output",
+      "was": "{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$month\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCMonth()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCMonth()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$month\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$month\":\"$ts\"},null]},null]},{\"$ne\":[{\"$month\":\"$ts\"},false]},{\"$ne\":[{\"$month\":\"$ts\"},\"\"]},{\"$ne\":[{\"$month\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCDate()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCDate()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfMonth\":\"$ts\"},null]},null]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},false]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},\"\"]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCDate()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCDate()",
+      "kind": "output",
+      "was": "{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$dayOfMonth\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCDate()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCDate()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$dayOfMonth\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfMonth\":\"$ts\"},null]},null]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},false]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},\"\"]},{\"$ne\":[{\"$dayOfMonth\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCDay()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCDay()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfWeek\":\"$ts\"},null]},null]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},false]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},\"\"]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCDay()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCDay()",
+      "kind": "output",
+      "was": "{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$dayOfWeek\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCDay()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCDay()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$dayOfWeek\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dayOfWeek\":\"$ts\"},null]},null]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},false]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},\"\"]},{\"$ne\":[{\"$dayOfWeek\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCMinutes()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCMinutes()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$minute\":\"$ts\"},null]},null]},{\"$ne\":[{\"$minute\":\"$ts\"},false]},{\"$ne\":[{\"$minute\":\"$ts\"},\"\"]},{\"$ne\":[{\"$minute\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCMinutes()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCMinutes()",
+      "kind": "output",
+      "was": "{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$minute\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCMinutes()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCMinutes()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$minute\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$minute\":\"$ts\"},null]},null]},{\"$ne\":[{\"$minute\":\"$ts\"},false]},{\"$ne\":[{\"$minute\":\"$ts\"},\"\"]},{\"$ne\":[{\"$minute\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCSeconds()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCSeconds()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$second\":\"$ts\"},null]},null]},{\"$ne\":[{\"$second\":\"$ts\"},false]},{\"$ne\":[{\"$second\":\"$ts\"},\"\"]},{\"$ne\":[{\"$second\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCSeconds()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCSeconds()",
+      "kind": "output",
+      "was": "{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$second\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCSeconds()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCSeconds()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$second\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$second\":\"$ts\"},null]},null]},{\"$ne\":[{\"$second\":\"$ts\"},false]},{\"$ne\":[{\"$second\":\"$ts\"},\"\"]},{\"$ne\":[{\"$second\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.getUTCMilliseconds()": {
+      "entry": "jsmql",
+      "src": "$.ts.getUTCMilliseconds()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$millisecond\":\"$ts\"},null]},null]},{\"$ne\":[{\"$millisecond\":\"$ts\"},false]},{\"$ne\":[{\"$millisecond\":\"$ts\"},\"\"]},{\"$ne\":[{\"$millisecond\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.getUTCMilliseconds()": {
+      "entry": "expr",
+      "src": "$.ts.getUTCMilliseconds()",
+      "kind": "output",
+      "was": "{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}}",
+      "now": "{\"$millisecond\":\"$ts\"}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.getUTCMilliseconds()": {
+      "entry": "filter",
+      "src": "$.ts.getUTCMilliseconds()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$millisecond\":{\"date\":\"$ts\",\"timezone\":\"UTC\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$millisecond\":\"$ts\"},null]},null]},{\"$ne\":[{\"$millisecond\":\"$ts\"},false]},{\"$ne\":[{\"$millisecond\":\"$ts\"},\"\"]},{\"$ne\":[{\"$millisecond\":\"$ts\"},0]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$.ts.toISOString()": {
+      "entry": "jsmql",
+      "src": "$.ts.toISOString()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},false]},{\"$ne\":[{\"$dateToStr",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},false]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},\"\"]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "expr\u0000$.ts.toISOString()": {
+      "entry": "expr",
+      "src": "$.ts.toISOString()",
+      "kind": "output",
+      "was": "{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}}",
+      "now": "{\"$dateToString\":{\"date\":\"$ts\"}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "filter\u0000$.ts.toISOString()": {
+      "entry": "filter",
+      "src": "$.ts.toISOString()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},false]},{\"$ne\":[{\"$dateToStr",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},false]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},\"\"]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
     }
   }
 }

@@ -1537,7 +1537,7 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpperCase()}] \${$.event.message}\``),
       ).toEqual({
         $concat: [
-          { $dateToString: { date: "$event.ts", format: "%Y-%m-%dT%H:%M:%S.%LZ" } },
+          { $dateToString: { date: "$event.ts" } },
           " [",
           { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
           "] ",
@@ -2024,10 +2024,7 @@ describe("event fell within UTC business hours (.getUTCHours)", { features: ["Da
       // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
       // (not the server's local zone) keeps the window stable across deployments.
       expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
-        $and: [
-          { $gte: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 9] },
-          { $lt: [{ $hour: { date: "$event.ts", timezone: "UTC" } }, 17] },
-        ],
+        $and: [{ $gte: [{ $hour: "$event.ts" }, 9] }, { $lt: [{ $hour: "$event.ts" }, 17] }],
       });
     },
   );
