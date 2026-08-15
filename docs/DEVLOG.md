@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: assignment sugar inside a literal sub-pipeline no longer emits an empty field path
+
+Three loops assemble pipeline elements. Two of them route an assignment through
+the sugar hub; the third — the one that lowers a literal sub-pipeline array —
+buffered every assignment as an update op. `$ = …` has an empty target path, so
+`$lookup({ pipeline: [$ = { t: $.total }] })` emitted
+`{ $set: { "": { t: "$total" } } }`, which mongod refuses with *FieldPath cannot
+be constructed with empty string*. `$$$.<coll> = …` in the same slot reached
+`internalError`, a helper reserved for states a valid program cannot produce.
+
+That loop has no slot allocator, so it cannot run the sugar itself. It now
+recognises the three sugar shapes and rejects each one by naming the spelling
+that does work there: `$replaceWith({ … })` for a root replacement, `$match(…)`
+for narrowing a stream a sub-pipeline already owns, and — for a collection write
+— the fact that `$out` and `$merge` are forbidden inside any sub-pipeline, so
+the write belongs at the end of the outer one. An ordinary `$.a = 1` and a
+`delete $.x` are untouched.
+
+The rejection is the interim shape. Sugar becomes an explicit node before any
+loop runs once the desugar pass lands, at which point no loop can encounter a
+sugar form at all — see [specs/desugar-pass.md](specs/desugar-pass.md).
+
+---
+
 ## 2026-08-16 — fix: a fractional count is rejected instead of handed to `$slice`
 
 `$slice` needs a 32-bit integer in every count and position slot, so a fraction

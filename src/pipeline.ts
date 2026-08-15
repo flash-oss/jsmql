@@ -2200,6 +2200,29 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   let updateBuffer: UpdateOp[] = [];
   // Pipeline context: see GenerateCtx.pipelineContext (string literals pass through).
   let ctx: GenerateCtx = { ...startCtx, pipelineContext: true, slotTypes: startCtx.slotTypes ?? new Map() };
+  const rejectAssignSugarInLiteralSubPipeline = (op: AssignExpr): void => {
+    if (isReplaceRootAssign(op)) {
+      throw new CodegenError(
+        `'$ = …' isn't available inside a literal sub-pipeline array. ` +
+          `Write the stage directly instead — '$replaceWith({ … })'.`,
+        op.pos,
+      );
+    }
+    if (isReplaceStreamAssign(op)) {
+      throw new CodegenError(
+        `'$$ = …' isn't available inside a literal sub-pipeline array — a sub-pipeline ` +
+          `already has its own stream. Write the stage that narrows it, e.g. '$match(…)'.`,
+        op.pos,
+      );
+    }
+    if (detectOutAssign(op, ctx) !== null) {
+      throw new CodegenError(
+        `'$$$.<coll> = …' writes a collection, which a sub-pipeline can't do — ` +
+          `'$out' and '$merge' are forbidden inside one. Move the write to the end of the outer pipeline.`,
+        op.pos,
+      );
+    }
+  };
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
   const validator = makePipelineValidator(container);
 
@@ -2212,6 +2235,12 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
   ast.elements.forEach((el, i) => {
     validator.checkBeforeElement(el.pos);
     if (el.type === "AssignExpr" || el.type === "DeleteStmt") {
+      // A sugar-shaped assignment is not an update op. `$ = …` has an empty target
+      // path, so buffering it would emit `{ $set: { "": … } }` — a document mongod
+      // refuses ("FieldPath cannot be constructed with empty string"). This loop
+      // lowers a literal sub-pipeline array and has no slot allocator to run the
+      // sugar through, so name the stage-call spelling that works here instead.
+      if (el.type === "AssignExpr") rejectAssignSugarInLiteralSubPipeline(el);
       updateBuffer.push(el);
       return;
     }

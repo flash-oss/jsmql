@@ -1646,3 +1646,27 @@ describe("a predicate error names the receiver as written", () => {
     );
   });
 });
+
+describe("assignment sugar inside a literal sub-pipeline array", () => {
+  // This loop lowers a literal sub-pipeline and has no slot allocator to run the
+  // sugar through. It rejects with the spelling that works here rather than
+  // buffering the assignment into a `$set` on an empty field path.
+  const wrap = (el: string) => `$lookup({ from: "o", pipeline: [${el}], as: "o" });`;
+
+  it("rejects `$ = …` and names $replaceWith", () => {
+    expect(() => jsmql(wrap("$ = { t: $.total }"))).toThrow(/\$replaceWith/);
+  });
+
+  it("rejects `$$ = …` and names $match", () => {
+    expect(() => jsmql(wrap("$$ = $$.filter(d => d.a > 1)"))).toThrow(/\$match/);
+  });
+
+  it("rejects a collection write without an internal error", () => {
+    expect(() => jsmql(wrap("$$$.arch = $$"))).toThrow(/forbidden inside one/);
+    expect(() => jsmql(wrap("$$$.arch = $$"))).not.toThrow(/internal error/);
+  });
+
+  it("still lowers an ordinary field assignment", () => {
+    expect(jsmql(wrap("$.a = 1"))).toEqual([{ $lookup: { from: "o", pipeline: [{ $set: { a: 1 } }], as: "o" } }]);
+  });
+});
