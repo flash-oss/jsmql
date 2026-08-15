@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: a `jsmql.compile` param resolves inside `.reduce` and `Object.groupBy`
+
+`GenerateCtx` carries 23 fields and only two of them are required. A context
+literal that omits one of the other 21 still type-checks, so an omission is
+invisible at the point it is written and invisible in review. Two builders —
+the one `.reduce` uses for its callback and the one `Object.groupBy` uses for
+its key lambda — enumerated eight fields each, and `bindings` was not among
+them. The result was a parameter that resolved in `.map` and `.filter` and
+threw `Unknown identifier` in `.reduce`, for the same query.
+
+Both now spread the caller's context and override only what they actually
+change. The rule the comment states is the general one: never enumerate this
+type, because the field you forget is the field nobody can see you forgot. A
+builder that means to drop a field writes it as an explicit `undefined` with a
+reason, which reads as a decision instead of an accident.
+
+---
+
 ## 2026-08-16 — fix: `$$.push(...)` is detected in every callback body shape
 
 `jsmql.update()` pre-rejects the statement-only union syntax with a message that

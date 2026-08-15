@@ -4470,20 +4470,18 @@ function generateMethodCall(
       // 2-param: acc → value, element → this (status quo).
       // 3-param: acc → value still, but element + index come from $$this being
       // an (index, element) pair — body wraps in $let to expose both names.
+      // Spread, never enumerate: 21 of GenerateCtx's 23 fields are optional, so a
+      // literal that omits one still type-checks and the omission is invisible.
       const reduceCtx: GenerateCtx = {
+        ...ctx,
         lambdaParams: new Set([...ctx.lambdaParams, ...lambda.params]),
-        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: has3
           ? new Map([[lambda.params[0], "value"]])
           : new Map([
               [lambda.params[0], "value"],
               [lambda.params[1], "this"],
             ]),
-        pipelineLets: ctx.pipelineLets,
-        droppedLets: ctx.droppedLets,
         bindingTypes: nextBindingTypes,
-        functions: ctx.functions,
-        expandingFns: ctx.expandingFns,
       };
       const baseBody = genLambdaBody(lambda, reduceCtx);
       const inExpr = has3
@@ -6547,15 +6545,11 @@ function generateObjectCall(method: ObjectMethod, args: CallArg[], ctx: Generate
       // Reduce over the input. For each element, compute the discriminator key with the
       // user's lambda param bound to $$this. Use $let to materialise the key once, then
       // append the current element to the array under that key in the accumulator.
+      // Spread, never enumerate — see the note on `reduceCtx`.
       const keyCtx: GenerateCtx = {
+        ...ctx,
         lambdaParams: new Set([...ctx.lambdaParams, lambda.params[0]]),
-        inSubPipeline: ctx.inSubPipeline,
         reduceRemap: new Map([[lambda.params[0], "this"]]),
-        pipelineLets: ctx.pipelineLets,
-        droppedLets: ctx.droppedLets,
-        bindingTypes: ctx.bindingTypes,
-        functions: ctx.functions,
-        expandingFns: ctx.expandingFns,
       };
       const keyBody = genLambdaBody(lambda, keyCtx);
       const keyExpr = isStringProducing(lambdaResult(lambda)) ? keyBody : { $toString: keyBody };

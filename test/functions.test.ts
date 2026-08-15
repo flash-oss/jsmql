@@ -399,3 +399,20 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(jsmql.expr("$.function")).toEqual("$function");
   });
 });
+
+describe("compile params resolve inside every higher-order callback", () => {
+  // The lambda contexts are spread from the caller's, so a binding reaches the
+  // body of every method that opens a scope — not only the ones whose context
+  // builder happened to list `bindings`.
+  it("resolves a param inside .reduce", () => {
+    const build = jsmql.expr.compile<{ rate: number }>(({ rate }, { $ }) => $.items.reduce((a, x) => a + x * rate, 0));
+    expect(build({ rate: 1.1 })).toEqual({
+      $reduce: { input: "$items", initialValue: 0, in: { $add: ["$$value", { $multiply: ["$$this", 1.1] }] } },
+    });
+  });
+
+  it("resolves a param inside Object.groupBy", () => {
+    const build = jsmql.expr.compile<{ k: string }>(({ k }, { $ }) => Object.groupBy($.items, (x) => x[k]));
+    expect(JSON.stringify(build({ k: "t" }))).toContain('"t"');
+  });
+});
