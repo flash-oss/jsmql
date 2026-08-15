@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: a `let` tombstone survives every lambda depth
+
+`extendCtx` built its result by naming fields — nineteen of `GenerateCtx`'s
+twenty-three. The four it did not name were dropped, and nothing marked the drop
+as deliberate, because an omission in a literal of optional fields looks exactly
+like a field that does not apply.
+
+One of the four was `sourceSwitch`, the tombstone recording which `let` bindings
+a stream switch invalidated. So `let k = $.x; $$ = $$$.orders.map(o => o.total + k)`
+produced the message that explains what happened, and adding one more `.map`
+level produced `Unknown identifier 'k'. Did you mean '$.k'?` — the same mistake,
+diagnosed well at depth 1 and badly at depth 2.
+
+It now spreads. A lambda body is inside everything its surroundings are inside —
+the same sub-pipeline, the same `$lookup`, the same source switch — so the
+default is that every field carries through, and a field that must stop is
+written as an explicit `undefined` with a reason. The differential harness
+confirms the blast radius: across 2 518 sources and five entry points, exactly
+two outputs changed, and both are the improved message.
+
+That is the third context bug of the same shape, so the rule is now stated in
+`src/CLAUDE.md`: never enumerate a `GenerateCtx` literal.
+
+---
+
 ## 2026-08-16 — test: the server halves of two suites were never running
 
 `permutations.test.ts` generates 2 277 method chains and checks two things: that

@@ -336,27 +336,13 @@ export type GenerateCtx = {
 const EMPTY_CTX: GenerateCtx = { lambdaParams: new Set(), inSubPipeline: false };
 
 function extendCtx(ctx: GenerateCtx, params: string[]): GenerateCtx {
-  return {
-    lambdaParams: new Set([...ctx.lambdaParams, ...params]),
-    inSubPipeline: ctx.inSubPipeline,
-    reduceRemap: ctx.reduceRemap,
-    pipelineLets: ctx.pipelineLets,
-    pipelineConstNames: ctx.pipelineConstNames,
-    droppedLets: ctx.droppedLets,
-    bindings: ctx.bindings,
-    bindingTypes: ctx.bindingTypes,
-    slotTypes: ctx.slotTypes,
-    insideLiteral: ctx.insideLiteral,
-    pipelineContext: ctx.pipelineContext,
-    topLevelStream: ctx.topLevelStream,
-    substreamLengthHandles: ctx.substreamLengthHandles,
-    rootStreamLengthVar: ctx.rootStreamLengthVar,
-    slotAllocator: ctx.slotAllocator,
-    accumulatorContext: ctx.accumulatorContext,
-    aggExpr: ctx.aggExpr,
-    functions: ctx.functions,
-    expandingFns: ctx.expandingFns,
-  };
+  // Spread, never enumerate. 21 of the 23 fields are optional, so a literal that omits
+  // one still type-checks and the omission is invisible at the point it is written.
+  // A lambda body is INSIDE everything its surroundings are inside — the same
+  // sub-pipeline, the same `$lookup`, the same source switch — so every field carries
+  // through. Anything that should genuinely stop here belongs below as an explicit
+  // `undefined` with the reason, so a drop reads as a decision.
+  return { ...ctx, lambdaParams: new Set([...ctx.lambdaParams, ...params]) };
 }
 
 /**

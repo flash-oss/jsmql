@@ -41,7 +41,9 @@ New syntax forms add a branch in `parseExpression()` and a dedicated `parseXxx()
 
 New AST node types add a case in the `_generate(expr, ctx)` switch. The public export is `generate(expr)` which calls `_generate` with `EMPTY_CTX`. All recursive calls must pass `ctx` through — never call `_generate` without it. Helper functions for specific shapes stay private and file-local.
 
-`GenerateCtx` carries two things: `lambdaParams` (set of in-scope lambda parameter names) and `reduceRemap` (maps user param names to MongoDB's fixed `$$value`/`$$this` names inside `.reduce()` bodies). Use `extendCtx(ctx, params)` to add lambda params; never mutate ctx directly.
+`GenerateCtx` carries the lexical scope plus the position and service state a lowering needs. Use `extendCtx(ctx, params)` to add lambda params; never mutate ctx directly.
+
+**Never enumerate a `GenerateCtx` literal — always spread.** 21 of its 23 fields are optional, so a literal that omits one still type-checks, and the omission is invisible both where it is written and in review. Every context bug found so far has this shape: `.reduce` and `Object.groupBy` listed eight fields and lost `bindings`, so a `jsmql.compile` parameter resolved in `.map` and threw in `.reduce`; `extendCtx` listed nineteen and lost `sourceSwitch`, so a `let` tombstone survived one lambda level and not two. A lambda body is inside everything its surroundings are inside, so the default is that every field carries through. A field that genuinely must stop somewhere is written as an explicit `field: undefined` with a `// why`, which reads as a decision instead of an accident.
 
 ## Extending the pipeline sugar
 

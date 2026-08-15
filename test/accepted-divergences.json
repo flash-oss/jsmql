@@ -359,6 +359,22 @@
       "was": "'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write `$$.push({...})`, `$$.push(...$$$.<coll>[.filter(pred)])`, or",
       "now": "jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the union in a regular aggregat",
       "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
+    },
+    "jsmql\u0000let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));": {
+      "entry": "jsmql",
+      "src": "let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));",
+      "kind": "message",
+      "was": "Unknown identifier 'k'. Did you mean '$.k'?",
+      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) \u2014 so `k` (along with the outer document and the root `$$.length`) is",
+      "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement."
+    },
+    "pipeline\u0000let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));": {
+      "entry": "pipeline",
+      "src": "let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));",
+      "kind": "message",
+      "was": "Unknown identifier 'k'. Did you mean '$.k'?",
+      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) \u2014 so `k` (along with the outer document and the root `$$.length`) is",
+      "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement."
     }
   }
 }

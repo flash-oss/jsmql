@@ -882,3 +882,25 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
     ]);
   });
 });
+
+describe("a let tombstone survives every lambda depth", () => {
+  // A lambda body is inside everything its surroundings are inside, so the scope
+  // context spreads rather than being re-listed field by field. When it was
+  // enumerated, `sourceSwitch` fell off and the actionable message degraded to a
+  // generic one at the second nesting level — correct at depth 1, wrong at depth 2.
+  const SWITCH = /replaces the stream with a different collection/;
+
+  it("reports the source switch at depth 1", () => {
+    expect(() => jsmql("let k = $.x; $$ = $$$.orders.map(o => ({ t: o.total + k }));")).toThrow(SWITCH);
+  });
+
+  it("reports the same thing at depth 2", () => {
+    expect(() => jsmql("let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));")).toThrow(SWITCH);
+  });
+
+  it("does not degrade to the generic unknown-identifier message", () => {
+    expect(() => jsmql("let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));")).not.toThrow(
+      /Unknown identifier/,
+    );
+  });
+});
