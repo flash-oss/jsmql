@@ -5271,22 +5271,16 @@ describe("string padding methods", () => {
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
-          $cond: {
-            if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, 5] },
-            then: "$$jsmqlPad",
-            else: {
-              $concat: [
-                {
-                  $reduce: {
-                    input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
-                    initialValue: "",
-                    in: { $concat: ["$$value", "0"] },
-                  },
-                },
-                "$$jsmqlPad",
-              ],
+          $concat: [
+            {
+              $reduce: {
+                input: { $range: [0, { $subtract: [5, { $strLenCP: "$$jsmqlPad" }] }] },
+                initialValue: "",
+                in: { $concat: ["$$value", "0"] },
+              },
             },
-          },
+            "$$jsmqlPad",
+          ],
         },
       },
     });
@@ -5300,22 +5294,16 @@ describe("string padding methods", () => {
       $let: {
         vars: { jsmqlPad: { $ifNull: ["$code", ""] } },
         in: {
-          $cond: {
-            if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, 5] },
-            then: "$$jsmqlPad",
-            else: {
-              $concat: [
-                {
-                  $substrCP: [
-                    { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", "US"] } } },
-                    0,
-                    { $max: [0, need] },
-                  ],
-                },
-                "$$jsmqlPad",
+          $concat: [
+            {
+              $substrCP: [
+                { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", "US"] } } },
+                0,
+                { $max: [0, need] },
               ],
             },
-          },
+            "$$jsmqlPad",
+          ],
         },
       },
     });
@@ -5354,28 +5342,22 @@ describe("string padding methods", () => {
             // the remaining width; the binding is coerced for a missing field.
             vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
             in: {
-              $cond: {
-                if: { $gte: [{ $strLenCP: "$$jsmqlPad" }, "$$s.width"] },
-                then: "$$jsmqlPad",
-                else: {
-                  $concat: [
+              $concat: [
+                {
+                  $substrCP: [
                     {
-                      $substrCP: [
-                        {
-                          $reduce: {
-                            input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
-                            initialValue: "",
-                            in: { $concat: ["$$value", "$$s.pad"] },
-                          },
-                        },
-                        0,
-                        { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
-                      ],
+                      $reduce: {
+                        input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                        initialValue: "",
+                        in: { $concat: ["$$value", "$$s.pad"] },
+                      },
                     },
-                    "$$jsmqlPad",
+                    0,
+                    { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
                   ],
                 },
-              },
+                "$$jsmqlPad",
+              ],
             },
           },
         },
@@ -5386,7 +5368,9 @@ describe("string padding methods", () => {
     const out = JSON.stringify(jsmql.expr("$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))"));
     expect(out).toContain('"as":"jsmqlPad"'); // the user's name is left alone
     expect(out).toContain('"vars":{"jsmqlPad2":{"$ifNull":["$$jsmqlPad.code",""]}}'); // ours moves aside
-    expect(out).toContain('{"$strLenCP":"$$jsmqlPad2"},"$$jsmqlPad.width"');
+    // The target width still resolves to the USER's param while the receiver length
+    // reads OUR gensymmed binding — the two names stay distinct inside one expression.
+    expect(out).toContain('"$subtract":["$$jsmqlPad.width",{"$strLenCP":"$$jsmqlPad2"}]');
   });
   it("repeat", () => {
     expect(jsmql.expr('"-".repeat(5)')).toEqual({

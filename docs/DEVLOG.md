@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: `.padStart` / `.padEnd` drop a guard that never fired
+
+Both carried a `$cond` on `$strLenCP >= targetLength`, returning the receiver
+when it was already long enough and building the padded string otherwise. The
+two branches agree. When the receiver reaches the target, `need` is zero or
+negative, `$range: [0, need]` is empty, the filler reduces to `""`, and the
+concat returns the receiver — the same value the `then` branch selected.
+
+So the guard cost 84 characters per occurrence to choose between two identical
+answers. Removed after checking on a live mongod across over-long, exact-length,
+short, empty and missing receivers, single- and multi-character pads, and both
+padding sides: identical every time. `$.s.padStart(9, "US")` goes from 378
+characters to 294.
+
+The `clampNonNegative` on the multi-character trim stays. Its comment explained
+that the length is floored because the optimizer may evaluate this branch even
+when the `$cond` selects the other one — with no `$cond`, the branch always
+evaluates, so the floor is now load-bearing rather than defensive.
+
+---
+
 ## 2026-08-16 — refactor: `.zip` / `.zipWith` lower to `$zip`
 
 `.zip` built its own transpose: a `$let` binding every input array, a `$range`

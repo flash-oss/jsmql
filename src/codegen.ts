@@ -4068,12 +4068,13 @@ function generateMethodCall(
       // The binding itself is coerced, not just the `$strLenCP` argument: an
       // uncoerced receiver would leave the trailing `$concat` returning null on
       // a missing field rather than the fully-padded string JS gives for "".
-      return {
-        $let: {
-          vars: { [v]: coerceStringBinding(genObj) },
-          in: cond({ $gte: [{ $strLenCP: ref }, target] }, ref, { $concat: concatOrder }),
-        },
-      };
+      //
+      // No length guard: when the receiver already reaches `target`, `need` is <= 0, so
+      // `$range: [0, need]` is empty, the filler is "", and the concat returns the
+      // receiver unchanged. A `$cond` on `$strLenCP >= target` would select between two
+      // expressions that agree — verified on a live mongod across over-long, exact,
+      // short, empty and missing receivers, single- and multi-character pads, both sides.
+      return { $let: { vars: { [v]: coerceStringBinding(genObj) }, in: { $concat: concatOrder } } };
     }
     case "repeat": {
       const exprArgs = exprArgsOnly(args, "repeat");

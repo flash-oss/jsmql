@@ -447,6 +447,342 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\"",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPa",
       "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "jsmql\u0000$.code.padStart(5, \"0\")": {
+      "entry": "jsmql",
+      "src": "$.code.padStart(5, \"0\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$conca",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.code.padStart(5, \"0\")": {
+      "entry": "expr",
+      "src": "$.code.padStart(5, \"0\")",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$js",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"0\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.code.padStart(5, \"0\")": {
+      "entry": "filter",
+      "src": "$.code.padStart(5, \"0\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$conca",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.code.padStart(5, \"US\")": {
+      "entry": "jsmql",
+      "src": "$.code.padStart(5, \"US\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.code.padStart(5, \"US\")": {
+      "entry": "expr",
+      "src": "$.code.padStart(5, \"US\")",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$s",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"US\"]}}},0",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.code.padStart(5, \"US\")": {
+      "entry": "filter",
+      "src": "$.code.padStart(5, \"US\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.code.padStart(5, \"$sep\")": {
+      "entry": "jsmql",
+      "src": "$.code.padStart(5, \"$sep\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.code.padStart(5, \"$sep\")": {
+      "entry": "expr",
+      "src": "$.code.padStart(5, \"$sep\")",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$s",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"$sep\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.code.padStart(5, \"$sep\")": {
+      "entry": "filter",
+      "src": "$.code.padStart(5, \"$sep\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.code.padStart(5, $.sep)": {
+      "entry": "jsmql",
+      "src": "$.code.padStart(5, $.sep)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.code.padStart(5, $.sep)": {
+      "entry": "expr",
+      "src": "$.code.padStart(5, $.sep)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$s",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"$sep\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.code.padStart(5, $.sep)": {
+      "entry": "filter",
+      "src": "$.code.padStart(5, $.sep)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},5]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[5,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.s.padStart(10)": {
+      "entry": "jsmql",
+      "src": "$.s.padStart(10)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.s.padStart(10)": {
+      "entry": "expr",
+      "src": "$.s.padStart(10)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsm",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\" \"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.s.padStart(10)": {
+      "entry": "filter",
+      "src": "$.s.padStart(10)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.s.padEnd(10, \"-\")": {
+      "entry": "jsmql",
+      "src": "$.s.padEnd(10, \"-\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"i",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.s.padEnd(10, \"-\")": {
+      "entry": "expr",
+      "src": "$.s.padEnd(10, \"-\")",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$str",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"-\"]}}}]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.s.padEnd(10, \"-\")": {
+      "entry": "filter",
+      "src": "$.s.padEnd(10, \"-\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},10]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[\"$$jsmqlPad\",{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[10,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"i",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.items.map(s => s.code.padStart(s.width, s.pad))": {
+      "entry": "jsmql",
+      "src": "$.items.map(s => s.code.padStart(s.width, s.pad))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},\"$$s.width\"]},\"then\":\"$$jsmql",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$s.wi",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.items.map(s => s.code.padStart(s.width, s.pad))": {
+      "entry": "expr",
+      "src": "$.items.map(s => s.code.padStart(s.width, s.pad))",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},\"$$s.width\"]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[",
+      "now": "{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$s.width\",{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"i",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.items.map(s => s.code.padStart(s.width, s.pad))": {
+      "entry": "filter",
+      "src": "$.items.map(s => s.code.padStart(s.width, s.pad))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},\"$$s.width\"]},\"then\":\"$$jsmql",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$s.wi",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))": {
+      "entry": "jsmql",
+      "src": "$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad2\"},\"$$jsmqlPad.w",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$jsm",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))": {
+      "entry": "expr",
+      "src": "$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad2\"},\"$$jsmqlPad.width\"]},\"then\":\"$$jsmqlPad2\",\"else\":{\"",
+      "now": "{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$jsmqlPad.width\",{\"$strLenCP\":\"$$jsmqlPad2",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))": {
+      "entry": "filter",
+      "src": "$.items.map(jsmqlPad => jsmqlPad.code.padStart(jsmqlPad.width))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad2\"},\"$$jsmqlPad.w",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"jsmqlPad\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad2\":{\"$ifNull\":[\"$$jsmqlPad.code\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[\"$$jsm",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.items.map(s => s.code.padStart(3, s.pad))": {
+      "entry": "jsmql",
+      "src": "$.items.map(s => s.code.padStart(3, s.pad))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},3]},\"then\":\"$$jsmqlPad\",\"else",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[3,{\"$st",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.items.map(s => s.code.padStart(3, s.pad))": {
+      "entry": "expr",
+      "src": "$.items.map(s => s.code.padStart(3, s.pad))",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},3]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\"",
+      "now": "{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[3,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValu",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.items.map(s => s.code.padStart(3, s.pad))": {
+      "entry": "filter",
+      "src": "$.items.map(s => s.code.padStart(3, s.pad))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},3]},\"then\":\"$$jsmqlPad\",\"else",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$items\",\"as\":\"s\",\"in\":{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$$s.code\",\"\"]}},\"in\":{\"$concat\":[{\"$substrCP\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[3,{\"$st",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.arr.padStart(4,'x')": {
+      "entry": "jsmql",
+      "src": "$.arr.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.arr.padStart(4,'x')": {
+      "entry": "expr",
+      "src": "$.arr.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsm",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"x\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.arr.padStart(4,'x')": {
+      "entry": "filter",
+      "src": "$.arr.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.s.padStart(4,'x')": {
+      "entry": "jsmql",
+      "src": "$.s.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.s.padStart(4,'x')": {
+      "entry": "expr",
+      "src": "$.s.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmql",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"x\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.s.padStart(4,'x')": {
+      "entry": "filter",
+      "src": "$.s.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.n.padStart(4,'x')": {
+      "entry": "jsmql",
+      "src": "$.n.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.n.padStart(4,'x')": {
+      "entry": "expr",
+      "src": "$.n.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmql",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"x\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.n.padStart(4,'x')": {
+      "entry": "filter",
+      "src": "$.n.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000$.obj.padStart(4,'x')": {
+      "entry": "jsmql",
+      "src": "$.obj.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000$.obj.padStart(4,'x')": {
+      "entry": "expr",
+      "src": "$.obj.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsm",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"x\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000$.obj.padStart(4,'x')": {
+      "entry": "filter",
+      "src": "$.obj.padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "jsmql\u0000\"abc\".padStart(4,'x')": {
+      "entry": "jsmql",
+      "src": "\"abc\".padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "expr\u0000\"abc\".padStart(4,'x')": {
+      "entry": "expr",
+      "src": "\"abc\".padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmq",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"x\"]}}},\"$$jsmqlPad\"]}}}",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
+    },
+    "filter\u0000\"abc\".padStart(4,'x')": {
+      "entry": "filter",
+      "src": "\"abc\".padStart(4,'x')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$cond\":{\"if\":{\"$gte\":[{\"$strLenCP\":\"$$jsmqlPad\"},4]},\"then\":\"$$jsmqlPad\",\"else\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlPad\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$concat\":[{\"$reduce\":{\"input\":{\"$range\":[0,{\"$subtract\":[4,{\"$strLenCP\":\"$$jsmqlPad\"}]}]},\"initialValue\":\"\",\"in\":{\"$concat\"",
+      "reason": "Intended. .padStart/.padEnd carried a `$cond` on `$strLenCP >= target` selecting between two expressions that agree: when the receiver already reaches the target, `need` is <= 0, `$range: [0, need]` is empty, the filler is \"\", and the concat returns the receiver unchanged. Verified on a live mongod across over-long, exact, short, empty and missing receivers, single- and multi-character pads, both sides. Drops 84 chars per occurrence."
     }
   }
 }
