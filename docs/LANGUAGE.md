@@ -1400,7 +1400,7 @@ $.first.trim().concat(" ", $.last) // { $concat: [{ $trim: ... }, " ", "$last"] 
 $.email.match(/^[a-z]/)            // { $regexMatch: { input: "$email", regex: "^[a-z]" } }
 $.text.matchAll(/word/g)           // { $regexFindAll: { input: "$text", regex: "word" } }  — see flag note
 $.text.search(/foo/)               // first match index, or -1 (via $regexFind + $ifNull)
-$.code.padStart(5, "0")            // padded via $reduce + $range + $concat
+$.code.padStart(5, "0")            // padded via $reduce + $range + $concat (no length guard — an already-long string concats an empty filler)
 $.tier.padStart(9, "US")           // "gold" → "USUSUgold" — a multi-char pad is cut to fit, as in JS
 $.note.padEnd(10)                  // (default pad char is space)
 "-".repeat($.n)                    // $reduce concatenating "-" n times
@@ -2227,20 +2227,20 @@ $.createdAt.getMinutes()           // { $minute: "$createdAt" }
 $.createdAt.getSeconds()           // { $second: "$createdAt" }
 $.createdAt.getMilliseconds()      // { $millisecond: "$createdAt" }
 $.createdAt.getTime()              // { $toLong: "$createdAt" }   (ms since epoch)
-$.createdAt.toISOString()          // { $dateToString: { date: "$createdAt", format: "%Y-%m-%dT%H:%M:%S.%LZ" } }
+$.createdAt.toISOString()          // { $dateToString: { date: "$createdAt" } }   (that format IS $dateToString's default)
 ```
 
 Each component getter has a `getUTC*` variant that reads the date in UTC instead of the server's local zone — matching JavaScript's `getHours()` (local) vs `getUTCHours()` (UTC) split:
 
 ```js
-$.createdAt.getUTCFullYear()       // { $year: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCMonth()          // { $month: { date: "$createdAt", timezone: "UTC" } }   (1-based)
-$.createdAt.getUTCDate()           // { $dayOfMonth: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCDay()            // { $dayOfWeek: { date: "$createdAt", timezone: "UTC" } }   (1 = Sunday)
-$.createdAt.getUTCHours()          // { $hour: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCMinutes()        // { $minute: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCSeconds()        // { $second: { date: "$createdAt", timezone: "UTC" } }
-$.createdAt.getUTCMilliseconds()   // { $millisecond: { date: "$createdAt", timezone: "UTC" } }
+$.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
+$.createdAt.getUTCMonth()          // { $month: "$createdAt" }   (1-based)
+$.createdAt.getUTCDate()           // { $dayOfMonth: "$createdAt" }
+$.createdAt.getUTCDay()            // { $dayOfWeek: "$createdAt" }   (1 = Sunday)
+$.createdAt.getUTCHours()          // { $hour: "$createdAt" }
+$.createdAt.getUTCMinutes()        // { $minute: "$createdAt" }
+$.createdAt.getUTCSeconds()        // { $second: "$createdAt" }
+$.createdAt.getUTCMilliseconds()   // { $millisecond: "$createdAt" }
 ```
 
 **Parts JavaScript has no getter for.** MongoDB counts weeks, ISO weeks and days of the year; JavaScript's `Date` does not, so these carry Moment's method names and MQL's own numbering:
