@@ -1,4 +1,4 @@
-// Type-level regression test for `@koresar/jsmql/ops` code completion.
+// Type-level regression test for `@koresar/jsmql/globals` code completion.
 //
 // Compiled (noEmit, strict) by test/types/tsconfig.json, which test/smoke.test.ts
 // drives through `tsc`. This file NEVER runs — every reference is type-only. Its
@@ -8,8 +8,8 @@
 // future edit drops a member or widens it to `any`, an @ts-expect-error stops
 // firing and `tsc` fails the build.
 //
-// See docs/specs/ops-generation.md § Value-method augmentations.
-import "../../src/ops.ts";
+// See docs/specs/globals-generation.md § Value-method augmentations.
+import "../../src/globals.ts";
 
 // ── Stream methods on the `$$` collection ref ────────────────────────────────
 // `$$` is an ambient `var $$: JsmqlCollectionRef`; every method returns the ref,
@@ -24,7 +24,7 @@ const _stream = $$.filter((d) => d.active)
 void _stream;
 // Note: a *typo* on a stream method (`$$.rejct(...)`) does NOT error here — the
 // `JsmqlCollectionRef` interface ends in a `[key: string]: any` permissive tail
-// (it carries far more syntax than its named members; see ops-generation.md), so
+// (it carries far more syntax than its named members; see globals-generation.md), so
 // unknown members resolve to `any`. jsmql's parser catches the typo at compile
 // time instead. Value-method interfaces below have no such tail, so their typo
 // negatives DO fire.

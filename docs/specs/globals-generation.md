@@ -1,18 +1,18 @@
-# `@koresar/jsmql/ops` — spec-generated ambient types
+# `@koresar/jsmql/globals` — spec-generated ambient types
 
 ## Purpose
 
-How `src/ops.ts` is generated from the canonical jsmql registries and the vendored MongoDB MQL spec, exposed as the `@koresar/jsmql/ops` subpath. The companion user-facing reference is [`docs/LANGUAGE.md` § Operator autocomplete](../LANGUAGE.md#operator-autocomplete-koresarjsmqlops).
+How `src/globals.ts` is generated from the canonical jsmql registries and the vendored MongoDB MQL spec, exposed as the `@koresar/jsmql/globals` subpath. The companion user-facing reference is [`docs/LANGUAGE.md` § Operator autocomplete](../LANGUAGE.md#operator-autocomplete-koresarjsmqlops).
 
-The module is **pure-types** at the source: `declare global { … } export {};`. There are no exported runtime values. Users import it with `import "@koresar/jsmql/ops"` (the side-effect form — TS does not allow `import type "…"` on a side-effect-only import), which costs one empty-module load and brings every stage and operator into ambient global scope. The runtime path is unchanged — the parser already accepts bare `$stage(…)` / `$op(…)` calls via [`STAGES`](../../src/stages.ts) and [`OPERATORS`](../../src/operators.ts); this module exists solely so TypeScript stops underlining the names and the IDE has something to autocomplete.
+The module is **pure-types** at the source: `declare global { … } export {};`. There are no exported runtime values. Users import it with `import "@koresar/jsmql/globals"` (the side-effect form — TS does not allow `import type "…"` on a side-effect-only import), which costs one empty-module load and brings every stage and operator into ambient global scope. The runtime path is unchanged — the parser already accepts bare `$stage(…)` / `$op(…)` calls via [`STAGES`](../../src/stages.ts) and [`OPERATORS`](../../src/operators.ts); this module exists solely so TypeScript stops underlining the names and the IDE has something to autocomplete.
 
-Users who want zero runtime impact can instead add `"@koresar/jsmql/ops"` to their tsconfig's `compilerOptions.types` array; the ambient declarations propagate without any `import` statement.
+Users who want zero runtime impact can instead add `"@koresar/jsmql/globals"` to their tsconfig's `compilerOptions.types` array; the ambient declarations propagate without any `import` statement.
 
 ## Generator
 
-[`scripts/generate-ops.mjs`](../../scripts/generate-ops.mjs). Runs as `prebuild` and `pretest` in `package.json`, so the file emitted to `src/ops.ts` always reflects the pinned spec on every build and test run. Also exposed as `npm run generate:ops` for ad-hoc regeneration.
+[`scripts/generate-globals.mjs`](../../scripts/generate-globals.mjs). Runs as `prebuild` and `pretest` in `package.json`, so the file emitted to `src/globals.ts` always reflects the pinned spec on every build and test run. Also exposed as `npm run generate:globals` for ad-hoc regeneration.
 
-Exports `generateOpsSource()` so [`test/operator-spec-coverage.test.ts`](../../test/operator-spec-coverage.test.ts) can byte-compare the committed `src/ops.ts` against fresh generator output (passed through `oxfmt --stdin-filepath` to normalise whitespace). The drift test fails if either side moves.
+Exports `generateGlobalsSource()` so [`test/operator-spec-coverage.test.ts`](../../test/operator-spec-coverage.test.ts) can byte-compare the committed `src/globals.ts` against fresh generator output (passed through `oxfmt --stdin-filepath` to normalise whitespace). The drift test fails if either side moves.
 
 ### Inputs
 
@@ -26,7 +26,7 @@ Exports `generateOpsSource()` so [`test/operator-spec-coverage.test.ts`](../../t
 
 ### Output
 
-A single `src/ops.ts` file containing one `declare global { … } export {};` block, alphabetised within five sections:
+A single `src/globals.ts` file containing one `declare global { … } export {};` block, alphabetised within five sections:
 
 1. **Stages** — every key of `STAGES`.
 2. **Expression operators (incl. accumulators and window functions)** — every key of `OPERATORS`. Accumulators sit in the same registry; the section header reflects that this set covers all non-stage callables.
@@ -108,7 +108,7 @@ Two boundaries are inherent, not incidental:
 - **The receiver must be concretely typed.** A bare `$.field` is `any`, and `any.uniq()` stays `any` — so the augmentation "activates" only on an annotated `$`, a typed static (`Object.values(o)`), a literal, or a known-return method result mid-chain. This is the same tension `[DEF-016]` notes for `$op(...)` returns: `$.field` must stay `any` so operator forms (`$.age > 18`) type-check, and `any` can't also carry completion. The augmentation is safe precisely because it never forces a field ref to narrow — it only adds members to types that are *already* concrete.
 - **Object-receiver methods are excluded.** `.mapValues` / `.pick` / `.omit` / `.invert` / `.pickBy` / `.omitBy` / `.toPairs` would have to be hung on `interface Object`, the base of every type — which would advertise them (misleadingly) on numbers, strings, and arrays. They sit in `VALUE_METHOD_SKIP.object` and get no completion.
 
-Covered by the type-level regression test [`test/types/ops-completion.ts`](../../test/types/ops-completion.ts) (run through `tsc` by `test/smoke.test.ts`): positive chains plus `@ts-expect-error` typos that prove the surface isn't silently `any`.
+Covered by the type-level regression test [`test/types/globals-completion.ts`](../../test/types/globals-completion.ts) (run through `tsc` by `test/smoke.test.ts`): positive chains plus `@ts-expect-error` typos that prove the surface isn't silently `any`.
 
 ### Stable ordering
 
@@ -122,7 +122,7 @@ This determinism is required for the drift test to byte-compare without spurious
 
 ### Final formatting pass
 
-After writing the file, the generator invokes `node_modules/.bin/oxfmt` to normalise spacing, line breaks inside argument-object literals, and trailing commas. The drift test mirrors this by piping its own output through the same binary via `--stdin-filepath`. Outside Claude Code or CI, `npm run generate:ops` runs the full pipeline.
+After writing the file, the generator invokes `node_modules/.bin/oxfmt` to normalise spacing, line breaks inside argument-object literals, and trailing commas. The drift test mirrors this by piping its own output through the same binary via `--stdin-filepath`. Outside Claude Code or CI, `npm run generate:globals` runs the full pipeline.
 
 ## Subpath export
 
@@ -131,22 +131,22 @@ After writing the file, the generator invokes `node_modules/.bin/oxfmt` to norma
 ```json
 "exports": {
   ".": { "types": "./dist/index.d.ts", "default": "./dist/index.js" },
-  "./ops": { "types": "./dist/ops.d.ts", "default": "./dist/ops.js" }
+  "./globals": { "types": "./dist/globals.d.ts", "default": "./dist/globals.js" }
 }
 ```
 
-The `default` field points at the (essentially empty) `dist/ops.js` so an accidental non-type `import "@koresar/jsmql/ops"` resolves at runtime — it's a no-op but doesn't error.
+The `default` field points at the (essentially empty) `dist/globals.js` so an accidental non-type `import "@koresar/jsmql/globals"` resolves at runtime — it's a no-op but doesn't error.
 
 ## Test coverage
 
-[`test/operator-spec-coverage.test.ts`](../../test/operator-spec-coverage.test.ts) — drift test "src/ops.ts is byte-equal to the generator output".
+[`test/operator-spec-coverage.test.ts`](../../test/operator-spec-coverage.test.ts) — drift test "src/globals.ts is byte-equal to the generator output".
 
 [`test/smoke.test.ts`](../../test/smoke.test.ts) — existence-and-content check on `dist/ops.{js,d.ts}` in the `smoke:dist` flow.
 
-[`test/realistic.test.ts`](../../test/realistic.test.ts) — the `Compile form: ambient ops via \`import "@koresar/jsmql/ops"\`` describe shows the runtime end-to-end without an ops-hint destructure. Linked from `README.md`, so it doubles as a copy-paste reference for new users.
+[`test/realistic.test.ts`](../../test/realistic.test.ts) — the `Compile form: ambient ops via \`import "@koresar/jsmql/globals"\`` describe shows the runtime end-to-end without an ops-hint destructure. Linked from `README.md`, so it doubles as a copy-paste reference for new users.
 
 ## When to regenerate
 
-The generator runs automatically on `npm run build` and `npm test`, so the committed `src/ops.ts` should always match `OPERATORS` ∪ `STAGES` × the pinned spec. The drift test fails if a contributor edits the registries without running the generator, or edits `src/ops.ts` by hand.
+The generator runs automatically on `npm run build` and `npm test`, so the committed `src/globals.ts` should always match `OPERATORS` ∪ `STAGES` × the pinned spec. The drift test fails if a contributor edits the registries without running the generator, or edits `src/globals.ts` by hand.
 
-Bumping `PINNED_SHA` in [`vendor/fetch-mql-specs.mjs`](../../vendor/fetch-mql-specs.mjs) pulls new spec data; the next test run will fail the drift check, prompting `npm run generate:ops` and a commit of the refreshed `src/ops.ts`.
+Bumping `PINNED_SHA` in [`vendor/fetch-mql-specs.mjs`](../../vendor/fetch-mql-specs.mjs) pulls new spec data; the next test run will fail the drift check, prompting `npm run generate:globals` and a commit of the refreshed `src/globals.ts`.

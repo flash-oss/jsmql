@@ -39,7 +39,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/const-folding.md` | Compile-time-constant `const`/`let` folded to inlined values (the compile-time counterpart to let-bindings) |
 | `specs/reusable-functions.md` | Reusable named functions (`const f = (a) => …`) → inline IIFE/`$let` per call |
 | `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the two-slot `(params, { $, … })` arrow signature |
-| `specs/ops-generation.md` | How `src/ops.ts` (`@koresar/jsmql/ops`) is generated + its drift test |
+| `specs/globals-generation.md` | How `src/globals.ts` (`@koresar/jsmql/globals`) is generated + its drift test |
 | `specs/strict-shape-entries.md` | `jsmql.filter` / `jsmql.pipeline` / `jsmql.update`: strict-shape dispatch + the update whitelist |
 | `specs/mongoose-plugin.md` | The `@koresar/jsmql/mongoose` plugin |
 | `specs/context-references.md` | The `$$` / `$$$` / `$$$$` context-ref prefixes (collection / database / cluster) |

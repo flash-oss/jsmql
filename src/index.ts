@@ -79,7 +79,7 @@ export class JsmqlInterpolationError extends Error {
 // Everything on the toolbox is typed `any`: `$` so `$.foo.bar` autocompletes
 // without `noImplicitAny` complaining, and each `$op` so a destructured
 // `({ $, $dateDiff }) => $dateDiff(…)` type-checks even without importing
-// `@koresar/jsmql/ops`. Rich signatures come from that ambient-globals import
+// `@koresar/jsmql/globals`. Rich signatures come from that ambient-globals import
 // (use the names un-destructured); listing them here is optional convenience.
 export type JsmqlToolbox = { [K in `$${string}`]: any };
 type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;

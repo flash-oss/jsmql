@@ -23,13 +23,13 @@ import { resolve, relative } from "node:path";
 //                    match at least one phrase in the live surface, so the
 //                    allowlist cannot accumulate stale entries.
 //
-// Live surface = src/**/*.ts (excluding ops.ts), docs/specs/**/*.md,
+// Live surface = src/**/*.ts (excluding globals.ts), docs/specs/**/*.md,
 // docs/LANGUAGE.md, docs/CLAUDE.md, README.md, test/**/*.ts (except this
 // file and operator-spec-coverage.test.ts's meta-comment).
 //
 // Excluded: docs/DEVLOG.md (append-only history), docs/DEFERRED.md itself,
 // this test file itself, the allowlist, vendor/, node_modules/, dist/,
-// src/ops.ts (generated).
+// src/globals.ts (generated).
 // ---------------------------------------------------------------------------
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -62,7 +62,7 @@ const EXCLUDED_FILES = new Set([
   "docs/DEFERRED.md",
   "test/deferred-coverage.test.ts",
   "test/deferred-allowlist.txt",
-  "src/ops.ts",
+  "src/globals.ts",
 ]);
 
 interface FileLine {

@@ -35,7 +35,7 @@ const pkgVersion = JSON.parse(readFileSync(path.join(ROOT, "package.json"), "utf
 await build({
   entryPoints: {
     index: path.join(ROOT, "src/index.ts"),
-    ops: path.join(ROOT, "src/ops.ts"),
+    globals: path.join(ROOT, "src/globals.ts"),
     mongoose: path.join(ROOT, "src/mongoose.ts"),
     cli: path.join(ROOT, "src/cli.ts"),
   },
@@ -59,7 +59,7 @@ chmodSync(path.join(OUT_DIR, "cli.cjs"), 0o755);
 // Mirror the ESM .d.ts files as .d.cts so TypeScript's `nodenext` resolution
 // finds types under the `require` condition. The declaration content is
 // identical between ESM and CJS for this package — exports compile the same.
-for (const name of ["index", "ops", "mongoose"]) {
+for (const name of ["index", "globals", "mongoose"]) {
   const src = path.join(ROOT, "dist", `${name}.d.ts`);
   const dst = path.join(OUT_DIR, `${name}.d.cts`);
   copyFileSync(src, dst);
@@ -71,7 +71,7 @@ for (const name of ["index", "ops", "mongoose"]) {
 // write `require(...).default(mongoose)`. Append a one-liner that promotes
 // the default export to be the module value while keeping `.default` set so
 // both call shapes — and ESM/TS `import jsmqlMongoose from "…/mongoose"` —
-// remain interoperable. Index/ops have no default export, so they're left
+// remain interoperable. Index/globals have no default export, so they're left
 // alone.
 const mongooseCjs = path.join(OUT_DIR, "mongoose.cjs");
 appendFileSync(

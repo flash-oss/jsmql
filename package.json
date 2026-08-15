@@ -25,14 +25,14 @@
         "default": "./dist/cjs/index.cjs"
       }
     },
-    "./ops": {
+    "./globals": {
       "import": {
-        "types": "./dist/ops.d.ts",
-        "default": "./dist/ops.js"
+        "types": "./dist/globals.d.ts",
+        "default": "./dist/globals.js"
       },
       "require": {
-        "types": "./dist/cjs/ops.d.cts",
-        "default": "./dist/cjs/ops.cjs"
+        "types": "./dist/cjs/globals.d.cts",
+        "default": "./dist/cjs/globals.cjs"
       }
     },
     "./mongoose": {
@@ -56,13 +56,13 @@
   },
   "scripts": {
     "build": "tsc && node scripts/build-cjs.mjs",
-    "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs && node scripts/sync-playground.mjs",
-    "pretest": "node vendor/fetch-mql-specs.mjs && node scripts/generate-ops.mjs",
+    "prebuild": "node vendor/fetch-mql-specs.mjs && node scripts/generate-globals.mjs && node scripts/sync-playground.mjs",
+    "pretest": "node vendor/fetch-mql-specs.mjs && node scripts/generate-globals.mjs",
     "test": "vitest run",
     "test:watch": "vitest",
     "smoke:dist": "npm run build && vitest run test/smoke.test.ts",
     "format": "oxfmt .",
-    "generate:ops": "node scripts/generate-ops.mjs",
+    "generate:globals": "node scripts/generate-globals.mjs",
     "sync:playground": "node scripts/sync-playground.mjs",
     "fixture:up": "node test/fixtures/instance.ts up",
     "fixture:seed": "node test/fixtures/instance.ts seed",

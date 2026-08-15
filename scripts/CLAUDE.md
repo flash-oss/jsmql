@@ -4,15 +4,15 @@ Node scripts that run outside the published library. Each is invoked by an npm s
 
 ## Files
 
-### `generate-ops.mjs`
+### `generate-globals.mjs`
 
-Generates [`src/ops.ts`](../src/ops.ts) — the ambient-global types shipped at the `@koresar/jsmql/ops` subpath — from [`src/operators.ts`](../src/operators.ts), [`src/stages.ts`](../src/stages.ts), and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
+Generates [`src/globals.ts`](../src/globals.ts) — the ambient-global types shipped at the `@koresar/jsmql/globals` subpath — from [`src/operators.ts`](../src/operators.ts), [`src/stages.ts`](../src/stages.ts), and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
 
-Runs as `prebuild` and `pretest`, so the committed `src/ops.ts` is always rebuilt before any tsc or vitest invocation. Also exposed as `npm run generate:ops` for ad-hoc regeneration after editing the registries.
+Runs as `prebuild` and `pretest`, so the committed `src/globals.ts` is always rebuilt before any tsc or vitest invocation. Also exposed as `npm run generate:globals` for ad-hoc regeneration after editing the registries.
 
-Exports `generateOpsSource()` for the drift test in [`test/operator-spec-coverage.test.ts`](../test/operator-spec-coverage.test.ts). The CLI form writes the file and pipes it through `oxfmt`; the drift test mirrors the pipe so the comparison is whitespace-agnostic.
+Exports `generateGlobalsSource()` for the drift test in [`test/operator-spec-coverage.test.ts`](../test/operator-spec-coverage.test.ts). The CLI form writes the file and pipes it through `oxfmt`; the drift test mirrors the pipe so the comparison is whitespace-agnostic.
 
-See [`docs/specs/ops-generation.md`](../docs/specs/ops-generation.md) for the generator's contract, input/output shape, type-mapping rules, and stable-ordering invariants.
+See [`docs/specs/globals-generation.md`](../docs/specs/globals-generation.md) for the generator's contract, input/output shape, type-mapping rules, and stable-ordering invariants.
 
 ### `sync-playground.mjs`
 
@@ -26,7 +26,7 @@ Runs as `prebuild`, so `npm run build` always refreshes both artifacts. Also hoo
 
 ### `build-cjs.mjs`
 
-Bundles `src/index.ts`, `src/ops.ts`, `src/mongoose.ts`, and `src/cli.ts` into `dist/cjs/{index,ops,mongoose,cli}.cjs` via esbuild, targeting `node14`, so the package's `require` condition resolves to a working CommonJS module. Also copies the ESM `.d.ts` files to sibling `.d.cts` files for `moduleResolution: nodenext` consumers (the `cli` entry is an executable, not an importable type, so it's excluded from that mirror loop), and drops a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. The `cli` entry is the `jsmql` bin: esbuild preserves its `#!/usr/bin/env node` shebang, the build passes `define: { __JSMQL_VERSION__: <package.json version> }` to inline the version, and the script `chmod`s `dist/cjs/cli.cjs` to `0o755`. Runs as the second half of `npm run build` (after `tsc`). The CJS bundle is covered by the `dist/cjs/index.cjs loads via require()` and `dist/cjs/cli.cjs runs as the jsmql bin` cases in [`test/smoke.test.ts`](../test/smoke.test.ts).
+Bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` into `dist/cjs/{index,globals,mongoose,cli}.cjs` via esbuild, targeting `node14`, so the package's `require` condition resolves to a working CommonJS module. Also copies the ESM `.d.ts` files to sibling `.d.cts` files for `moduleResolution: nodenext` consumers (the `cli` entry is an executable, not an importable type, so it's excluded from that mirror loop), and drops a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. The `cli` entry is the `jsmql` bin: esbuild preserves its `#!/usr/bin/env node` shebang, the build passes `define: { __JSMQL_VERSION__: <package.json version> }` to inline the version, and the script `chmod`s `dist/cjs/cli.cjs` to `0o755`. Runs as the second half of `npm run build` (after `tsc`). The CJS bundle is covered by the `dist/cjs/index.cjs loads via require()` and `dist/cjs/cli.cjs runs as the jsmql bin` cases in [`test/smoke.test.ts`](../test/smoke.test.ts).
 
 ### `merge-devlog.mjs`
 
@@ -41,4 +41,4 @@ PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-p
 - Scripts are `.mjs` (ESM) and may import directly from `src/*.ts` files; Node 22.18+ / 24.3+'s native type-stripping handles the TS syntax without a flag (unflagged in 22.18.0 LTS and 24.3.0; stable in 25.2.0).
 - Each script's first paragraph (in a top-of-file comment) explains its purpose, when it runs, and how to invoke it manually.
 - Scripts never use `npx` — always `node_modules/.bin/<tool>` or an npm script (the rationale lives in the root `CLAUDE.md`).
-- A script that emits files into `src/` (like `generate-ops.mjs`) must produce **byte-stable output** for the drift test to compare cleanly. Sort inputs by name, avoid timestamps, and feed the result through `oxfmt` so the formatter doesn't introduce churn.
+- A script that emits files into `src/` (like `generate-globals.mjs`) must produce **byte-stable output** for the drift test to compare cleanly. Sort inputs by name, avoid timestamps, and feed the result through `oxfmt` so the formatter doesn't introduce churn.

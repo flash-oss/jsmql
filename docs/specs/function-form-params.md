@@ -28,7 +28,7 @@ Two optional slots, each an **object destructure**. The parser classifies each b
 | Destructure with only `$`-prefixed keys (`{ $ }`, `{ $, $match }`, incl. the context refs `$$` / `$$$` / `$$$$`) | Toolbox slot — the document root `$`, context refs, and operators; keys are discarded after parsing. See note below. |
 | Bare identifier or bare `$` (`$`, `doc`) | **Rejected** — the document context must be destructured (`({ $ }) => …`). |
 
-> The toolbox slot is types-only convenience; the **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/ops"` (see [`ops-generation.md`](ops-generation.md)), which surfaces every stage and operator as an ambient global — no need to list them per call site. Listing `$` (and any op) in the toolbox lets the arrow type-check even without that import.
+> The toolbox slot is types-only convenience; the **preferred way** to get IDE autocomplete is `import "@koresar/jsmql/globals"` (see [`globals-generation.md`](globals-generation.md)), which surfaces every stage and operator as an ambient global — no need to list them per call site. Listing `$` (and any op) in the toolbox lets the arrow type-check even without that import.
 
 When both appear, the only legal order is `(params, { $, … })`. Shorter combinations: `(params)`, `({ $, … })`, and `()`. Anything else — a third slot, a bare-identifier / bare-`$` slot, or the toolbox before params — throws `FunctionInputError` with the actual and expected shape.
 

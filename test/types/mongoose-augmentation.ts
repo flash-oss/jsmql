@@ -11,7 +11,7 @@
 
 import mongoose from "mongoose";
 import "../../src/mongoose.ts";
-import "../../src/ops.ts";
+import "../../src/globals.ts";
 
 interface User {
   name: string;

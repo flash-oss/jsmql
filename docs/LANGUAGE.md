@@ -4044,14 +4044,14 @@ db.users.updateMany({}, bumpTier({ tier: 2 }));
 
 `jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` share `jsmql.compile`'s binding mechanics exactly — they only narrow the output and enforce the same shape contract their one-shot siblings do. A compiled builder whose arrow body lowers to the wrong shape throws the identical error the one-shot strict entry would (e.g. `jsmql.pipeline.compile(({ m }, { $ }) => $.age > m)` throws "expects a Pipeline … but received a bare expression" when called).
 
-### Operator autocomplete (`@koresar/jsmql/ops`)
+### Operator autocomplete (`@koresar/jsmql/globals`)
 
 Listing every stage and operator alongside `$` in the toolbox destructure gets tedious. A real-world pipeline mentions five to ten stages plus a handful of escape-hatch expression ops; spelling them out at every call site is bookkeeping the user shouldn't have to do.
 
-The `@koresar/jsmql/ops` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, keep just `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
+The `@koresar/jsmql/globals` subpath is a **pure-types** module that surfaces every jsmql stage and operator as an ambient global. Import it once at the top of your file, keep just `$` in the toolbox destructure, and write `$match(…)`, `$dateAdd(…)`, etc. directly — your IDE will autocomplete names and arg objects, catch typos at compile time, and surface the official MongoDB description and doc link on hover.
 
 ```ts
-import "@koresar/jsmql/ops"; // ← side-effect import; loads only `declare global` types
+import "@koresar/jsmql/globals"; // ← side-effect import; loads only `declare global` types
 import { jsmql } from "@koresar/jsmql";
 
 const eligibleUsersQuery = jsmql.compile(
@@ -4068,7 +4068,7 @@ const eligibleUsersQuery = jsmql.compile(
 Object-form operators get full key autocomplete from the spec:
 
 ```ts
-import "@koresar/jsmql/ops";
+import "@koresar/jsmql/globals";
 
 const recent = jsmql(
   ({ $ }) => $dateAdd({ startDate: $.purchaseDate, unit: "day", amount: 3 }),
@@ -4079,17 +4079,17 @@ const recent = jsmql(
 
 How it works:
 
-- The compiled module (`dist/ops.js`) is `export {};` — **no exported values, no runtime cost** beyond a single empty module load. Bundlers tree-shake it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/ops"` to your tsconfig `compilerOptions.types` instead of importing.
+- The compiled module (`dist/globals.js`) is `export {};` — **no exported values, no runtime cost** beyond a single empty module load. Bundlers tree-shake it to nothing in practice. For fully zero-runtime use, add `"@koresar/jsmql/globals"` to your tsconfig `compilerOptions.types` instead of importing.
 - The types are **generated at build time from the official MongoDB MQL spec** ([`mongodb/mql-specifications`](https://github.com/mongodb/mql-specifications)), so they always match the operator the server documents — required vs optional args, function-overload shapes (e.g. `$and(x)` vs `$and(x, y, z)`), full descriptions, version metadata, and links.
 - The declarations are **global** (via TypeScript's `declare global`): once any file in your project imports the module, the names are visible everywhere. **This is intentional** — every alternative (named imports, namespace imports) gets rewritten by bundlers into `(0, _ops.$match)(…)` form, which the jsmql parser can't recognise. Globals are the only shape that survives every transform. The names all start with `$`, so realistic collisions with user identifiers are nil — `$` as an identifier prefix is the MongoDB convention and isn't used elsewhere in the TS ecosystem.
 - The runtime path is unchanged. The jsmql parser already recognises bare `$stage(…)` and `$op(…)` calls regardless of TypeScript's view; this import only quiets TypeScript and gives your IDE something to autocomplete.
 
-Listing operator names in the toolbox destructure (`(…, { $, $match, $project })`) is the per-call-site alternative — `@koresar/jsmql/ops` is preferred when you don't want to maintain those lists.
+Listing operator names in the toolbox destructure (`(…, { $, $match, $project })`) is the per-call-site alternative — `@koresar/jsmql/globals` is preferred when you don't want to maintain those lists.
 
 The import also declares the context-reference prefixes `$$`, `$$$`, and `$$$$`, so arrow-form code using them type-checks instead of erroring on an undeclared name. The collection-scoped (`$$`) and cluster-scoped (`$$$$`) **diagnostic source stages** get full completion and hover docs with annotated option objects:
 
 ```ts
-import "@koresar/jsmql/ops";
+import "@koresar/jsmql/globals";
 
 jsmql(({ $ }) => $$.collStats({ storageStats: { scale: 1024 } }));
 //                    ╰── autocomplete: indexStats, collStats, planCacheStats, listSearchIndexes
@@ -4101,10 +4101,10 @@ The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.report
 
 #### Value-method completion on typed values
 
-The lodash-flavoured **value** methods (a JavaScript-array / string / number method jsmql recognises — e.g. `.uniq()`, `.chunk()`, `.groupBy()`, `.capitalize()`, `.clamp()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/ops` augments the built-in `Array<T>` / `String` / `Number` types with them, each with a concrete return type so a chain stays completable end to end:
+The lodash-flavoured **value** methods (a JavaScript-array / string / number method jsmql recognises — e.g. `.uniq()`, `.chunk()`, `.groupBy()`, `.capitalize()`, `.clamp()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/globals` augments the built-in `Array<T>` / `String` / `Number` types with them, each with a concrete return type so a chain stays completable end to end:
 
 ```ts
-import "@koresar/jsmql/ops";
+import "@koresar/jsmql/globals";
 
 // annotate the document once → every hop completes and chains
 jsmql(({ $ }: { $: { orders: { total: number; sku: string }[] } }) =>

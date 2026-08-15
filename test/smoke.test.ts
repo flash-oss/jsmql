@@ -160,15 +160,15 @@ describe("smoke: built dist", () => {
   const tscBin = resolve(ROOT, "node_modules/.bin/tsc");
 
   it.skipIf(!existsSync(tscBin))(
-    "@koresar/jsmql/ops value-method + stream completion type-checks (test/types/ops-completion.ts)",
+    "@koresar/jsmql/globals value-method + stream completion type-checks (test/types/globals-completion.ts)",
     () => {
-      // Type-only validation of the ambient-ops completion surface: the
+      // Type-only validation of the ambient-globals completion surface: the
       // Array<T> / String / Number prototype augmentations complete and chain on
       // concretely-typed receivers, value-method typos error (proving the surface
       // isn't silently `any`), and a bare `any` receiver stays permissive. Its
       // own tsconfig (no mongoose), so it runs whenever tsc is present regardless
-      // of whether mongoose is installed. See docs/specs/ops-generation.md.
-      const result = spawnSync(tscBin, ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.ops.json")], {
+      // of whether mongoose is installed. See docs/specs/globals-generation.md.
+      const result = spawnSync(tscBin, ["--noEmit", "-p", resolve(ROOT, "test/types/tsconfig.globals.json")], {
         cwd: ROOT,
         encoding: "utf8",
       });
@@ -222,18 +222,18 @@ describe("smoke: built dist", () => {
     expect(result.status, result.stderr).toBe(0);
   });
 
-  const opsJs = resolve(ROOT, "dist/ops.js");
-  const opsDts = resolve(ROOT, "dist/ops.d.ts");
+  const opsJs = resolve(ROOT, "dist/globals.js");
+  const opsDts = resolve(ROOT, "dist/globals.d.ts");
 
-  it.skipIf(!existsSync(distPath))("dist/ops.{js,d.ts} are emitted with stage and operator declarations", () => {
-    // `@koresar/jsmql/ops` is a pure-types module — the runtime ops.js is essentially
+  it.skipIf(!existsSync(distPath))("dist/globals.{js,d.ts} are emitted with stage and operator declarations", () => {
+    // `@koresar/jsmql/globals` is a pure-types module — the runtime globals.js is essentially
     // empty (`export {};`), but it must exist so accidental non-type imports
     // resolve. The .d.ts is the artifact users actually consume.
     if (!existsSync(opsJs)) {
-      throw new Error(`expected dist/ops.js to exist after build; rebuild with \`npm run build\``);
+      throw new Error(`expected dist/globals.js to exist after build; rebuild with \`npm run build\``);
     }
     if (!existsSync(opsDts)) {
-      throw new Error(`expected dist/ops.d.ts to exist after build; rebuild with \`npm run build\``);
+      throw new Error(`expected dist/globals.d.ts to exist after build; rebuild with \`npm run build\``);
     }
     const dts = readFileSync(opsDts, "utf8");
     // Spot-check that the declaration block is intact and includes both a

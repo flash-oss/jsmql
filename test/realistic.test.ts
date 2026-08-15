@@ -14,7 +14,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
-import "../src/ops.ts";
+import "../src/globals.ts";
 
 // Teach TS about the playground-metadata keys (`kind`, `usage`, `features`)
 // we pass as the 2nd arg to describe()/it(). Vitest already ignores unknown

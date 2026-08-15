@@ -166,8 +166,8 @@ This makes jsmql forward-compatible with new MongoDB operators that are not yet 
 
 When the test fails, the message names the specific operator and the specific drift; act on it before merging.
 
-## Generated user-facing types (`src/ops.ts`)
+## Generated user-facing types (`src/globals.ts`)
 
-The registry, together with `STAGES` in [`src/stages.ts`](../../src/stages.ts) and the vendored spec, is the input to a build-time generator that emits the ambient-globals module shipped at the `@koresar/jsmql/ops` subpath. See [`ops-generation.md`](ops-generation.md) for the generator's contract and type-mapping rules.
+The registry, together with `STAGES` in [`src/stages.ts`](../../src/stages.ts) and the vendored spec, is the input to a build-time generator that emits the ambient-globals module shipped at the `@koresar/jsmql/globals` subpath. See [`globals-generation.md`](globals-generation.md) for the generator's contract and type-mapping rules.
 
-When you add a new operator, the generator picks it up automatically on the next `npm test` / `npm run build`. The drift test in `test/operator-spec-coverage.test.ts` will fail if the committed `src/ops.ts` is stale; running `npm run generate:ops` refreshes it.
+When you add a new operator, the generator picks it up automatically on the next `npm test` / `npm run build`. The drift test in `test/operator-spec-coverage.test.ts` will fail if the committed `src/globals.ts` is stale; running `npm run generate:globals` refreshes it.

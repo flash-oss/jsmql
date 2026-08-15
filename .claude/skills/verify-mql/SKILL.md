@@ -69,7 +69,7 @@ echo '$.qty = $.qty + 1' | node src/cli.ts --update | ./test/probe --update --do
 1. **`node_modules` present?** A fresh worktree starts without it (probe needs the
    `mongodb` driver, a devDependency). If missing, run `npm install` first. Do
    **not** symlink `node_modules` from another checkout — it breaks the byte-equal
-   `ops.ts` drift test.
+   `globals.ts` drift test.
 2. **Is a local `mongod` running?** Probe defaults to `127.0.0.1:27017`. If mongod
    is **not installed or not running, stop and ask the developer to install and
    start it** — point them at the official

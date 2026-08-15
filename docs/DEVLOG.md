@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — feat!: the ambient-types subpath is `@koresar/jsmql/globals`
+
+`@koresar/jsmql/ops` is now `@koresar/jsmql/globals`, and `src/ops.ts` is
+`src/globals.ts`. The name had stopped describing the file. It was accurate when
+the module held operator declarations and nothing else; it now also carries every
+pipeline stage, the `$$` / `$$$` / `$$$$` context refs, `ObjectId`, `assert`, and
+the prototype augmentations on `Array<T>` / `String` / `Number`. What every one
+of those has in common is that they are **ambient globals** — which is what the
+module is, a `declare global { … } export {};` with no runtime exports.
+
+`globals` is also the name the ecosystem already uses for exactly this shape:
+`vitest/globals` is the same "side-effect import, or list it in tsconfig
+`compilerOptions.types`" module. A reader who has seen one knows what the other
+does.
+
+The rename is total and carries no alias — pre-1.0, a second spelling would only
+create the "which one does my codebase use?" question. Renamed with it:
+`scripts/generate-ops.mjs` → `generate-globals.mjs`, its `generateOpsSource()`
+export → `generateGlobalsSource()`, the npm script `generate:ops` →
+`generate:globals`, `docs/specs/ops-generation.md` →
+[globals-generation.md](specs/globals-generation.md),
+`test/types/ops-completion.ts` → `globals-completion.ts`, and the
+`dist/globals.*` / `dist/cjs/globals.*` build outputs behind the `./globals`
+condition in `package.json#exports`. No emitted MQL changes — this is a
+packaging-and-types rename only.
+
+---
+
 ## 2026-08-14 — feat(site): the flagship example reads the same on both published pages
 
 The collaborative-filtering example exists as two copies — the first `it()` in

@@ -1,12 +1,12 @@
 #!/usr/bin/env node
 /**
- * Generate `src/ops.ts` from the canonical jsmql operator/stage registries
+ * Generate `src/globals.ts` from the canonical jsmql operator/stage registries
  * (`src/operators.ts`, `src/stages.ts`) and the vendored MongoDB MQL
  * specification YAMLs (`vendor/mql-specifications/definitions/{expression,
  * accumulator,stage}/`).
  *
  * The generated file is a `declare global` ambient module: when imported as
- * `import type "@koresar/jsmql/ops"`, it surfaces every stage and operator as a global
+ * `import type "@koresar/jsmql/globals"`, it surfaces every stage and operator as a global
  * function with a precise signature, JSDoc description, version, and link to
  * the MongoDB docs. The runtime path is unchanged — the jsmql parser already
  * recognises bare `$stage(...)` and `$op(...)` calls via the registries; this
@@ -14,15 +14,15 @@
  *
  * Runs as part of `prebuild` and `pretest` (after `vendor/fetch-mql-specs.mjs`)
  * so the emitted file always reflects the pinned spec. The committed
- * `src/ops.ts` is the artifact that ships in the npm package.
+ * `src/globals.ts` is the artifact that ships in the npm package.
  *
  * Drift protection: `test/operator-spec-coverage.test.ts` imports
- * `generateOpsSource()` from this file and asserts the committed `src/ops.ts`
+ * `generateGlobalsSource()` from this file and asserts the committed `src/globals.ts`
  * is byte-equal to the generator output on every `npm test`.
  *
  * Usage:
- *   node scripts/generate-ops.mjs            # rewrite src/ops.ts and run oxfmt
- *   import { generateOpsSource } from "..."  # for the drift test
+ *   node scripts/generate-globals.mjs            # rewrite src/globals.ts and run oxfmt
+ *   import { generateGlobalsSource } from "..."  # for the drift test
  */
 
 import { readFileSync, readdirSync, writeFileSync, existsSync } from "node:fs";
@@ -39,7 +39,7 @@ import { valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
 const SPEC_ROOT = resolve(ROOT, "vendor", "mql-specifications", "definitions");
-const OUT_PATH = resolve(ROOT, "src", "ops.ts");
+const OUT_PATH = resolve(ROOT, "src", "globals.ts");
 
 // Sub-constructs that appear in the spec as standalone files but are not
 // top-level callable operators (e.g. `$case` is part of `$switch.branches[]`).
@@ -226,7 +226,7 @@ function streamMethodMembers() {
   const missing = registry.filter((n) => STREAM_METHOD_SIGNATURES[n] === undefined);
   if (missing.length > 0) {
     throw new Error(
-      `generate-ops: stream method(s) ${missing.join(", ")} are in the STREAM_METHODS registry ` +
+      `generate-globals: stream method(s) ${missing.join(", ")} are in the STREAM_METHODS registry ` +
         `but have no signature in STREAM_METHOD_SIGNATURES. Add one so '$$.<method>()' gets completion.`,
     );
   }
@@ -241,7 +241,7 @@ function streamMethodMembers() {
 }
 
 // ---------------------------------------------------------------------------
-// Value-method prototype augmentations (`@koresar/jsmql/ops`).
+// Value-method prototype augmentations (`@koresar/jsmql/globals`).
 //
 // jsmql's lodash-flavoured *value* methods (`.uniq()`, `.chunk()`, `.clamp()`,
 // `.capitalize()`, …) are called on array / string / number *values*, not on a
@@ -252,7 +252,7 @@ function streamMethodMembers() {
 // typed receiver: a bare `$.field` is `any`, and `any.uniq()` stays `any` (no
 // completion, but no error either), so operators like `$.age > 18` are untouched.
 // The win is for annotated documents, typed statics (`Object.values(o)`),
-// literals, and mid-chain results. See docs/specs/ops-generation.md.
+// literals, and mid-chain results. See docs/specs/globals-generation.md.
 //
 // Object-*receiver* methods (`.mapValues` / `.pick` / `.omit` / `.invert` / …)
 // are deliberately NOT augmented: the only interface to hang them on is `Object`,
@@ -543,14 +543,14 @@ function valueMethodAugmentationBlock() {
   const straySkip = [...skip].filter((n) => !registry.has(n));
   if (straySkip.length > 0) {
     throw new Error(
-      `generate-ops: VALUE_METHOD_SKIP names not in the METHODS registry: ${straySkip.sort().join(", ")}`,
+      `generate-globals: VALUE_METHOD_SKIP names not in the METHODS registry: ${straySkip.sort().join(", ")}`,
     );
   }
   const augmentable = [...registry].filter((n) => !skip.has(n));
   const missing = augmentable.filter((n) => VALUE_METHOD_SIGNATURES[n] === undefined);
   if (missing.length > 0) {
     throw new Error(
-      `generate-ops: value method(s) ${missing.sort().join(", ")} are in the METHODS registry but have no ` +
+      `generate-globals: value method(s) ${missing.sort().join(", ")} are in the METHODS registry but have no ` +
         `VALUE_METHOD_SIGNATURES entry. Add a signature so completion works, or a VALUE_METHOD_SKIP entry ` +
         `(native / object-receiver / set / regex / date / shimmed) if it shouldn't be augmented.`,
     );
@@ -558,7 +558,7 @@ function valueMethodAugmentationBlock() {
   const stray = Object.keys(VALUE_METHOD_SIGNATURES).filter((n) => !registry.has(n) || skip.has(n));
   if (stray.length > 0) {
     throw new Error(
-      `generate-ops: VALUE_METHOD_SIGNATURES has entries that are unknown or skipped: ${stray.sort().join(", ")}`,
+      `generate-globals: VALUE_METHOD_SIGNATURES has entries that are unknown or skipped: ${stray.sort().join(", ")}`,
     );
   }
 
@@ -590,7 +590,7 @@ function valueMethodAugmentationBlock() {
   }
   if (drift.length > 0) {
     throw new Error(
-      `generate-ops: value-method augmentation return types drifted from the METHODS registry:\n  ${drift.sort().join("\n  ")}\n` +
+      `generate-globals: value-method augmentation return types drifted from the METHODS registry:\n  ${drift.sort().join("\n  ")}\n` +
         `Reconcile the VALUE_METHOD_SIGNATURES entry with the registry 'returns' (or vice versa) so completion stays truthful.`,
     );
   }
@@ -945,7 +945,7 @@ function statementFormsBlock() {
   return jsdoc + "\nfunction assert(condition: any, message?: any): void;";
 }
 
-export function generateOpsSource() {
+export function generateGlobalsSource() {
   const spec = loadSpec();
 
   // Categorise every name by which registries it appears in. `$count` is the
@@ -988,13 +988,13 @@ export function generateOpsSource() {
   const opBlocks = opOnlyNames.map(blockFor).filter((s) => s !== null);
 
   const header = [
-    "// AUTO-GENERATED by scripts/generate-ops.mjs from src/operators.ts,",
+    "// AUTO-GENERATED by scripts/generate-globals.mjs from src/operators.ts,",
     "// src/stages.ts, and vendor/mql-specifications. DO NOT EDIT — re-run",
-    "// `npm run generate:ops` (or `npm run build`) after pulling new specs.",
+    "// `npm run generate:globals` (or `npm run build`) after pulling new specs.",
     "//",
     "// User-facing import shape:",
     "//",
-    '//   import "@koresar/jsmql/ops";',
+    '//   import "@koresar/jsmql/globals";',
     "//",
     "// Surfaces every jsmql stage and operator as an ambient global with a",
     "// precise signature, JSDoc description, and link to the MongoDB docs.",
@@ -1002,7 +1002,7 @@ export function generateOpsSource() {
     "// completion for the collection- and cluster-scoped diagnostic stages.",
     "// The compiled module exports nothing at runtime (`export {};`), so the",
     "// import resolves to an empty module — bundlers tree-shake it away. For",
-    '// fully zero-runtime use, add `"@koresar/jsmql/ops"` to tsconfig',
+    '// fully zero-runtime use, add `"@koresar/jsmql/globals"` to tsconfig',
     "// compilerOptions.types instead.",
     "//",
     "// Why globals: named imports of these names break under every common",
@@ -1060,15 +1060,15 @@ function isMain() {
 }
 
 if (isMain()) {
-  const source = generateOpsSource();
+  const source = generateGlobalsSource();
   writeFileSync(OUT_PATH, source);
   const oxfmt = resolve(ROOT, "node_modules/.bin/oxfmt");
   if (existsSync(oxfmt)) {
     const r = spawnSync(oxfmt, [OUT_PATH], { stdio: "inherit" });
     if (r.status !== 0) {
-      console.error(`generate-ops: oxfmt exited with ${r.status}`);
+      console.error(`generate-globals: oxfmt exited with ${r.status}`);
       process.exit(r.status ?? 1);
     }
   }
-  console.error(`generate-ops: wrote ${OUT_PATH}`);
+  console.error(`generate-globals: wrote ${OUT_PATH}`);
 }

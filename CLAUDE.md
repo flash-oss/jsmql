@@ -115,7 +115,7 @@ src/
   stage-validation.ts          Per-stage body-shape validation (literal-gated) + `$match` placement rules. See docs/specs/pipeline-validation.md.
   literal-gate.ts              Shared literal-gating helpers (litNumber/objectInfo/requireObjectBody/checkEnum/checkIntBound/…) used by both validators. See docs/specs/pipeline-validation.md § literal-gating invariant.
   operator-validation.ts       Per-operator `$op(...)` argument validation (literal-gated): arity, object keys, enums, literal types. See docs/specs/operator-validation.md.
-  ops.ts          GENERATED ambient `declare global` types (`@koresar/jsmql/ops`). See docs/specs/ops-generation.md.
+  globals.ts          GENERATED ambient `declare global` types (`@koresar/jsmql/globals`). See docs/specs/globals-generation.md.
 docs/
   LANGUAGE.md     User-facing language reference (canonical for user-visible behaviour + examples).
   specs/          Implementation specs — canonical for per-feature internals (see docs/CLAUDE.md for the index).
@@ -127,7 +127,7 @@ test/
   site.test.ts         Landing-page examples + GitHub Pages invariants. See docs/specs/site.md.
   fixtures/            Deterministic dataset + dedicated read-only mongod (:27018) for integration.test.ts. See test/fixtures/CLAUDE.md.
 scripts/
-  generate-ops.mjs              Generates src/ops.ts; runs on prebuild / pretest.
+  generate-globals.mjs              Generates src/globals.ts; runs on prebuild / pretest.
   build-cjs.mjs                 Bundles dist/cjs/*.cjs via esbuild for the `require` condition.
   merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict.
   sync-playground.mjs           Build the committed pure-ESM bundle dist/jsmql.js + generate playground.html (skeleton + realistic examples).

@@ -751,7 +751,7 @@ function methodsWhere(pred: (m: MethodMeta) => boolean): ReadonlySet<string> {
 }
 
 // Every JS-method alias jsmql recognises (the `METHODS` registry keys). Consumed by
-// `scripts/generate-ops.mjs` to drift-check the `@koresar/jsmql/ops` value-method
+// `scripts/generate-globals.mjs` to drift-check the `@koresar/jsmql/globals` value-method
 // prototype augmentations against the registry — the same single-source-of-truth
 // contract `streamMethodNames()` gives the stream-method members.
 export function valueMethodNames(): readonly string[] {

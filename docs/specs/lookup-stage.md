@@ -282,5 +282,5 @@ expression-body form, to any depth and in any of three positions:
 
 ## Future work
 
-- **Ambient TS types for `$$$`** so the function-form lookup (`({ $ }) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`ops-generation.md`](./ops-generation.md).
+- **Ambient TS types for `$$$`** so the function-form lookup (`({ $ }) => $$$.coll.find(...)`) type-checks under TypeScript. Design separately in [`globals-generation.md`](./globals-generation.md).
 - **Optimised chained terminals.** `.map`, `.at`, second `.filter` currently fall through the generic path (one extra `$set` stage); they could emit specialised single-stage transforms.

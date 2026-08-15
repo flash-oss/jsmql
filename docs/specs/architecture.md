@@ -91,7 +91,7 @@ type JsmqlInput = string | JsmqlFn;
 // never calls the arrow), so the destructure is types-only. Every key is `any`:
 // `$` so unannotated `$.foo` keeps autocomplete without `noImplicitAny`, and
 // each `$op` so a destructured `({ $, $dateDiff }) => …` type-checks even
-// without the `@koresar/jsmql/ops` ambient import (which is where rich
+// without the `@koresar/jsmql/globals` ambient import (which is where rich
 // signatures come from). A bare `$` / bare identifier is not a valid
 // parameter slot — the document context must be destructured.
 

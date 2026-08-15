@@ -5,7 +5,7 @@ import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
 import { streamMethodNames } from "../src/stream-methods.ts";
-import { generateOpsSource } from "../scripts/generate-ops.mjs";
+import { generateGlobalsSource } from "../scripts/generate-globals.mjs";
 
 // ---------------------------------------------------------------------------
 // Drift-protection test: keep OPERATORS in sync with mongodb/mql-specifications.
@@ -143,22 +143,27 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     expect(bad).toEqual([]);
   });
 
-  it("src/ops.ts is byte-equal to the generator output", () => {
-    // The committed src/ops.ts is the artifact that ships in the npm package.
+  it("src/globals.ts is byte-equal to the generator output", () => {
+    // The committed src/globals.ts is the artifact that ships in the npm package.
     // The generator runs as part of `prebuild` and `pretest`, but a contributor
     // who edits OPERATORS/STAGES without re-running the generator (or who edits
-    // src/ops.ts by hand) would otherwise ship drifted types. Catch that here.
+    // src/globals.ts by hand) would otherwise ship drifted types. Catch that here.
     //
     // The generator's CLI writes the file through oxfmt before exit, so we
     // mirror that by piping the generated string through oxfmt before
     // comparing — otherwise the test would always fail on whitespace.
-    const raw = generateOpsSource();
+    const raw = generateGlobalsSource();
     const root = resolve(import.meta.dirname, "..");
     const oxfmt = resolve(root, "node_modules/.bin/oxfmt");
-    const formatted = execSync(`${JSON.stringify(oxfmt)} --stdin-filepath=ops.ts`, { input: raw, encoding: "utf8" });
-    const actual = readFileSync(resolve(root, "src/ops.ts"), "utf8");
+    const formatted = execSync(`${JSON.stringify(oxfmt)} --stdin-filepath=globals.ts`, {
+      input: raw,
+      encoding: "utf8",
+    });
+    const actual = readFileSync(resolve(root, "src/globals.ts"), "utf8");
     if (actual !== formatted) {
-      throw new Error("src/ops.ts is out of date relative to its generator. Run `npm run generate:ops` to refresh.");
+      throw new Error(
+        "src/globals.ts is out of date relative to its generator. Run `npm run generate:globals` to refresh.",
+      );
     }
   });
 
@@ -166,7 +171,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // The context-ref ambient globals let arrow-form `$$` / `$$$` / `$$$$` code
     // type-check, and surface the collection-/cluster-scoped diagnostic stages
     // with completion. A future generator change must not silently drop them.
-    const src = generateOpsSource();
+    const src = generateGlobalsSource();
     // `$$` is emitted as a named interface (so its stream methods can return it
     // for chaining); `$$$` / `$$$$` stay inline anonymous types.
     expect(src).toContain("interface JsmqlCollectionRef {");
@@ -192,7 +197,7 @@ describe("operator registry coverage vs mongodb/mql-specifications", () => {
     // surfaces as a typed `$$` member so arrow-form `$$.filter(...).map(...)`
     // chains get IDE completion instead of falling through the `[key: string]`
     // tail. The generator asserts registry coverage; this guards the output.
-    const src = generateOpsSource();
+    const src = generateGlobalsSource();
     const block = src.slice(src.indexOf("interface JsmqlCollectionRef {"), src.indexOf("const $$$: {"));
     // Stream methods return the ref interface (chaining) — not `any` — so
     // `$$.filter(d => …).map(d => …)` keeps completion and contextual typing.
