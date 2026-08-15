@@ -60,12 +60,22 @@ $.t = $$$.orders.$set({ owner: "$tag" });   // → $set: { owner: "$tag" }      
 
 **SR1 — jsmql is trying to guess what you mean.** When a construct could lower more than one way, jsmql leans toward the reading a developer most likely intended, accepting the shorter, idiomatic form over the most literal one. The guessing stays conservative: where intent is genuinely ambiguous, or the likely reading would emit invalid MQL, it raises an actionable error rather than guess wrong.
 
-**SR2 — a native JavaScript API behaves as its JavaScript self.** When jsmql accepts a JavaScript built-in — a method or static you'd reach for in plain JS — it lowers to MQL that reproduces the JavaScript behaviour. Best-effort: where MQL can't reproduce the JavaScript semantics exactly, the divergence is documented, not hidden.
+**SR2 — jsmql gives you the JavaScript *syntax* you know, not the JavaScript *runtime* you know.** When jsmql accepts a JavaScript built-in — a method or static you'd reach for in plain JS — it lowers to the MQL a MongoDB developer would write for it. The notation is what carries over; the behaviour is MongoDB's.
+
+The line runs between what you **wrote** and what you **never wrote**:
+
+- **You wrote it** — a negative index, an argument, an operator. jsmql honours its JavaScript meaning, even when that costs MQL size. A token you typed on purpose is an instruction.
+- **You never wrote it** — an ordering, a stability guarantee, an argument default the JS or lodash runtime happens to carry. jsmql takes MongoDB's behaviour and the smaller MQL. Nobody types `order: "preserve"`, so there is nothing to honour.
 
 ```js
-$.name.trim().toLowerCase()  // → { $toLower: { $trim: { input: "$name" } } }   (same result as JS)
-$.items.map(x => x * 1.1)    // → { $map: { input: "$items", as: "x", in: { $multiply: ["$$x", 1.1] } } }   (same as Array.prototype.map)
+$.s.substr(-3, 2)   // honours the -3 you typed: counts from the end, and pays the MQL to do it
+$.tags.toSorted()   // MongoDB's numeric order, not JavaScript's lexicographic default
+$$ = $$.uniqBy("t") // → $group — MongoDB's order, because you never asked for lodash's
 ```
+
+Where MQL simply rejects the JavaScript form, jsmql raises an actionable error rather than emit a wrapper that hides the constraint. Where a behaviour differs, the divergence is documented, not hidden.
+
+This rule does **not** license guessing a value's type. A `$cond` on `$isArray` is the compiler not knowing whether a field holds an array or a string — that is missing information, not JavaScript behaviour, and dropping it would return a wrong answer instead of a smaller one.
 
 **SR3 — jsmql also adds some APIs of its own for brevity and better DX.** Where a construct has no natural JavaScript spelling — nested pipelines above all — jsmql invents a convenience API rather than leave you in the `$op(…)` escape hatch. To stay unsurprising it borrows a name developers already know — a MongoDB driver method (`.aggregate()`, `.count()`) or a widely-recognised JS date idiom (`.plus` / `.minus` / `.diff`, as in Temporal/Luxon) — and lowers to a real MQL operator or stage; it never mints a `$foo()` of its own, and the underlying MQL stays reachable by hand, so the sugar is always additive.
 

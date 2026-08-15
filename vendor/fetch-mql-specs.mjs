@@ -22,7 +22,18 @@ import { fileURLToPath } from "node:url";
 
 const PINNED_SHA = "671c69579f9852c12ff89834ac73239f27005f81";
 const REPO_URL = "https://github.com/mongodb/mql-specifications.git";
-const SPARSE_PATHS = ["definitions/expression", "definitions/accumulator", "definitions/stage"];
+// `types` carries the enum members named by `arguments[].type` (e.g. every valid
+// `timeUnit`), which the operator validators otherwise hold as hand-written lists with
+// nothing to check them against. `query` describes the MQL query language — the surface
+// Filter mode and `$match` emit into, and the only part of MQL jsmql produces that has no
+// spec to reconcile against. See docs/specs/predicate-ir.md.
+const SPARSE_PATHS = [
+  "definitions/expression",
+  "definitions/accumulator",
+  "definitions/stage",
+  "definitions/types",
+  "definitions/query",
+];
 
 const here = dirname(fileURLToPath(import.meta.url));
 const target = resolve(here, "mql-specifications");

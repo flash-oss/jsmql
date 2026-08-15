@@ -10,6 +10,56 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — docs: the target architecture for MQL code generation
+
+The compiler has a clean front end and no back end. The lexer and parser are one
+straight line, and then the AST goes directly to JSON — so scope resolution,
+type inference, desugaring, constant folding and validation all run *during*
+emission, wherever the code first needs them. A feature has no single home, so
+each new one lands wherever is nearest to hand. The measurable result: one JS
+method can carry four separate declarations of its own contract (a TypeScript
+signature for the value form, another for the stream form, an arity check in the
+value lowering, an argument validator in the stream registry) and no two of them
+have to agree. `.take` currently disagrees with itself in all four.
+
+These specs describe the architecture that replaces it, and they are written
+before the code so the design is reviewable while it is still cheap to change.
+[`specs/architecture.md`](specs/architecture.md) is rewritten around the three
+MQL target languages (Query, Expr, Stage) and the two receiver kinds (Value,
+Stream), with the target implied by position rather than threaded as a value —
+a field can be dropped, and dropping this one would emit the wrong language.
+[`specs/lowering-grid.md`](specs/lowering-grid.md) is new: one declaration per
+feature, applicability derived from the declared receiver, and every applicable
+cell answered by a lowering or an `unsupported(reason)` a user will read.
+[`specs/predicate-ir.md`](specs/predicate-ir.md) is new: eleven nodes shared by
+the Query and Expr targets, each declaring the operand kinds its query form
+accepts, so a node that cannot index falls back to `{ $expr: … }` by
+construction instead of by omission. [`specs/desugar-pass.md`](specs/desugar-pass.md)
+is new: the seventeen sugar forms become explicit nodes before any lowering
+runs, with the five load-bearing precedence constraints written down and proved
+by the input that discriminates each pair.
+
+`SR2` in [`LANG_RULES.md`](LANG_RULES.md) is amended, because it promised the
+opposite of what the language should do. "A native JavaScript API behaves as its
+JavaScript self" reads as a promise about the runtime; the promise jsmql
+actually makes is about the *notation*. The line runs between what the developer
+wrote and what they never wrote: a typed `-3` in `.substr(-3, 2)` is an
+instruction and is honoured at whatever MQL cost, while lodash's ordering
+guarantee in `.uniqBy()` was never expressed by anyone and gives way to
+MongoDB's behaviour and the smaller document. The rule explicitly does not
+license guessing a value's type — a `$cond` on `$isArray` is missing
+information, not JavaScript behaviour.
+
+`vendor/fetch-mql-specs.mjs` now also fetches `definitions/types` and
+`definitions/query`. The first carries the enum members that
+`operator-validation.ts` otherwise holds as hand-written lists with nothing to
+check them against — the vendored `timeUnit` matches ours exactly, which is the
+point: it can now be asserted rather than assumed. The second describes the MQL
+query language, the one surface jsmql emits into with no spec to reconcile
+against, and the surface the predicate IR targets.
+
+---
+
 ## 2026-08-15 — chore: a receiver drift guard, and the docs the removed stream methods left behind
 
 Two kinds of rot, both surfaced by typing the completion surface.
