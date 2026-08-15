@@ -334,7 +334,13 @@ export function validateOperatorArgs(
 
   // ── literal-type checks (single / array / flex operands) ─────────────────────
   if (rules.singleType !== undefined && def.shape.kind === "single" && args.length >= 1) {
-    checkArgType(name, "", args[0] as Expr, rules.singleType);
+    // An object literal is exempt. The date accessors ($year, $hour, …) take either a
+    // date directly OR the `{ date, timezone }` form the server also accepts, so an
+    // object here is not certainly wrong — and the literal gate only rejects what is.
+    // Rejecting it made the documented, server-valid spelling unreachable.
+    if ((args[0] as Expr).type !== "ObjectLiteral") {
+      checkArgType(name, "", args[0] as Expr, rules.singleType);
+    }
   }
   if (def.shape.kind === "array" || def.shape.kind === "flex") {
     if (rules.elementType !== undefined) {

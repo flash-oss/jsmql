@@ -7766,3 +7766,38 @@ describe("fractional counts are rejected, not passed to $slice", () => {
     expect(() => jsmql.expr("$.a.take($.n)")).not.toThrow();
   });
 });
+
+describe("date accessors accept the { date, timezone } object form", () => {
+  // The server takes either a bare date or the object form for all 13 accessors,
+  // so an object literal is not certainly wrong and the literal gate must let it
+  // through. Every shape below is verified accepted by a live mongod.
+  const ACCESSORS = [
+    "$year",
+    "$month",
+    "$dayOfMonth",
+    "$dayOfWeek",
+    "$dayOfYear",
+    "$hour",
+    "$minute",
+    "$second",
+    "$millisecond",
+    "$week",
+    "$isoDayOfWeek",
+    "$isoWeek",
+    "$isoWeekYear",
+  ];
+  for (const op of ACCESSORS) {
+    it(`${op} compiles the object form`, () => {
+      expect(jsmql.expr(`${op}({ date: $.d, timezone: "UTC" })`)).toEqual({ [op]: { date: "$d", timezone: "UTC" } });
+    });
+  }
+
+  it("still rejects a certainly-wrong literal", () => {
+    expect(() => jsmql.expr('$year("2020-01-01")')).toThrow(/expects a date, but got a string/);
+    expect(() => jsmql.expr("$year(5)")).toThrow(/expects a date, but got a number/);
+  });
+
+  it("leaves the bare-date form unchanged", () => {
+    expect(jsmql.expr("$year($.d)")).toEqual({ $year: "$d" });
+  });
+});

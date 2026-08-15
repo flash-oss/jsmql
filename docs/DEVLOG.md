@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: the date accessors accept the `{ date, timezone }` object form
+
+All 13 date-component accessors — `$year`, `$hour`, `$isoWeekYear` and their
+siblings — take either a date directly or a `{ date, timezone }` document, and
+the server accepts both. jsmql declared them `single`-shaped with
+`singleType: "date"`, so the object form was refused at compile time with
+*'$year' expects a date, but got an object*. The documented, server-valid
+spelling was unreachable, and the escape hatch could not route around it,
+because the escape hatch is the thing that was rejecting it.
+
+A false rejection is worse than a missing feature: the developer wrote valid
+MQL and jsmql refused to emit it. The `singleType` gate now exempts an object
+literal, which restores the literal-gating invariant it was breaking — a
+validator rejects only what is *certainly* wrong, and an object argument to
+these operators is certainly right about half the time. A string or a number
+still fails, since neither is a date in either form.
+
+All 13 object-form outputs were executed against a live `mongod` and accepted.
+Full validation of the object form's own keys waits for the argument vocabulary
+to be able to say "single or object" — see
+[specs/lowering-grid.md](specs/lowering-grid.md).
+
+---
+
 ## 2026-08-16 — fix!: `jsmql.expr()` refuses root- and stream-replace instead of returning stages
 
 `jsmql.expr()` returns one aggregation expression — the shape that goes inside a
