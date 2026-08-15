@@ -4113,6 +4113,10 @@ function generateMethodCall(
     case "slice": {
       const exprArgs = exprArgsOnly(args, "slice");
       checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
+      // A negative index is honoured here — the developer wrote it — but a fraction is
+      // not an index in either language, and `$slice` aborts on one.
+      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY);
+      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY);
       // Receiver-type dispatch: known array → $slice (native negative-index support);
       // known string → $substrCP (with compile-time/runtime normalisation of negatives);
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
@@ -4944,6 +4948,7 @@ function generateMethodCall(
           nArg.pos,
         );
       }
+      requireIntCount(method, "n", nArg, 0);
       const n = nArg !== undefined ? _generate(nArg, ctx) : 1;
       if (method === "take") return { $slice: [genObj, n] };
       if (method === "takeRight") return { $slice: [genObj, negate(n)] };
@@ -5029,6 +5034,7 @@ function generateMethodCall(
       if (exprArgs[0] !== undefined && isNegativeLiteral(exprArgs[0])) {
         throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
       }
+      requireIntCount("sampleSize", "n", exprArgs[0], 0);
       const n = exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 1;
       const [vShuf, shuf] = internalVar(ctx, "shuffled");
       const [vItem, item] = internalVar(ctx, "item");
@@ -5475,6 +5481,25 @@ function generateMethodCall(
  *  `UnaryExpr(-, NumberLiteral(N))`). Used by `.toSpliced` / `.with` to reject
  *  negative literals at compile time — MongoDB's `$slice` position/length args
  *  are non-negative and a runtime check would surprise users with confusing MQL. */
+/**
+ * Reject a numeric literal that MQL's `$slice` family cannot take: a fraction, or
+ * (where `min` says so) a negative. Literal-gated — a field path or any expression
+ * passes, because only a literal is certainly wrong.
+ *
+ * `$slice` demands a 32-bit integer in every count/position slot, so a fractional
+ * count is an abort at query time rather than a wrong answer. The check belongs to
+ * the argument, not the method, which is why every count-taking method shares it.
+ */
+function requireIntCount(method: string, sig: string, arg: Expr | undefined, min: number): void {
+  if (arg === undefined || arg.type !== "NumberLiteral") return;
+  if (!Number.isInteger(arg.value)) {
+    throw new CodegenError(`.${method}(${sig}) needs a whole number, but got ${arg.value}.`, arg.pos);
+  }
+  if (arg.value < min) {
+    throw new CodegenError(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
+  }
+}
+
 function isNegativeLiteral(e: Expr): boolean {
   if (e.type === "NumberLiteral") return e.value < 0;
   if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") {

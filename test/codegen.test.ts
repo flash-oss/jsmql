@@ -7739,3 +7739,30 @@ describe("internal expression-variable names never capture a user param", () => 
     expect(jsmql.expr('$.code.padStart(5, "0")')).toEqual(jsmql.expr('$.code.padStart(5, "0")'));
   });
 });
+
+describe("fractional counts are rejected, not passed to $slice", () => {
+  // $slice needs a 32-bit integer in every count/position slot, so a fraction is a
+  // query-time abort. The gate is literal-only: an expression still compiles.
+  const rejected: [string, string][] = [
+    ["take", "$.a.take(1.5)"],
+    ["drop", "$.a.drop(1.5)"],
+    ["takeRight", "$.a.takeRight(2.5)"],
+    ["dropRight", "$.a.dropRight(2.5)"],
+    ["sampleSize", "$.a.sampleSize(1.5)"],
+    ["slice start", "$.a.slice(0.5)"],
+    ["slice end", "$.a.slice(0, 2.5)"],
+  ];
+  for (const [name, src] of rejected) {
+    it(`rejects a fraction — ${name}`, () => {
+      expect(() => jsmql.expr(src)).toThrow(/needs a whole number/);
+    });
+  }
+
+  it("honours a written negative index", () => {
+    expect(jsmql.expr("$.a.take(2)")).toEqual({ $slice: ["$a", 2] });
+  });
+
+  it("stays silent on a non-literal count", () => {
+    expect(() => jsmql.expr("$.a.take($.n)")).not.toThrow();
+  });
+});

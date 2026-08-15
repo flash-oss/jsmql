@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: a fractional count is rejected instead of handed to `$slice`
+
+`$slice` needs a 32-bit integer in every count and position slot, so a fraction
+is not a wrong answer — it is an abort at query time. `.chunk` checked for one.
+`.take`, `.drop`, `.takeRight`, `.dropRight`, `.sampleSize` and `.slice` did
+not, and passed `1.5` straight through into the emitted document. The stream
+forms of the same methods rejected it, because that side gates its count
+through one shared validator; the value side had no equivalent, so one method
+disagreed with itself depending on where it was written.
+
+The check now lives with the argument rather than with the method, as
+`requireIntCount`, and every count-taking arm calls it. It stays literal-gated:
+a field path or any expression passes untouched, because only a literal is
+certainly wrong. A written negative index is still honoured — `.slice(-3)`
+means what the developer typed, and only the fraction is refused.
+
+---
+
 ## 2026-08-16 — fix: a `jsmql.compile` param resolves inside `.reduce` and `Object.groupBy`
 
 `GenerateCtx` carries 23 fields and only two of them are required. A context
