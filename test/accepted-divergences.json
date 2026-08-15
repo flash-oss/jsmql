@@ -375,6 +375,78 @@
       "was": "Unknown identifier 'k'. Did you mean '$.k'?",
       "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) \u2014 so `k` (along with the outer document and the root `$$.length`) is",
       "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement."
+    },
+    "jsmql\u0000$.a.zip($.b)": {
+      "entry": "jsmql",
+      "src": "$.a.zip($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":[{\"$arrayElemAt",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},null]},null]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},false]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"u",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "expr\u0000$.a.zip($.b)": {
+      "entry": "expr",
+      "src": "$.a.zip($.b)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":[{\"$arrayElemAt\":[\"$$jsmqlZip0\",\"$$jsmqlI\"]},{\"$array",
+      "now": "{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}}",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "filter\u0000$.a.zip($.b)": {
+      "entry": "filter",
+      "src": "$.a.zip($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":[{\"$arrayElemAt",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},null]},null]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},false]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"u",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "jsmql\u0000$.a.zip($.b, $.c)": {
+      "entry": "jsmql",
+      "src": "$.a.zip($.b, $.c)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\",\"jsmqlZip2\":\"$c\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"},{\"$size\":\"$$jsmqlZip2",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"useLongestLength\":true}},null]},null]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"useLongestLength\":true}},false]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "expr\u0000$.a.zip($.b, $.c)": {
+      "entry": "expr",
+      "src": "$.a.zip($.b, $.c)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\",\"jsmqlZip2\":\"$c\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"},{\"$size\":\"$$jsmqlZip2\"}]}]},\"as\":\"jsmqlI\",\"in\":[{\"$arrayEle",
+      "now": "{\"$zip\":{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"useLongestLength\":true}}",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "filter\u0000$.a.zip($.b, $.c)": {
+      "entry": "filter",
+      "src": "$.a.zip($.b, $.c)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\",\"jsmqlZip2\":\"$c\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"},{\"$size\":\"$$jsmqlZip2",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"useLongestLength\":true}},null]},null]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a\",\"$b\",\"$c\"],\"useLongestLength\":true}},false]},{\"$ne\":[{\"$zip\":{\"inputs\":[\"$a",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "jsmql\u0000$.a.zipWith($.b, (x, y) => x + y)": {
+      "entry": "jsmql",
+      "src": "$.a.zipWith($.b, (x, y) => x + y)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPa",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "expr\u0000$.a.zipWith($.b, (x, y) => x + y)": {
+      "entry": "expr",
+      "src": "$.a.zipWith($.b, (x, y) => x + y)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlZip0\",\"",
+      "now": "{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPair\",1]}},\"in\":{\"$add\":[\"$$x\",\"$$y\"]}}}",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
+    },
+    "filter\u0000$.a.zipWith($.b, (x, y) => x + y)": {
+      "entry": "filter",
+      "src": "$.a.zipWith($.b, (x, y) => x + y)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPa",
+      "reason": "Intended. `.zip`/`.zipWith` now lower to `$zip` with useLongestLength -- which IS this operation, and whose padding rule is lodash's -- instead of a hand-built $let + $range + $max + per-array $arrayElemAt. Results verified byte-identical on a live mongod across ragged, equal and empty inputs. $.a.zip($.b) drops 260 chars to 55."
     }
   }
 }

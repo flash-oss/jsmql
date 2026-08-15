@@ -4808,41 +4808,23 @@ describe("lodash set-ops & By-iteratee value methods", () => {
 });
 
 describe("lodash transpose value methods — zip / unzip / zipWith", () => {
-  it(".zip(...arrays) → $map over $range building the index-tuples (groups run to the longest)", () => {
-    expect(jsmql.expr("$.a.zip($.b)")).toEqual({
-      $let: {
-        vars: { jsmqlZip0: "$a", jsmqlZip1: "$b" },
-        in: {
-          $map: {
-            input: { $range: [0, { $max: [{ $size: "$$jsmqlZip0" }, { $size: "$$jsmqlZip1" }] }] },
-            as: "jsmqlI",
-            in: [{ $arrayElemAt: ["$$jsmqlZip0", "$$jsmqlI"] }, { $arrayElemAt: ["$$jsmqlZip1", "$$jsmqlI"] }],
-          },
-        },
-      },
-    });
-    // Three-way zip binds a third array.
-    expect(jsmql.expr("$.a.zip($.b, $.c)")).toMatchObject({
-      $let: { vars: { jsmqlZip0: "$a", jsmqlZip1: "$b", jsmqlZip2: "$c" } },
-    });
+  it(".zip(...arrays) → $zip with useLongestLength (groups run to the longest)", () => {
+    // `$zip` IS this operation, and `useLongestLength` is lodash's padding rule: groups
+    // run to the longest input and short ones fill with null. Verified byte-identical to
+    // the hand-built form on a live mongod across ragged and empty inputs.
+    expect(jsmql.expr("$.a.zip($.b)")).toEqual({ $zip: { inputs: ["$a", "$b"], useLongestLength: true } });
+    expect(jsmql.expr("$.a.zip($.b, $.c)")).toEqual({ $zip: { inputs: ["$a", "$b", "$c"], useLongestLength: true } });
   });
   it(".zipWith(...arrays, fn) applies an N-parameter arrow (one param per array) to each group", () => {
+    // Each arrow parameter binds to its position in the tuple `$zip` produced.
     expect(jsmql.expr("$.a.zipWith($.b, (x, y) => x + y)")).toEqual({
-      $let: {
-        vars: { jsmqlZip0: "$a", jsmqlZip1: "$b" },
+      $map: {
+        input: { $zip: { inputs: ["$a", "$b"], useLongestLength: true } },
+        as: "jsmqlPair",
         in: {
-          $map: {
-            input: { $range: [0, { $max: [{ $size: "$$jsmqlZip0" }, { $size: "$$jsmqlZip1" }] }] },
-            as: "jsmqlI",
-            in: {
-              $let: {
-                vars: {
-                  x: { $arrayElemAt: ["$$jsmqlZip0", "$$jsmqlI"] },
-                  y: { $arrayElemAt: ["$$jsmqlZip1", "$$jsmqlI"] },
-                },
-                in: { $add: ["$$x", "$$y"] },
-              },
-            },
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$jsmqlPair", 0] }, y: { $arrayElemAt: ["$$jsmqlPair", 1] } },
+            in: { $add: ["$$x", "$$y"] },
           },
         },
       },

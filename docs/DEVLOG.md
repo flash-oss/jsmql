@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: `.zip` / `.zipWith` lower to `$zip`
+
+`.zip` built its own transpose: a `$let` binding every input array, a `$range`
+over `$max` of their sizes, and a per-array `$arrayElemAt` inside the tuple.
+`$zip` is that operation, and its `useLongestLength` option is precisely lodash's
+padding rule — groups run to the longest input, short ones fill with null. So
+the hand-built form was re-deriving an operator MongoDB already ships.
+
+`$.a.zip($.b)` goes from 260 characters to 55, and the three-way form from 345 to
+60. `.zipWith` keeps a `$map`, but over `$zip`'s output rather than an index
+range, and binds each arrow parameter to its position in the tuple.
+
+Equivalence was checked on a live mongod over ragged, equal-length and empty
+inputs, in the two- and three-array forms — byte-identical every time. Plain
+`$zip` would NOT have been: it truncates to the shortest input and would have
+silently dropped the tail of the longer one. `useLongestLength` costs 24
+characters and preserves the meaning.
+
+Two tests asserted the old shape and now assert the new one; the differential
+harness records the nine affected corpus rows with that reasoning.
+
+---
+
 ## 2026-08-16 — refactor: the hand-rolled tree walks are gone
 
 With the child-list table in place, the private walkers that predate it have

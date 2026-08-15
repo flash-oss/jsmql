@@ -5181,33 +5181,29 @@ function generateMethodCall(
       const fn = isWith ? exprArgs[exprArgs.length - 1] : null;
       const otherArrays = isWith ? exprArgs.slice(0, -1) : exprArgs;
       const arrays = [genObj, ...otherArrays.map((a) => _generate(a, ctx))];
-      const [vI, i] = internalVar(ctx, "i");
-      const vars: Record<string, unknown> = {};
-      const refs: string[] = [];
-      arrays.forEach((arr, k) => {
-        const [v, ref] = internalVar(ctx, `zip${k}`);
-        vars[v] = arr;
-        refs.push(ref);
-      });
-      const elems = refs.map((r) => ({ $arrayElemAt: [r, i] }));
-      let inExpr: unknown = elems; // the tuple
-      if (isWith) {
-        if (fn!.type !== "Lambda" || fn!.block !== undefined || fn!.params.length !== arrays.length) {
-          throw new CodegenError(
-            `.zipWith(...arrays, iteratee) needs a ${arrays.length}-parameter arrow (one per zipped array).`,
-            fn!.pos,
-          );
-        }
-        const fnVars: Record<string, unknown> = {};
-        fn!.params.forEach((p, k) => {
-          fnVars[safeVarName(p)] = elems[k];
-        });
-        inExpr = { $let: { vars: fnVars, in: _generate(fn!.body as Expr, extendCtx(ctx, fn!.params)) } };
+      // `$zip` IS this operation. `useLongestLength` gives lodash's padding rule —
+      // groups run to the longest input and short ones fill with null — so the
+      // hand-built `$let` + `$range` + `$max` + per-array `$arrayElemAt` it replaces
+      // produces byte-identical results at a fraction of the size.
+      const zipped = { $zip: { inputs: arrays, useLongestLength: true } };
+      if (!isWith) return zipped;
+      if (fn!.type !== "Lambda" || fn!.block !== undefined || fn!.params.length !== arrays.length) {
+        throw new CodegenError(
+          `.zipWith(...arrays, iteratee) needs a ${arrays.length}-parameter arrow (one per zipped array).`,
+          fn!.pos,
+        );
       }
+      // Bind each arrow parameter to its position in the tuple `$zip` produced.
+      const [vPair, pair] = internalVar(ctx, "pair");
+      const fnVars: Record<string, unknown> = {};
+      fn!.params.forEach((p, k) => {
+        fnVars[safeVarName(p)] = { $arrayElemAt: [pair, k] };
+      });
       return {
-        $let: {
-          vars,
-          in: { $map: { input: { $range: [0, { $max: refs.map((r) => sizeOf(r)) }] }, as: vI, in: inExpr } },
+        $map: {
+          input: zipped,
+          as: vPair,
+          in: { $let: { vars: fnVars, in: _generate(fn!.body as Expr, extendCtx(ctx, fn!.params)) } },
         },
       };
     }
