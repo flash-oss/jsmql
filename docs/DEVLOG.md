@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — feat: `interface Date` completes jsmql's date vocabulary
+
+`@koresar/jsmql/globals` now augments `Date` alongside `Array<T>` / `String` /
+`Number`. Sixteen methods gained completion: `.plus`, `.minus`, `.diff`,
+`.startOf`, `.endOf`, `.format`, `.set`, `.week`, `.isoWeek`, `.isoWeekYear`,
+`.isoWeekday`, `.dayOfYear`, `.quarter`, `.isSame`, `.isBefore`, `.isAfter` —
+plus `.clamp`, which turned out to be a seventeenth (below).
+
+This is not the same kind of win the array/string augmentations were. Those
+added completion to methods that were merely un-suggested. jsmql's date
+vocabulary has **no** counterpart in JavaScript's `Date`, so
+`$.placedAt.startOf("month")` on a typed receiver was a TS2339 *error* on code
+the compiler accepts. The augmentation removes a false positive; completion is
+the bonus. Verified against every `interface Date` declaration TypeScript ships
+(lib.es5, es2015.symbol.wellknown, es2017.date, es2019/2020/2021.intl,
+esnext.date, esnext.temporal, scripthost): not one of the sixteen names
+collides, and the emitted members are method syntax, which merges as overloads
+and cannot conflict with a third party's augmentation the way a property could.
+
+`Date` clears the bar `interface Object` failed. The §B rejection of the
+object-receiver methods rests on `Object` being the base of every type, so its
+members would surface on numbers, strings and arrays alike. `Date` is a leaf:
+its members appear on dates and nothing else — a narrower blast radius than the
+`Number` augmentation already shipped.
+
+Three supporting changes. `.clamp` bounds a number **or** a date, so a
+signature entry's `recv` now accepts an array of receivers and its `sig` a map
+keyed by receiver; `.clamp` emits onto both, returning `number` on one and
+`Date` on the other. Every `unit` parameter is the MQL time-unit literal union
+rather than `string`, and that union is now derived from the same `TIME_UNIT`
+the runtime `checkEnum` validates against, so the editor rejects
+`.startOf("fortnight")` by the same closed set the compiler does. And the skip
+bucket for native date methods is now the exported `NATIVE_DATE_METHODS`, the
+list that also drives their zero-argument arity check.
+
+Docs: [specs/globals-generation.md](specs/globals-generation.md)
+§ Value-method augmentations, [LANGUAGE.md](LANGUAGE.md) § Value-method
+completion. Locked in by positive chains and four `@ts-expect-error` negatives
+(a method typo, a bad unit, an argument on a zero-argument accessor, a date
+method on a string result) in `test/types/globals-completion.ts`.
+
+---
+
 ## 2026-08-15 — fix: the zero-argument date accessors reject an argument instead of dropping it
 
 `$.ts.getFullYear("UTC")` compiled to `{ "$year": "$ts" }` — the argument was

@@ -4101,7 +4101,7 @@ The other context-ref forms (`$$.push(...)`, `$$$.orders.find(...)`, `$$$.report
 
 #### Value-method completion on typed values
 
-The lodash-flavoured **value** methods (a JavaScript-array / string / number method jsmql recognises — e.g. `.uniq()`, `.chunk()`, `.groupBy()`, `.capitalize()`, `.clamp()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/globals` augments the built-in `Array<T>` / `String` / `Number` types with them, each with a concrete return type so a chain stays completable end to end:
+The **value** methods (a JavaScript method jsmql recognises on an array / string / number / date value — e.g. `.uniq()`, `.capitalize()`, `.clamp()`, `.startOf()`) are called on *values*, not on a `$`-prefixed global, so their completion depends on the **receiver's type**. Importing `@koresar/jsmql/globals` augments the built-in `Array<T>` / `String` / `Number` / `Date` types with them, each with a concrete return type so a chain stays completable end to end:
 
 ```ts
 import "@koresar/jsmql/globals";
@@ -4109,6 +4109,23 @@ import "@koresar/jsmql/globals";
 // annotate the document once → every hop completes and chains
 jsmql(({ $ }: { $: { orders: { total: number; sku: string }[] } }) =>
   $.orders.sortBy("total").takeRight(3).map((o) => o.sku).uniq()
+);
+```
+
+The **date** methods are the ones where this matters most. jsmql's date vocabulary
+beyond the native accessors — `.plus()`, `.minus()`, `.diff()`, `.startOf()`, `.endOf()`,
+`.format()`, `.set()`, `.quarter()`, `.isSame()`, … — has no counterpart in JavaScript's
+own `Date`, so without the import a typed date receiver doesn't merely miss completion:
+TypeScript reports an error on code jsmql compiles correctly. Each `unit` argument is
+typed as the MQL time-unit set, so a mistyped unit is caught as you write it:
+
+```ts
+import "@koresar/jsmql/globals";
+
+jsmql.expr(({ $ }: { $: { placedAt: Date } }) =>
+  $.placedAt.startOf("month").plus(3, "day").format("%Y-%m-%d")
+  //          ╰── autocomplete: startOf, endOf, plus, minus, diff, quarter, isSame, set, …
+  //          ╰── "fortnight" is rejected; "month" is not
 );
 ```
 

@@ -79,6 +79,24 @@ declare const byId: Record<string, Order>;
 const _seeded: Order[] = Object.values(byId).uniq().take(3);
 void _seeded;
 
+// ── Date: jsmql's non-native date vocabulary on a real `Date` receiver ───────
+// Every one of these was a TS2339 false positive before `interface Date` was
+// augmented — the code compiled in jsmql and was underlined in the editor.
+declare const placedAt: Date;
+const _month: string = placedAt.startOf("month").plus(3, "day").format("%Y-%m-%d");
+const _hours: number = placedAt.diff(new Date(), "hour");
+const _q: number = placedAt.quarter();
+const _sameDay: boolean = placedAt.isSame(new Date(), "day");
+const _reset: Date = placedAt.set({ year: 2030, month: 1 }).endOf("day");
+const _iso: Date = placedAt.set({ isoWeekYear: 2030, isoWeek: 5 });
+// `.clamp` is the one dual-receiver method — a number OR a date, result following
+// the receiver.
+const _bounded: Date = placedAt.clamp(new Date(), new Date());
+// Native members still resolve to lib.d.ts's own declarations.
+const _epoch: number = placedAt.getTime();
+const _isoStr: string = placedAt.toISOString();
+void [_month, _hours, _q, _sameDay, _reset, _iso, _bounded, _epoch, _isoStr];
+
 // ── Negatives: completion is real, not `any` ─────────────────────────────────
 // @ts-expect-error — typo on a typed array chain must error.
 nums.uniq().chunkz(2);
@@ -88,6 +106,14 @@ label.capitalize().uniq();
 price.clamp(0, 1).capitalize();
 // @ts-expect-error — a value method must not leak onto an object result.
 orders.groupBy("sku").chunk(2);
+// @ts-expect-error — a typo on a date method must error.
+placedAt.startOff("day");
+// @ts-expect-error — `unit` is the closed MQL timeUnit set, not a bare string.
+placedAt.startOf("fortnight");
+// @ts-expect-error — the zero-argument accessors take nothing (jsmql rejects it too).
+placedAt.getFullYear("UTC");
+// @ts-expect-error — a date method must not exist on a string result.
+placedAt.format("%Y").quarter();
 
 // ── Permissiveness intact: a bare `any` receiver still type-checks ────────────
 // jsmql keeps `$.field` as `any` so operator forms work; value methods on it are

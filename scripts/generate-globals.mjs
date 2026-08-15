@@ -34,7 +34,8 @@ import yaml from "js-yaml";
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
 import { streamMethodNames } from "../src/stream-methods.ts";
-import { valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
+import { NATIVE_DATE_METHODS, valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
+import { TIME_UNIT } from "../src/operator-validation.ts";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -47,9 +48,10 @@ const OUT_PATH = resolve(ROOT, "src", "globals.ts");
 const SUB_CONSTRUCTS = new Set(["$case"]);
 
 // MQL `timeUnit` enum — used by date operators like $dateAdd, $dateDiff,
-// $dateTrunc. Narrowed to a literal union for autocomplete and typo-check.
-const TIME_UNIT_LITERAL =
-  '"year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond"';
+// $dateTrunc, and by every date method that takes a `unit`. Narrowed to a
+// literal union for autocomplete and typo-check. Derived from the same `TIME_UNIT`
+// the runtime validator checks against, so the two can't drift.
+const TIME_UNIT_LITERAL = TIME_UNIT.map((u) => `"${u}"`).join(" | ");
 
 // Options-object shapes for the diagnostic / system source stages reached via
 // the context-ref prefixes (`$$.collStats({...})`, `$$$$.currentOp({...})`, …).
@@ -329,43 +331,12 @@ const VALUE_METHOD_SKIP = {
     "indexOf",
     "includes",
   ]),
-  // Date-receiver (native getters on `Date`; `.plus`/`.minus`/`getTime` custom but date-shaped).
-  date: new Set([
-    "getFullYear",
-    "getMonth",
-    "getDate",
-    "getDay",
-    "getHours",
-    "getMinutes",
-    "getSeconds",
-    "getMilliseconds",
-    "getUTCFullYear",
-    "getUTCMonth",
-    "getUTCDate",
-    "getUTCDay",
-    "getUTCHours",
-    "getUTCMinutes",
-    "getUTCSeconds",
-    "getUTCMilliseconds",
-    "getTime",
-    "toISOString",
-    "plus",
-    "minus",
-    "diff",
-    "startOf",
-    "format",
-    "week",
-    "isoWeek",
-    "isoWeekYear",
-    "isoWeekday",
-    "dayOfYear",
-    "quarter",
-    "isSame",
-    "isBefore",
-    "isAfter",
-    "set",
-    "endOf",
-  ]),
+  // Native `Date.prototype` — the accessors plus `.getTime()` / `.toISOString()`,
+  // which lib.d.ts types already. The single source of truth is
+  // `NATIVE_DATE_METHODS` in src/codegen.ts, which also drives their zero-argument
+  // arity check. jsmql's OTHER date methods (`.plus`, `.startOf`, `.format`, …) are
+  // NOT native, so they ARE augmented — see VALUE_METHOD_SIGNATURES.
+  dateNative: new Set(NATIVE_DATE_METHODS),
   // Object-receiver — no safe interface (Object is the base of everything).
   object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),
   // Set-receiver (intercepted on `new Set(...)`; native/ES-proposal Set methods).
@@ -497,9 +468,12 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Split into an array of words — `_.words`.",
   },
   // ── Number → number / boolean ───────────────────────────────────────────────
+  // The one dual-receiver method: `.clamp` bounds a number OR a date, and its
+  // result follows the receiver (which is why the METHODS registry gives it no
+  // invariant `returns`). Hence the per-receiver `sig` map.
   clamp: {
-    recv: "Number",
-    sig: "(lower: number, upper: number): number",
+    recv: ["Number", "Date"],
+    sig: { Number: "(lower: number, upper: number): number", Date: "(lower: Date, upper: Date): Date" },
     doc: "Clamp within `[lower, upper]` — `_.clamp`.",
   },
   inRange: {
@@ -514,12 +488,95 @@ const VALUE_METHOD_SIGNATURES = {
     sig: "(precision?: number): number",
     doc: "Round down to `precision` decimals — `_.floor`.",
   },
+  // ── Date → Date / number / string / boolean ─────────────────────────────────
+  // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter
+  // list mirrors the method's own `checkArity` spec in src/codegen.ts, and every
+  // `unit` is the MQL timeUnit union rather than `string`, so a typo is caught in
+  // the editor by the same closed set `checkEnum` enforces at compile time.
+  plus: {
+    recv: "Date",
+    sig: `(amount: number, unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
+    doc: "Add `amount` units — `$dateAdd`.",
+  },
+  minus: {
+    recv: "Date",
+    sig: `(amount: number, unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
+    doc: "Subtract `amount` units — `$dateSubtract`.",
+  },
+  diff: {
+    recv: "Date",
+    sig: `(other: Date, unit: ${TIME_UNIT_LITERAL}, timezone?: string): number`,
+    doc: "Whole units from this date to `other` — `$dateDiff`.",
+  },
+  startOf: {
+    recv: "Date",
+    sig: `(unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
+    doc: "Truncate to the start of `unit` — `$dateTrunc`.",
+  },
+  endOf: {
+    recv: "Date",
+    sig: `(unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
+    doc: "The last instant of `unit`.",
+  },
+  format: {
+    recv: "Date",
+    sig: "(format: string, timezone?: string): string",
+    doc: "Render with an MQL format string — `$dateToString`.",
+  },
+  set: {
+    recv: "Date",
+    sig:
+      "(parts: { year?: number; month?: number; day?: number; hour?: number; minute?: number; second?: number; millisecond?: number } | " +
+      "{ isoWeekYear?: number; isoWeek?: number; isoDayOfWeek?: number; hour?: number; minute?: number; second?: number; millisecond?: number }, " +
+      "timezone?: string): Date",
+    doc: "Override date parts, keeping the rest. Calendar parts and ISO parts can't be mixed.",
+  },
+  week: { recv: "Date", sig: "(timezone?: string): number", doc: "Week of the year, Sunday-based — `$week`." },
+  isoWeek: { recv: "Date", sig: "(timezone?: string): number", doc: "ISO 8601 week of the year — `$isoWeek`." },
+  isoWeekYear: { recv: "Date", sig: "(timezone?: string): number", doc: "ISO 8601 year — `$isoWeekYear`." },
+  isoWeekday: {
+    recv: "Date",
+    sig: "(timezone?: string): number",
+    doc: "ISO 8601 weekday, Monday = 1 — `$isoDayOfWeek`.",
+  },
+  dayOfYear: { recv: "Date", sig: "(timezone?: string): number", doc: "Day of the year — `$dayOfYear`." },
+  quarter: { recv: "Date", sig: "(timezone?: string): number", doc: "Quarter of the year, 1–4." },
+  isSame: {
+    recv: "Date",
+    sig: `(other: Date, unit: ${TIME_UNIT_LITERAL}, timezone?: string): boolean`,
+    doc: "Whether both dates fall in the same `unit`.",
+  },
+  isBefore: {
+    recv: "Date",
+    sig: `(other: Date, unit: ${TIME_UNIT_LITERAL}, timezone?: string): boolean`,
+    doc: "Whether this date's `unit` precedes `other`'s.",
+  },
+  isAfter: {
+    recv: "Date",
+    sig: `(other: Date, unit: ${TIME_UNIT_LITERAL}, timezone?: string): boolean`,
+    doc: "Whether this date's `unit` follows `other`'s.",
+  },
 };
+
+/** The receiver interfaces one signature entry augments (one, or several). */
+function recvsOf(entry) {
+  return Array.isArray(entry.recv) ? entry.recv : [entry.recv];
+}
+
+/** That entry's signature text for a given receiver. */
+function sigFor(entry, recv) {
+  return typeof entry.sig === "string" ? entry.sig : entry.sig[recv];
+}
 
 // The interface header each receiver augments. `Array` carries the element type
 // `T` so signatures like `head(): T` / `groupBy(...): Record<string, T[]>` stay
 // precise across a chain.
-const VALUE_METHOD_INTERFACES = { Array: "interface Array<T>", String: "interface String", Number: "interface Number" };
+const VALUE_METHOD_INTERFACES = {
+  Array: "interface Array<T>",
+  String: "interface String",
+  Number: "interface Number",
+  Date: "interface Date",
+};
 
 // Emit the `interface Array<T> { … } interface String { … } interface Number { … }`
 // augmentation blocks. Drift-protected against the `METHODS` registry: every
@@ -531,7 +588,7 @@ function valueMethodAugmentationBlock() {
   const skip = new Set([
     ...VALUE_METHOD_SKIP.nativeArray,
     ...VALUE_METHOD_SKIP.nativeString,
-    ...VALUE_METHOD_SKIP.date,
+    ...VALUE_METHOD_SKIP.dateNative,
     ...VALUE_METHOD_SKIP.object,
     ...VALUE_METHOD_SKIP.set,
     ...VALUE_METHOD_SKIP.regex,
@@ -552,7 +609,7 @@ function valueMethodAugmentationBlock() {
     throw new Error(
       `generate-globals: value method(s) ${missing.sort().join(", ")} are in the METHODS registry but have no ` +
         `VALUE_METHOD_SIGNATURES entry. Add a signature so completion works, or a VALUE_METHOD_SKIP entry ` +
-        `(native / object-receiver / set / regex / date / shimmed) if it shouldn't be augmented.`,
+        `(native array/string/date, object-receiver, set, regex, shimmed) if it shouldn't be augmented.`,
     );
   }
   const stray = Object.keys(VALUE_METHOD_SIGNATURES).filter((n) => !registry.has(n) || skip.has(n));
@@ -578,14 +635,23 @@ function valueMethodAugmentationBlock() {
     // T[] / any[] / any[][] / string[] — and the `.partition` tuple `[T[], T[]]`.
     array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
   };
+  // Note: the date-RETURNING methods (`.plus` / `.minus` / `.startOf` / `.endOf` /
+  // `.set`) are unprotected here by construction, not by omission. `MethodReturn`
+  // has no `"date"` member — those methods return "same as the receiver", so the
+  // registry deliberately leaves `returns` unset and they fall through the
+  // `undefined` skip below. Don't "fix" that by adding `returns: "date"` to the
+  // registry without also adding a `date` row to `inCategory`.
   const drift = [];
   for (const name of augmentable) {
     const category = registryReturns[name];
     if (category === undefined) continue;
-    const { sig } = VALUE_METHOD_SIGNATURES[name];
-    const ret = sig.slice(sig.lastIndexOf("): ") + 3).trim();
-    if (!inCategory[category] || !inCategory[category](ret)) {
-      drift.push(`.${name}(): registry returns "${category}" but the ambient signature returns "${ret}"`);
+    const entry = VALUE_METHOD_SIGNATURES[name];
+    for (const recv of recvsOf(entry)) {
+      const sig = sigFor(entry, recv);
+      const ret = sig.slice(sig.lastIndexOf("): ") + 3).trim();
+      if (!inCategory[category] || !inCategory[category](ret)) {
+        drift.push(`.${name}() on ${recv}: registry returns "${category}" but the ambient signature returns "${ret}"`);
+      }
     }
   }
   if (drift.length > 0) {
@@ -595,14 +661,18 @@ function valueMethodAugmentationBlock() {
     );
   }
 
-  const byRecv = { Array: [], String: [], Number: [] };
+  const order = Object.keys(VALUE_METHOD_INTERFACES);
+  const byRecv = Object.fromEntries(order.map((recv) => [recv, []]));
   for (const name of augmentable.sort()) {
-    const { recv, sig, doc } = VALUE_METHOD_SIGNATURES[name];
-    byRecv[recv].push(`/** ${doc} */`, `${name}${sig};`);
+    const entry = VALUE_METHOD_SIGNATURES[name];
+    for (const recv of recvsOf(entry)) {
+      // Method syntax, never property syntax: same-named methods merge as
+      // overloads and can never collide, while a property would hit TS2717
+      // against anyone else's augmentation of the same built-in.
+      byRecv[recv].push(`/** ${entry.doc} */`, `${name}${sigFor(entry, recv)};`);
+    }
   }
-  return ["Array", "String", "Number"]
-    .map((recv) => `${VALUE_METHOD_INTERFACES[recv]} {\n${byRecv[recv].join("\n")}\n}`)
-    .join("\n");
+  return order.map((recv) => `${VALUE_METHOD_INTERFACES[recv]} {\n${byRecv[recv].join("\n")}\n}`).join("\n");
 }
 
 // ---------------------------------------------------------------------------

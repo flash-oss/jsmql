@@ -2499,6 +2499,93 @@ declare global {
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
   }
+  interface Date {
+    /** Clamp within `[lower, upper]` — `_.clamp`. */
+    clamp(lower: Date, upper: Date): Date;
+    /** Day of the year — `$dayOfYear`. */
+    dayOfYear(timezone?: string): number;
+    /** Whole units from this date to `other` — `$dateDiff`. */
+    diff(
+      other: Date,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): number;
+    /** The last instant of `unit`. */
+    endOf(
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): Date;
+    /** Render with an MQL format string — `$dateToString`. */
+    format(format: string, timezone?: string): string;
+    /** Whether this date's `unit` follows `other`'s. */
+    isAfter(
+      other: Date,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): boolean;
+    /** Whether this date's `unit` precedes `other`'s. */
+    isBefore(
+      other: Date,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): boolean;
+    /** Whether both dates fall in the same `unit`. */
+    isSame(
+      other: Date,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): boolean;
+    /** ISO 8601 week of the year — `$isoWeek`. */
+    isoWeek(timezone?: string): number;
+    /** ISO 8601 year — `$isoWeekYear`. */
+    isoWeekYear(timezone?: string): number;
+    /** ISO 8601 weekday, Monday = 1 — `$isoDayOfWeek`. */
+    isoWeekday(timezone?: string): number;
+    /** Subtract `amount` units — `$dateSubtract`. */
+    minus(
+      amount: number,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): Date;
+    /** Add `amount` units — `$dateAdd`. */
+    plus(
+      amount: number,
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): Date;
+    /** Quarter of the year, 1–4. */
+    quarter(timezone?: string): number;
+    /** Override date parts, keeping the rest. Calendar parts and ISO parts can't be mixed. */
+    set(
+      parts:
+        | {
+            year?: number;
+            month?: number;
+            day?: number;
+            hour?: number;
+            minute?: number;
+            second?: number;
+            millisecond?: number;
+          }
+        | {
+            isoWeekYear?: number;
+            isoWeek?: number;
+            isoDayOfWeek?: number;
+            hour?: number;
+            minute?: number;
+            second?: number;
+            millisecond?: number;
+          },
+      timezone?: string,
+    ): Date;
+    /** Truncate to the start of `unit` — `$dateTrunc`. */
+    startOf(
+      unit: "year" | "quarter" | "month" | "week" | "day" | "hour" | "minute" | "second" | "millisecond",
+      timezone?: string,
+    ): Date;
+    /** Week of the year, Sunday-based — `$week`. */
+    week(timezone?: string): number;
+  }
 }
 
 export {};
