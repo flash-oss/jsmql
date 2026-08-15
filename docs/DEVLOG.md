@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — test: the server halves of two suites were never running
+
+`permutations.test.ts` generates 2 277 method chains and checks two things: that
+each compiles, and that the emitted MQL runs on a real mongod. The second half
+was gated on `JSMQL_PERM_MONGO`, which nothing in the repo sets and `npm test`
+never passes. So the half that catches server rejections — the half its own
+header credits with finding two real bugs — had not run in a normal test run.
+It now defaults to a local mongod and self-skips when none is reachable, the
+same shape `fold-consistency.test.ts` already used.
+
+Defaulting it is not enough on its own, because a suite that degrades to
+compile-only still reads as green. Both suites now assert which of the two
+happened. `permutations` counts the chains that reached the server and requires
+that to be all of them or none. `fold-consistency` counts the cases that
+actually compared a folded value against a server value — 43 of its 793 cases
+early-return, asserting nothing, and nothing said so — and requires at least
+90% to compare. Both floors were checked by tightening them until they failed,
+because a guard nobody has seen fail is not a guard.
+
+---
+
 ## 2026-08-16 — test: a value/stream parity gate
 
 21 method names carry two lowerings — a value form over an array inside a

@@ -32,6 +32,14 @@ Smoke also has a strippable-TS check for the CLI bin (`node src/cli.ts --help`) 
 
 Spawns `node src/cli.ts` directly (native type-stripping, no build step) and asserts on `{ status, stdout, stderr }`. Covers input sources (stdin / positional / `--file`), every output-shape flag, formatting (`-c` / `--tab` / `--indent`), `--validate` valid+invalid, jq-style params (`--arg` / `--argjson`) combined with each output-shape / `--validate` flag (routed through the matching `*.compile()` builder), compiler-style caret rendering, and usage errors (unknown/conflicting flags). The built-bin invariants (shebang, exec bit, version `define`) live in `smoke.test.ts`, not here. See [`docs/specs/cli.md`](../docs/specs/cli.md).
 
+### Suites that talk to a server must say whether they did
+
+`permutations.test.ts`, `fold-consistency.test.ts`, `parity.test.ts` and `integration.test.ts` all self-skip (green) when no mongod is reachable, so `npm test` stays green without one. That design has a failure mode: a suite that silently degrades to compile-only looks exactly like a suite that passed.
+
+Each therefore carries a **coverage guard** that states which happened. `permutations.test.ts` asserts every generated chain reached the server, or that none did. `fold-consistency.test.ts` asserts that at least 90% of its cases actually compared a fold against a server value, because a case that early-returns asserts nothing. When you add a suite that self-skips, add the matching guard — and check it has teeth by tightening it until it fails.
+
+**Never gate a server half behind an unset environment variable.** `permutations.test.ts` did, and the result was that all 2 277 of its chains were compile-only in every normal run — the half that catches server rejections, and that found the two bugs its header names, never executed. Default to a local URI and self-skip instead.
+
 ### `update-filter.test.ts`, `pipeline.test.ts`, `security.test.ts`, `operator-spec-coverage.test.ts`
 
 Topic-scoped suites: pipeline-stage handling, update-filter desugaring (the `$set`/`$unset` shape MongoDB's `db.coll.updateOne(filter, update)` takes), template-tag interpolation safety, and drift protection between `src/operators.ts` and the vendored MongoDB spec. Add to the matching file when extending those areas; create a new topic file only when an area outgrows `codegen.test.ts`.

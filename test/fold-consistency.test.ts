@@ -326,13 +326,31 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     }
   }
 
-  for (const { lit, val, call } of [...stringCases, ...numberCases, ...arrayCases, ...objCases]) {
+  // A case that early-returns asserts NOTHING and still reads as green. Counting the
+  // ones that actually compared is what stops the suite hollowing out as cases are
+  // added — see the floor below.
+  let compared = 0;
+  const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases];
+
+  for (const { lit, val, call } of ALL_CASES) {
     it(`${lit}${call}`, async () => {
       const folded = foldedValue(lit, call);
       if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare
       const server = await serverValue(call, val);
       if (server === SERVER_ERROR) return; // lowering errors on this input → no value to compare
+      compared += 1;
       expect(folded).toEqual(server);
     });
   }
+
+  it("most cases actually compared a fold against the server", () => {
+    if (!db) {
+      expect(compared).toBe(0);
+      return;
+    }
+    // Some early-returns are legitimate — a method whose fold is deliberately withheld,
+    // or an input its lowering rejects. A large share of them is not, and would mean the
+    // gate stopped gating without anything going red.
+    expect(compared).toBeGreaterThanOrEqual(Math.floor(ALL_CASES.length * 0.9));
+  });
 });

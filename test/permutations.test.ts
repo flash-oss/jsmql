@@ -3,8 +3,8 @@
 // A generative smoke test that CHAINS the lodash array/collection methods in
 // every ordered pair (reshaper × reshaper, reshaper × terminal) and asserts:
 //   1. every chain COMPILES (no throw) — always runs, the primary regression net;
-//   2. every emitted MQL RUNS on a real mongod without a server error — runs only
-//      when `JSMQL_PERM_MONGO` points at a writable mongod (self-skips otherwise).
+//   2. every emitted MQL RUNS on a real mongod without a server error — connects to
+//      a local mongod by default and self-skips (green) when none is reachable.
 //
 // Why: chaining N methods is a combinatorial surface no hand-written case can
 // cover. This is where "method X breaks when chained after Y" gets caught. It has
@@ -12,7 +12,11 @@
 // `takeWhile`/`*RightWhile` and in `drop`/`dropRight`/`tail`/`initial` on an empty
 // array or `n ≥ size`).
 //
-// Run the mongod half:  JSMQL_PERM_MONGO=mongodb://127.0.0.1:27017 npm test
+// Point the mongod half elsewhere:  JSMQL_PERM_MONGO=mongodb://host:port npm test
+//
+// The server half MUST default to on. Gating it behind an unset environment variable
+// made every one of these chains compile-only in a normal `npm test`, so the half that
+// catches server rejections — the half that found the two bugs above — never ran.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -197,14 +201,13 @@ for (const r of STREAM_LOOKUP_RESHAPERS) {
 }
 
 // ── optional mongod runtime check ────────────────────────────────────────────
-const MONGO = process.env.JSMQL_PERM_MONGO;
+const MONGO = process.env.JSMQL_PERM_MONGO ?? "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1500";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types aren't imported unless MONGO is set
 let mainColl: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any = null;
 
 beforeAll(async () => {
-  if (MONGO === undefined) return;
   const { MongoClient } = await import("mongodb");
   client = new MongoClient(MONGO, { serverSelectionTimeoutMS: 2500 });
   try {
@@ -291,6 +294,7 @@ afterAll(async () => {
 async function checkAll(subset: Chain[]) {
   const compileFails: string[] = [];
   const runFails: string[] = [];
+  let ran = 0;
   for (const { kind, src } of subset) {
     let mql: unknown;
     try {
@@ -300,6 +304,7 @@ async function checkAll(subset: Chain[]) {
       continue;
     }
     if (mainColl !== null) {
+      ran += 1;
       try {
         if (kind === "expr") {
           await mainColl.aggregate([{ $addFields: { __v: mql } }, { $project: { _id: 0, __v: 1 } }]).toArray();
@@ -314,7 +319,11 @@ async function checkAll(subset: Chain[]) {
   }
   expect(compileFails, `compile failures:\n  ${compileFails.join("\n  ")}`).toEqual([]);
   expect(runFails, `mongod runtime failures:\n  ${runFails.join("\n  ")}`).toEqual([]);
+  served += ran;
 }
+
+/** How many chains actually reached the server. Read by the coverage guard below. */
+let served = 0;
 
 const only = (k: Chain["kind"], pred: (s: string) => boolean) => chains.filter((c) => c.kind === k && pred(c.src));
 
@@ -332,5 +341,18 @@ describe("lodash chain permutations (chinese wall)", () => {
 
   it("covers a large matrix (guard against an accidentally-empty generator)", () => {
     expect(chains.length).toBeGreaterThan(1500);
+  });
+
+  it("reports whether the server half ran, so a green run cannot hide a skip", () => {
+    // Compiling every chain proves jsmql does not throw. It says nothing about whether
+    // the emitted MQL RUNS, which is the half that has caught the real bugs here. A
+    // suite that silently degrades to compile-only looks identical to one that passed,
+    // so state which happened: either every chain reached the server, or none did.
+    if (mainColl === null) {
+      console.warn("\n[permutations] no mongod reachable — compile-only. Start one to exercise the runtime half.\n");
+      expect(served).toBe(0);
+      return;
+    }
+    expect(served).toBe(chains.length);
   });
 });
