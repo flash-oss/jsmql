@@ -82,7 +82,7 @@ export class JsmqlInterpolationError extends Error {
 // `@koresar/jsmql/globals`. Rich signatures come from that ambient-globals import
 // (use the names un-destructured); listing them here is optional convenience.
 export type JsmqlToolbox = { [K in `$${string}`]: any };
-type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;
+export type JsmqlFn = (toolbox: JsmqlToolbox) => unknown;
 export type JsmqlInput = string | JsmqlFn;
 
 // Function-form parameter binding (used by `jsmql.compile`). The arrow's first
@@ -105,6 +105,28 @@ type JsmqlCompileFn<P> = (params: P, toolbox: JsmqlToolbox) => unknown;
 // `object` to make pipeline mode visible in the type. Both runtime values are
 // objects, so existing call sites keep type-checking.
 export type JsmqlOutput = object | object[];
+
+/**
+ * The output shape of an arrow input, narrowed where — and only where — the
+ * arrow's own type settles it.
+ *
+ * A **block-bodied** arrow (`({ $ }) => { $match(…); $limit(5); }`) is a run of
+ * statements, which is always a Pipeline, and its return type is `void`. That is
+ * the one shape TypeScript can read off the input, so it is the one that narrows.
+ *
+ * Nothing else does, and the near-misses are worth naming so they aren't
+ * "fixed" later. An **expression-bodied** arrow may be either: `({ $ }) =>
+ * $.age > 18` is a Filter, but `({ $ }) => $$.filter(d => d.a).take(5)` is a
+ * Pipeline, and both are just expressions. Returning an **array** doesn't settle
+ * it either — `[$match(…)]` is a Pipeline while `[$.a, $.b]` is an array-valued
+ * Filter, and both are `any[]` here. And a **string** input is opaque by
+ * definition. Those all keep the full `JsmqlOutput` union; the caller narrows
+ * with `jsmql.pipeline` / `jsmql.filter` when the shape must be certain.
+ *
+ * Written with the `[T] extends [void]` tuple wrapper so a naked `void` is
+ * matched rather than distributed over.
+ */
+export type JsmqlArrowOutput<F extends JsmqlFn> = [ReturnType<F>] extends [void] ? object[] : JsmqlOutput;
 
 // `jsmql` has three call shapes — string, arrow function, and template tag —
 // dispatched on the first argument. The template-tag form is detected by the
@@ -200,6 +222,7 @@ function dispatchInput(
   throw new TypeError(`${apiName}() expects a string, an arrow function, or a template literal — got ${ty}.`);
 }
 
+function jsmqlDispatch<F extends JsmqlFn>(input: F): JsmqlArrowOutput<F>;
 function jsmqlDispatch(input: JsmqlInput): JsmqlOutput;
 function jsmqlDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
 function jsmqlDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {
@@ -219,6 +242,7 @@ function jsmqlDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unkn
  * literal Pipelines still pass through — the three other branches are shared
  * with `jsmql()` via `lowerProgram`. Same three input shapes as `jsmql()`.
  */
+function exprDispatch<F extends JsmqlFn>(input: F): JsmqlArrowOutput<F>;
 function exprDispatch(input: JsmqlInput): JsmqlOutput;
 function exprDispatch(strings: TemplateStringsArray, ...values: unknown[]): JsmqlOutput;
 function exprDispatch(input: JsmqlInput | TemplateStringsArray, ...values: unknown[]): JsmqlOutput {

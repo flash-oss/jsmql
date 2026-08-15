@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — feat: a block-bodied arrow narrows `jsmql()`'s return type to `object[]` (closes DEF-018)
+
+`jsmql(({ $ }) => { $match($.age > 18); $limit(5); })` is now typed `object[]`
+rather than `object | object[]`. A statement block is always a Pipeline, and
+such an arrow returns `void` — the one thing about the input that TypeScript can
+read directly — so `JsmqlArrowOutput<F>` resolves it. Same for `jsmql.expr`.
+Callers stop widening or casting for the most common pipeline spelling.
+
+Everything else keeps the union, and the near-misses are recorded in
+[specs/aggregation-stages.md](specs/aggregation-stages.md) § Public API impact so
+they aren't "fixed" later. An expression arrow may be either shape —
+`({ $ }) => $.age > 18` is a Filter, `({ $ }) => $$.filter(d => d.a).take(5)` is
+a Pipeline through the lone-chain sugar. Returning an array doesn't settle it
+either: `[$match(…)]` is a Pipeline and `[$.a, $.b]` is an array-valued Filter,
+and both are `any[]` — what separates them is an AST test, not a type-level one.
+Strings and template tags are opaque by construction.
+
+This closes **DEF-018**, whose stated criterion was that
+`jsmql([{ $match: … }])` narrow to `object[]`. That premise turned out to be
+wrong: a literal array is not an accepted call shape at all — it throws
+`TypeError: jsmql() expects a string, an arrow function, or a template literal`.
+So there was no overload to add for it, and of the shapes jsmql really accepts,
+the block-bodied arrow is the only one that carries the answer in its type. The
+row has nothing actionable left.
+
+---
+
 ## 2026-08-15 — feat: pipelines complete — chained stages, foreign chains, and the stream as an array (closes DEF-015)
 
 `@koresar/jsmql/globals` now types the pipeline surface instead of letting it

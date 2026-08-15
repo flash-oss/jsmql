@@ -207,7 +207,15 @@ The parser accepts `Dollar` + identifier tokens as a static object key in `parse
 
 ## Public API impact
 
-`jsmql()`'s return type is widened from `object` to `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array; expression mode returns the single object. Both runtime values satisfy `object`, so existing code keeps type-checking. Pre-1.0; semver-tracked when 1.0 cuts.
+`jsmql()`'s return type is `object | object[]` (`JsmqlOutput`). Pipeline mode returns the array; expression mode returns the single object. Both runtime values satisfy `object`, so existing code keeps type-checking. Pre-1.0; semver-tracked when 1.0 cuts.
+
+One input shape narrows that union: a **block-bodied arrow** (`({ $ }) => { $match(…); $limit(5); }`) is a run of statements, which is always a Pipeline, and its arrow type returns `void` — so `JsmqlArrowOutput<F>` ([src/index.ts](../../src/index.ts)) resolves it to `object[]`. It is the only shape the input's own type settles, and the near-misses are worth stating so they aren't "fixed" later:
+
+- An **expression-bodied arrow** may be either. `({ $ }) => $.age > 18` is a Filter; `({ $ }) => $$.filter(d => d.a).take(5)` is a Pipeline, via the lone-chain sugar. Both are just expressions to TypeScript.
+- **Returning an array** doesn't settle it either: `[$match(…)]` is a Pipeline while `[$.a, $.b]` is an array-valued Filter, and both are `any[]` — the stage-candidate test that separates them is an AST check, not a type-level one.
+- A **string** and a **template tag** are opaque by construction.
+
+Those keep the full union; a caller who needs certainty uses `jsmql.pipeline` / `jsmql.filter`, which are typed to their shape outright.
 
 `validate()` reports pipeline errors as `CODEGEN_ERROR` (not `SYNTAX_ERROR`) — they are caught at the codegen stage after the AST parses cleanly.
 
@@ -236,5 +244,4 @@ A realistic, multi-stage example using the canonical `;`-separated form lives in
 
 - **Drift-protection test for `STAGES`** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.
 - **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
-- **Type-level overloads** of `jsmql()` so a literal pipeline input narrows the return to `object[]`. The widened union is enough for now.
 - **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly, but typos like `$prject({...})` are caught for the same reason — a mistyped stage name still produces a clear error. Object-form typos are caught with did-you-mean.

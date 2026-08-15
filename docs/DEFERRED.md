@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 28. Decided-against: 9. As of 2026-08-15.
+**Counts.** Open: 27. Decided-against: 9. As of 2026-08-15.
 
 ---
 
@@ -127,18 +127,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Rejection site(s).** `docs/specs/aggregation-stages.md:100` (allowlisted as a categorical "Out of scope (future work)" header).
 - **Spec.** `docs/specs/aggregation-stages.md` § Out of scope bullet 1.
 - **Status.** design-only — small win
-- **Effort.** S
-
-### DEF-018 — Type-level overloads of `jsmql()` for literal pipeline input
-
-- **What's blocked.** `jsmql([{ $match: ... }])` returns the widened union of all output shapes. With overloads, a literal pipeline array input could narrow the return to `object[]`.
-- **Target lowering.** No MQL change. TS overload signatures only.
-- **Why blocked.** Pre-1.0 churn; not pulling its weight yet.
-- **Attempted approaches.** None.
-- **Success criteria.** `jsmql([{ $match: ... }])` is `object[]` in TS.
-- **Rejection site(s).** `docs/specs/aggregation-stages.md:100`.
-- **Spec.** `docs/specs/aggregation-stages.md` § Out of scope bullet 4.
-- **Status.** design-only
 - **Effort.** S
 
 ### DEF-019 — `.toSorted(comparator)` two-param arrow recognition

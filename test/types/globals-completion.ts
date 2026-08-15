@@ -10,6 +10,21 @@
 //
 // See docs/specs/globals-generation.md § Value-method augmentations.
 import "../../src/globals.ts";
+import { jsmql } from "../../src/index.ts";
+
+// ── `jsmql()` narrows its return type for a block-bodied arrow ───────────────
+// A statement block is always a Pipeline, and its arrow returns `void` — the one
+// shape TypeScript can read off the input, so the one that narrows to `object[]`.
+const _pipeline: object[] = jsmql(({ $ }) => {
+  $match($.age > 18);
+  $limit(5);
+});
+// Everything else keeps the full union, because nothing else settles the shape:
+// an expression arrow may be either (`$.age > 18` is a Filter, `$$.filter(…)` is
+// a Pipeline), and a string is opaque.
+const _either: object | object[] = jsmql(({ $ }) => $.age > 18);
+const _fromString: object | object[] = jsmql("$.age > 18");
+void [_pipeline, _either, _fromString];
 
 // ── Stream methods on the `$$` collection ref ────────────────────────────────
 // `$$` is an ambient `var $$: JsmqlCollectionRef`; every method returns the ref,
@@ -159,6 +174,11 @@ placedAt.format("%Y").quarter();
 $$.find((d) => d.a);
 // @ts-expect-error — and not at any later position of a `$$` chain either.
 $$.filter((d) => d.a).find((d) => d.b);
+// @ts-expect-error — an expression arrow must NOT narrow: it may lower to either
+// shape, so the union stays and is not assignable to `object[]`. This is the pair
+// to the positive above — together they prove the narrowing is real and targeted.
+const _notNarrowed: object[] = jsmql(({ $ }) => $.age > 18);
+void _notNarrowed;
 
 // ── Permissiveness intact: a bare `any` receiver still type-checks ────────────
 // jsmql keeps `$.field` as `any` so operator forms work; value methods on it are

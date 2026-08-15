@@ -6219,6 +6219,27 @@ var METHODS = {
   // → `$regexMatch`
   exec: {}
 };
+var NATIVE_DATE_METHODS = [
+  "getFullYear",
+  "getMonth",
+  "getDate",
+  "getDay",
+  "getHours",
+  "getMinutes",
+  "getSeconds",
+  "getMilliseconds",
+  "getUTCFullYear",
+  "getUTCMonth",
+  "getUTCDate",
+  "getUTCDay",
+  "getUTCHours",
+  "getUTCMinutes",
+  "getUTCSeconds",
+  "getUTCMilliseconds",
+  "getTime",
+  "toISOString"
+];
+var ZERO_ARG_DATE_METHODS = new Set(NATIVE_DATE_METHODS);
 function methodsWhere(pred) {
   return new Set(Object.keys(METHODS).filter((name) => pred(METHODS[name])));
 }
@@ -7814,6 +7835,9 @@ function generateMethodCall(object, method, args, ctx, callPos, optional = false
   const genObj = neutral !== void 0 ? wrapIfNull(rawObj, neutral) : rawObj;
   const receiverType = METHODS[method]?.receiver;
   if (receiverType !== void 0) checkArgType(`.${method}`, "", object, receiverType);
+  if (ZERO_ARG_DATE_METHODS.has(method)) {
+    checkArity(method, { sig: "", none: true }, args.length, callPos);
+  }
   if (method in METHODS) {
     const recv = certainReceiverType(object, ctx);
     if (recv !== null) rejectIncompatibleChain(recv, method, object);
@@ -15795,6 +15819,7 @@ function applyStreamMethods(methods, target, ctx, lowerBlockFn, allocSlot, rhs, 
   const cleanup = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    validator.checkBeforeElement(m.pos);
     if (isStageLink(m)) {
       const linked = lowerStageLink(m, ctx, target, validator);
       target.push(linked.stage);
@@ -15901,6 +15926,7 @@ function lowerChainOnCollection(methods, target, outerCtx, lowerBlockFn, allocSl
   const innerValidator = makePipelineValidator("unionWith");
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    innerValidator.checkBeforeElement(m.pos);
     if (isStageLink(m)) {
       inner.push(lowerStageLink(m, innerCtx, inner, innerValidator).stage);
       continue;
