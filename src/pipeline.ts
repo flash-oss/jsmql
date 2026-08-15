@@ -1214,6 +1214,11 @@ function applyStreamMethods(
   const cleanup: object[] = [];
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    // A terminal stage ends the pipeline, and a chain link is as much a "next
+    // stage" as the next statement is — `.$out("a").$limit(1)` must fail exactly
+    // like `$out("a"); $limit(1);` does. The per-statement call sites can't see
+    // inside a chain, so each link re-arms the same guard here.
+    validator.checkBeforeElement(m.pos);
     // `.$match(<body>)` — a chained pipeline stage on the current stream. Same
     // lowering as the `$match(<body>);` statement.
     if (isStageLink(m)) {
@@ -1446,6 +1451,8 @@ function lowerChainOnCollection(
   const innerValidator = makePipelineValidator("unionWith");
   for (let i = 0; i < methods.length; i++) {
     const m = methods[i];
+    // Same per-link terminal guard as the current-stream chain above.
+    innerValidator.checkBeforeElement(m.pos);
     if (isStageLink(m)) {
       inner.push(lowerStageLink(m, innerCtx, inner, innerValidator).stage);
       continue;

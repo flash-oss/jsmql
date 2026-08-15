@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-15 — fix: the terminal-stage guard fires between chain links, not just between statements
+
+`$$.filter(d => d.a).$out("archive").$limit(1);` emitted
+`[{$match…}, {$out: "archive"}, {$limit: 1}]` — a pipeline mongod refuses,
+because nothing may follow `$out`. The statement spelling of the same mistake,
+`$out("archive"); $limit(1);`, threw correctly. jsmql was emitting MQL it knows
+is invalid, which HR3 forbids.
+
+`makePipelineValidator` already had the machinery: `checkStage` records a
+must-be-last stage and `checkBeforeElement` throws for anything after it. The
+gap was where that second call sits — once per *element/statement*, so a whole
+chain passed it once and every link after `$out` went unchecked. Both chain
+loops in [pipeline.ts](../src/pipeline.ts) (the current stream, and the
+`$unionWith` source-switch) now call `checkBeforeElement` per link. A chain link
+is as much a "next stage" as the next statement is, so the same guard, wording
+and all, now covers both spellings. Stream methods are caught too, not only
+stage links — `.$out("a").take(1)` was the same hole.
+
+Found while typing the chainable stage surface for
+[globals-generation.md](specs/globals-generation.md): declaring `.$out()` as a
+chain member would have advertised in the IDE exactly the chain the compiler
+mis-emitted.
+
+---
+
 ## 2026-08-15 — feat!: the ambient-types subpath is `@koresar/jsmql/globals`
 
 `@koresar/jsmql/ops` is now `@koresar/jsmql/globals`, and `src/ops.ts` is

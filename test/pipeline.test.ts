@@ -1185,6 +1185,21 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     expect(jsmql("[ $sort({ x: 1 }), { $merge: 'archive' } ]")).toEqual([{ $sort: { x: 1 } }, { $merge: "archive" }]);
   });
 
+  // A chain link is as much a "next stage" as the next statement is, so the
+  // terminal guard has to fire between links too — mongod rejects anything
+  // after $out/$merge however the source spelled it.
+  it("rejects a stage link after a terminal stage in the same chain", () => {
+    expect(() => jsmql("$$.filter(d => d.a).$out('archive').$limit(1);")).toThrow(/'\$out' must be the last stage/);
+  });
+  it("rejects a stream method after a terminal stage in the same chain", () => {
+    expect(() => jsmql("$$.filter(d => d.a).$merge({ into: 't' }).take(1);")).toThrow(
+      /'\$merge' must be the last stage/,
+    );
+  });
+  it("accepts a terminal stage that ends the chain", () => {
+    expect(jsmql("$$.$sort({ x: 1 }).$out('archive');")).toEqual([{ $sort: { x: 1 } }, { $out: "archive" }]);
+  });
+
   // Uniqueness falls out of must-first / must-last.
   it("rejects two terminal stages (the first isn't last)", () => {
     expect(() => jsmql("[ { $out: 'a' }, { $merge: 'b' } ]")).toThrow(/'\$out' must be the last stage/);

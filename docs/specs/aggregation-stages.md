@@ -51,6 +51,11 @@ previously reachable only by nesting an `.aggregate((o) => { … })` block.
   errors; see [grammar.md](grammar.md).
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), a
   following stage link is rejected by the guard at the top of `generateMethodCall`.
+- **Placement rules read a chain link as a stage**, so a link is subject to the same
+  `position` constraints as the statement it stands for. Each chain loop calls the
+  validator's `checkBeforeElement` **per link** (not once per statement), which is what
+  makes `.$out("a").$limit(1)` fail exactly like `$out("a"); $limit(1);` does — for a
+  following stream method (`.$out("a").take(1)`) as much as a following stage link.
 
 **Lowering — two equivalences, by construction.** A stage link has no lowering of its own;
 each container delegates to the path that already lowers the equivalent spelling, so the
