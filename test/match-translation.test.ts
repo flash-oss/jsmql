@@ -489,11 +489,20 @@ describe("$match translation — .length vs natural number → string-or-array $
   // unlike the old array-only `$size` peephole, also matches strings.
   // The string branch coerces: `$strLenCP` aborts the query on a missing field,
   // where `$size` on the array side is already shielded by the `$isArray` test.
+  // Three-way: reading "not an array" as "string" made `$strLenCP` abort the query on a
+  // numerically-typed field. Missing/null still reach the string branch, where the `$ifNull`
+  // makes them 0 — a deliberate answer this fix preserves.
   const lenCond = (path: string) => ({
     $cond: {
       if: { $isArray: `$${path}` },
       then: { $size: `$${path}` },
-      else: { $strLenCP: { $ifNull: [`$${path}`, ""] } },
+      else: {
+        $cond: {
+          if: { $in: [{ $type: `$${path}` }, ["string", "missing", "null"]] },
+          then: { $strLenCP: { $ifNull: [`$${path}`, ""] } },
+          else: "$$REMOVE",
+        },
+      },
     },
   });
 

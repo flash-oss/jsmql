@@ -2086,10 +2086,16 @@ function generateLengthAccess(object: Expr, optional: boolean, ctx: GenerateCtx)
   if (isStringProducing(object, ctx)) return strLenOf(rawObj);
   if (isArrayProducing(object, ctx)) return sizeOf(optional ? wrapIfNull(rawObj, []) : rawObj);
   const obj = optional ? wrapIfNull(rawObj, []) : rawObj;
-  // Only the string branch needs coercing: an absent field is already routed to
-  // `$size([])` by the `[]` neutral when the chain is optional, and reaches the
-  // else branch (where `$strLenCP` would abort) when it isn't.
-  return cond({ $isArray: obj }, sizeOf(obj), strLenOf(obj));
+  // Three-way, not two. Reading "not an array" as "string" is the mistake `.at()` and
+  // numeric index access already avoid, and here it ABORTED THE QUERY: `$strLenCP` errors on
+  // an int, so one numerically-typed value anywhere in the field killed the whole command.
+  //
+  // The string branch still takes a MISSING or null receiver, because `strLenOf` coerces it
+  // through `$ifNull` to `""` → 0, and that 0 is a deliberate documented answer (JS's
+  // `undefined?.length` is undefined; jsmql surfaces 0). Only a receiver that is genuinely
+  // some OTHER type falls to `$$REMOVE` — which is what JavaScript's `(7).length` is.
+  const stringish = { $in: [{ $type: obj }, ["string", "missing", "null"]] };
+  return cond({ $isArray: obj }, sizeOf(obj), cond(stringish, strLenOf(obj), "$$REMOVE"));
 }
 
 /**

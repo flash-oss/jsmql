@@ -1913,7 +1913,13 @@ describe("string methods", () => {
       $cond: {
         if: { $isArray: "$items" },
         then: { $size: "$items" },
-        else: { $strLenCP: { $ifNull: ["$items", ""] } },
+        else: {
+          $cond: {
+            if: { $in: [{ $type: "$items" }, ["string", "missing", "null"]] },
+            then: { $strLenCP: { $ifNull: ["$items", ""] } },
+            else: "$$REMOVE",
+          },
+        },
       },
     });
   });
@@ -6146,7 +6152,13 @@ describe("optional chaining (?.)", () => {
       $cond: {
         if: { $isArray: { $ifNull: ["$user.tags", []] } },
         then: { $size: { $ifNull: ["$user.tags", []] } },
-        else: { $strLenCP: { $ifNull: ["$user.tags", []] } },
+        else: {
+          $cond: {
+            if: { $in: [{ $type: { $ifNull: ["$user.tags", []] } }, ["string", "missing", "null"]] },
+            then: { $strLenCP: { $ifNull: ["$user.tags", []] } },
+            else: "$$REMOVE",
+          },
+        },
       },
     });
   });

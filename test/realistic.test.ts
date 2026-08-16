@@ -1211,7 +1211,13 @@ $.customer.region.trim().toLowerCase() === "us"
                 $cond: {
                   if: { $isArray: "$cart.items" },
                   then: { $size: "$cart.items" },
-                  else: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
+                  else: {
+                    $cond: {
+                      if: { $in: [{ $type: "$cart.items" }, ["string", "missing", "null"]] },
+                      then: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
+                      else: "$$REMOVE",
+                    },
+                  },
                 },
               },
               20,

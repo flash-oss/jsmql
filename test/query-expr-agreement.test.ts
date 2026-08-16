@@ -93,6 +93,10 @@ const AGREE: readonly string[] = [
   "$.a !== undefined",
   "$.n === undefined",
   "$.n !== undefined",
+  // `.length` — the runtime three-way dispatch. Its receiver is unknown here, so both
+  // targets take the same `$cond`; the doc set has strings and a missing field.
+  "$.s.length === 5",
+  "$.s.length > 2",
   // Logical
   "$.a > 0 && $.s === 'hello'",
   "$.a > 0 || $.t === false",

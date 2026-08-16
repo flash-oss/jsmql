@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: `.length` on a wrongly-typed field aborted the whole query
+
+`$.v.length` lowered to a TWO-way runtime dispatch: `$isArray` ? `$size` : `$strLenCP`. That
+reads "not an array" as "string", and `$strLenCP` errors on an int — so a single numerically
+typed value anywhere in that field killed the entire command, in filter and expression
+position alike. Not a wrong answer; a dead query.
+
+The same flawed reasoning is already called out and avoided two other places in this
+codebase. `.at()` says it outright — "Test for a STRING explicitly rather than reading 'not
+an array' as 'string'" — and numeric index access does the same. `.length` was the odd one
+out.
+
+It now tests for a string explicitly and falls to `$$REMOVE` otherwise, which is what
+JavaScript's `(7).length` is. The subtlety worth stating: MISSING and null still take the
+STRING branch, because `strLenOf` coerces them through `$ifNull` to `""` → 0, and that 0 is a
+deliberate documented answer rather than an accident (`undefined?.length` is undefined in JS;
+jsmql surfaces 0). Only a receiver that is genuinely some other type changes behaviour.
+
+Verified on a live mongod across array / string / missing / null / int / object: 3, 4, 0, 0,
+missing, missing. `$.v.length > 1` now returns the two matching documents where it was
+rejected outright before. The cost is one `$cond`, and only when the receiver's type is
+unknown.
+
+Found by widening the query/expr agreement probe into arrays and mixed-type fields — the
+third bug that probe has turned up, after the `typeof` alias tables and the `$expr` that
+could not use an index.
+
+---
+
 ## 2026-08-16 — refactor: Mod and RegexMatch join the Predicate IR
 
 Two more nodes, both output-neutral — the agreement suite already showed these two targets
