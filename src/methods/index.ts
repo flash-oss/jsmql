@@ -12,10 +12,14 @@
 // See docs/specs/lowering-grid.md.
 
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
+import { STRING_METHODS } from "./string.ts";
 import type { MethodDef } from "./types.ts";
 
 /** Every family, in the order a reader would look for them. */
-const FAMILIES: Record<string, Record<string, MethodDef>> = { "date-accessors": DATE_ACCESSOR_METHODS };
+const FAMILIES: Record<string, Record<string, MethodDef>> = {
+  "date-accessors": DATE_ACCESSOR_METHODS,
+  string: STRING_METHODS,
+};
 
 /** The names each family declares — used by the completeness tests. */
 export const METHOD_FAMILIES: ReadonlyMap<string, readonly string[]> = new Map(

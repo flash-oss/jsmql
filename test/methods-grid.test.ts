@@ -88,7 +88,7 @@ describe("the migration ratchet", () => {
   // The number of methods still lowering from the switch. It must only ever go DOWN.
   // Lower this line as families migrate; a rise means a method was added to the switch
   // instead of to the grid, which is the habit the grid exists to break.
-  const MAX_UNMIGRATED = 158;
+  const MAX_UNMIGRATED = 149;
 
   it("never grows the set of methods that bypass the grid", () => {
     const unmigrated = valueMethodNames().filter((n) => lookupMethod(n) === undefined);
@@ -108,6 +108,10 @@ describe("the migration ratchet", () => {
 
 describe("the migrated date accessors behave", () => {
   const CASES: [string, object][] = [
+    ["$.s.trim()", { $trim: { input: "$s" } }],
+    ["$.s.trimStart()", { $ltrim: { input: "$s" } }],
+    ["$.s.toUpperCase()", { $toUpper: "$s" }],
+    ['$.s.split(",")', { $split: ["$s", ","] }],
     ["$.d.getFullYear()", { $year: "$d" }],
     ["$.d.getUTCFullYear()", { $year: "$d" }],
     ["$.d.getMonth()", { $month: "$d" }],
@@ -120,8 +124,12 @@ describe("the migrated date accessors behave", () => {
     });
   }
 
-  it("still rejects an argument, from the declaration's arity rule", () => {
+  it("applies the declaration's arity rule, which the switch arms skipped", () => {
     expect(() => jsmql.expr('$.d.getUTCHours("UTC")')).toThrow(/takes no arguments, got 1/);
+    // These two used to COMPILE and silently discard the argument: their switch arms
+    // returned without an arity check. A declaration cannot skip its own rule.
+    expect(() => jsmql.expr('$.s.trim("x")')).toThrow(/\.trim\(\) takes no arguments, got 1/);
+    expect(() => jsmql.expr("$.s.toLowerCase(1)")).toThrow(/\.toLowerCase\(\) takes no arguments, got 1/);
   });
 
   it("still rejects a receiver that is certainly not a date", () => {

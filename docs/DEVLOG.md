@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: `.trim("x")` is rejected instead of silently discarded
+
+Moving the self-contained string methods into the declaration grid turned up a
+gap none of the 4 000 tests covered. `.trim`, `.trimStart`, `.trimEnd`,
+`.toLowerCase` and `.toUpperCase` had switch arms that returned an operator
+without ever checking arity, so `$.s.trim("x")` compiled to a plain `$trim` and
+the argument vanished. The developer wrote something that did nothing, and jsmql
+said nothing.
+
+Nothing about that was a hard problem — it is what happens when the arity rule
+and the lowering are two separate statements and only one of them is consulted.
+In a declaration they are the same object, and dispatch applies the rule before
+the lowering runs, so an arm cannot skip its own check. The nine methods in
+`src/methods/string.ts` got the rejection for free by being declared.
+
+Rejecting is faithful to both languages: JavaScript's `trim` takes no arguments,
+and MQL's `chars` option stays reachable through the operator form,
+`$trim({ input, chars })`.
+
+One constraint the migration surfaced: `src/methods/` must be a **leaf**. The
+first version of the string family imported `CodegenError` to write a nicer
+message, which made `codegen.ts` and the registry mutually dependent — the
+registry then assembled before the family initialised, `lookupMethod` returned
+nothing for every string method, and all nine silently fell back to the switch.
+The declarative arity rule says the same thing without the import.
+
+---
+
 ## 2026-08-16 — refactor: the declaration grid takes its first family
 
 `src/methods/` is the shape every JS method is heading for: one declaration holding

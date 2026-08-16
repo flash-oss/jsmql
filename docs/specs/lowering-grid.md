@@ -139,6 +139,12 @@ the count reaches zero.
 | Family | File | Methods |
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
+| string (self-contained half) | `src/methods/string.ts` | 9 |
+
+`src/methods/` is a **leaf**: it imports only its own types. A family file that reaches
+back into `codegen.ts` creates a cycle, and the registry then assembles before the family
+initialises — the lookup silently returns nothing and every method in that file falls
+through to the switch. Express what a lowering needs through `LowerInput` instead.
 
 A migration must not change output. The differential harness is the check — moving where a
 lowering lives is not licence to move what it emits, and a divergence from a migration

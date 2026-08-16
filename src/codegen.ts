@@ -3866,18 +3866,7 @@ function generateMethodCall(
 
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
-    case "trim":
-      return { $trim: { input: genObj } };
-    case "trimStart":
-    case "trimLeft":
-      return { $ltrim: { input: genObj } };
-    case "trimEnd":
-    case "trimRight":
-      return { $rtrim: { input: genObj } };
-    case "toLowerCase":
-      return { $toLower: genObj };
-    case "toUpperCase":
-      return { $toUpper: genObj };
+    // .trim / .trimStart / .trimEnd / .toLowerCase / .toUpperCase → src/methods/string.ts
     case "substr": {
       const exprArgs = exprArgsOnly(args, "substr");
       checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
@@ -3918,11 +3907,7 @@ function generateMethodCall(
       const index = _generate(exprArgs[0], ctx);
       return cond({ $lt: [index, 0] }, "", { $substrCP: [genObj, index, 1] });
     }
-    case "split": {
-      const exprArgs = exprArgsOnly(args, "split");
-      checkArity("split", { sig: "separator", exact: 1 }, exprArgs.length, callPos);
-      return { $split: [genObj, _generate(exprArgs[0], ctx)] };
-    }
+    // .split → src/methods/string.ts
     case "startsWith": {
       const exprArgs = exprArgsOnly(args, "startsWith");
       checkArity("startsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
@@ -4108,12 +4093,7 @@ function generateMethodCall(
       // short, empty and missing receivers, single- and multi-character pads, both sides.
       return { $let: { vars: { [v]: coerceStringBinding(genObj) }, in: { $concat: concatOrder } } };
     }
-    case "repeat": {
-      const exprArgs = exprArgsOnly(args, "repeat");
-      checkArity("repeat", { sig: "count", exact: 1 }, exprArgs.length, callPos);
-      const count = _generate(exprArgs[0], ctx);
-      return { $reduce: { input: { $range: [0, count] }, initialValue: "", in: { $concat: ["$$value", genObj] } } };
-    }
+    // .repeat → src/methods/string.ts
 
     // ── Array methods (no lambda) ───────────────────────────────────────────
     case "at": {

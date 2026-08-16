@@ -1623,6 +1623,54 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"in",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[[1,2,3]]},null]},null]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},false]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},\"\"]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},0]}]}}",
       "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.s.trim(\"x\")": {
+      "entry": "jsmql",
+      "src": "$.s.trim(\"x\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
+      "now": ".trim() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "expr\u0000$.s.trim(\"x\")": {
+      "entry": "expr",
+      "src": "$.s.trim(\"x\")",
+      "kind": "now-rejected",
+      "was": "{\"$trim\":{\"input\":\"$s\"}}",
+      "now": ".trim() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "filter\u0000$.s.trim(\"x\")": {
+      "entry": "filter",
+      "src": "$.s.trim(\"x\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
+      "now": ".trim() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "jsmql\u0000$.s.toLowerCase(1)": {
+      "entry": "jsmql",
+      "src": "$.s.toLowerCase(1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLower\":\"$s\"},null]},null]},{\"$ne\":[{\"$toLower\":\"$s\"},false]},{\"$ne\":[{\"$toLower\":\"$s\"},\"\"]},{\"$ne\":[{\"$toLower\":\"$s\"},0]}]}}",
+      "now": ".toLowerCase() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "expr\u0000$.s.toLowerCase(1)": {
+      "entry": "expr",
+      "src": "$.s.toLowerCase(1)",
+      "kind": "now-rejected",
+      "was": "{\"$toLower\":\"$s\"}",
+      "now": ".toLowerCase() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "filter\u0000$.s.toLowerCase(1)": {
+      "entry": "filter",
+      "src": "$.s.toLowerCase(1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLower\":\"$s\"},null]},null]},{\"$ne\":[{\"$toLower\":\"$s\"},false]},{\"$ne\":[{\"$toLower\":\"$s\"},\"\"]},{\"$ne\":[{\"$toLower\":\"$s\"},0]}]}}",
+      "now": ".toLowerCase() takes no arguments, got 1",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     }
   }
 }
