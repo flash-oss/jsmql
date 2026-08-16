@@ -148,12 +148,14 @@ the count reaches zero.
 | array shims (mutators / iterators) | `src/methods/array-shims.ts` | 14 |
 | array slicing / zip | `src/methods/array-slicing.ts` | 16 |
 | array callbacks | `src/methods/array-callbacks.ts` | 7 |
+| array reshape (immutable copies / sorts) | `src/methods/array-reshape.ts` | 6 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
 test compare the directory to the registry directly. Shared MQL shape-builders live beside
 it, not inside it: `src/mql-shape.ts` (generic — `cond`, the index clamps, the literal
-readers), `src/mql-string.ts` (string-specific) and `src/mql-array.ts` (array-specific,
-plus the resolved-iteratee shape the array family reads).
+readers), `src/mql-string.ts` (string-specific), `src/mql-array.ts` (array-specific,
+plus the resolved-iteratee shape the array family reads), `src/mql-date.ts` and
+`src/mql-sort.ts`.
 
 Each family file is a **leaf**: it imports only its own types and other leaves. What a
 lowering needs from the compiler arrives through `LowerInput` as a **service**, never as an

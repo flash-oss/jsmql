@@ -12,6 +12,7 @@
 // See docs/specs/lowering-grid.md.
 
 import { ARRAY_CALLBACK_METHODS } from "./array-callbacks.ts";
+import { ARRAY_RESHAPE_METHODS } from "./array-reshape.ts";
 import { ARRAY_SHIM_METHODS } from "./array-shims.ts";
 import { ARRAY_SLICING_METHODS } from "./array-slicing.ts";
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
@@ -26,6 +27,7 @@ import type { MethodDef } from "./types.ts";
 /** Every family, in the order a reader would look for them. */
 const FAMILIES: Record<string, Record<string, MethodDef>> = {
   "array-callbacks": ARRAY_CALLBACK_METHODS,
+  "array-reshape": ARRAY_RESHAPE_METHODS,
   "array-shims": ARRAY_SHIM_METHODS,
   "array-slicing": ARRAY_SLICING_METHODS,
   "date-accessors": DATE_ACCESSOR_METHODS,

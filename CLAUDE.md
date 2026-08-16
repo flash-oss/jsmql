@@ -106,6 +106,8 @@ src/
   mql-shape.ts    Pure MQL shape-builders and literal readers (generic). A leaf both codegen.ts and the families use.
   mql-string.ts   The same, string-specific.
   mql-array.ts    The same, array-specific, plus the resolved-iteratee shape the array family reads.
+  mql-date.ts     The same, date-specific: the trailing-options rule, the $dateFromParts part families, the .format() gate.
+  mql-sort.ts     A sort-spec argument → the `sortBy` value $sortArray expects. Reads source nodes only; never lowers.
   index.ts        Public API: the `jsmql` callable + its properties, polymorphic over string / arrow / template tag.
   cli.ts          The `jsmql` command-line bin (thin `jq`-style wrapper over index.ts). See docs/specs/cli.md.
   mongoose.ts     `@koresar/jsmql/mongoose` plugin. See docs/specs/mongoose-plugin.md.

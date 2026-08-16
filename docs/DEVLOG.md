@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the reshaping array methods join the grid
+
+`.toReversed`, `.toSorted`, `.sortBy`, `.orderBy`, `.toSpliced` and `.with` become
+`src/methods/array-reshape.ts` — the immutable spellings JavaScript added beside its
+mutators, which is what the shim messages in `array-shims.ts` point at, plus the two lodash
+sorts. Ratchet 27 → 21.
+
+`src/mql-sort.ts` is the sixth leaf: a `.toSorted` / `.sortBy` / `.orderBy` argument → the
+`sortBy` value `$sortArray` expects. It reads SOURCE nodes and never lowers one, because
+`$sortArray` takes field names rather than expressions — so a sort key is always resolved at
+compile time or rejected.
+
+Output-neutral; all six were re-checked against their JavaScript and lodash results on a
+live `mongod`.
+
+---
+
 ## 2026-08-16 — fix: a callback method rejects JavaScript's trailing thisArg instead of dropping it
 
 `$.a.map(x => x, 1)` compiled and silently discarded the `1`. So did `.filter`, `.find`,
