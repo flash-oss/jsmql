@@ -1708,3 +1708,23 @@ describe("a lookup inside a literal sub-pipeline array", () => {
     ]);
   });
 });
+
+describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
+  // A strict-shape entry rejects input that would lower to the OTHER shape. This input
+  // lowers to a Pipeline, which is the shape `jsmql.pipeline` asks for — but the lookup form
+  // was missing from its reroute list, so the same source compiled through `jsmql()` and
+  // threw through `jsmql.pipeline()`.
+  const SRC = "$.o = $$$.orders.find(o => o.uid === 1)";
+  const EXPECTED = [
+    { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "o" } },
+    { $set: { o: { $first: "$o" } } },
+  ];
+  it("compiles identically through both entries", () => {
+    expect(jsmql(SRC)).toEqual(EXPECTED);
+    expect(jsmql.pipeline(SRC)).toEqual(EXPECTED);
+  });
+
+  it("jsmql.update() still refuses it — $lookup is not in the update whitelist", () => {
+    expect(() => jsmql.update(SRC)).toThrow(/does not allow lookup syntax/);
+  });
+});

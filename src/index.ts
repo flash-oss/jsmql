@@ -1153,7 +1153,12 @@ function lowerToPipelineStages(ast: Program, ctx: GenerateCtx, apiName: string):
       containsOutAssign(ast) ||
       updateFilterHasReplaceRoot(ast) ||
       updateFilterHasReplaceStream(ast) ||
-      containsStreamLength(ast)
+      containsStreamLength(ast) ||
+      // The lookup form was missing from this list while `lowerWithCtx` had it, so
+      // `jsmql("$.o = $$$.orders.find(…)")` compiled and `jsmql.pipeline(…)` on the SAME
+      // source threw. A strict-shape entry rejects input that would lower to the OTHER
+      // shape; this input lowers to a Pipeline, which is the shape it asks for.
+      containsLookupCall(ast, ctx)
     ) {
       const synthetic: Pipeline = { type: "Pipeline", stmts: [ast], pos: ast.pos };
       return generateImplicitPipeline(synthetic, ctx) as object[];

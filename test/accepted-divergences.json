@@ -2336,6 +2336,86 @@
       "was": "{\"valid\":true,\"errors\":[]}",
       "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from ",
       "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "pipeline\u0000$.x = $$$.users.find(u => u._id === $._id)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.users.find(u => u._id === $._id)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"users\",\"localField\":\"_id\",\"foreignField\":\"_id\",\"as\":\"x\"}},{\"$set\":{\"x\":{\"$first\":\"$x\"}}}]",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).length > 0)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x).length > 0)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"a\",\"pipeline\":[{\"$lookup\":{\"from\":\"b\",\"let\":{\"jsmql_f1_x\":\"$x\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$x\",\"$$jsmql_f1_x\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$size\":\"$__jsmql.tmp.",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$.a.find(a => $$$.b.find(b => b.x === a.x))": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.a.find(a => $$$.b.find(b => b.x === a.x))",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"a\",\"pipeline\":[{\"$lookup\":{\"from\":\"b\",\"let\":{\"jsmql_f1_x\":\"$x\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$x\",\"$$jsmql_f1_x\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)": {
+      "entry": "pipeline",
+      "src": "$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"posts\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$lookup\":{\"from\":\"tags\",\"let\":{\"jsmql_f1__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$postId\",\"$$jsmql_f1__id\"]}}}],\"as\":\"__jsmql.tmp.1\"}},",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$.a.filter(a => $$$.b.filter(b => $$$.c.filter(c => c.x === b.x).length > 0).length > 0)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.a.filter(a => $$$.b.filter(b => $$$.c.filter(c => c.x === b.x).length > 0).length > 0)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"a\",\"pipeline\":[{\"$lookup\":{\"from\":\"b\",\"pipeline\":[{\"$lookup\":{\"from\":\"c\",\"let\":{\"jsmql_f2_x\":\"$x\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$x\",\"$$jsmql_f2_x\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__j",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"a\",\"pipeline\":[{\"$lookup\":{\"from\":\"b\",\"let\":{\"jsmql_f1_x\":\"$x\"},\"pipeline\":[{\"$match\":{\"active\":true,\"$expr\":{\"$eq\":[\"$x\",\"$$jsmql_f1_x\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$size\":",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).length > 0)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.a.filter(a => $$$.b.filter(b => b === a).length > 0)",
+      "kind": "message",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "Bare lambda parameter 'a' in a $lookup predicate is not yet supported — use `a.<field>` to reference a foreign document field.",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)": {
+      "entry": "pipeline",
+      "src": "$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)",
+      "kind": "message",
+      "was": "'$$$$.<db>.<coll>' is only usable as a cross-database $out destination ('$$$$.<db>.<coll> = $$'). Cross-database READS aren't supported (a $lookup/$unionWith with a '{ db, coll }' namespace is rejected by a standalone / ",
+      "now": "Cross-database reads aren't supported: '$$$$.analytics.orders' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federat",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.o = $$$.orders.find(o => o.uid === $.id)": {
+      "entry": "pipeline",
+      "src": "$.o = $$$.orders.find(o => o.uid === $.id)",
+      "kind": "now-accepted",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"localField\":\"id\",\"foreignField\":\"uid\",\"as\":\"o\"}},{\"$set\":{\"o\":{\"$first\":\"$o\"}}}]",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "pipeline\u0000$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })": {
+      "entry": "pipeline",
+      "src": "$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })",
+      "kind": "message",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a",
+      "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
     }
   }
 }

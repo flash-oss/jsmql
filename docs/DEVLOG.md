@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: jsmql.pipeline() rejected a source jsmql() compiled
+
+`jsmql("$.o = $$$.orders.find(o => o.uid === 1)")` produced a two-stage pipeline.
+`jsmql.pipeline()` on the same source threw.
+
+A strict-shape entry exists to reject input that would lower to the OTHER shape. This input
+lowers to a Pipeline — the shape `jsmql.pipeline` asks for — so refusing it was simply wrong.
+The reroute list in `lowerToPipelineStages` names `$out`, replace-root, replace-stream and
+`$$.length`, and omits the lookup form that `lowerWithCtx` has; the comment directly above
+that list says the two entries must agree on every sugar, so the intent was recorded and the
+list was one item short.
+
+`jsmql.update()` still refuses it, and correctly: `$lookup` is not in the update-pipeline
+whitelist.
+
+Ten corpus sources changed answer, every one a lookup assignment through the `pipeline`
+entry. They were already harvested — the divergence had been invisible only because BOTH
+compilers rejected them.
+
+Second of the entry-point gaps the desugar-pass audit turned up. Both are the same shape: a
+place that assembles stages, not testing for a form another place tests for.
+
+---
+
 ## 2026-08-16 — fix: a lookup inside a sub-pipeline read as missing, silently
 
 `$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(...)] })` put the `$lookup` in the
