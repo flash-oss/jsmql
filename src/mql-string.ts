@@ -1,7 +1,8 @@
 // Pure MQL shape-builders for string lowerings.
 //
-// A LEAF: it imports only other leaves (`lodash-shared.ts`, `namespace.ts`). That is what
-// lets both `codegen.ts` and the method families use it — a family file that reached back
+// A LEAF: it imports only other leaves (`mql-shape.ts`, `lodash-shared.ts`, `namespace.ts`)
+// and AST types. That is what lets both `codegen.ts` and the method families use it — a
+// family file that reached back
 // into `codegen.ts` would make the two mutually dependent, and the registry would then
 // assemble before the family initialised, silently dropping every method in it.
 //
@@ -14,11 +15,9 @@
 // See docs/specs/lowering-grid.md § Where declarations live.
 
 import { ASCII_WORDS_RE, HTML_ESCAPE_PAIRS } from "./lodash-shared.ts";
+import { clampNonNegative, cond, foldedSubtract, type Gen, isIfNullWrapped } from "./mql-shape.ts";
 import { exprVar } from "./namespace.ts";
-
-function isIfNullWrapped(value: unknown): boolean {
-  return typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
-}
+import type { Expr } from "./ast.ts";
 
 /**
  * `$strLenCP` of a generated value, tolerant of a missing field.
@@ -37,6 +36,32 @@ function isIfNullWrapped(value: unknown): boolean {
 export function strLenOf(value: unknown): unknown {
   if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
   return { $strLenCP: isIfNullWrapped(value) ? value : { $ifNull: [value, ""] } };
+}
+
+/**
+ * Normalise a JS-style `.slice` index against a string length. JS treats
+ * negative indices as `len + idx`, floored at 0; MQL `$substrCP` rejects
+ * negatives. Folds literal negatives into `$strLenCP - n` at compile time;
+ * non-literals expand to a `$cond` that picks the form at runtime. Either way
+ * the from-the-end result is floored, because `len + idx` is itself negative
+ * when the receiver is shorter than the index (`"abc".slice(-5)`).
+ *
+ * Mirrors `resolveSliceIndex`, the array analogue, which floors the same way.
+ *
+ * `genObj` is reused for `$strLenCP` rather than re-generating from the
+ * source AST, so callers should pass the same generated value they use in
+ * the surrounding `$substrCP` call.
+ */
+export function normaliseSliceIndex(node: Expr, gen: Gen, genObj: unknown): unknown {
+  if (node.type === "NumberLiteral") {
+    if (node.value >= 0) return node.value;
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), -node.value));
+  }
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return clampNonNegative(foldedSubtract(strLenOf(genObj), node.operand.value));
+  }
+  const g = gen(node);
+  return cond({ $lt: [g, 0] }, clampNonNegative({ $add: [g, strLenOf(genObj)] }), g);
 }
 
 /** Everything from `from` to the end of the string. */

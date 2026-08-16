@@ -88,6 +88,46 @@ export function mongoRegexOptions(jsFlags: string): string {
 }
 
 /**
+ * Lower an argument expression. The one thing an index resolver needs from the compiler,
+ * and the reason these helpers can live at leaf level: they take the FUNCTION, not the
+ * `GenerateCtx` that carries it.
+ */
+export type Gen = (node: Expr) => unknown;
+
+/**
+ * Clamp a string-index AST node to non-negative, matching JS `.substring`
+ * semantics where negative arguments are treated as 0. Folds at compile time
+ * when the node is a literal number (or unary-minus of one); otherwise wraps
+ * the generated value in `$max:[0, …]` so the runtime sees a non-negative
+ * index.
+ */
+export function clampNonNegativeIndex(node: Expr, gen: Gen): unknown {
+  if (node.type === "NumberLiteral") return Math.max(0, node.value);
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
+    return Math.max(0, -node.operand.value);
+  }
+  return { $max: [0, gen(node)] };
+}
+
+/**
+ * JS-resolve a `.slice` index against the array length `size`, mirroring the
+ * `k`/`final` clamping in the ECMAScript `Array.prototype.slice` algorithm:
+ * a negative index counts from the end (`size + i`, floored at 0); a positive
+ * one clamps up to `size`. Literals fold to plain `$min`/`$max`; a runtime
+ * index expands to a `$cond` that picks the branch at runtime.
+ */
+export function resolveSliceIndex(node: Expr, gen: Gen, size: unknown): unknown {
+  const lit = literalIndexValue(node);
+  if (lit !== null) {
+    if (lit === 0) return 0;
+    if (lit > 0) return { $min: [lit, size] };
+    return { $max: [{ $subtract: [size, -lit] }, 0] };
+  }
+  const g = gen(node);
+  return { $cond: [{ $lt: [g, 0] }, { $max: [{ $add: [g, size] }, 0] }, { $min: [g, size] }] };
+}
+
+/**
  * Signed integer value of a slice-index literal (`5` or `-5`), else null — a runtime
  * expression, or a non-integer literal jsmql does not fold.
  */

@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the slice-index resolvers become leaves, and seven string methods follow
+
+`normaliseSliceIndex`, `resolveSliceIndex` and `clampNonNegativeIndex` each read
+an AST node *and* lower it, which is why they had sat in `codegen.ts` taking a
+`GenerateCtx`. They wanted one function out of it. Each now takes a `Gen` —
+`(node) => unknown`, the same shape `LowerInput.gen` already has — and moves to
+`src/mql-shape.ts` (the two array/index ones) and `src/mql-string.ts` (the string
+analogue, which needs `strLenOf`). `genIn(ctx)` in `codegen.ts` binds the
+function at each call site.
+
+That unblocked seven declarations: `.substr`, `.substring`, `.replace`,
+`.replaceAll`, `.match`, `.matchAll` and `.truncate` join `src/methods/string.ts`,
+which now holds 22. The pattern generalises and is written into the spec — before
+concluding a lowering needs the compiler, check whether it needs one function the
+compiler happens to carry.
+
+What is left in the switch from this family is a different problem, and the file
+now says so: `.indexOf`, `.lastIndexOf`, `.includes`, `.at` and `.slice` are
+DUAL-receiver. Each works on a string and on an array and picks its lowering from
+what the receiver is inferred to be, so the family they would declare is not one
+of the five the grid has. Ratchet 126 → 119.
+
+Output-neutral, as a migration must be: the differential harness reports the same
+209 accepted divergences and nothing unclassified, and `.substr(-3, 2)` /
+`.truncate({ length: 8 })` were re-checked on a live `mongod`.
+
+---
+
 ## 2026-08-16 — refactor: the number and object families join the grid
 
 Eight more declarations. `.round` / `.ceil` / `.floor` / `.inRange` become

@@ -10,13 +10,16 @@ import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import {
   clampNonNegative,
+  clampNonNegativeIndex,
   coerceStringBinding,
   cond,
   foldedSubtract,
+  type Gen,
   isIfNullWrapped,
   isSingleCodePointLiteral,
   literalIndexValue,
   mongoRegexOptions,
+  resolveSliceIndex,
   wrapIfNull,
 } from "./mql-shape.ts";
 import {
@@ -24,6 +27,7 @@ import {
   escapeHtmlExpr,
   firstCharExpr,
   joinWords,
+  normaliseSliceIndex,
   strLenOf,
   strTail,
   wordsExpr,
@@ -1417,62 +1421,15 @@ function internalVar(ctx: GenerateCtx, base: string): [string, string] {
 }
 
 /**
- * Clamp a string-index AST node to non-negative, matching JS `.substring`
- * semantics where negative arguments are treated as 0. Folds at compile time
- * when the node is a literal number (or unary-minus of one); otherwise wraps
- * the generated value in `$max:[0, …]` so the runtime sees a non-negative
- * index.
- */
-function clampNonNegativeIndex(node: Expr, ctx: GenerateCtx): unknown {
-  if (node.type === "NumberLiteral") return Math.max(0, node.value);
-  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return Math.max(0, -node.operand.value);
-  }
-  return { $max: [0, _generate(node, ctx)] };
-}
-
-/**
- * Normalise a JS-style `.slice` index against a string length. JS treats
- * negative indices as `len + idx`, floored at 0; MQL `$substrCP` rejects
- * negatives. Folds literal negatives into `$strLenCP - n` at compile time;
- * non-literals expand to a `$cond` that picks the form at runtime. Either way
- * the from-the-end result is floored, because `len + idx` is itself negative
- * when the receiver is shorter than the index (`"abc".slice(-5)`).
+ * Bind the lowering function to a live ctx, for a leaf helper that takes `Gen`.
  *
- * Mirrors `resolveSliceIndex`, the array analogue, which floors the same way.
- *
- * `genObj` is reused for `$strLenCP` rather than re-generating from the
- * source AST, so callers should pass the same generated value they use in
- * the surrounding `$substrCP` call.
+ * The index resolvers in `mql-shape.ts` / `mql-string.ts` read an AST node AND lower it,
+ * which reads like something that needs a `GenerateCtx`. It needs one function out of it.
+ * Passing the function keeps those helpers at leaf level, where a method family can reach
+ * them — the same shape `LowerInput.gen` has.
  */
-function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unknown {
-  if (node.type === "NumberLiteral") {
-    if (node.value >= 0) return node.value;
-    return clampNonNegative(foldedSubtract(strLenOf(genObj), -node.value));
-  }
-  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral") {
-    return clampNonNegative(foldedSubtract(strLenOf(genObj), node.operand.value));
-  }
-  const gen = _generate(node, ctx);
-  return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, strLenOf(genObj)] }), gen);
-}
-
-/**
- * JS-resolve a `.slice` index against the array length `size`, mirroring the
- * `k`/`final` clamping in the ECMAScript `Array.prototype.slice` algorithm:
- * a negative index counts from the end (`size + i`, floored at 0); a positive
- * one clamps up to `size`. Literals fold to plain `$min`/`$max`; a runtime
- * index expands to a `$cond` that picks the branch at runtime.
- */
-function resolveSliceIndex(node: Expr, ctx: GenerateCtx, size: unknown): unknown {
-  const lit = literalIndexValue(node);
-  if (lit !== null) {
-    if (lit === 0) return 0;
-    if (lit > 0) return { $min: [lit, size] };
-    return { $max: [{ $subtract: [size, -lit] }, 0] };
-  }
-  const gen = _generate(node, ctx);
-  return { $cond: [{ $lt: [gen, 0] }, { $max: [{ $add: [gen, size] }, 0] }, { $min: [gen, size] }] };
+function genIn(ctx: GenerateCtx): Gen {
+  return (node: Expr) => _generate(node, ctx);
 }
 
 /**
@@ -1525,7 +1482,7 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
   if (startLit === 0) {
     const [vArr, arr] = internalVar(ctx, "arr");
     return {
-      $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, resolveSliceIndex(endNode, ctx, { $size: arr })] } },
+      $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, resolveSliceIndex(endNode, genIn(ctx), { $size: arr })] } },
     };
   }
 
@@ -1546,8 +1503,8 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
       in: {
         $let: {
           vars: {
-            [vK]: resolveSliceIndex(startNode, ctx, { $size: arr }),
-            [vF]: resolveSliceIndex(endNode, ctx, { $size: arr }),
+            [vK]: resolveSliceIndex(startNode, genIn(ctx), { $size: arr }),
+            [vF]: resolveSliceIndex(endNode, genIn(ctx), { $size: arr }),
           },
           in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, k, { $max: [count, 1] }] }, []] },
         },
@@ -1564,7 +1521,7 @@ function negate(n: unknown): unknown {
 /** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
 function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
   if (exprArgs.length === 0) return genObj;
-  const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
+  const start = normaliseSliceIndex(exprArgs[0], genIn(ctx), genObj);
   if (exprArgs.length === 1) {
     // For 1-arg `.slice(-n)` on a string, the length is exactly `n` (JS
     // returns the last n characters). Fold that case so the output isn't
@@ -1574,7 +1531,7 @@ function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unkno
     // `strLen - start` is negative when start runs past the end ("".slice(1)).
     return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
   }
-  const end = normaliseSliceIndex(exprArgs[1], ctx, genObj);
+  const end = normaliseSliceIndex(exprArgs[1], genIn(ctx), genObj);
   return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
 }
 
@@ -2208,7 +2165,9 @@ function coerceFieldKey(idx: unknown): unknown {
  * length via `normaliseSliceIndex` — the helper `.slice`/`.substr` share.
  */
 function generateIndexFromEitherEnd(object: Expr, genObj: unknown, index: Expr | undefined, ctx: GenerateCtx): unknown {
-  const charAt = () => ({ $substrCP: [genObj, index === undefined ? 0 : normaliseSliceIndex(index, ctx, genObj), 1] });
+  const charAt = () => ({
+    $substrCP: [genObj, index === undefined ? 0 : normaliseSliceIndex(index, genIn(ctx), genObj), 1],
+  });
   const elemAt = () => ({ $arrayElemAt: [genObj, index === undefined ? 0 : _generate(index, ctx)] });
   if (isStringProducing(object, ctx)) return charAt();
   if (isArrayProducing(object, ctx)) return elemAt();
@@ -3741,35 +3700,7 @@ function generateMethodCall(
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
     // .trim / .trimStart / .trimEnd / .toLowerCase / .toUpperCase → src/methods/string.ts
-    case "substr": {
-      const exprArgs = exprArgsOnly(args, "substr");
-      checkArity("substr", { sig: "start[, count]", allowed: [1, 2] }, exprArgs.length, callPos);
-      // JS .substr(start, count): a negative start counts from the end (as
-      // .slice does), and a negative count yields "". Both were previously
-      // passed straight to $substrCP, which rejects either outright.
-      const start = normaliseSliceIndex(exprArgs[0], ctx, genObj);
-      if (exprArgs.length === 1) {
-        // A length past the end is clamped by the server, so the full length
-        // stands in for "the rest of the string".
-        return { $substrCP: [genObj, start, strLenOf(genObj)] };
-      }
-      return { $substrCP: [genObj, start, clampNonNegativeIndex(exprArgs[1], ctx)] };
-    }
-    case "substring": {
-      const exprArgs = exprArgsOnly(args, "substring");
-      checkArity("substring", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
-      if (exprArgs.length === 0) return genObj;
-      // JS .substring(s, e) takes end-exclusive; MQL $substrCP takes a length.
-      // JS clamps negative indices to 0 (and would also swap if start > end —
-      // we model the clamping but not the swap; see docs/specs/method-dispatch.md).
-      const start = clampNonNegativeIndex(exprArgs[0], ctx);
-      if (exprArgs.length === 1) {
-        // `strLen - start` is negative when start runs past the end.
-        return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
-      }
-      const end = clampNonNegativeIndex(exprArgs[1], ctx);
-      return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
-    }
+    // .substr / .substring → src/methods/string.ts
     // .charAt → src/methods/string.ts
     // .split → src/methods/string.ts
     // .startsWith → src/methods/string.ts
@@ -3815,20 +3746,7 @@ function generateMethodCall(
         },
       };
     }
-    case "replace": {
-      const exprArgs = exprArgsOnly(args, "replace");
-      checkArity("replace", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
-      return {
-        $replaceOne: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
-      };
-    }
-    case "replaceAll": {
-      const exprArgs = exprArgsOnly(args, "replaceAll");
-      checkArity("replaceAll", { sig: "find, replacement", exact: 2 }, exprArgs.length, callPos);
-      return {
-        $replaceAll: { input: genObj, find: _generate(exprArgs[0], ctx), replacement: _generate(exprArgs[1], ctx) },
-      };
-    }
+    // .replace / .replaceAll → src/methods/string.ts
     case "includes": {
       const exprArgs = exprArgsOnly(args, "includes");
       checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
@@ -3844,38 +3762,7 @@ function generateMethodCall(
       }
       return cond({ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] });
     }
-    case "match": {
-      const exprArgs = exprArgsOnly(args, "match");
-      checkArity("match", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
-      const pattern = exprArgs[0];
-      if (pattern.type === "RegexLiteral") {
-        const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
-        const opts = mongoRegexOptions(pattern.flags);
-        if (opts) result["options"] = opts;
-        return { $regexMatch: result };
-      }
-      return { $regexMatch: { input: genObj, regex: _generate(pattern, ctx) } };
-    }
-    case "matchAll": {
-      const exprArgs = exprArgsOnly(args, "matchAll");
-      checkArity("matchAll", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
-      const pattern = exprArgs[0];
-      if (pattern.type === "RegexLiteral") {
-        if (!pattern.flags.includes("g")) {
-          throw new CodegenError(
-            `.matchAll() requires a regex with the 'g' flag (matching JS's TypeError on non-global regex)`,
-            callPos,
-          );
-        }
-        const result: Record<string, unknown> = { input: genObj, regex: pattern.pattern };
-        // Drop the required `g` (and any other JS-only flag) — `$regexFindAll`
-        // is inherently global, and `g` is not a valid MongoDB option.
-        const opts = mongoRegexOptions(pattern.flags);
-        if (opts) result["options"] = opts;
-        return { $regexFindAll: result };
-      }
-      return { $regexFindAll: { input: genObj, regex: _generate(pattern, ctx) } };
-    }
+    // .match / .matchAll → src/methods/string.ts
     // .search → src/methods/string.ts
     // .padStart / .padEnd → src/methods/string.ts
     // .repeat → src/methods/string.ts
@@ -5050,50 +4937,7 @@ function generateMethodCall(
     }
 
     // ── lodash string methods → src/methods/lodash-string.ts ────────────────
-    case "truncate": {
-      const exprArgs = exprArgsOnly(args, "truncate");
-      checkArity("truncate", { sig: "[{ length, omission }]", allowed: [0, 1] }, exprArgs.length, callPos);
-      let length = 30;
-      let omission = "...";
-      if (exprArgs.length === 1) {
-        const opts = exprArgs[0];
-        if (opts.type !== "ObjectLiteral") {
-          throw new CodegenError(
-            `.truncate(...) takes an options object, e.g. '.truncate({ length: 24, omission: "…" })'.`,
-            opts.pos,
-          );
-        }
-        for (const entry of opts.entries) {
-          if (entry.type !== "KeyValueEntry" || entry.key.kind !== "static") {
-            throw new CodegenError(`.truncate({ … }) options must be static keys ('length', 'omission').`, entry.pos);
-          }
-          if (entry.key.name === "length" && entry.value.type === "NumberLiteral") length = entry.value.value;
-          else if (entry.key.name === "omission" && entry.value.type === "StringLiteral") omission = entry.value.value;
-          else if (entry.key.name === "separator") {
-            throw new CodegenError(
-              `.truncate({ separator }) (word-boundary truncation) isn't supported — MQL has no back-search. Use 'length' + 'omission'.`,
-              entry.value.pos,
-            );
-          } else {
-            throw new CodegenError(
-              `.truncate({ ${entry.key.name} }) — only literal 'length' and 'omission' are supported.`,
-              entry.value.pos,
-            );
-          }
-        }
-      }
-      const keep = Math.max(0, length - omission.length);
-      // Bound once (and coerced) so the receiver isn't evaluated three times and
-      // an absent field truncates to "" like lodash, rather than passing null
-      // through the else branch.
-      const [vStr, s] = internalVar(ctx, "str");
-      return {
-        $let: {
-          vars: { [vStr]: coerceStringBinding(genObj) },
-          in: { $cond: [{ $gt: [{ $strLenCP: s }, length] }, { $concat: [{ $substrCP: [s, 0, keep] }, omission] }, s] },
-        },
-      };
-    }
+    // .truncate → src/methods/string.ts
 
     // ── lodash number methods (value vocabulary) ─────────────────────────────
     case "clamp": {

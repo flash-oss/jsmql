@@ -139,7 +139,7 @@ the count reaches zero.
 | Family | File | Methods |
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
-| string | `src/methods/string.ts` | 15 |
+| string | `src/methods/string.ts` | 22 |
 | number | `src/methods/number.ts` | 4 |
 | object (key/value reshapers) | `src/methods/object.ts` | 4 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
@@ -164,6 +164,13 @@ becoming a grab-bag is the failure `GenerateCtx` already demonstrated. A family 
 back into `codegen.ts` creates a cycle, and the registry then assembles before the family
 initialises — the lookup silently returns nothing and every method in that file falls
 through to the switch. Express what a lowering needs through `LowerInput` instead.
+
+**A helper that takes a `GenerateCtx` usually wants one function out of it.** The slice-index
+resolvers read an AST node *and* lower it, which reads like a codegen dependency. What they
+need is `_generate` bound to the live scope, so they take a `Gen` — the same
+`(node) => unknown` shape `LowerInput.gen` has — and live at leaf level where a family can
+reach them. `genIn(ctx)` in `codegen.ts` is the binder. Check for this before concluding a
+lowering cannot be declared.
 
 A migration must not change output. The differential harness is the check — moving where a
 lowering lives is not licence to move what it emits, and a divergence from a migration
