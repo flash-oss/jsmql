@@ -92,22 +92,31 @@ leaf translator. See [desugar-pass.md](desugar-pass.md).
 
 ## Implementation state
 
-The IR lands node by node. `src/predicate-ir.ts` holds the shared vocabulary and the cells;
-each node moves when its two sides are made to read that vocabulary instead of their own.
+**All eleven nodes now state their shapes in `src/predicate-ir.ts`.** The query translator
+builds no query document of its own — a test reads its source and asserts that, because the
+IR's whole value is that a shape exists once.
 
-| Node | State |
-|---|---|
-| 4 `Mod` | **shared.** The Query cell owns `$mod`'s `[divisor, remainder]` order; the Expr cell is declared and pinned against codegen's generic binary lowering, which still emits it. |
-| 7 `RegexMatch` | **shared.** The Query cell emits a live `RegExp` (a `$regex` document would arrive as a document, not a BSON regex). |
-| 6 `Contains` (anchored) | **shared.** `.startsWith` / `.endsWith` gained the indexed query form the overview predicted — an escaped prefix/suffix regex, gated on a literal needle and a static path. |
-| 2 `Exists` | **shared.** `$exists` as a query, a `$type`-against-`"missing"` test as an expression. |
-| 3 `TypeIs` | **shared.** One alias table, both cells derived. The Query cell is gated on a static path and takes the alias directly; the Expr cell accepts any operand and expands a query-only group alias (`number`) into the concrete types `$type` can return. |
-| the other six | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
+| Node | Query cell | Expr cell |
+|---|---|---|
+| 1 `Cmp` | equality, ordered, and the two null modes | codegen's generic binary lowering |
+| 2 `Exists` | `$exists` | `$type` against `"missing"` |
+| 3 `TypeIs` | `$type` alias | `$type`, with a group alias expanded |
+| 4 `Mod` | `$mod` `[divisor, remainder]` | declared, pinned against codegen |
+| 5 `Membership` | `$in` | codegen |
+| 6 `Contains` | anchored → an indexed regex; unanchored → the array-membership form | `$indexOfCP` / `$substrCP` / `$in` |
+| 7 `RegexMatch` | a live `RegExp` | `$regexMatch` |
+| 8 `Quantify` | `some` → `$elemMatch`; `every` → none (needs De Morgan) | `$anyElementTrue` / `$allElementsTrue` |
+| 9 `Logical` | `and` merges keys, `or` → `$or` all-or-nothing, `not` → none | `$and` / `$or` / `$not` |
+| 10 `Truthy` | none by construction | the `jsBool` chain |
+| 11 `Raw` | none by definition | the term's own lowering |
 
-`TypeIs` moved first because its two sides provably disagreed: the expression cell compared
-`$type` against JavaScript's own spelling, so `typeof $.a === "boolean"` was false for every
-document while the identical source in Filter position was correct. That is the failure the
-IR exists to make impossible, so it is the node that earns it.
+A cell may be DECLARED before both sides call it — `Mod`'s Expr cell is still reached through
+codegen's generic binary path. That is honest only while the declared cell and the emitted MQL
+agree, so a test asserts exactly that. A cell nobody checks is a comment pretending to be code.
+
+Two Query cells are deliberately absent rather than unwritten. `Quantify(every)` needs De
+Morgan, and `Logical(not)` flips index usage with the data's shape — both would change which
+documents an index can serve, so they take the `$expr` fallback by construction.
 
 ## The acceptance harness
 

@@ -21,8 +21,15 @@ import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import { lookupOperator } from "./operators.ts";
 import {
+  cmpEqualityQuery,
+  cmpNullQuery,
+  cmpOrderedQuery,
+  containsAnyQuery,
   containsFrom,
   containsQuery,
+  logicalOrQuery,
+  membershipQuery,
+  quantifySomeQuery,
   existsFrom,
   existsQuery,
   modFrom,
@@ -120,7 +127,7 @@ function combineOr(left: MatchTranslation, right: MatchTranslation, original: Ex
   if (isEmpty(left.query) || isEmpty(right.query)) {
     return { query: {}, residual: original };
   }
-  return { query: { $or: [left.query, right.query] }, residual: null };
+  return { query: logicalOrQuery([left.query, right.query]), residual: null };
 }
 
 /**
@@ -334,7 +341,7 @@ function translateIncludesCall(expr: Expr & { type: "MethodCall" }, ctx: Transla
   const recvField = asFieldPath(expr.object);
   if (recvField !== null) {
     const lit = anyEqualityLiteral(arg, ctx);
-    if (lit !== null) return { [recvField]: lit.value };
+    if (lit !== null) return containsAnyQuery(recvField, lit.value);
   }
   // Form 2: <array-literal-of-literals>.includes(<field>)
   if (expr.object.type === "ArrayLiteral") {
@@ -353,7 +360,7 @@ function translateIncludesCall(expr: Expr & { type: "MethodCall" }, ctx: Transla
       if (lit === null) return null;
       values.push(lit.value);
     }
-    return { [argField]: { $in: values } };
+    return membershipQuery(argField, values);
   }
   return null;
 }
@@ -428,7 +435,7 @@ function translateSomeCall(expr: Expr & { type: "MethodCall" }, ctx: TranslateCt
   const inner = translate(rewritten, ctx);
   if (inner.residual !== null) return null;
   if (isEmpty(inner.query)) return null;
-  return { [field]: { $elemMatch: inner.query } };
+  return quantifySomeQuery(field, inner.query);
 }
 
 /**
@@ -525,22 +532,6 @@ function isIntegerLiteral(expr: Expr): boolean {
 }
 
 /**
- * Emit `{ [field]: positive }` for a `===` predicate, or `{ [field]: { $not:
- * positive } }` for `!==`. The shared shape for any equality-family peephole
- * whose negation is a `$not` wrap of an inner query operator (`$mod`, `$type`,
- * …) — each such translator supplies only the positive operator object and gets
- * the `!==` form for free. (Equality-shorthand and `$exists` negate differently
- * — `$ne` and a flipped boolean — so they don't use this.)
- */
-function fieldQueryOrNegated(
-  field: string,
-  positive: Record<string, unknown>,
-  op: "===" | "!==",
-): Record<string, unknown> {
-  return { [field]: op === "===" ? positive : { $not: positive } };
-}
-
-/**
  * `$.x % N === M` → `{ x: { $mod: [N, M] } }`. Both `N` (divisor) and `M`
  * (remainder) must be integer literals; the field path must be a clean
  * `$.<path>` (no method calls, no further arithmetic).
@@ -631,8 +622,7 @@ function translateEquality(
   const oriented = orientFieldLiteral(left, right, (e) => anyEqualityLiteral(e, ctx));
   if (oriented === null) return null;
   const { field, value } = oriented;
-  if (op === "===") return { [field]: value };
-  return { [field]: { $ne: value } };
+  return cmpEqualityQuery(op === "===" ? "eq" : "ne", field, value);
 }
 
 function translateLooseNull(left: Expr, right: Expr, op: "==" | "!="): Record<string, unknown> | null {
@@ -641,8 +631,7 @@ function translateLooseNull(left: Expr, right: Expr, op: "==" | "!="): Record<st
   if (field === null) return null;
   // Query language `{ field: null }` already matches null OR missing, which is
   // exactly the loose semantics. Keep the index-friendly shape unchanged.
-  if (op === "==") return { [field]: null };
-  return { [field]: { $ne: null } };
+  return cmpNullQuery("loose", op === "!=", field);
 }
 
 function translateStrictNull(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
@@ -651,9 +640,11 @@ function translateStrictNull(left: Expr, right: Expr, op: "===" | "!=="): Record
   if (field === null) return null;
   // `$type: "null"` matches only docs where the field is the BSON null type —
   // missing fields are excluded, matching JS strict equality.
-  if (op === "===") return { [field]: { $type: "null" } };
-  return { [field]: { $not: { $type: "null" } } };
+  return cmpNullQuery("strict", op === "!==", field);
 }
+
+/** jsmql's ordered operators in the IR's spelling. */
+const CMP_FROM_JS = { ">": "gt", ">=": "gte", "<": "lt", "<=": "lte" } as const;
 
 function translateOrderedCompare(
   left: Expr,
@@ -680,7 +671,7 @@ function translateOrderedCompare(
   } else {
     return null;
   }
-  return { [field]: { [orderedOpToMql(effectiveOp)]: value } };
+  return cmpOrderedQuery(CMP_FROM_JS[effectiveOp], field, value);
 }
 
 function orientFieldLiteral(

@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the Predicate IR is complete — every query shape is stated once
+
+The remaining six nodes join `src/predicate-ir.ts`: `Cmp` (equality, ordered, and the two
+null modes), `Membership`, `Contains` unanchored, `Quantify`, `Logical` and the two that have
+no query cell at all.
+
+The measurable end state is that `src/match-translation.ts` builds NO query document of its
+own. Every `{ [field]: … }` it used to assemble now comes from a named cell, and a test reads
+its source and asserts that, because the IR's entire value is that a shape exists in one
+place. `fieldQueryOrNegated` — the generic negation helper the old sites shared — turned out
+to have no callers left once the nodes absorbed them, and is gone.
+
+Three cells were worth writing out rather than folding together. `Cmp`'s null modes are
+separate functions because they are genuinely different queries: JS `===` must EXCLUDE a
+missing field, which only `{ p: { $type: "null" } }` does, while `==` wants the looser
+`{ p: null }` that matches missing too. Equality does NOT route through the ordered builder,
+because `{ p: v }` is both the indexed spelling and the one that matches an array containing
+`v` — `{ p: { $eq: v } }` is neither. And `Contains` unanchored keeps the array-membership
+form with the divergence stated on it.
+
+Two Query cells are deliberately absent rather than unwritten: `Quantify(every)` needs De
+Morgan and `Logical(not)` flips index usage with the data's shape. Both would change which
+documents an index can serve, so they take the `$expr` fallback BY CONSTRUCTION — which is
+the property the IR was designed around. A missing query rule is never a wrong answer, only a
+larger document.
+
+Output-neutral throughout: 443 accepted rows, nothing unclassified, and the agreement suite
+still shows the two targets selecting the same documents.
+
+---
+
 ## 2026-08-16 — fix: .some() / .every() killed the query when one document lacked the field
 
 `$.items.some(i => i.q > 3)` mapped the predicate over the raw receiver, and

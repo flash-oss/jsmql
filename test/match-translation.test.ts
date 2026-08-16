@@ -1,4 +1,6 @@
 import { describe, it, expect } from "vitest";
+import { readFileSync } from "node:fs";
+import { join } from "node:path";
 import { jsmql } from "../src/index.ts";
 
 // `$match` translates expression-form predicates to MongoDB's query language
@@ -603,5 +605,21 @@ describe("$match translation — $all folding from .includes && .includes", () =
     expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
       { $match: { tags: "a", age: { $gt: 18 } } },
     ]);
+  });
+});
+
+describe("every query shape comes from the Predicate IR", () => {
+  // The point of the IR is that a shape is stated ONCE. That only holds while the translator
+  // has no query documents of its own left — so this reads the source and says so. `typeof`
+  // drifted precisely because two files each built their own shape.
+  it("the translator builds no bare `{ [field]: … }` document itself", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "src", "match-translation.ts"), "utf8");
+    const raw = src.match(/return \{ \[(?:field|recvField|argField|path)\]:/g) ?? [];
+    expect(raw, `built here instead of in predicate-ir.ts:\n${raw.join("\n")}`).toEqual([]);
+  });
+
+  it("imports its shapes from predicate-ir.ts", () => {
+    const src = readFileSync(join(import.meta.dirname, "..", "src", "match-translation.ts"), "utf8");
+    expect(src).toContain('from "./predicate-ir.ts"');
   });
 });

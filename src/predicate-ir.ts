@@ -266,3 +266,100 @@ export function regexMatchFrom(pattern: string, flags: string): RegexMatch {
 export function regexMatchQuery(node: RegexMatch, path: string): Record<string, unknown> {
   return { [path]: new RegExp(node.pattern, node.flags) };
 }
+
+// ── The remaining nodes ────────────────────────────────────────────────────────
+// Their two cells already AGREE — `test/query-expr-agreement.test.ts` proves it on a live
+// server — so what follows moves shapes into one place rather than repairing them. The value
+// is that a shape stated once cannot drift, which is exactly how `typeof` broke.
+
+/** The comparison operators `Cmp` covers, in jsmql's spelling. */
+export type CmpOp = "eq" | "ne" | "gt" | "gte" | "lt" | "lte";
+
+/** How a comparison against `null` is meant: JS `===` excludes missing, `==` includes it. */
+export type NullMode = "strict" | "loose";
+
+const CMP_QUERY_OP: Readonly<Record<CmpOp, string>> = {
+  eq: "$eq",
+  ne: "$ne",
+  gt: "$gt",
+  gte: "$gte",
+  lt: "$lt",
+  lte: "$lte",
+};
+
+/** Reading a comparison right-to-left flips its direction; equality is symmetric. */
+export const FLIPPED_CMP: Readonly<Record<CmpOp, CmpOp>> = {
+  eq: "eq",
+  ne: "ne",
+  gt: "lt",
+  gte: "lte",
+  lt: "gt",
+  lte: "gte",
+};
+
+/**
+ * The Query cell for an ORDERED comparison — `{ p: { $gt: v } }`.
+ *
+ * Equality is deliberately not routed here: `{ p: v }` is the indexed spelling and also the
+ * one that matches an array containing `v`, which `{ p: { $eq: v } }` does not.
+ */
+export function cmpOrderedQuery(
+  op: "gt" | "gte" | "lt" | "lte",
+  path: string,
+  value: unknown,
+): Record<string, unknown> {
+  return { [path]: { [CMP_QUERY_OP[op]]: value } };
+}
+
+/** The Query cell for equality — the bare form, which is what an index reads. */
+export function cmpEqualityQuery(op: "eq" | "ne", path: string, value: unknown): Record<string, unknown> {
+  return { [path]: op === "eq" ? value : { $ne: value } };
+}
+
+/**
+ * The Query cell for a comparison against NULL, where the two modes genuinely differ.
+ *
+ * `strict` (JS `===`) must EXCLUDE a missing field, and `{ p: { $type: "null" } }` is the
+ * only query shape that does — `{ p: null }` matches missing too. `loose` (JS `==`) wants
+ * exactly that looser shape, so it gets the plain one. Writing both here is what stops one
+ * being quietly used for the other.
+ */
+export function cmpNullQuery(mode: NullMode, negated: boolean, path: string): Record<string, unknown> {
+  if (mode === "loose") return { [path]: negated ? { $ne: null } : null };
+  const isNull = { $type: "null" };
+  return { [path]: negated ? { $not: isNull } : isNull };
+}
+
+/** `Membership` — the node behind `[a, b].includes($.x)`. */
+export function membershipQuery(path: string, values: readonly unknown[]): Record<string, unknown> {
+  return { [path]: { $in: [...values] } };
+}
+
+/**
+ * The Query cell for an UNANCHORED contains — the array-membership form.
+ *
+ * `{ p: v }` means "equals v, OR is an array containing v", which is what `.includes` means
+ * on an array. It is NOT a substring test, so on a string receiver this reads differently
+ * from the expression form — divergence 4 in match-query-translation.md, and the reason the
+ * caller only reaches here for a receiver whose type it cannot prove.
+ */
+export function containsAnyQuery(path: string, value: unknown): Record<string, unknown> {
+  return { [path]: value };
+}
+
+/**
+ * The Query cell for `Quantify(some)` — `{ p: { $elemMatch: <inner query> } }`.
+ *
+ * Only reachable when the inner predicate translates ENTIRELY. A partial translation would
+ * mix index-friendly and `$expr` semantics inside one `$elemMatch`, which is not the same
+ * predicate. `every` has no query cell: it needs De Morgan, and negating flips index usage
+ * with the data's shape.
+ */
+export function quantifySomeQuery(path: string, inner: Record<string, unknown>): Record<string, unknown> {
+  return { [path]: { $elemMatch: inner } };
+}
+
+/** The Query cell for `Logical(or)` — all-or-nothing, since a branch cannot carry a residual. */
+export function logicalOrQuery(branches: readonly Record<string, unknown>[]): Record<string, unknown> {
+  return { $or: [...branches] };
+}
