@@ -3104,6 +3104,446 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$size\":\"$obj\"},\"else\":{\"$strLenCP\":{\"$ifNull\":[\"$obj\",\"\"]}}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$size\":\"$o",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$size\":\"$obj\"},\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$obj\"},[\"string\",\"missing\",\"null\"]]},\"then\":{\"$strLenCP\":{\"$ifNull\":[\"$obj\",\"\"]}},\"",
       "reason": "Intended, an HR3 fix: `.length` on a receiver of unknown type ABORTED THE QUERY. Its runtime dispatch was two-way — `$isArray` ? `$size` : `$strLenCP` — so it read \"not an array\" as \"string\", and `$strLenCP` ERRORS on an int. One numerically-typed value anywhere in that field killed the whole command, in filter and expression position alike. That is the same flawed reasoning `.at()` and numeric index access already avoid, and both already use the three-way form; `.length` was the odd one out. It now tests for a string EXPLICITLY and falls to `$$REMOVE` otherwise, which is what JavaScript's `(7).length` is. Crucially, MISSING and null still take the string branch, where `strLenOf`'s `$ifNull` makes them 0 — that 0 is a deliberate documented answer (`undefined?.length` is undefined; jsmql surfaces 0) and this fix preserves it. Verified on a live mongod across array/string/missing/null/int/object: 3, 4, 0, 0, missing, missing — and `$.v.length > 1` now returns [1,2] where it was rejected outright. Costs one `$cond` in the unknown-receiver case only."
+    },
+    "jsmql\u0000$.items.some(x => x > 0)": {
+      "entry": "jsmql",
+      "src": "$.items.some(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.items.some(x => x > 0)": {
+      "entry": "expr",
+      "src": "$.items.some(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.items.some(x => x > 0)": {
+      "entry": "filter",
+      "src": "$.items.some(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.items.every(x => x > 0)": {
+      "entry": "jsmql",
+      "src": "$.items.every(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.items.every(x => x > 0)": {
+      "entry": "expr",
+      "src": "$.items.every(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.items.every(x => x > 0)": {
+      "entry": "filter",
+      "src": "$.items.every(x => x > 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$gt\":[\"$$x\",0]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.xs.some(Boolean)": {
+      "entry": "jsmql",
+      "src": "$.xs.some(Boolean)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.xs.some(Boolean)": {
+      "entry": "expr",
+      "src": "$.xs.some(Boolean)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.xs.some(Boolean)": {
+      "entry": "filter",
+      "src": "$.xs.some(Boolean)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.xs.every(Boolean)": {
+      "entry": "jsmql",
+      "src": "$.xs.every(Boolean)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.xs.every(Boolean)": {
+      "entry": "expr",
+      "src": "$.xs.every(Boolean)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.xs.every(Boolean)": {
+      "entry": "filter",
+      "src": "$.xs.every(Boolean)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.items.every(x => x.ok).toString()": {
+      "entry": "jsmql",
+      "src": "$.items.every(x => x.ok).toString()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok\",\"\"]},{\"$ne\":[\"$",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.items.every(x => x.ok).toString()": {
+      "entry": "expr",
+      "src": "$.items.every(x => x.ok).toString()",
+      "kind": "output",
+      "was": "{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok\",\"\"]},{\"$ne\":[\"$$x.ok\",0]}]}}}}}",
+      "now": "{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok\",\"\"]},{\"$ne\":[\"$$x.ok\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.items.every(x => x.ok).toString()": {
+      "entry": "filter",
+      "src": "$.items.every(x => x.ok).toString()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok\",\"\"]},{\"$ne\":[\"$",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toString\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.ok\",null]},null]},{\"$ne\":[\"$$x.ok\",false]},{\"$ne\":[\"$$x.ok",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.a.some({ ok: true })": {
+      "entry": "jsmql",
+      "src": "$.a.some({ ok: true })",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$a\",[]]},\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.a.some({ ok: true })": {
+      "entry": "expr",
+      "src": "$.a.some({ ok: true })",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$a\",[]]},\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.a.some({ ok: true })": {
+      "entry": "filter",
+      "src": "$.a.some({ ok: true })",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$a\",[]]},\"as\":\"jsmqlItem\",\"in\":{\"$eq\":[\"$$jsmqlItem.ok\",true]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]": {
+      "entry": "jsmql",
+      "src": "[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]": {
+      "entry": "expr",
+      "src": "[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "pipeline\u0000[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]": {
+      "entry": "pipeline",
+      "src": "[$match($.items.some(it => it.tag.toLowerCase() === 'vip'))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$eq\":[{\"$toLower\":\"$$it.tag\"},\"vip\"]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000[$match($.items.some(it => it))]": {
+      "entry": "jsmql",
+      "src": "[$match($.items.some(it => it))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000[$match($.items.some(it => it))]": {
+      "entry": "expr",
+      "src": "[$match($.items.some(it => it))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "pipeline\u0000[$match($.items.some(it => it))]": {
+      "entry": "pipeline",
+      "src": "[$match($.items.some(it => it))]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "now": "[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"it\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$it\",null]},null]},{\"$ne\":[\"$$it\",false]},{\"$ne\":[\"$$it\",\"\"]},{\"$ne\":[\"$$it\",0]}]}}}}}}]",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.arr.some(x => x)": {
+      "entry": "jsmql",
+      "src": "$.arr.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.arr.some(x => x)": {
+      "entry": "expr",
+      "src": "$.arr.some(x => x)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.arr.some(x => x)": {
+      "entry": "filter",
+      "src": "$.arr.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.arr.every(x => x)": {
+      "entry": "jsmql",
+      "src": "$.arr.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.arr.every(x => x)": {
+      "entry": "expr",
+      "src": "$.arr.every(x => x)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.arr.every(x => x)": {
+      "entry": "filter",
+      "src": "$.arr.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$arr\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$arr\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.s.some(x => x)": {
+      "entry": "jsmql",
+      "src": "$.s.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.s.some(x => x)": {
+      "entry": "expr",
+      "src": "$.s.some(x => x)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.s.some(x => x)": {
+      "entry": "filter",
+      "src": "$.s.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.s.every(x => x)": {
+      "entry": "jsmql",
+      "src": "$.s.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.s.every(x => x)": {
+      "entry": "expr",
+      "src": "$.s.every(x => x)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.s.every(x => x)": {
+      "entry": "filter",
+      "src": "$.s.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$s\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$s\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.n.some(x => x)": {
+      "entry": "jsmql",
+      "src": "$.n.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.n.some(x => x)": {
+      "entry": "expr",
+      "src": "$.n.some(x => x)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.n.some(x => x)": {
+      "entry": "filter",
+      "src": "$.n.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.n.every(x => x)": {
+      "entry": "jsmql",
+      "src": "$.n.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.n.every(x => x)": {
+      "entry": "expr",
+      "src": "$.n.every(x => x)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.n.every(x => x)": {
+      "entry": "filter",
+      "src": "$.n.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$n\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$n\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.obj.some(x => x)": {
+      "entry": "jsmql",
+      "src": "$.obj.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.obj.some(x => x)": {
+      "entry": "expr",
+      "src": "$.obj.some(x => x)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.obj.some(x => x)": {
+      "entry": "filter",
+      "src": "$.obj.some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000$.obj.every(x => x)": {
+      "entry": "jsmql",
+      "src": "$.obj.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.obj.every(x => x)": {
+      "entry": "expr",
+      "src": "$.obj.every(x => x)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000$.obj.every(x => x)": {
+      "entry": "filter",
+      "src": "$.obj.every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$obj\",\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$obj\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000[1,2,3].some(x => x)": {
+      "entry": "jsmql",
+      "src": "[1,2,3].some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000[1,2,3].some(x => x)": {
+      "entry": "expr",
+      "src": "[1,2,3].some(x => x)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000[1,2,3].some(x => x)": {
+      "entry": "filter",
+      "src": "[1,2,3].some(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "jsmql\u0000[1,2,3].every(x => x)": {
+      "entry": "jsmql",
+      "src": "[1,2,3].every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000[1,2,3].every(x => x)": {
+      "entry": "expr",
+      "src": "[1,2,3].every(x => x)",
+      "kind": "output",
+      "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "filter\u0000[1,2,3].every(x => x)": {
+      "entry": "filter",
+      "src": "[1,2,3].every(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.items.some(i => i.q > 2)": {
+      "entry": "expr",
+      "src": "$.items.some(i => i.q > 2)",
+      "kind": "output",
+      "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"i\",\"in\":{\"$gt\":[\"$$i.q\",2]}}}}",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"i\",\"in\":{\"$gt\":[\"$$i.q\",2]}}}}",
+      "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
     }
   }
 }

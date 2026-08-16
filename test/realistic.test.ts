@@ -140,7 +140,7 @@ $ = candidateProductIds
                   $expr: {
                     $anyElementTrue: {
                       $map: {
-                        input: "$productIds",
+                        input: { $ifNull: ["$productIds", []] },
                         as: "p",
                         // `myProductIds` is a `const` bound to `.uniq()` — provably an
                         // array — and the `$lookup.let` var captures the whole binding,

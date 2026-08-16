@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: .some() / .every() killed the query when one document lacked the field
+
+`$.items.some(i => i.q > 3)` mapped the predicate over the raw receiver, and
+`$anyElementTrue` aborts the whole command on a non-array. One document without `items` — in
+a collection of thousands that have it — and the query died.
+
+The same predicate in FILTER position lowers to `$elemMatch`, which simply does not match
+that document. So the two targets answered differently, and one of the answers was "your
+query is dead". That is the disagreement the Predicate IR exists to remove, which is why this
+one is a fix rather than a preference: it is not a choice between two defensible behaviours.
+
+The `$map` input is now `$ifNull[recv, []]`. A missing receiver gives `false` for `.some` and
+`true` for `.every` — matching `$elemMatch` and JavaScript's own `[].some` / `[].every`
+alike. Verified on a live mongod over documents with a match, a non-match, an empty array and
+no field at all: both targets now select the same ids.
+
+Deliberately only `$ifNull`. A receiver that is PRESENT but wrongly typed still aborts, which
+is the line the rest of the array surface draws; moving that line is a separate decision and
+not one to take while fixing a disagreement.
+
+Fourth bug from the query/expr agreement probe. The pattern across all four is the same
+shape: the query language answers a badly-shaped document with "no match", the expression
+language answers with an error, and nothing was comparing the two.
+
+---
+
 ## 2026-08-16 — fix: `.length` on a wrongly-typed field aborted the whole query
 
 `$.v.length` lowered to a TWO-way runtime dispatch: `$isArray` ? `$size` : `$strLenCP`. That

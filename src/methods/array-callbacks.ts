@@ -36,7 +36,20 @@ function finder(end: 0 | -1): MethodDef {
   };
 }
 
-/** `.some()` / `.every()` — map the predicate over the elements, then collapse. */
+/**
+ * `.some()` / `.every()` — map the predicate over the elements, then collapse.
+ *
+ * The input is coerced to `[]` for a missing receiver, and that is a CORRECTNESS fix rather
+ * than defensiveness. `$anyElementTrue` aborts the whole command on a non-array — so a single
+ * document without the field killed the query — while the same predicate in Filter position
+ * lowers to `$elemMatch`, which simply does not match. The two targets answered differently,
+ * and one of the answers was "your query is dead". An empty array gives `false` for `.some`
+ * and `true` for `.every`, matching both `$elemMatch` and JavaScript's own `[].some` /
+ * `[].every`.
+ *
+ * Only `$ifNull` — a receiver that is present but wrongly typed still aborts, which is the
+ * same line the rest of the array surface draws.
+ */
 function quantifier(operator: "$anyElementTrue" | "$allElementsTrue"): MethodDef {
   return {
     receiver: "array",
@@ -45,7 +58,8 @@ function quantifier(operator: "$anyElementTrue" | "$allElementsTrue"): MethodDef
     // No pair projection: the result is a single boolean either way.
     value: ({ callback }) => {
       const cb = callback();
-      return { [operator]: { $map: { input: cb.input, as: cb.as, in: cb.boolBody() } } };
+      const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
+      return { [operator]: { $map: { input, as: cb.as, in: cb.boolBody() } } };
     },
   };
 }

@@ -398,7 +398,9 @@ describe("$match translation — .some(p) → $elemMatch", () => {
       {
         $match: {
           $expr: {
-            $anyElementTrue: { $map: { input: "$items", as: "it", in: { $eq: [{ $toLower: "$$it.tag" }, "vip"] } } },
+            $anyElementTrue: {
+              $map: { input: { $ifNull: ["$items", []] }, as: "it", in: { $eq: [{ $toLower: "$$it.tag" }, "vip"] } },
+            },
           },
         },
       },
@@ -414,7 +416,7 @@ describe("$match translation — .some(p) → $elemMatch", () => {
           $expr: {
             $anyElementTrue: {
               $map: {
-                input: "$items",
+                input: { $ifNull: ["$items", []] },
                 as: "it",
                 in: {
                   $and: [

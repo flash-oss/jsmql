@@ -41,6 +41,8 @@ const DOCS = [
   { _id: 3, a: -2, s: "Hi", t: true, d: new Date("2024-05-17T00:00:00Z") }, // n missing
   { _id: 4, s: "hello world", n: null }, // a, t, d missing
   { _id: 5, a: 5.5, s: "HELLO", t: false, n: "x", d: new Date("2030-01-01T00:00:00Z") },
+  // Only this one carries `items` — the other four exercise the missing-receiver path.
+  { _id: 6, s: "hey", items: [{ q: 5 }, { q: 1 }] },
 ];
 
 /** A predicate whose two lowerings must select the same documents. */
@@ -97,6 +99,11 @@ const AGREE: readonly string[] = [
   // targets take the same `$cond`; the doc set has strings and a missing field.
   "$.s.length === 5",
   "$.s.length > 2",
+  // Quantify — `$elemMatch` as a query, `$anyElementTrue`/`$allElementsTrue` as an
+  // expression. The doc set has no `items` field at all, which is the case that used to
+  // abort the expression form while the query form answered correctly.
+  "$.items.some(i => i.q > 3)",
+  "$.items.every(i => i.q > 3)",
   // Logical
   "$.a > 0 && $.s === 'hello'",
   "$.a > 0 || $.t === false",

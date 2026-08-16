@@ -2237,12 +2237,12 @@ describe("array methods (with lambda)", () => {
   });
   it("some", () => {
     expect(jsmql.expr("$.items.some(x => x > 0)")).toEqual({
-      $anyElementTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
+      $anyElementTrue: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("every", () => {
     expect(jsmql.expr("$.items.every(x => x > 0)")).toEqual({
-      $allElementsTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x", 0] } } },
+      $allElementsTrue: { $map: { input: { $ifNull: ["$items", []] }, as: "x", in: { $gt: ["$$x", 0] } } },
     });
   });
   it("reduce", () => {
@@ -2537,7 +2537,11 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
     expect((p[1] as { $lookup: { pipeline: unknown[] } }).$lookup.pipeline).toEqual([
       {
         $match: {
-          $expr: { $anyElementTrue: { $map: { input: "$pid", as: "p", in: { $in: ["$$p", "$$jsmql_v0_ids"] } } } },
+          $expr: {
+            $anyElementTrue: {
+              $map: { input: { $ifNull: ["$pid", []] }, as: "p", in: { $in: ["$$p", "$$jsmql_v0_ids"] } },
+            },
+          },
         },
       },
     ]);
@@ -2653,12 +2657,12 @@ describe("bare built-in callbacks", () => {
   });
   it("some(Boolean) is any-JS-truthy", () => {
     expect(jsmql.expr("$.xs.some(Boolean)")).toEqual({
-      $anyElementTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
+      $anyElementTrue: { $map: { input: { $ifNull: ["$xs", []] }, as: "v", in: truthy("$$v") } },
     });
   });
   it("every(Boolean) is all-JS-truthy", () => {
     expect(jsmql.expr("$.xs.every(Boolean)")).toEqual({
-      $allElementsTrue: { $map: { input: "$xs", as: "v", in: truthy("$$v") } },
+      $allElementsTrue: { $map: { input: { $ifNull: ["$xs", []] }, as: "v", in: truthy("$$v") } },
     });
   });
   it("flatMap(Number) survives the desugar", () => {
@@ -4797,7 +4801,9 @@ describe("lodash iteratee / predicate shorthands (uniform across higher-order me
       $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $eq: ["$$jsmqlItem.ok", true] }] } },
     });
     expect(jsmql.expr("$.a.some({ ok: true })")).toEqual({
-      $anyElementTrue: { $map: { input: "$a", as: "jsmqlItem", in: { $eq: ["$$jsmqlItem.ok", true] } } },
+      $anyElementTrue: {
+        $map: { input: { $ifNull: ["$a", []] }, as: "jsmqlItem", in: { $eq: ["$$jsmqlItem.ok", true] } },
+      },
     });
   });
   it("a bad matchesProperty shape is rejected with a shape hint", () => {
