@@ -314,6 +314,33 @@ false
 null
 ```
 
+### `undefined` — the existence test
+
+`undefined` is not a value in MQL, so jsmql gives it the one meaning it can carry: comparing
+against it asks whether a field is **present**.
+
+```js
+$.deletedAt === undefined      // the field is absent
+$.deletedAt !== undefined      // the field is present
+```
+
+It works in every position. In a Filter or `$match` body it becomes MongoDB's indexed
+`$exists`; anywhere else it becomes a `$type` test against `"missing"`. Both draw the same
+line, so the two agree on every document:
+
+```js
+jsmql(`$.a === undefined`);        // → { a: { $exists: false } }
+jsmql.expr(`$.a === undefined`);   // → { $eq: [{ $type: "$a" }, "missing"] }
+```
+
+**Absent is not the same as null.** A document holding `{ a: null }` *has* the field, so
+`$.a === undefined` is false for it while `$.a === null` is true. That distinction is the
+point of having both.
+
+Used as a **value** rather than in a comparison, `undefined` is rejected — MQL has nothing to
+lower it to, and quietly emitting `null` would merge two different documents. Write `null`
+for the present-but-null case, or `delete $.field` to remove a field.
+
 ### Arrays
 
 Comma-separated values in brackets, including spread:
@@ -3478,6 +3505,8 @@ jsmql(`[{ $match: $.items.some(it => it.qty > 5 && it.tag === "vip") }]`);
 // Existence / type / size / modulo
 jsmql(`[{ $match: $.deletedAt === undefined }]`);
 // → [{ $match: { deletedAt: { $exists: false } } }]
+jsmql.expr(`$.deletedAt === undefined`);
+// → { $eq: [{ $type: "$deletedAt" }, "missing"] }         // the same test, outside $match
 jsmql(`[{ $match: typeof $.x === "boolean" }]`);
 // → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
 jsmql(`[{ $match: $.items.length === 3 }]`);
