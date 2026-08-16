@@ -456,10 +456,17 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
     expect(jsmql("[$match(undefined === $.field)]")).toEqual([{ $match: { field: { $exists: false } } }]);
   });
 
-  it("rejects `undefined` in expression position with an actionable error", () => {
-    expect(() => jsmql.expr("$.x === undefined ? 1 : 2")).toThrow(
-      /'undefined' is only meaningful in '\$match' position/,
-    );
+  it("is an existence test in expression position too, not an error", () => {
+    // This used to throw. `$type` distinguishes a missing field ("missing") from a
+    // present-but-null one ("null"), which is exactly the line `$exists` draws — so the
+    // expression language CAN express existence, and now does.
+    expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({
+      $cond: { if: { $eq: [{ $type: "$x" }, "missing"] }, then: 1, else: 2 },
+    });
+  });
+
+  it("still rejects `undefined` used as a VALUE rather than compared", () => {
+    expect(() => jsmql.expr("$.a + undefined")).toThrow(/'undefined' is only meaningful in a comparison/);
   });
 });
 

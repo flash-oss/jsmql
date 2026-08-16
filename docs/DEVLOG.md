@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — feat: `=== undefined` is an existence test in expression position too
+
+`$.a === undefined` lowered to `{ a: { $exists: false } }` as a filter and THREW everywhere
+else. The error explained that MongoDB's aggregation language "has no way to distinguish
+'missing field' from 'field present with null value'".
+
+That is not true, and has not been for a long time. `$type` answers `"missing"` for an absent
+field and `"null"` for one holding an explicit null — exactly the line `$exists` draws. So the
+expression language can express existence, and `Exists` is now the second node of the
+Predicate IR with both cells: `{ p: { $exists: b } }` as a query,
+`{ $eq | $ne: [{ $type: P }, "missing"] }` as an expression.
+
+Verified on a live mongod over `{a:5}`, `{a:null}`, `{}`: both targets select only the third
+for `=== undefined` and all three others for `!== undefined`, while `=== null` still selects
+only the second. Missing and null stay distinct, which was the whole worry.
+
+`undefined` used as a VALUE rather than compared still throws — MQL has no `undefined`, and
+emitting `null` would conflate two different documents. Its message no longer claims the
+comparison is `$match`-only; it names the two comparison forms and the two alternatives
+(`null`, `delete $.field`).
+
+The four `Exists` sources moved from the skipped set into the agreeing set of
+`test/query-expr-agreement.test.ts`, which is what that suite is for.
+
+---
+
 ## 2026-08-16 — test: the two predicate targets are compared on a live server
 
 Before migrating nine more nodes into the Predicate IR, the question worth answering was

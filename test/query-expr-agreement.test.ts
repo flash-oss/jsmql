@@ -75,6 +75,13 @@ const AGREE: readonly string[] = [
   "$.s.match(/HE/i)",
   // Membership
   '["hello", "Hi"].includes($.s)',
+  // Exists — `=== undefined` is an existence test in BOTH targets: `$exists` in the query
+  // language, `$type` against "missing" in the expression language. Note it must NOT treat an
+  // explicit null as absent, which is why the doc set carries both.
+  "$.a === undefined",
+  "$.a !== undefined",
+  "$.n === undefined",
+  "$.n !== undefined",
   // Logical
   "$.a > 0 && $.s === 'hello'",
   "$.a > 0 || $.t === false",

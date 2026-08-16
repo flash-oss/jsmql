@@ -123,3 +123,52 @@ export function typeIsExpr(node: TypeIs, loweredOperand: unknown): unknown {
   }
   return { [node.negated ? "$ne" : "$eq"]: [actual, node.alias] };
 }
+
+/** `Exists` — the node behind `x === undefined` / `x !== undefined`. */
+export type Exists = {
+  readonly kind: "Exists";
+  readonly operand: Expr;
+  /** True for `!== undefined` (the field must be present). */
+  readonly present: boolean;
+};
+
+/**
+ * The type `$type` reports for a field the document does not carry.
+ *
+ * This is what gives the Expr cell exact `$exists` semantics. The aggregation language was
+ * long assumed unable to tell "missing" from "present and null" — it can: `$type` answers
+ * `"missing"` for an absent field and `"null"` for an explicit null, which is precisely the
+ * distinction `$exists` draws.
+ */
+const MISSING = "missing";
+
+/**
+ * The non-`undefined` side of an `x === undefined` comparison, either way round — shared, so
+ * both cells agree on what counts as one. `undefined === undefined` is not a predicate.
+ */
+export function orientUndefined(left: Expr, right: Expr): Expr | null {
+  if (left.type === "UndefinedLiteral") return right.type === "UndefinedLiteral" ? null : right;
+  if (right.type === "UndefinedLiteral") return left;
+  return null;
+}
+
+export function existsFrom(operand: Expr, present: boolean): Exists {
+  return { kind: "Exists", operand, present };
+}
+
+/** The Query cell. Gated on a static field path, which the caller resolves. */
+export function existsQuery(node: Exists, path: string): Record<string, unknown> {
+  return { [path]: { $exists: node.present } };
+}
+
+/**
+ * The Expr cell. Takes the ALREADY-LOWERED operand.
+ *
+ * `$exists: false` is "the field is absent", NOT "the field is absent or null" — and
+ * `$type` draws the same line, so the two cells agree on a document carrying an explicit
+ * null. Verified on a live mongod.
+ */
+export function existsExpr(node: Exists, loweredOperand: unknown): unknown {
+  const actual = { $type: loweredOperand };
+  return { [node.present ? "$ne" : "$eq"]: [actual, MISSING] };
+}

@@ -1936,6 +1936,33 @@ describe("string methods", () => {
   });
 });
 
+describe("`=== undefined` is an existence test in both targets", () => {
+  // Expression position used to THROW here, on the belief that the aggregation language
+  // could not tell a missing field from a present-but-null one. `$type` can: it answers
+  // "missing" for absent and "null" for null, which is the same line `$exists` draws.
+  it("lowers to $exists as a query and to a $type test as an expression", () => {
+    expect(jsmql("$.a === undefined")).toEqual({ a: { $exists: false } });
+    expect(jsmql.expr("$.a === undefined")).toEqual({ $eq: [{ $type: "$a" }, "missing"] });
+    expect(jsmql("$.a !== undefined")).toEqual({ a: { $exists: true } });
+    expect(jsmql.expr("$.a !== undefined")).toEqual({ $ne: [{ $type: "$a" }, "missing"] });
+  });
+
+  it("reads either way round", () => {
+    expect(jsmql.expr("undefined === $.a")).toEqual({ $eq: [{ $type: "$a" }, "missing"] });
+  });
+
+  it("does not treat an explicit null as absent", () => {
+    // Verified on a live mongod: over docs {a:5}, {a:null}, {} the existence test selects
+    // only the third from BOTH targets, while `=== null` selects only the second.
+    expect(jsmql.expr("$.a === null")).not.toEqual(jsmql.expr("$.a === undefined"));
+  });
+
+  it("works on an operand no query could index", () => {
+    // The Query cell needs a static path; the Expr cell does not — the operand-kind gate.
+    expect(jsmql.expr("$.a.b.c === undefined")).toEqual({ $eq: [{ $type: "$a.b.c" }, "missing"] });
+  });
+});
+
 describe("enum slots: an operator's is an expression slot, a stage's is not", () => {
   // `checkArgEnum` and `checkEnum` look like duplicates and are NOT. Unifying them would
   // break one side, so this pins the difference: verified on a live mongod, an operator's

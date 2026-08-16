@@ -20,7 +20,7 @@ import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import { lookupOperator } from "./operators.ts";
-import { typeIsFrom, typeIsQuery } from "./predicate-ir.ts";
+import { existsFrom, existsQuery, orientUndefined, typeIsFrom, typeIsQuery } from "./predicate-ir.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -461,13 +461,13 @@ function paramMemberAsField(expr: Expr & { type: "MemberAccess" }, param: string
  * `$exists` line up. (Distinct from `=== null`, which lowers to
  * `$type: "null"` — present-and-null only.)
  */
+/** The Query cell of the `Exists` IR node. Its Expr sibling lives in `codegen.ts`. */
 function translateUndefinedPredicate(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
-  const undefSide = left.type === "UndefinedLiteral" ? right : right.type === "UndefinedLiteral" ? left : null;
-  if (undefSide === null) return null;
-  const field = asFieldPath(undefSide);
+  const oriented = orientUndefined(left, right);
+  if (oriented === null) return null;
+  const field = asFieldPath(oriented);
   if (field === null) return null;
-  if (op === "===") return { [field]: { $exists: false } };
-  return { [field]: { $exists: true } };
+  return existsQuery(existsFrom(oriented, op === "!=="), field);
 }
 
 /**

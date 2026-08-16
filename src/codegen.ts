@@ -29,7 +29,7 @@ import {
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
-import { typeIsExpr, typeIsFrom } from "./predicate-ir.ts";
+import { existsExpr, existsFrom, orientUndefined, typeIsExpr, typeIsFrom } from "./predicate-ir.ts";
 import {
   distinctKeysExpr,
   firstOf,
@@ -1572,15 +1572,16 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
     case "NullLiteral":
       return null;
     case "UndefinedLiteral":
-      // MongoDB's aggregation expression language has no way to distinguish
-      // "missing field" from "field present with null value" — `$eq` against
-      // missing returns true for both. `undefined` only carries non-redundant
-      // meaning in `$match` position (where it lowers to `$exists`); in any
-      // expression position it's ambiguous, so we surface an actionable error
-      // rather than silently lowering to `null`.
+      // Reaching here means `undefined` was used as a VALUE, not compared against. A
+      // comparison (`x === undefined`) is the `Exists` IR node and never arrives here — it
+      // is intercepted in `generateBinaryExpr` and lowers to `$exists` as a query or a
+      // `$type`-against-"missing" test as an expression. As a value there is nothing to
+      // lower to: MQL has no `undefined`, and silently emitting `null` would conflate
+      // "absent" with "present and null", which are different documents.
       throw new CodegenError(
-        `'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). ` +
-          `In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.`,
+        `'undefined' is only meaningful in a comparison — 'x === undefined' / 'x !== undefined' ` +
+          `test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for ` +
+          `the present-but-null case, or 'delete $.field' to remove a field.`,
         expr.pos,
       );
     case "FieldRef":
@@ -2236,6 +2237,13 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "/":
     case "===":
     case "!==": {
+      // The Expr cell of the `Exists` IR node. `x === undefined` is an EXISTENCE test, and
+      // the aggregation language can express one exactly: `$type` answers "missing" for an
+      // absent field and "null" for a present-but-null one, which is the same line
+      // `$exists` draws. (This position used to throw, on the belief that the expression
+      // language could not tell those apart. It can.)
+      const exists = undefinedComparison(left, right, op === "!==", ctx);
+      if (exists !== null) return exists;
       // The Expr cell of the `TypeIs` IR node. Without it, `typeof $.a === "boolean"`
       // lowered to a raw comparison against JavaScript's own spelling — and MongoDB's
       // `$type` returns "bool", never "boolean", so the test was false for EVERY document
@@ -2261,6 +2269,18 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "^":
       return { [BINARY_OP_TO_MQL[op]]: flattenChain(op, left, right, ctx) };
   }
+}
+
+/**
+ * `<x> === undefined` / `!== undefined`, either way round, as the `Exists` node's Expr cell.
+ *
+ * Like `TypeIs`, the Expr cell needs no static field path — only the Query cell does, because
+ * only it has to index on something.
+ */
+function undefinedComparison(left: Expr, right: Expr, negated: boolean, ctx: GenerateCtx): unknown | null {
+  const operand = orientUndefined(left, right);
+  if (operand === null) return null;
+  return existsExpr(existsFrom(operand, negated), _generate(operand, ctx));
 }
 
 /**

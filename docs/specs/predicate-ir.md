@@ -45,7 +45,7 @@ at all.
 | # | Node | Query lowering | Expr lowering |
 |---|---|---|---|
 | 1 | `Cmp(op, a, b, nullMode?)`<br>`op ∈ eq \| ne \| gt \| gte \| lt \| lte` | gate: one side `path`, the other `const`; flip `op` when reversed. `eq` → `{p: v}`; `ne` → `{p:{$ne:v}}`; ordered → `{p:{$gt:v}}` …<br>`v = null`, strict → `{p:{$type:"null"}}`<br>`v = null`, loose → `{p: null}` | `{$eq\|$ne\|$gt\|$gte\|$lt\|$lte: [A,B]}`<br>loose null → `{$in:[{$type:A},["null","missing"]]}` |
-| 2 | `Exists(path, present)` | `{p:{$exists: present}}` | `unsupported` — `undefined` is meaningful only in `$match` position |
+| 2 | `Exists(operand, present)` | gate: `operand` is a `path` → `{p:{$exists: present}}` | `{$eq\|$ne: [{$type: P}, "missing"]}` — `$type` reports `"missing"` for an absent field and `"null"` for a present-but-null one, the same line `$exists` draws |
 | 3 | `TypeIs(path, alias, negated)` | `{p:{$type:alias}}` / `{p:{$not:{$type:alias}}}`; gate: `alias` is a BSON type alias | `{$eq\|$ne: [{$type: P}, alias]}` |
 | 4 | `Mod(path, d, m, negated)` | `{p:{$mod:[d,m]}}` / `{p:{$not:{$mod:[d,m]}}}`; gate: `d`, `m` non-negative integer literals | `{$eq\|$ne: [{$mod:[P,d]}, m]}` |
 | 5 | `Membership(path, values, mode)` | `any` → `{p:{$in:[…]}}`; `all` → `{p:{$all:[…]}}` | `any` → `{$in:[P,[…]]}`; `all` → an `$and` of `Contains` |
@@ -97,8 +97,9 @@ each node moves when its two sides are made to read that vocabulary instead of t
 
 | Node | State |
 |---|---|
+| 2 `Exists` | **shared.** `$exists` as a query, a `$type`-against-`"missing"` test as an expression. |
 | 3 `TypeIs` | **shared.** One alias table, both cells derived. The Query cell is gated on a static path and takes the alias directly; the Expr cell accepts any operand and expands a query-only group alias (`number`) into the concrete types `$type` can return. |
-| the other ten | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
+| the other nine | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
 
 `TypeIs` moved first because its two sides provably disagreed: the expression cell compared
 `$type` against JavaScript's own spelling, so `typeof $.a === "boolean"` was false for every

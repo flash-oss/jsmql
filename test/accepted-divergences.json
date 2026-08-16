@@ -2416,6 +2416,110 @@
       "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
       "now": "'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a",
       "reason": "Intended, a CONSISTENCY fix. `jsmql.pipeline()` rejected a source `jsmql()` compiled happily: the lookup form was missing from its reroute list while `lowerWithCtx` had it, even though the comment above that list says the two entries must agree on every sugar. A strict-shape entry rejects input that would lower to the OTHER shape, and this input lowers to a Pipeline — the shape it asks for. `jsmql.update()` still refuses it, correctly: `$lookup` is not in the update-pipeline whitelist."
+    },
+    "expr\u0000$.a === undefined": {
+      "entry": "expr",
+      "src": "$.a === undefined",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$eq\":[{\"$type\":\"$a\"},\"missing\"]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "expr\u0000$.a !== undefined": {
+      "entry": "expr",
+      "src": "$.a !== undefined",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$ne\":[{\"$type\":\"$a\"},\"missing\"]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "expr\u0000undefined === $.a": {
+      "entry": "expr",
+      "src": "undefined === $.a",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$eq\":[{\"$type\":\"$a\"},\"missing\"]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "expr\u0000$.a.b.c === undefined": {
+      "entry": "expr",
+      "src": "$.a.b.c === undefined",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"missing\"]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "jsmql\u0000$.x === undefined ? 1 : 2": {
+      "entry": "jsmql",
+      "src": "$.x === undefined ? 1 : 2",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$x\"},\"missing\"]},\"then\":1,\"else\":2}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$x\"},\"missing\"]},\"then\":1,\"else\":2}},false]},{\"$ne\":[{\"$c",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "expr\u0000$.x === undefined ? 1 : 2": {
+      "entry": "expr",
+      "src": "$.x === undefined ? 1 : 2",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$x\"},\"missing\"]},\"then\":1,\"else\":2}}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "filter\u0000$.x === undefined ? 1 : 2": {
+      "entry": "filter",
+      "src": "$.x === undefined ? 1 : 2",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$x\"},\"missing\"]},\"then\":1,\"else\":2}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$x\"},\"missing\"]},\"then\":1,\"else\":2}},false]},{\"$ne\":[{\"$c",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "validate\u0000$.x === undefined ? 1 : 2": {
+      "entry": "validate",
+      "src": "$.x === undefined ? 1 : 2",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "jsmql\u0000$.a + undefined": {
+      "entry": "jsmql",
+      "src": "$.a + undefined",
+      "kind": "message",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "'undefined' is only meaningful in a comparison — 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.fiel",
+      "reason": "Intended, message follow-through. `undefined` used as a VALUE (not compared) still has no MongoDB equivalent and still throws, but the old text said it was \"only meaningful in '$match' position\" — no longer true now that a comparison works in expression position too. The message names the two comparison forms and the two alternatives (`null`, `delete $.field`)."
+    },
+    "expr\u0000$.a + undefined": {
+      "entry": "expr",
+      "src": "$.a + undefined",
+      "kind": "message",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "'undefined' is only meaningful in a comparison — 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.fiel",
+      "reason": "Intended, message follow-through. `undefined` used as a VALUE (not compared) still has no MongoDB equivalent and still throws, but the old text said it was \"only meaningful in '$match' position\" — no longer true now that a comparison works in expression position too. The message names the two comparison forms and the two alternatives (`null`, `delete $.field`)."
+    },
+    "filter\u0000$.a + undefined": {
+      "entry": "filter",
+      "src": "$.a + undefined",
+      "kind": "message",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "'undefined' is only meaningful in a comparison — 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the present-but-null case, or 'delete $.fiel",
+      "reason": "Intended, message follow-through. `undefined` used as a VALUE (not compared) still has no MongoDB equivalent and still throws, but the old text said it was \"only meaningful in '$match' position\" — no longer true now that a comparison works in expression position too. The message names the two comparison forms and the two alternatives (`null`, `delete $.field`)."
+    },
+    "validate\u0000$.a + undefined": {
+      "entry": "validate",
+      "src": "$.a + undefined",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'undefined' is only meaningful in a comparison — 'x === undefined' / 'x !== undefined' test whether a field is present. As a value it has no MongoDB equivalent: use 'null' for the pre",
+      "reason": "Intended, message follow-through. `undefined` used as a VALUE (not compared) still has no MongoDB equivalent and still throws, but the old text said it was \"only meaningful in '$match' position\" — no longer true now that a comparison works in expression position too. The message names the two comparison forms and the two alternatives (`null`, `delete $.field`)."
+    },
+    "expr\u0000$.x !== undefined": {
+      "entry": "expr",
+      "src": "$.x !== undefined",
+      "kind": "now-accepted",
+      "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
+      "now": "{\"$ne\":[{\"$type\":\"$x\"},\"missing\"]}",
+      "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
     }
   }
 }
