@@ -18,6 +18,13 @@
 
     <style>
       :root {
+        /* Both themes come from this token block and its dark counterpart
+           below. Every rule in this file reads a token, so the two themes
+           share one set of rules and cannot drift apart. `color-scheme` tells
+           the browser to paint its own surfaces — scroll bars, the search
+           box, the Prettify check box — to match. */
+        color-scheme: light dark;
+
         --fg: #1a1a1a;
         --muted: #6b6b6b;
         --subtle: #94a3b8;
@@ -44,8 +51,105 @@
         --error-bg: #fdf3f2;
         --err-soft: rgba(192, 57, 43, 0.12);
         --err-strong: rgba(192, 57, 43, 0.22);
+        /* The underline under the offending region of a rejected query. */
+        --err-marker: rgba(192, 57, 43, 0.18);
+        /* Base text colour of the two editors — the punctuation and operators
+           that no `cm-*` token class covers. */
+        --code-fg: #2e383c;
+        /* Text selection inside an editor: the second applies while the
+           editor does not hold the focus. */
+        --code-selection: #d7d4f0;
+        --code-selection-blur: #d9d9d9;
+        /* A data URI cannot read a token, so the whole `url()` is the token
+           and the dark block below restates it with a lighter stroke. */
+        --search-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b6b6b' stroke-width='1.6'><circle cx='7' cy='7' r='5'/><path d='m11 11 3 3'/></svg>");
         --mono:
           ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      /* The reader's system theme selects the palette. There is no switch in
+         the page: a browser set to dark gets the tokens below, and the layout,
+         the spacing and the colour meanings stay exactly as they are above. */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6e9ef;
+          --muted: #a2abb8;
+          --subtle: #838d9b;
+          --bg: #181b22;
+          --panel: #1e222a;
+          --sidebar-bg: #14171d;
+          --border: #2b313a;
+          --border-strong: #3b434f;
+          --accent: #6ea8fe;
+          --accent-soft: rgba(110, 168, 254, 0.16);
+          --accent-soft-strong: rgba(110, 168, 254, 0.26);
+          --expr: #6ea8fe;
+          --expr-soft: rgba(110, 168, 254, 0.16);
+          --expr-strong: rgba(110, 168, 254, 0.32);
+          --pipe: #f0a35e;
+          --pipe-soft: rgba(240, 163, 94, 0.16);
+          --pipe-strong: rgba(240, 163, 94, 0.32);
+          --filter: #3fcf9e;
+          --filter-soft: rgba(63, 207, 158, 0.16);
+          --filter-strong: rgba(63, 207, 158, 0.32);
+          --update: #b18aff;
+          --update-soft: rgba(177, 138, 255, 0.16);
+          --error: #ff8072;
+          --error-bg: #2b1a18;
+          --err-soft: rgba(255, 128, 114, 0.16);
+          --err-strong: rgba(255, 128, 114, 0.32);
+          --err-marker: rgba(255, 128, 114, 0.26);
+          --code-fg: #d7dce4;
+          --code-selection: rgba(110, 168, 254, 0.3);
+          --code-selection-blur: rgba(110, 168, 254, 0.16);
+          --search-icon: url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%23a2abb8' stroke-width='1.6'><circle cx='7' cy='7' r='5'/><path d='m11 11 3 3'/></svg>");
+        }
+
+        /* The pinned `neo` stylesheet picks its token colours against white,
+           so a dark surface needs them again. Each keeps the hue `neo` gives
+           it and changes only lightness, so a keyword stays blue and a string
+           stays orange in both themes — and the landing page, which loads the
+           same stylesheet and repeats these rules, matches this one. */
+        .cm-s-neo .cm-comment {
+          color: #7f8b98;
+        }
+
+        .cm-s-neo .cm-keyword,
+        .cm-s-neo .cm-property {
+          color: #7bb0e8;
+        }
+
+        .cm-s-neo .cm-atom,
+        .cm-s-neo .cm-number {
+          color: #c9a3e8;
+        }
+
+        .cm-s-neo .cm-node,
+        .cm-s-neo .cm-tag {
+          color: #ef8a7d;
+        }
+
+        .cm-s-neo .cm-string {
+          color: #e0a76a;
+        }
+
+        .cm-s-neo .cm-qualifier,
+        .cm-s-neo .cm-variable {
+          color: #4fc9a8;
+        }
+
+        /* `neo` draws the caret as a translucent grey block, which needs more
+           weight to read against a dark editor. */
+        .cm-s-neo .CodeMirror-cursor {
+          background: rgba(190, 200, 215, 0.45);
+        }
+
+        /* CodeMirror's own stylesheet fills the corner between the two scroll
+           bars with white. */
+        .CodeMirror-gutter-filler,
+        .CodeMirror-scrollbar-filler {
+          background-color: var(--bg);
+        }
       }
 
       * {
@@ -264,8 +368,7 @@
         width: 12px;
         height: 12px;
         margin-top: -6px;
-        background: no-repeat center / contain
-          url("data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16' fill='none' stroke='%236b6b6b' stroke-width='1.6'><circle cx='7' cy='7' r='5'/><path d='m11 11 3 3'/></svg>");
+        background: no-repeat center / contain var(--search-icon);
         opacity: 0.8;
         pointer-events: none;
       }
@@ -1035,8 +1138,30 @@
         border-right: 1px solid var(--border-strong);
       }
 
+      /* The pinned `neo` stylesheet paints the editor surface white and its
+         text near-black. Name both from the token block instead, so the two
+         editors and the output panel follow the page theme. */
+      .cm-s-neo.CodeMirror {
+        background-color: var(--panel);
+        color: var(--code-fg);
+      }
+
+      .CodeMirror-selected {
+        background: var(--code-selection-blur);
+      }
+
+      .CodeMirror-focused .CodeMirror-selected {
+        background: var(--code-selection);
+      }
+
+      .CodeMirror-line::selection,
+      .CodeMirror-line > span::selection,
+      .CodeMirror-line > span > span::selection {
+        background: var(--code-selection);
+      }
+
       .cm-s-neo .CodeMirror-linenumber {
-        color: #1a1a1a;
+        color: var(--fg);
         font-weight: 600;
         opacity: 1;
       }
@@ -1062,7 +1187,7 @@
       }
 
       .cm-error-marker {
-        background: rgba(192, 57, 43, 0.18);
+        background: var(--err-marker);
         border-bottom: 2px solid var(--error);
       }
 

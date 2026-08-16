@@ -10,6 +10,41 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — feat(site): both published pages follow the reader's system colour scheme
+
+[index.html](../index.html) and the playground carry a dark palette beside the
+light one, chosen by `prefers-color-scheme` alone. Neither page has a switch, a
+stored preference, or a class on `<html>`: the reader's system decides, which is
+also the only way to get the right paint on first frame with no flash. Both pages
+already routed every colour through a `:root` token block, so the dark theme is a
+second token block and nothing else — one set of rules serves both themes, and
+they cannot drift apart the way two hand-maintained stylesheets would.
+`color-scheme: light dark` hands the browser its own surfaces (scroll bars, the
+search box, the Prettify check box, the canvas behind the page), which is
+otherwise the part of a dark page that stays stubbornly white.
+
+Six colours sat outside the token block and blocked the swap, so they became
+tokens: the primary button's fill and its text (`--accent-hover`, `--on-accent`),
+the editors' base colour (`--code-fg`), the error underline (`--err-marker`), the
+editor selection (`--code-selection`, plus a blurred variant so the light theme
+keeps the two distinct states CodeMirror ships), and the sidebar's search icon.
+That last one is a data URI, and a data URI cannot read a token — so the whole
+`url()` *is* the token, restated in the dark block with a lighter stroke.
+
+The pinned CodeMirror `neo` stylesheet is a light-theme file: it picks its token
+colours against white. Loading a second, dark CodeMirror theme was the obvious
+alternative and does not work here — the theme name is fixed in JavaScript
+(`theme: "neo"`), and CSS cannot swap a class on a media query, so the switch
+would have needed script and a stored preference, which is exactly what this
+change avoids. Instead both pages restate `neo`'s six token families at a
+lightness that reads on a dark surface, each keeping the hue `neo` gives it, so a
+keyword stays blue and a string stays orange in either theme. The landing page
+uses the same tokeniser as the playground's editors, so repeating the same rules
+in both files is also what keeps a block on one page matching the same block on
+the other. Light mode is unchanged to the byte.
+
+---
+
 ## 2026-08-15 — chore: a receiver drift guard, and the docs the removed stream methods left behind
 
 Two kinds of rot, both surfaced by typing the completion surface.

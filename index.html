@@ -47,6 +47,13 @@
 
     <style>
       :root {
+        /* Both themes come from this token block and its dark counterpart
+           below. Every rule on the page reads a token, so the two themes share
+           one set of rules and cannot drift apart. `color-scheme` tells the
+           browser to paint its own surfaces — scroll bars, form controls, the
+           canvas behind the page — to match. */
+        color-scheme: light dark;
+
         --fg: #1a1a1a;
         --muted: #6b6b6b;
         --subtle: #94a3b8;
@@ -56,7 +63,9 @@
         --border: #e3e6ea;
         --border-strong: #d4d9e0;
         --accent: #2a6df4;
+        --accent-hover: #1f5ad4;
         --accent-soft: rgba(42, 109, 244, 0.1);
+        --on-accent: #fff;
         --expr: #2a6df4;
         --expr-soft: rgba(42, 109, 244, 0.1);
         --pipe: #b45309;
@@ -67,7 +76,72 @@
         --update-soft: rgba(124, 58, 237, 0.12);
         --error: #c0392b;
         --error-bg: #fdf3f2;
+        --code-fg: #2e383c;
         --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+      }
+
+      /* The reader's system theme selects the palette. There is no switch on
+         the page: a browser set to dark gets the tokens below, and the layout,
+         the spacing and the colour meanings stay exactly as they are above. */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6e9ef;
+          --muted: #a2abb8;
+          --subtle: #838d9b;
+          --bg: #181b22;
+          --panel: #1e222a;
+          --sidebar-bg: #14171d;
+          --border: #2b313a;
+          --border-strong: #3b434f;
+          --accent: #6ea8fe;
+          --accent-hover: #8bbaff;
+          --accent-soft: rgba(110, 168, 254, 0.16);
+          --on-accent: #10131a;
+          --expr: #6ea8fe;
+          --expr-soft: rgba(110, 168, 254, 0.16);
+          --pipe: #f0a35e;
+          --pipe-soft: rgba(240, 163, 94, 0.16);
+          --filter: #3fcf9e;
+          --filter-soft: rgba(63, 207, 158, 0.16);
+          --update: #b18aff;
+          --update-soft: rgba(177, 138, 255, 0.16);
+          --error: #ff8072;
+          --error-bg: #2b1a18;
+          --code-fg: #d7dce4;
+        }
+
+        /* The pinned `neo` stylesheet picks its token colours against white,
+           so a dark surface needs them again. Each keeps the hue `neo` gives
+           it and changes only lightness, so a keyword stays blue and a string
+           stays orange in both themes — and the playground, which loads the
+           same stylesheet and repeats these rules, matches this page. */
+        .cm-s-neo .cm-comment {
+          color: #7f8b98;
+        }
+
+        .cm-s-neo .cm-keyword,
+        .cm-s-neo .cm-property {
+          color: #7bb0e8;
+        }
+
+        .cm-s-neo .cm-atom,
+        .cm-s-neo .cm-number {
+          color: #c9a3e8;
+        }
+
+        .cm-s-neo .cm-node,
+        .cm-s-neo .cm-tag {
+          color: #ef8a7d;
+        }
+
+        .cm-s-neo .cm-string {
+          color: #e0a76a;
+        }
+
+        .cm-s-neo .cm-qualifier,
+        .cm-s-neo .cm-variable {
+          color: #4fc9a8;
+        }
       }
 
       * {
@@ -197,13 +271,13 @@
       .btn.primary {
         background: var(--accent);
         border-color: var(--accent);
-        color: #fff;
+        color: var(--on-accent);
       }
 
       .btn.primary:hover {
-        background: #1f5ad4;
-        border-color: #1f5ad4;
-        color: #fff;
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+        color: var(--on-accent);
       }
 
       .install {
@@ -352,7 +426,7 @@
       }
 
       pre.out {
-        background: #fff;
+        background: var(--panel);
       }
 
       /* A highlighted block. The `neo` stylesheet paints the `cm-*` spans the
@@ -362,7 +436,7 @@
          arrives from the script, so a block it never reached keeps the page's
          own text colour, and `.pending` / `.failed` below outrank it anyway. */
       pre.cm-s-neo {
-        color: #2e383c;
+        color: var(--code-fg);
       }
 
       /* One example compiles a whole recommendation engine. Its MQL runs to
