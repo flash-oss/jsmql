@@ -13,6 +13,7 @@
 // See docs/specs/lowering-grid.md.
 
 import type { Expr } from "../ast.ts";
+import type { ResolvedIteratee, ResolvedPredicate } from "../mql-array.ts";
 
 /** The receiver family a method requires. Decides which cells are applicable. */
 export type ReceiverFamily = "string" | "array" | "number" | "date" | "object";
@@ -64,6 +65,18 @@ export type LowerInput = {
    * what is wrong, so the caret lands on it.
    */
   err: (message: string, pos?: number) => Error;
+  /**
+   * Resolve a lodash iteratee — a one-parameter arrow, one of the shorthand forms
+   * (`"id"` / `{ active: true }` / `["a.b", v]`), a bare built-in, or omitted for identity.
+   *
+   * This one cannot be a leaf helper: it lowers a lambda body against a scope that binds
+   * the element, and only the compiler holds that scope. The RESULT is leaf-shaped, which
+   * is what lets `src/mql-array.ts` build shapes from it. The method name is already bound,
+   * so a rejection names the right method without the declaration repeating it.
+   */
+  iteratee: (node?: Expr) => ResolvedIteratee;
+  /** The same vocabulary read as a boolean, for a predicate-taking method. */
+  predicate: (node: Expr) => ResolvedPredicate;
 };
 
 /** A cell that cannot exist, with the reason a user reads. */

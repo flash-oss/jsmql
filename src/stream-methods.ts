@@ -10,7 +10,8 @@
 import type { ArrayElement, CallArg, Expr, Pipeline, SpreadElement, UpdateFilter } from "./ast.ts";
 import { someExpr } from "./ast-walk.ts";
 import { callbackBlockToValue, requireStageFreeCallback, type StageRewrite } from "./callback-block.ts";
-import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda, stringKeyExpr } from "./codegen.ts";
+import { CodegenError, generateWithCtx, type GenerateCtx, shorthandToLambda } from "./codegen.ts";
+import { stringKeyExpr } from "./mql-array.ts";
 import {
   aggregateArgToLambda,
   EMPTY_ENCLOSING,

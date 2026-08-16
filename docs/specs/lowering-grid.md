@@ -143,11 +143,13 @@ the count reaches zero.
 | number | `src/methods/number.ts` | 4 |
 | object (key/value reshapers) | `src/methods/object.ts` | 4 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
+| lodash array (value vocabulary) | `src/methods/lodash-array.ts` | 33 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
 test compare the directory to the registry directly. Shared MQL shape-builders live beside
-it — `src/mql-shape.ts` (generic: `cond`, the index clamps, the literal readers) and
-`src/mql-string.ts` (string-specific) — not inside it.
+it, not inside it: `src/mql-shape.ts` (generic — `cond`, the index clamps, the literal
+readers), `src/mql-string.ts` (string-specific) and `src/mql-array.ts` (array-specific,
+plus the resolved-iteratee shape the array family reads).
 
 Each family file is a **leaf**: it imports only its own types and other leaves. What a
 lowering needs from the compiler arrives through `LowerInput` as a **service**, never as an
@@ -158,6 +160,13 @@ import:
 | `gen(expr)` | lower an argument |
 | `internalVar(base)` | mint a variable name that cannot capture a user parameter |
 | `err(message, pos?)` | reject, with a caret — importing `CodegenError` would create the cycle |
+| `iteratee(node?)` | resolve a lodash iteratee — it lowers a lambda body against a scope binding the element, which only the compiler holds |
+| `predicate(node)` | the same vocabulary read as a boolean |
+
+A resolved iteratee carries its own `innerVar`, for a binding read from *inside* the element
+binding: the user's iteratee parameter is in scope there, so a bare name would capture it.
+Putting the scoped minter on the iteratee is what stops a call site from forgetting the
+extra scope — four of them used to spell it out by hand.
 
 Add a service only when a lowering genuinely cannot be written without it. `LowerInput`
 becoming a grab-bag is the failure `GenerateCtx` already demonstrated. A family file that reaches

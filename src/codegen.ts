@@ -9,6 +9,21 @@ import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import {
+  distinctKeysExpr,
+  firstOf,
+  iterateeKeys,
+  jsBool,
+  lastOf,
+  type ResolvedIteratee,
+  type ResolvedPredicate,
+  reverseArrayOf,
+  singleArrayArg,
+  sizeOf,
+  stringKeyExpr,
+  takeDropWhile,
+  uniqByReduce,
+} from "./mql-array.ts";
+import {
   clampNonNegative,
   clampNonNegativeIndex,
   coerceStringBinding,
@@ -1275,26 +1290,6 @@ function rejectIncompatibleChain(recv: ReceiverFamily | "bool", method: string, 
     `'.${method}(...)' expects ${RECEIVER_NOUN[need]} receiver, but ${receiverPhrase(object)} returns ${RECEIVER_NOUN[recv]}. ${hint}`,
     object.pos,
   );
-}
-
-/** Wrap an already-generated MQL expression in a JS-truthy check.
- *  Returns true iff `value` is truthy under JS rules (false, null, missing,
- *  0, "" → false; everything else → true; NaN treated as truthy — see note). */
-function jsBool(value: unknown): unknown {
-  return {
-    $and: [
-      // Catches both `null` and *missing*. A bare `$ne: [value, null]` does NOT
-      // catch missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct
-      // from null (`$eq: ["$absent", null]` is false), so `arr.filter(x => x.f)`
-      // would wrongly keep elements where `f` is absent. `$ifNull` collapses
-      // missing → null first, matching JS where `undefined` is falsy. The other
-      // three clauses compare the raw value (false/""/0 are never "missing").
-      { $ne: [{ $ifNull: [value, null] }, null] },
-      { $ne: [value, false] },
-      { $ne: [value, ""] },
-      { $ne: [value, 0] },
-    ],
-  };
 }
 
 /** jsBool around a generated value, but elide if the source AST is already
@@ -2770,30 +2765,6 @@ function arrayToObjectOfLiteralPairs(pairs: unknown): Record<string, unknown> {
   return { $arrayToObject: [pairs] };
 }
 
-/**
- * Wrap the operand of a **positional single-array-argument** operator (`$size`,
- * `$first`, `$last`, `$reverseArray`) so a *literal* array can't be read as the
- * argument LIST. MongoDB splices a bare array there: `{ $size: [1, 2] }` is two
- * arguments ("takes exactly 1 arguments. 2 were passed in") and the one-element
- * `{ $size: [1] }` unwraps to the scalar ("must be an array, but was of type:
- * int") — so `[1, 2].length` emitted invalid MQL. One extra level,
- * `{ $size: [[1, 2]] }`, is unwrapped exactly once back to the intended operand.
- *
- * Every other operand — a field path, a `$$var`, a nested operator document — is
- * already unambiguous and passes through untouched, so the four constructors below
- * are safe to use at every site. Same trap and same remedy as
- * `arrayToObjectOfLiteralPairs`. Applies only to jsmql's own lowering; a raw
- * `$op($size, …)` stays a faithful passthrough (HR2).
- */
-function singleArrayArg(operand: unknown): unknown {
-  return Array.isArray(operand) ? [operand] : operand;
-}
-
-const sizeOf = (a: unknown): Record<string, unknown> => ({ $size: singleArrayArg(a) });
-const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
-const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
-const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
-
 function generateComputedKeyObject(entries: KeyValueEntry[], ctx: GenerateCtx): unknown {
   // Emit `$arrayToObject`'s `{ k, v }` object-pair form rather than the `[k, v]`
   // array-pair form: one less nesting level once wrapped, self-documenting, and
@@ -3238,14 +3209,26 @@ export function shorthandToLambda(arg: Expr, method: string, param: string): Lam
 // `src` is the AST the `value` was generated from — carried so a predicate
 // context can ask `isProvablyBool` whether the jsBool wrap can be elided.
 // Absent for the identity iteratee (an element value is never provably bool).
-type ResolvedIteratee = { as: string; elem: string; value: unknown; src?: Expr };
 function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: GenerateCtx): ResolvedIteratee {
   const AS = gensymInScope(ctx, exprVar("item"));
-  if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}` };
+  // A variable read from INSIDE the element binding is gensymmed against the iteratee's
+  // own name too, because the user's parameter is in scope there. Carrying the minter on
+  // the resolved iteratee is what stops a call site from forgetting the extra scope.
+  const innerVar =
+    (as: string) =>
+    (base: string): [string, string] =>
+      internalVar(extendCtx(ctx, [as]), base);
+  if (iteratee === undefined) return { as: AS, elem: `$$${AS}`, value: `$$${AS}`, innerVar: innerVar(AS) };
   if (iteratee.type === "Lambda" && iteratee.block === undefined && iteratee.params.length === 1) {
     const as = safeVarName(iteratee.params[0]);
     const body = iteratee.body as Expr;
-    return { as, elem: `$$${as}`, value: _generate(body, extendCtx(ctx, [iteratee.params[0]])), src: body };
+    return {
+      as,
+      elem: `$$${as}`,
+      value: _generate(body, extendCtx(ctx, [iteratee.params[0]])),
+      src: body,
+      innerVar: innerVar(as),
+    };
   }
   // A bare built-in (`.uniqBy(Number)`, `.map(ObjectId)`) reads the element as a
   // scalar, which is what a value-mode array holds — so it belongs here rather than
@@ -3253,7 +3236,7 @@ function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: Genera
   const lam = bareCallbackToLambda(iteratee, AS) ?? shorthandToLambda(iteratee, method, AS);
   if (lam !== null) {
     const body = lam.body as Expr;
-    return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body };
+    return { as: AS, elem: `$$${AS}`, value: _generate(body, extendCtx(ctx, [AS])), src: body, innerVar: innerVar(AS) };
   }
   throw new CodegenError(
     `.${method}(iteratee) takes a field name ("id"), a matches object ({ active: true }), a ["field", value] pair, or a single-parameter arrow ('x => x.id').`,
@@ -3269,100 +3252,9 @@ function resolveIteratee(iteratee: Expr | undefined, method: string, ctx: Genera
 // `.filter` / `.find` / `.some` / `.every`. Raw MQL truthiness would make `.reject(p)`
 // stop being the complement of `.filter(p)` — an element whose predicate value is `""`
 // would fall out of BOTH halves — and put that element in the wrong `.partition` bucket.
-function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): { as: string; cond: unknown } {
+function resolvePredicate(pred: Expr, method: string, ctx: GenerateCtx): ResolvedPredicate {
   const it = resolveIteratee(pred, method, ctx);
-  return { as: it.as, cond: it.src ? jsBoolIfNeeded(it.src, it.value) : jsBool(it.value) };
-}
-
-// `.takeWhile` / `.dropWhile` from the LEFT: find the first element whose predicate
-// is falsy (`$indexOfArray` on the strict-boolified predicate array → -1 if none),
-// then slice on that boundary. The receiver is bound to an internal var; the caller
-// passes the (possibly reversed) array in. `drop` picks the keep-from-boundary slice;
-// otherwise the take-up-to-boundary slice.
-function takeDropWhile(
-  arrExpr: unknown,
-  pred: { as: string; cond: unknown },
-  drop: boolean,
-  ctx: GenerateCtx,
-): unknown {
-  const [vArr, arr] = internalVar(ctx, "arr");
-  const [vFi, fi] = internalVar(ctx, "fi");
-  const preds = { $map: { input: arr, as: pred.as, in: { $cond: [pred.cond, true, false] } } };
-  const body = drop
-    ? { $cond: [{ $eq: [fi, -1] }, [], { $slice: [arr, fi, { $size: arr }] }] }
-    : // take: the first `fi` elements. The 2-arg `$slice` (first-n) — NOT the
-      // 3-arg `$slice: [arr, 0, fi]` — so a boundary at index 0 (the first
-      // element already fails the predicate) is `$slice: [arr, 0]` → `[]`, instead of
-      // the 3-arg `$slice: [arr, 0, 0]` mongod rejects ("count must be positive").
-      { $cond: [{ $eq: [fi, -1] }, arr, { $slice: [arr, fi] }] };
-  return {
-    $let: { vars: { [vArr]: arrExpr }, in: { $let: { vars: { [vFi]: { $indexOfArray: [preds, false] } }, in: body } } },
-  };
-}
-
-// A null-safe stringified object key for `$arrayToObject` / `$group`-`_id` entries.
-// lodash coerces a group key to a string; MongoDB's `$toString` yields *null* for a
-// missing/null value, and `$arrayToObject` then rejects it ("the value of 'k' must be
-// of type string"). Coerce that null to the literal "null" (matching `String(null)`)
-// so a missing/null grouping field lands under one "null" key instead of erroring on
-// the server. NB `$toString` still errors on an object/array value — a separate,
-// documented footgun. Shared by value-mode `keyBy`/`groupBy`/`countBy` and their
-// stream-collapse forms (imported by src/stream-methods.ts) so both stay consistent.
-export function stringKeyExpr(value: unknown): unknown {
-  return { $ifNull: [{ $toString: value }, "null"] };
-}
-
-// group/count key set of an array: distinct STRINGIFIED iteratee values (lodash
-// coerces group keys to strings). `$setUnion` needs a 2-arg form to be valid.
-function distinctKeysExpr(arr: unknown, it: ResolvedIteratee): unknown {
-  return { $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.value) } }, []] };
-}
-
-// The iteratee-keyed values of an array: `[it(x) for x in arr]` (NOT stringified —
-// used for `$in` membership in the `*By` set ops).
-function iterateeKeys(arr: unknown, it: ResolvedIteratee): unknown {
-  return { $map: { input: arr, as: it.as, in: it.value } };
-}
-
-// Order-preserving keep-first dedupe of `input` BY iteratee key (`.uniqBy`, and the
-// `.unionBy`/`.xorBy` tails). Tracks seen keys in a `{ seen, out }` accumulator, then
-// projects `out`.
-function uniqByReduce(input: unknown, it: ResolvedIteratee, ctx: GenerateCtx): unknown {
-  // The iteratee is written against the user's own param name, so the $let binding it
-  // must NOT enclose the $reduce accumulator reads — an iteratee like `value => value.id`
-  // would otherwise shadow `$$value` and read `.seen`/`.out` off the element.
-  // A $let var's VALUE is evaluated in the enclosing scope, so computing the key there
-  // keeps the user's name scoped to the key expression alone. It also binds the key once
-  // instead of re-emitting the iteratee for both the membership test and the accumulator.
-  const [k, key] = internalVar(ctx, "key");
-  // An identity iteratee (`x => x`) is just the element — no binding needed.
-  const keyExpr = it.value === it.elem ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.value } };
-  return {
-    $getField: {
-      field: "out",
-      input: {
-        $reduce: {
-          input,
-          initialValue: { seen: [], out: [] },
-          in: {
-            $let: {
-              vars: { [k]: keyExpr },
-              in: {
-                $cond: [
-                  { $in: [key, "$$value.seen"] },
-                  "$$value",
-                  {
-                    seen: { $concatArrays: ["$$value.seen", [key]] },
-                    out: { $concatArrays: ["$$value.out", ["$$this"]] },
-                  },
-                ],
-              },
-            },
-          },
-        },
-      },
-    },
-  };
+  return { as: it.as, cond: it.src ? jsBoolIfNeeded(it.src, it.value) : jsBool(it.value), innerVar: it.innerVar };
 }
 
 // A lodash (value[, key]) iteratee over `$objectToArray` entries (used by
@@ -3694,6 +3586,8 @@ function generateMethodCall(
       pos: callPos,
       internalVar: (base: string) => internalVar(ctx, base),
       err: (message: string, pos?: number) => new CodegenError(message, pos ?? callPos),
+      iteratee: (node?: Expr) => resolveIteratee(node, method, ctx),
+      predicate: (node: Expr) => resolvePredicate(node, method, ctx),
     });
   }
 
@@ -4477,78 +4371,13 @@ function generateMethodCall(
       );
 
     // ── lodash array methods (value vocabulary) ──────────────────────────────
-    case "sum":
-    case "mean":
-    case "max":
-    case "min": {
-      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      const op = method === "sum" ? "$sum" : method === "mean" ? "$avg" : method === "max" ? "$max" : "$min";
-      return { [op]: genObj };
-    }
-    case "sumBy":
-    case "meanBy": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], method, ctx);
-      return { [method === "sumBy" ? "$sum" : "$avg"]: { $map: { input: genObj, as: it.as, in: it.value } } };
-    }
-    case "minBy":
-    case "maxBy": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], method, ctx);
-      // Decorate each element with its key, sort ascending, take the last (max) or
-      // first (min) element back out.
-      const [vSorted, sorted] = internalVar(ctx, "sorted");
-      return {
-        $let: {
-          vars: {
-            [vSorted]: {
-              $sortArray: {
-                input: { $map: { input: genObj, as: it.as, in: { k: it.value, v: it.elem } } },
-                sortBy: { k: 1 },
-              },
-            },
-          },
-          in: { $getField: { field: "v", input: { $arrayElemAt: [sorted, method === "maxBy" ? -1 : 0] } } },
-        },
-      };
-    }
-    case "sortedUniq": // MQL has no sorted-array optimisation; alias of the general form.
-    case "uniq": {
-      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      // `$setUnion` of one array IS dedupe. It does not preserve input order, and lodash
-      // does — but nobody writes an ordering when they write `.uniq()`, so MongoDB's
-      // behaviour wins over a hand-built order-preserving `$reduce` (SR2). Same set,
-      // verified on a live mongod; 144 characters become 26.
-      return { $setUnion: singleArrayArg(genObj) };
-    }
-    case "sortedUniqBy": // alias of .uniqBy (no sorted-array optimisation in MQL)
-    case "uniqBy": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      // Track seen keys, keep the first element for each; then drop the tracker.
-      return uniqByReduce(genObj, resolveIteratee(exprArgs[0], method, ctx), ctx);
-    }
-    case "compact": {
-      checkArity("compact", { sig: "", none: true }, exprArgsOnly(args, "compact").length, callPos);
-      // JS truthiness via jsBool, so `.compact()` drops exactly what `_.compact`
-      // drops and agrees with the equivalent `.filter(x => x)`. Raw MQL
-      // truthiness would keep "" — see the jsBool note for the NaN caveat.
-      const [vItem, item] = internalVar(ctx, "item");
-      return { $filter: { input: genObj, as: vItem, cond: jsBool(item) } };
-    }
-    case "flatten": {
-      checkArity("flatten", { sig: "", none: true }, exprArgsOnly(args, "flatten").length, callPos);
-      // One level; `$isArray` guard so non-array elements pass through.
-      return {
-        $reduce: {
-          input: genObj,
-          initialValue: [],
-          in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
-        },
-      };
-    }
+    // .sum / .mean / .max / .min → src/methods/lodash-array.ts
+    // .sumBy / .meanBy → src/methods/lodash-array.ts
+    // .minBy / .maxBy → src/methods/lodash-array.ts
+    // .uniq / .sortedUniq → src/methods/lodash-array.ts
+    // .uniqBy / .sortedUniqBy → src/methods/lodash-array.ts
+    // .compact → src/methods/lodash-array.ts
+    // .flatten → src/methods/lodash-array.ts
     case "chunk": {
       const exprArgs = exprArgsOnly(args, "chunk");
       checkArity("chunk", { sig: "size", exact: 1 }, exprArgs.length, callPos);
@@ -4632,31 +4461,8 @@ function generateMethodCall(
       if (isObjectProducing(object, ctx)) return sizeOf({ $objectToArray: genObj });
       return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
     }
-    case "takeWhile":
-    case "dropWhile":
-    case "takeRightWhile":
-    case "dropRightWhile": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
-      const pred = resolvePredicate(exprArgs[0], method, ctx);
-      const drop = method === "dropWhile" || method === "dropRightWhile";
-      const fromRight = method === "takeRightWhile" || method === "dropRightWhile";
-      // From the right = do the left-side scan on the reversed array, then reverse back.
-      if (!fromRight) return takeDropWhile(genObj, pred, drop, ctx);
-      return reverseArrayOf(takeDropWhile(reverseArrayOf(genObj), pred, drop, ctx));
-    }
-    case "sample": {
-      // A random element: $arrayElemAt at floor($rand * size). Non-deterministic at
-      // runtime (like the stream `.sample` / `$sample`), deterministic to compile.
-      checkArity("sample", { sig: "", none: true }, exprArgsOnly(args, "sample").length, callPos);
-      const [vArr, arr] = internalVar(ctx, "arr");
-      return {
-        $let: {
-          vars: { [vArr]: genObj },
-          in: { $arrayElemAt: [arr, { $floor: { $multiply: [{ $rand: {} }, { $size: arr }] } }] },
-        },
-      };
-    }
+    // .takeWhile / .dropWhile / .takeRightWhile / .dropRightWhile → src/methods/lodash-array.ts
+    // .sample → src/methods/lodash-array.ts
     case "sampleSize": {
       // n random elements without replacement: decorate each with a random key, sort
       // by it, take the first n, undecorate. n past the length yields the whole shuffle.
@@ -4683,106 +4489,14 @@ function generateMethodCall(
         },
       };
     }
-    case "intersection": {
-      // lodash documents `.intersection` as returning UNIQUE values, which the old
-      // `$filter` did not do — it kept duplicates from the receiver, matching neither
-      // lodash nor MongoDB. `$setIntersection` is unique, so this moves TOWARDS the
-      // documented contract; only the order differs, and order is the unwritten part.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
-      return { $setIntersection: [genObj, _generate(exprArgs[0], ctx)] };
-    }
-    case "difference": {
-      // NOT `$setDifference`: lodash's `.difference` keeps duplicates from the receiver
-      // (`[3,1,1]`, not `[3,1]`), and dropping them would change the SET, not just the
-      // order. The developer wrote `.difference`, whose meaning includes those elements.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
-      const other = _generate(exprArgs[0], ctx);
-      const [vItem, item] = internalVar(ctx, "item");
-      return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, other] }] } } };
-    }
-    case "union": {
-      const exprArgs = exprArgsOnly(args, "union");
-      checkArity("union", { sig: "other", exact: 1 }, exprArgs.length, callPos);
-      // `$setUnion` IS the deduped union. Order is not preserved, and is not something
-      // `.union(...)` asks for — see SR2.
-      return { $setUnion: [genObj, _generate(exprArgs[0], ctx)] };
-    }
-    case "without": {
-      // lodash `without(arr, ...values)` — exclude the given values (variadic).
-      const exprArgs = exprArgsOnly(args, "without");
-      checkArity("without", { sig: "...values", atLeast: 1 }, exprArgs.length, callPos);
-      const values = exprArgs.map((a) => _generate(a, ctx));
-      const [vItem, item] = internalVar(ctx, "item");
-      return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, values] }] } } };
-    }
-    case "xor": {
-      // Symmetric difference. lodash documents `.xor` as returning UNIQUE values, so the
-      // set-operator composition says exactly what it means: everything in one side and
-      // not the other, both ways. Order is not preserved and was never asked for (SR2).
-      // Verified same-set on a live mongod across ragged, equal and empty inputs.
-      const exprArgs = exprArgsOnly(args, "xor");
-      checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
-      const other = _generate(exprArgs[0], ctx);
-      return { $setUnion: [{ $setDifference: [genObj, other] }, { $setDifference: [other, genObj] }] };
-    }
-    case "differenceBy":
-    case "intersectionBy": {
-      // Like difference/intersection but compared by iteratee key.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[1], method, ctx);
-      const otherKeys = iterateeKeys(_generate(exprArgs[0], ctx), it);
-      // The internal binding is read from inside a `$filter` bound to the USER's
-      // iteratee param, so it must be gensym'd against that name too.
-      const [vKeys, keys] = internalVar(extendCtx(ctx, [it.as]), "otherKeys");
-      const inOther = { $in: [it.value, keys] };
-      return {
-        $let: {
-          vars: { [vKeys]: otherKeys },
-          in: {
-            $filter: { input: genObj, as: it.as, cond: method === "intersectionBy" ? inOther : { $not: [inOther] } },
-          },
-        },
-      };
-    }
-    case "unionBy": {
-      // Concatenate then keep-first dedupe BY iteratee key.
-      const exprArgs = exprArgsOnly(args, "unionBy");
-      checkArity("unionBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[1], "unionBy", ctx);
-      return uniqByReduce({ $concatArrays: [genObj, _generate(exprArgs[0], ctx)] }, it, ctx);
-    }
-    case "xorBy": {
-      // Symmetric difference BY iteratee key: uniqBy( A∖B ++ B∖A ) on the keys.
-      const exprArgs = exprArgsOnly(args, "xorBy");
-      checkArity("xorBy", { sig: "other, iteratee", exact: 2 }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[1], "xorBy", ctx);
-      const other = _generate(exprArgs[0], ctx);
-      // The key-set bindings are read from inside `$filter`s bound to the USER's
-      // iteratee param, so gensym them against that name too.
-      const itCtx = extendCtx(ctx, [it.as]);
-      const [vA, a] = internalVar(itCtx, "a");
-      const [vB, b] = internalVar(itCtx, "b");
-      const [vAKeys, aKeys] = internalVar(itCtx, "aKeys");
-      const [vBKeys, bKeys] = internalVar(itCtx, "bKeys");
-      const aNotInB = { $filter: { input: a, as: it.as, cond: { $not: [{ $in: [it.value, bKeys] }] } } };
-      const bNotInA = { $filter: { input: b, as: it.as, cond: { $not: [{ $in: [it.value, aKeys] }] } } };
-      // Outer $let binds the two arrays once; inner derives their key sets from the
-      // bound copies (MongoDB $let vars can't reference their siblings).
-      return {
-        $let: {
-          vars: { [vA]: genObj, [vB]: other },
-          in: {
-            $let: {
-              vars: { [vAKeys]: iterateeKeys(a, it), [vBKeys]: iterateeKeys(b, it) },
-              in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it, ctx),
-            },
-          },
-        },
-      };
-    }
+    // .intersection → src/methods/lodash-array.ts
+    // .difference → src/methods/lodash-array.ts
+    // .union → src/methods/lodash-array.ts
+    // .without → src/methods/lodash-array.ts
+    // .xor → src/methods/lodash-array.ts
+    // .differenceBy / .intersectionBy → src/methods/lodash-array.ts
+    // .unionBy → src/methods/lodash-array.ts
+    // .xorBy → src/methods/lodash-array.ts
     case "zipObject": {
       const exprArgs = exprArgsOnly(args, "zipObject");
       checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
@@ -4861,44 +4575,9 @@ function generateMethodCall(
         },
       };
     }
-    case "keyBy": {
-      const exprArgs = exprArgsOnly(args, "keyBy");
-      // Iteratee is optional — omitted means identity (lodash `_.keyBy([...])`).
-      checkArity("keyBy", { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], "keyBy", ctx);
-      // { <key>: <last element with that key> } — $arrayToObject keeps the last.
-      return { $arrayToObject: { $map: { input: genObj, as: it.as, in: { k: stringKeyExpr(it.value), v: it.elem } } } };
-    }
-    case "groupBy":
-    case "countBy": {
-      const exprArgs = exprArgsOnly(args, method);
-      // Iteratee is optional — omitted means identity (lodash `_.countBy([1,2,2])`
-      // → `{ "1": 1, "2": 2 }`, `_.groupBy([1,2,2])` → `{ "1": [1], "2": [2,2] }`).
-      checkArity(method, { sig: "[iteratee]", allowed: [0, 1] }, exprArgs.length, callPos);
-      const it = resolveIteratee(exprArgs[0], method, ctx);
-      // Read from inside a `$filter` bound to the USER's iteratee param — gensym
-      // against that name too.
-      const [vKey, key] = internalVar(extendCtx(ctx, [it.as]), "key");
-      const filtered = { $filter: { input: genObj, as: it.as, cond: { $eq: [stringKeyExpr(it.value), key] } } };
-      return {
-        $arrayToObject: {
-          $map: {
-            input: distinctKeysExpr(genObj, it),
-            as: vKey,
-            in: { k: key, v: method === "countBy" ? { $size: filtered } : filtered },
-          },
-        },
-      };
-    }
-    case "partition":
-    case "reject": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
-      const p = resolvePredicate(exprArgs[0], method, ctx);
-      const yes = { $filter: { input: genObj, as: p.as, cond: p.cond } };
-      const no = { $filter: { input: genObj, as: p.as, cond: { $not: [p.cond] } } };
-      return method === "reject" ? no : [yes, no];
-    }
+    // .keyBy → src/methods/lodash-array.ts
+    // .groupBy / .countBy → src/methods/lodash-array.ts
+    // .partition / .reject → src/methods/lodash-array.ts
 
     // ── lodash object methods (value vocabulary) ─────────────────────────────
     case "mapValues":

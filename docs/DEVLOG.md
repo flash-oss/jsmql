@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the lodash array family joins the grid, and the iteratee becomes a service
+
+The largest family so far: 33 declarations in `src/methods/lodash-array.ts`, ratchet
+119 → 86.
+
+Two things had to move first. `src/mql-array.ts` is a third leaf, holding the shapes the
+array lowerings share — `singleArrayArg` and its four constructors, `jsBool`,
+`stringKeyExpr`, `uniqByReduce`, `takeDropWhile` — plus the `ResolvedIteratee` type. And
+`LowerInput` gained its fourth and fifth services, `iteratee` and `predicate`. Those two
+genuinely cannot be leaves: resolving an iteratee lowers a lambda body against a scope that
+binds the element, and only the compiler holds that scope. The RESULT is leaf-shaped, which
+is exactly what lets `mql-array.ts` build from it.
+
+A resolved iteratee now carries its own `innerVar` — the minter for a variable read from
+INSIDE the element binding, gensymmed against the user's parameter name as well as the
+outer scope. Four call sites used to spell that out by hand as
+`internalVar(extendCtx(ctx, [it.as]), …)`, and one that forgot would have emitted MQL that
+captures a user parameter. Carrying the scoped minter on the iteratee makes it unforgettable.
+
+What stays in the switch from this family is the JavaScript CALLBACK methods — `.map`,
+`.filter`, `.reduce`, `.some` and friends. Their callbacks take up to three parameters
+(element, index, array), and the index form iterates a `$zip`, so lowering one needs a body
+CONTEXT the compiler builds rather than a resolved value. That is a larger service than an
+iteratee, and the family file says so.
+
+Output-neutral: the harness reports the same 209 accepted divergences and nothing
+unclassified, and `.xorBy` / `.groupBy` were re-checked against lodash's own results on a
+live `mongod`.
+
+---
+
 ## 2026-08-16 — refactor: the slice-index resolvers become leaves, and seven string methods follow
 
 `normaliseSliceIndex`, `resolveSliceIndex` and `clampNonNegativeIndex` each read
