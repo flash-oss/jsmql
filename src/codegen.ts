@@ -3588,6 +3588,7 @@ function generateMethodCall(
       err: (message: string, pos?: number) => new CodegenError(message, pos ?? callPos),
       iteratee: (node?: Expr) => resolveIteratee(node, method, ctx),
       predicate: (node: Expr) => resolvePredicate(node, method, ctx),
+      objIteratee: (node: Expr) => resolveObjIteratee(node, method, ctx),
     });
   }
 
@@ -4580,28 +4581,10 @@ function generateMethodCall(
     // .partition / .reject → src/methods/lodash-array.ts
 
     // ── lodash object methods (value vocabulary) ─────────────────────────────
-    case "mapValues":
-    case "mapKeys": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "iteratee", exact: 1 }, exprArgs.length, callPos);
-      const { as, body: mapped } = resolveObjIteratee(exprArgs[0], method, ctx);
-      const entry =
-        method === "mapValues" ? { k: `$$${as}.k`, v: mapped } : { k: { $toString: mapped }, v: `$$${as}.v` };
-      return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as, in: entry } } };
-    }
+    // .mapValues / .mapKeys → src/methods/object.ts
     // .pick → src/methods/object.ts
     // .omit → src/methods/object.ts
-    case "pickBy":
-    case "omitBy": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "predicate", exact: 1 }, exprArgs.length, callPos);
-      const { as, body: cond } = resolveObjIteratee(exprArgs[0], method, ctx);
-      return {
-        $arrayToObject: {
-          $filter: { input: { $objectToArray: genObj }, as, cond: method === "pickBy" ? cond : { $not: [cond] } },
-        },
-      };
-    }
+    // .pickBy / .omitBy → src/methods/object.ts
     // .invert → src/methods/object.ts
     // .toPairs → src/methods/object.ts
     case "fromPairs": {

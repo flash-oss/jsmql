@@ -141,7 +141,7 @@ the count reaches zero.
 | date accessors | `src/methods/date-accessors.ts` | 16 |
 | string | `src/methods/string.ts` | 22 |
 | number | `src/methods/number.ts` | 4 |
-| object (key/value reshapers) | `src/methods/object.ts` | 4 |
+| object (key/value reshapers) | `src/methods/object.ts` | 8 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
 | lodash array (value vocabulary) | `src/methods/lodash-array.ts` | 33 |
 
@@ -162,6 +162,7 @@ import:
 | `err(message, pos?)` | reject, with a caret — importing `CodegenError` would create the cycle |
 | `iteratee(node?)` | resolve a lodash iteratee — it lowers a lambda body against a scope binding the element, which only the compiler holds |
 | `predicate(node)` | the same vocabulary read as a boolean |
+| `objIteratee(node)` | resolve a `(value[, key])` iteratee over `$objectToArray` entries |
 
 A resolved iteratee carries its own `innerVar`, for a binding read from *inside* the element
 binding: the user's iteratee parameter is in scope there, so a bare name would capture it.

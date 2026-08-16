@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the object iteratee methods join the grid
+
+`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` complete `src/methods/object.ts`, which
+now holds 8. They needed the sixth service, `objIteratee` — the `(value[, key])` form over
+`$objectToArray` entries, where the arrow's parameters bind to the entry's `.v` and `.k`
+and the body lowers against that scope. Same reason as `iteratee`: only the compiler holds
+the scope, and the result is leaf-shaped.
+
+The four are two pairs that differ in one place each, so they declare as two factories:
+`pairMapper` swaps either half of the pair, `pairFilter` keeps or drops it. Ratchet 86 → 82.
+
+Output-neutral; the harness reports the same 209 accepted divergences.
+
+---
+
 ## 2026-08-16 — refactor: the lodash array family joins the grid, and the iteratee becomes a service
 
 The largest family so far: 33 declarations in `src/methods/lodash-array.ts`, ratchet

@@ -77,6 +77,16 @@ export type LowerInput = {
   iteratee: (node?: Expr) => ResolvedIteratee;
   /** The same vocabulary read as a boolean, for a predicate-taking method. */
   predicate: (node: Expr) => ResolvedPredicate;
+  /**
+   * Resolve a lodash `(value[, key])` iteratee over `$objectToArray` entries — the shape
+   * `.mapValues` / `.mapKeys` / `.pickBy` / `.omitBy` take. Same reason it is a service:
+   * the arrow's parameters bind to the entry's `.v` and `.k`, and the body lowers against
+   * that scope.
+   *
+   * Returns the `$map`/`$filter` element variable alongside the body, so the caller emits
+   * the SAME name the body was built against.
+   */
+  objIteratee: (node: Expr) => { as: string; body: unknown };
 };
 
 /** A cell that cannot exist, with the reason a user reads. */

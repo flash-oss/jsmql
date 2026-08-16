@@ -1,12 +1,12 @@
 // Object methods — the key/value reshapers.
 //
-// All four here work the same way: `$objectToArray` turns the document into `{k, v}`
+// Nearly all of them work the same way: `$objectToArray` turns the document into `{k, v}`
 // pairs, the pairs are transformed, and `$arrayToObject` puts it back. `.pick` is the
 // exception — a fixed key list needs no round trip, so it field-selects directly.
 //
-// NOT YET HERE: `.mapValues`, `.mapKeys`, `.pickBy`, `.omitBy`. Each takes an iteratee
-// whose body is lowered against a scope that binds the pair variable, and that resolver
-// needs a `GenerateCtx`. The ratchet in `test/methods-grid.test.ts` counts them.
+// `.mapValues` / `.mapKeys` / `.pickBy` / `.omitBy` take a `(value[, key])` iteratee whose
+// body lowers against a scope binding the pair, so they read it through the `objIteratee`
+// service rather than resolving it themselves.
 //
 // See docs/specs/lowering-grid.md.
 
@@ -31,7 +31,45 @@ function pickKeys(arg: Expr, method: string, err: LowerInput["err"]): string[] {
   });
 }
 
+/**
+ * `.mapValues(iteratee)` / `.mapKeys(iteratee)` — the round trip with one half replaced.
+ *
+ * `.mapKeys` stringifies its result because an object key must be a string.
+ */
+function pairMapper(half: "k" | "v"): MethodDef {
+  return {
+    receiver: "object",
+    returns: "object",
+    args: { sig: "iteratee", exact: 1 },
+    value: ({ recv, args, objIteratee }) => {
+      const { as, body } = objIteratee(args[0]);
+      const entry = half === "v" ? { k: `$$${as}.k`, v: body } : { k: { $toString: body }, v: `$$${as}.v` };
+      return { $arrayToObject: { $map: { input: { $objectToArray: recv }, as, in: entry } } };
+    },
+  };
+}
+
+/** `.pickBy(predicate)` / `.omitBy(predicate)` — keep or drop the pairs the predicate picks. */
+function pairFilter(keep: boolean): MethodDef {
+  return {
+    receiver: "object",
+    returns: "object",
+    args: { sig: "predicate", exact: 1 },
+    value: ({ recv, args, objIteratee }) => {
+      const { as, body } = objIteratee(args[0]);
+      return {
+        $arrayToObject: { $filter: { input: { $objectToArray: recv }, as, cond: keep ? body : { $not: [body] } } },
+      };
+    },
+  };
+}
+
 export const OBJECT_METHODS: Record<string, MethodDef> = {
+  mapValues: pairMapper("v"),
+  mapKeys: pairMapper("k"),
+  pickBy: pairFilter(true),
+  omitBy: pairFilter(false),
+
   invert: {
     receiver: "object",
     returns: "object",
