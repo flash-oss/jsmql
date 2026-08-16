@@ -84,23 +84,53 @@ const { jsmql: cur } = await import(pathToFileURL(join(root, "src", "index.ts"))
 // permutations. Harvesting the suite is what makes the corpus wider than any list
 // written by hand: it inherits every case anyone thought worth a test.
 
-/** Pull the string argument out of `jsmql("…")` / `jsmql.expr('…')` / … call sites. */
+/**
+ * Pull jsmql source out of the test suite's call sites.
+ *
+ * THREE spellings, and missing any of them is a silent coverage hole rather than a visible
+ * one: the quoted call argument `jsmql("…")`, the BACKTICK call argument `` jsmql(`…`) ``,
+ * and the template-TAG form `` jsmql`…` `` (a first-class entry point, not a fallback).
+ * Reading only the quoted form left the suites that favour backticks — and the whole of
+ * `realistic.test.ts`'s tag cases — outside the corpus, which is how a real divergence sat
+ * unjudged behind the harvester instead of in the report.
+ *
+ * A backtick body containing `${` is SKIPPED. Interpolation makes the source dynamic, so
+ * there is no static string to compile, and the runtime-injected-value rules (HR1) give it
+ * different meaning anyway.
+ */
 function harvestFromTests() {
   const dir = join(root, "test");
   const found = new Set();
-  const CALL = /\bjsmql(?:\.(?:expr|filter|pipeline|update))?\(\s*(["'])((?:\\.|(?!\1).)*)\1/g;
+  const ENTRY = String.raw`jsmql(?:\.(?:expr|filter|pipeline|update|validate))?`;
+  const QUOTED = new RegExp(String.raw`\b${ENTRY}\(\s*(["'])((?:\\.|(?!\1).)*)\1`, "g");
+  // `jsmql(`…`)` — a backtick CALL argument.
+  const BACKTICK_CALL = new RegExp(String.raw`\b${ENTRY}\(\s*` + "`([^`]*)`", "g");
+  // `` jsmql`…` `` — the template-TAG form, no parenthesis.
+  const BACKTICK_TAG = new RegExp(String.raw`\b${ENTRY}` + "`([^`]*)`", "g");
+
+  const add = (s) => {
+    if (typeof s === "string" && s.trim().length > 0) found.add(s);
+  };
+
   for (const f of readdirSync(dir)) {
     if (!f.endsWith(".test.ts")) continue;
     const src = readFileSync(join(dir, f), "utf8");
-    for (const m of src.matchAll(CALL)) {
-      let s = m[2];
+    for (const m of src.matchAll(QUOTED)) {
       // Un-escape the literal so the compiler sees what the test's compiler saw.
       try {
-        s = JSON.parse(m[1] === '"' ? `"${s}"` : `"${s.replace(/\\'/g, "'").replace(/"/g, '\\"')}"`);
+        add(JSON.parse(m[1] === '"' ? `"${m[2]}"` : `"${m[2].replace(/\\'/g, "'").replace(/"/g, '\\"')}"`));
       } catch {
         continue;
       }
-      if (s.trim().length > 0) found.add(s);
+    }
+    for (const re of [BACKTICK_CALL, BACKTICK_TAG]) {
+      for (const m of src.matchAll(re)) {
+        const body = m[1];
+        if (body.includes("${")) continue; // interpolated — not a static source
+        // A backtick body carries no JS escapes to undo, but it does carry real newlines,
+        // which is exactly how the multi-statement pipeline cases are written.
+        add(body);
+      }
     }
   }
   return [...found];
@@ -222,7 +252,13 @@ function stable(v) {
   return out;
 }
 
-const ENTRIES = ["jsmql", "expr", "filter", "pipeline", "update"];
+/**
+ * The entry points compared. `validate` is here because its result IS a public contract —
+ * `{ valid, errors: [{ message, pos }] }`, and tooling underlines source with that `.pos`.
+ * A migration that changed an error's wording or moved its caret produced ZERO divergence
+ * while the other four entries only ever see the throw, never the position.
+ */
+const ENTRIES = ["jsmql", "expr", "filter", "pipeline", "update", "validate"];
 const call = (api, entry, src) => (entry === "jsmql" ? api(src) : api[entry](src));
 
 function run(api, entry, src) {

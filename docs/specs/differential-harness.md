@@ -102,3 +102,30 @@ and says so, because every accepted row is a judgement about one specific compil
 different one, a real regression can read as an already-accepted divergence.
 
 Restore the reference, or re-judge the rows against the new one with `--accept`.
+
+## What the corpus can see
+
+The harvester reads three spellings of a jsmql source in the test suite, and missing any one
+of them is a silent hole rather than a visible one:
+
+| Spelling | Example |
+|---|---|
+| quoted call argument | `jsmql("$.age > 18")` |
+| backtick call argument | ``jsmql(`$unwind("$items");`)`` |
+| template TAG | ``jsmql`$.age > 18` `` — a first-class entry point, not a fallback |
+
+A backtick body containing `${` is skipped: interpolation makes the source dynamic, so there
+is no static string to compile, and HR1 gives an injected value different meaning anyway.
+
+Reading only the quoted form left every backtick-favouring suite outside the corpus. Adding
+the other two grew it by 370 sources and immediately surfaced 28 divergences that had been
+real for some time — the same accepted behaviour changes, reaching sources the harness had
+never compiled. A divergence the corpus cannot see is not an absence of divergence.
+
+`validate` is compared alongside the four output entries, because its result is itself a
+public contract — `{ valid, errors: [{ message, pos }] }`, and tooling underlines source with
+that `.pos`. The other entries only ever observe that a throw happened; `validate` observes
+what it said and where it pointed. It contributed 24 further rows on the first run.
+
+Still uncompared, and deliberately: the six `.compile` builders and the interpolating
+template-tag form, whose inputs are runtime values rather than static source.

@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: the harness reads the sources it was blind to, and compares validate
+
+The corpus harvester read `jsmql("…")` and `jsmql('…')` and nothing else. Every source
+written with backticks — the backtick CALL argument and the template TAG form, the latter a
+first-class entry point — was outside the corpus, including the whole of `realistic.test.ts`'s
+tag cases.
+
+Reading all three spellings grew the corpus from 2531 to 2901 sources and immediately
+surfaced 28 divergences. None was new: they are the same already-judged changes (`.uniq()`
+lowering to `$setUnion`, `jsmql.expr()` refusing a stream-replace, `.getUTCxxx()` dropping
+its restated UTC default) reaching sources the harness had simply never compiled. Each was
+judged by reusing the existing row's reason, because the judgement already existed — only
+the evidence was missing. A divergence the corpus cannot see is not an absence of divergence.
+
+`validate` is now a compared entry point. Its result IS a public contract —
+`{ valid, errors: [{ message, pos }] }`, and editor tooling underlines source with that
+`.pos` — but the harness only ever asked the four output entries, which observe that a throw
+happened and never what it said or where it pointed. It contributed 24 more rows, every one
+the `validate` view of a change already accepted for a throwing entry.
+
+Corpus 2531 → 2901 sources, 5 → 6 entry points; accepted rows 218 → 270, UNCLASSIFIED 0.
+This is groundwork: the Predicate IR, the desugar pass and the argument-vocabulary
+unification all justify themselves with "UNCLASSIFIED: 0", and that sentence is only worth
+as much as the corpus behind it.
+
+---
+
 ## 2026-08-16 — fix: the differential harness pins the compiler it compares against
 
 The harness's reference is "the checkout this worktree hangs off". That checkout belongs to

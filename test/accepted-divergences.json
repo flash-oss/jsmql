@@ -1744,6 +1744,422 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{",
       "now": ".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
       "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "jsmql\u0000const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });": {
+      "entry": "jsmql",
+      "src": "const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"idx\":{\"$indexOfArray\":[\"$__jsmql.var.a\",\"b\"]},\"sl\":{\"$slice\":[\"$__jsmql.var.a\",2]},\"cc\":{\"$concatArrays\":[\"$__jsmql.var.a\",",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });": {
+      "entry": "expr",
+      "src": "const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"idx\":{\"$indexOfArray\":[\"$__jsmql.var.a\",\"b\"]},\"sl\":{\"$slice\":[\"$__jsmql.var.a\",2]},\"cc\":{\"$concatArrays\":[\"$__jsmql.var.a\",",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });": {
+      "entry": "pipeline",
+      "src": "const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"idx\":{\"$indexOfArray\":[\"$__jsmql.var.a\",\"b\"]},\"sl\":{\"$slice\":[\"$__jsmql.var.a\",2]},\"cc\":{\"$concatArrays\":[\"$__jsmql.var.a\",",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "update\u0000const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });": {
+      "entry": "update",
+      "src": "const a = $.tags.uniq();\n       $set({ inc: a.includes(\"b\"), idx: a.indexOf(\"b\"), sl: a.slice(0, 2), cc: a.concat([\"z\"]),\n              sz: a.size(), len: a.length, str: a.toString() });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"idx\":{\"$indexOfArray\":[\"$__jsmql.var.a\",\"b\"]},\"sl\":{\"$slice\":[\"$__jsmql.var.a\",2]},\"cc\":{\"$concatArrays\":[\"$__jsmql.var.a\",",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });": {
+      "entry": "jsmql",
+      "src": "let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__j",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__jsmql.var.a\"},\"then\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"else\":{\"$gte\":[{\"$indexOfCP\":[\"$__jsmql.var.a\",\"b\"]},0]}}}}},{\"$unset\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });": {
+      "entry": "expr",
+      "src": "let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__j",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__jsmql.var.a\"},\"then\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"else\":{\"$gte\":[{\"$indexOfCP\":[\"$__jsmql.var.a\",\"b\"]},0]}}}}},{\"$unset\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });": {
+      "entry": "pipeline",
+      "src": "let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__j",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__jsmql.var.a\"},\"then\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"else\":{\"$gte\":[{\"$indexOfCP\":[\"$__jsmql.var.a\",\"b\"]},0]}}}}},{\"$unset\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "update\u0000let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });": {
+      "entry": "update",
+      "src": "let a = $.tags.uniq(); $set({ inc: a.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__j",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"inc\":{\"$cond\":{\"if\":{\"$isArray\":\"$__jsmql.var.a\"},\"then\":{\"$in\":[\"b\",\"$__jsmql.var.a\"]},\"else\":{\"$gte\":[{\"$indexOfCP\":[\"$__jsmql.var.a\",\"b\"]},0]}}}}},{\"$unset\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });": {
+      "entry": "jsmql",
+      "src": "const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmq",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$__jsmql.var.a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\"",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });": {
+      "entry": "expr",
+      "src": "const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmq",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$__jsmql.var.a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\"",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });": {
+      "entry": "pipeline",
+      "src": "const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmq",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$__jsmql.var.a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\"",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "update\u0000const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });": {
+      "entry": "update",
+      "src": "const a = $.tags.uniq(); const b = a.slice(1); $set({ inc: b.includes(\"b\") });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.a\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmq",
+      "now": "[{\"$set\":{\"__jsmql.var.a\":{\"$setUnion\":\"$tags\"}}},{\"$set\":{\"__jsmql.var.b\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$__jsmql.var.a\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}},{\"$set\":{\"inc\":{\"$in\":[\"b\"",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));": {
+      "entry": "jsmql",
+      "src": "const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.ids\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_",
+      "now": "[{\"$set\":{\"__jsmql.var.ids\":{\"$setUnion\":\"$tags\"}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.ids\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$pid\",\"as\":\"p\",\"in\":{\"$in\":[\"$",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));": {
+      "entry": "pipeline",
+      "src": "const ids = $.tags.uniq(); const r = $$$.orders.filter(o => o.pid.some(p => ids.includes(p)));",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.ids\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_",
+      "now": "[{\"$set\":{\"__jsmql.var.ids\":{\"$setUnion\":\"$tags\"}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.ids\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$pid\",\"as\":\"p\",\"in\":{\"$in\":[\"$",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000const ids = $.tags.uniq();\n       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });": {
+      "entry": "jsmql",
+      "src": "const ids = $.tags.uniq();\n       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.ids\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_",
+      "now": "[{\"$set\":{\"__jsmql.var.ids\":{\"$setUnion\":\"$tags\"}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.ids\"},\"pipeline\":[{\"$lookup\":{\"from\":\"items\",\"pipeline\":[{\"$match\":{\"$expr\":{\"$in\":[\"$pid\",\"$$jsmql_v0_i",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000const ids = $.tags.uniq();\n       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });": {
+      "entry": "pipeline",
+      "src": "const ids = $.tags.uniq();\n       const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.ids\":{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_",
+      "now": "[{\"$set\":{\"__jsmql.var.ids\":{\"$setUnion\":\"$tags\"}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.ids\"},\"pipeline\":[{\"$lookup\":{\"from\":\"items\",\"pipeline\":[{\"$match\":{\"$expr\":{\"$in\":[\"$pid\",\"$$jsmql_v0_i",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = $$.filter({ a: 1 })": {
+      "entry": "expr",
+      "src": "$$ = $$.filter({ a: 1 })",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"a\":1}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = $$.map(t => ({ x: t.x }))": {
+      "entry": "expr",
+      "src": "$$ = $$.map(t => ({ x: t.x }))",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":{\"x\":\"$x\"}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = $$.take(3)": {
+      "entry": "expr",
+      "src": "$$ = $$.take(3)",
+      "kind": "now-rejected",
+      "was": "[{\"$limit\":3}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = []": {
+      "entry": "expr",
+      "src": "$$ = []",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"$expr\":false}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$.a = 1, $$ = $$.filter({ b: 2 })": {
+      "entry": "expr",
+      "src": "$.a = 1, $$ = $$.filter({ b: 2 })",
+      "kind": "now-rejected",
+      "was": "[{\"$set\":{\"a\":1}},{\"$match\":{\"b\":2}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = $$.filter({ b: 2 }), $.a = 1": {
+      "entry": "expr",
+      "src": "$$ = $$.filter({ b: 2 }), $.a = 1",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"b\":2}},{\"$set\":{\"a\":1}}]",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$$ = 5": {
+      "entry": "expr",
+      "src": "$$ = 5",
+      "kind": "message",
+      "was": "'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSort",
+      "now": "jsmql.expr() returns one aggregation expression, but received a stream-replace `$$ = <expr>` (which compiles to pipeline stages). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17": {
+      "entry": "jsmql",
+      "src": "$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$gte\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},9]},{\"$lt\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},17]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$gte\":[{\"$hour\":\"$event.ts\"},9]},{\"$lt\":[{\"$hour\":\"$event.ts\"},17]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "expr\u0000$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17": {
+      "entry": "expr",
+      "src": "$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17",
+      "kind": "output",
+      "was": "{\"$and\":[{\"$gte\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},9]},{\"$lt\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},17]}]}",
+      "now": "{\"$and\":[{\"$gte\":[{\"$hour\":\"$event.ts\"},9]},{\"$lt\":[{\"$hour\":\"$event.ts\"},17]}]}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "filter\u0000$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17": {
+      "entry": "filter",
+      "src": "$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$gte\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},9]},{\"$lt\":[{\"$hour\":{\"date\":\"$event.ts\",\"timezone\":\"UTC\"}},17]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$gte\":[{\"$hour\":\"$event.ts\"},9]},{\"$lt\":[{\"$hour\":\"$event.ts\"},17]}]}}",
+      "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "jsmql\u0000\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ": {
+      "entry": "jsmql",
+      "src": "\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmq",
+      "now": "[{\"$match\":{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmq",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "pipeline\u0000\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ": {
+      "entry": "pipeline",
+      "src": "\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmq",
+      "now": "[{\"$match\":{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmq",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set. (Same change, newly VISIBLE: the harness harvester now reads backtick call arguments and template-tag bodies, so sources that always diverged are finally in the corpus.)"
+    },
+    "validate\u0000$$.nosuchmethod({a:1})": {
+      "entry": "validate",
+      "src": "$$.nosuchmethod({a:1})",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeW",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeW",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$.pop({a:1})": {
+      "entry": "validate",
+      "src": "$$.pop({a:1})",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, ",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.\",\"pos\":3,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));": {
+      "entry": "validate",
+      "src": "let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"Unknown identifier 'k'. Did you mean '$.k'?\",\"pos\":65,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) — so `k` (along with the outer ",
+      "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.s.trim(\"x\")": {
+      "entry": "validate",
+      "src": "$.s.trim(\"x\")",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".trim() takes no arguments, got 1\",\"pos\":4,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars}). (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.s.toLowerCase(1)": {
+      "entry": "validate",
+      "src": "$.s.toLowerCase(1)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toLowerCase() takes no arguments, got 1\",\"pos\":4,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars}). (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$ = $$.slise(0, 5);": {
+      "entry": "validate",
+      "src": "$$ = $$.slise(0, 5);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .dro",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .dro",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$ = $$.filter(o => o.active).bogus();": {
+      "entry": "validate",
+      "src": "$$ = $$.filter(o => o.active).bogus();",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$.slise(0, 5);": {
+      "entry": "validate",
+      "src": "$$.slise(0, 5);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .dro",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .dro",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$.nosuchmethod(\"x\")": {
+      "entry": "validate",
+      "src": "$$.nosuchmethod(\"x\")",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeW",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeW",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$.pop(\"x\")": {
+      "entry": "validate",
+      "src": "$$.pop(\"x\")",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, ",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.\",\"pos\":3,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$$ = $$.dropp();": {
+      "entry": "validate",
+      "src": "$$ = $$.dropp();",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.take(1.5)": {
+      "entry": "validate",
+      "src": "$.a.take(1.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".take(n) needs a whole number, but got 1.5.\",\"pos\":9,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.drop(1.5)": {
+      "entry": "validate",
+      "src": "$.a.drop(1.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".drop(n) needs a whole number, but got 1.5.\",\"pos\":9,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.slice(0.5)": {
+      "entry": "validate",
+      "src": "$.a.slice(0.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".slice(start[, end]) needs a whole number, but got 0.5.\",\"pos\":10,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.slice(0, 2.5)": {
+      "entry": "validate",
+      "src": "$.a.slice(0, 2.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".slice(start[, end]) needs a whole number, but got 2.5.\",\"pos\":13,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.sampleSize(1.5)": {
+      "entry": "validate",
+      "src": "$.a.sampleSize(1.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".sampleSize(n) needs a whole number, but got 1.5.\",\"pos\":15,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.takeRight(2.5)": {
+      "entry": "validate",
+      "src": "$.a.takeRight(2.5)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".takeRight(n) needs a whole number, but got 2.5.\",\"pos\":14,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 1ad2b5b. $slice needs a 32-bit integer in every count/position slot, so a fractional literal aborted the query on the server. Rejected at compile time now, matching the stream form which already did. Literal-gated: an expression still compiles. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$year({ date: $.d, timezone: \"UTC\" })": {
+      "entry": "validate",
+      "src": "$year({ date: $.d, timezone: \"UTC\" })",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'$year' expects a date, but got an object. Use a field path or new Date(…).\",\"pos\":6,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$hour({ date: $.d })": {
+      "entry": "validate",
+      "src": "$hour({ date: $.d })",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'$hour' expects a date, but got an object. Use a field path or new Date(…).\",\"pos\":6,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
+      "entry": "validate",
+      "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.\",\"pos\":32,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
+      "entry": "validate",
+      "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.\",\"pos\":35,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.map(x => x, 1)": {
+      "entry": "validate",
+      "src": "$.a.map(x => x, 1)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".map(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.\",\"pos\":16,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.filter(x => x, 1)": {
+      "entry": "validate",
+      "src": "$.a.filter(x => x, 1)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".filter(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.\",\"pos\":19,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "validate\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "validate",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.\",\"pos\":22,\"code\":\"CODEGEN_ERROR\"}]",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
     }
   }
 }
