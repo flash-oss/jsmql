@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — feat(site): the landing page's code panels hold a numbered 80-column line
+
+The pretty-printer in [index.html](../index.html) breaks a line at 80 columns,
+and the panels showing its output were 464px of text — 59 columns. The page's
+own examples therefore scrolled sideways to be read, which is a poor advert for
+a language whose pitch is that its source is shorter than the MQL. The example
+cards now take a measure the *code* dictates: `--code-panel` states what one
+panel needs as arithmetic a reader can check — 80 columns at the character
+advance of the `--mono` stack, the widest line-number gutter, the padding, the
+border, a vertical scroll bar, and named slack for the platform variation in the
+last two — and `.wrap.code` carries two of them side by side.
+
+The cards break out of the page measure rather than the page widening to meet
+them. Widening `.wrap` itself was tried first and is worse: it drags every
+heading, paragraph and card grid along, and it pushed the six-card feature
+section from a balanced three-up to a ragged 4+2. So the examples section holds
+two wraps — the heading and the notices keep the 1080px prose measure, the cards
+get their own. A window too narrow for a whole line scrolls the panel sideways,
+as before. Making the panel wrap instead was tried and reverted: code should
+read as it was written, and a wrapped 80-column line is not what the printer
+produced.
+
+Line numbers arrive the way the playground's editors show them, which needed one
+element per line for a CSS counter to number. `paint()` therefore drives
+CodeMirror's `runMode` through its **callback** form rather than handing it the
+element: one run still tokenises the whole text, so a construct spanning lines
+reads correctly, while each line lands in its own `.ln`. Tokenising line by line
+would have been simpler and silently wrong for the same reason. The number is
+generated content, so a copied selection is the source alone, and the script
+sizes each gutter to the digits that panel actually reaches.
+
+One consequence worth recording: the hero paragraphs and the section intros
+dropped their 40em/46em reading caps. Beside cards half again as wide, a
+paragraph pinned to the left of a column that every heading, button row and card
+grid around it fills reads as a page that lost its centre. The page measure
+already bounds the line length, so the caps bought nothing and cost the
+alignment.
+
+---
+
 ## 2026-08-16 — feat(site): both published pages follow the reader's system colour scheme
 
 [index.html](../index.html) and the playground carry a dark palette beside the
