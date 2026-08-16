@@ -171,3 +171,27 @@ When the test fails, the message names the specific operator and the specific dr
 The registry, together with `STAGES` in [`src/stages.ts`](../../src/stages.ts) and the vendored spec, is the input to a build-time generator that emits the ambient-globals module shipped at the `@koresar/jsmql/globals` subpath. See [`globals-generation.md`](globals-generation.md) for the generator's contract and type-mapping rules.
 
 When you add a new operator, the generator picks it up automatically on the next `npm test` / `npm run build`. The drift test in `test/operator-spec-coverage.test.ts` will fail if the committed `src/globals.ts` is stale; running `npm run generate:globals` refreshes it.
+
+## Query-position-only operators (`matchOnly`)
+
+`$sampleRate` has no expression form on the server. Registering it as an ordinary
+expression operator meant `$match($sampleRate(0.1))` lowered through the truthiness wrap
+to `{ $match: { $expr: { $and: [ … { $sampleRate: 0.1 } … ] } } }`, which mongod refuses
+with *Unrecognized expression '$sampleRate'* — an HR3 violation on the very example
+`CLAUDE.md` uses to introduce the `$op(...)` escape hatch.
+
+`matchOnly: true` on the `OperatorDef` is the single source of truth. Two readers:
+
+- **`match-translation.ts`** lowers it to its bare query form, `{ $sampleRate: 0.1 }`,
+  ahead of every other rule. It composes with ordinary predicates, so
+  `$.age > 18 && $sampleRate(0.1)` merges into one query document and works in `find()`
+  as well as `$match`.
+- **`codegen.ts`** rejects it. Reaching codegen at all proves it was written where the
+  translator does not run, so the rejection needs no context flag — it names the query
+  spelling and the constant-argument requirement.
+
+The argument must be a literal. A query document holds values, and the server requires a
+constant, so a non-literal falls through to `$expr` and meets the codegen rejection.
+
+Raw MQL is untouched: `$match({ $sampleRate: 0.1 })` passes through as always.
+

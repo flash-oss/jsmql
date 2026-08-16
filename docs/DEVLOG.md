@@ -10,6 +10,66 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: `$sampleRate` emits its query form instead of invalid MQL
+
+`$match($sampleRate(0.1))` compiled to an `$expr` wrap containing
+`{ $sampleRate: 0.1 }`, and mongod refuses it: *Unrecognized expression
+'$sampleRate'*. The operator has no expression form at all — it is a `$match`
+body key and nothing else — so every expression-context lowering of it was
+invalid MQL. `CLAUDE.md` introduces the `$op(...)` escape hatch with this exact
+operator, so the documented example did not run.
+
+`OperatorDef` could not express "query position only", which is why the registry
+carried it as an ordinary single-argument expression operator. It can now:
+`matchOnly: true`, read by two places. The match translator lowers it to the bare
+query form ahead of every other rule, and codegen rejects it — reaching codegen
+proves it was written somewhere the translator does not run, so the rejection
+needs no context flag of its own.
+
+It composes: `$.age > 18 && $sampleRate(0.1)` merges into one query document, so
+it now works in `find()` as well as `$match`, which it never did. Verified on a
+live mongod in all three shapes. Raw `$match({ $sampleRate: 0.1 })` passes
+through untouched. This closes the last known HR3 violation from the audit.
+
+---
+
+## 2026-08-16 — feat: every array-receiver method answers for its stream form
+
+62 methods work on an in-document array and not on the stream. 14 explained
+themselves — the value-collapsing terminals, which say where they *do* work. The
+other 48 fell to one generic sentence listing what is chainable, which tells a
+developer what else exists and never why the thing they wrote is absent.
+
+The grid rule says an applicable cell must carry an answer, so each now does.
+`STREAM_UNSUPPORTED` holds a written reason per method, and every reason names
+what to write instead: `.reverse` points at `.sort(<key>)`, `.flat` at
+`.flatMap(d => d.<field>)` (which is `$unwind`), `.union` at `.concat(...)`
+(which is `$unionWith`), the from-the-end family at sorting by the opposite key.
+`STREAM_HANDLED_ELSEWHERE` names the four whose answer lives in another file, so
+they cannot look unanswered.
+
+Writing the reasons did what the design predicted: three of them could not be
+written. `.uniq`, `.sortedUniq` and `.sortedUniqBy` had no defensible "why not" —
+`.uniqBy` already lowers to `$group` + `$replaceWith`, and `.uniq` is the same
+thing keyed on the whole document. lodash's "input is already sorted"
+precondition is a hint its runtime uses, never something the developer asked for
+in the output, so the sorted pair are aliases (SR2). All three now lower, and
+their membership matches the value form exactly on a live mongod.
+
+A completeness test fails when an array-receiver method has none of the four
+answers, when a name claims two, or when a reason is too short to help. The
+generic list survives for a name jsmql does not recognise at all — a typo has no
+reason to give, so it still gets the vocabulary and a suggestion.
+
+---
+
+## 2026-08-16 — docs: the language reference matches the simplified date lowerings
+
+The `.getUTCxxx()` and `.toISOString()` examples in `LANGUAGE.md` still showed the
+restated-default forms. Each is now verified against the compiler.
+
+---
+
 ## 2026-08-16 — refactor: the date accessors stop restating MongoDB's defaults
 
 Two lowerings named a default and paid for it in every emitted document.

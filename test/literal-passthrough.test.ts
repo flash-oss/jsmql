@@ -126,6 +126,10 @@ describe("literal pass-through — the reported $unwind bug and siblings", () =>
 describe("literal pass-through — every operator in the registry", () => {
   for (const [name, def] of Object.entries(OPERATORS)) {
     if (name === "$literal") continue; // legitimately emits a $literal envelope
+    // A query-position-only operator has no expression form on the server, so it cannot
+    // appear in the expression contexts this loop builds. Its own pass-through case lives
+    // with the $match query-form tests instead.
+    if (def.matchOnly === true) continue;
 
     const call = callSource(name, def);
     const stageSrc = stageSourceFor(name, def, call);

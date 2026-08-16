@@ -99,6 +99,12 @@ export type OperatorDef = {
   // that have *both* expression and accumulator forms ($sum, $avg, $max, …) are
   // unrestricted and leave this unset.
   accumulatorOnly?: boolean;
+  // Query-position-only operators ($sampleRate): valid as a `$match` BODY key, never as
+  // an aggregation expression. The server has no expression form, so emitting one is an
+  // HR3 violation — `$match($sampleRate(0.1))` must produce `{ $match: { $sampleRate: 0.1 } }`,
+  // not an `$expr` wrap. This flag is the single source of truth; the match translator
+  // reads it to lower the query form, and codegen reads it to reject everywhere else.
+  matchOnly?: boolean;
   // Optional argument-validation rules (see ArgRules). Attached via withArgs(...).
   args?: ArgRules;
 };
@@ -547,7 +553,10 @@ export const OPERATORS: Record<string, OperatorDef> = {
     "algorithm",
   ),
   $rand: none("miscellaneous", "Returns a random float between 0 and 1."),
-  $sampleRate: single("miscellaneous", "Randomly selects documents at a given rate. Used inside $match."),
+  $sampleRate: {
+    ...single("miscellaneous", "Randomly selects documents at a given rate. Used inside $match."),
+    matchOnly: true,
+  },
   $toHashedIndexKey: single(
     "miscellaneous",
     "Computes the hash of the input expression using MongoDB's hashed-index hash function.",

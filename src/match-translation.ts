@@ -19,6 +19,7 @@
 import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
+import { lookupOperator } from "./operators.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -193,6 +194,13 @@ function combineResidualsAnd(a: Expr | null, b: Expr | null): Expr | null {
 }
 
 function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> | null {
+  // A query-position-only operator ($sampleRate) has no expression form on the server,
+  // so its ONLY correct lowering is as a `$match` body key. It is tried first, ahead of
+  // everything: reaching the `$expr` fallback would emit MQL mongod refuses (HR3), and
+  // codegen rejects it precisely because arriving there means it was written somewhere
+  // this translator does not run.
+  const mo = translateMatchOnlyOperator(expr, ctx);
+  if (mo !== null) return mo;
   // Bare boolean method calls — `.includes(x)`, `.match(/re/)`, `.some(p)` —
   // can be the entire predicate body (no `=== true` wrapper), so they're
   // tried before the BinaryExpr machinery.
@@ -228,6 +236,23 @@ function translateLeaf(expr: Expr, ctx: TranslateCtx): Record<string, unknown> |
     return translateOrderedCompare(expr.left, expr.right, op, ctx);
   }
   return null;
+}
+
+/**
+ * `$sampleRate(0.1)` and friends: a registry operator flagged `matchOnly` lowers to its
+ * bare query form, `{ $sampleRate: 0.1 }`. The argument is an ordinary expression, so a
+ * literal stays a literal and anything else lowers through codegen as usual.
+ */
+function translateMatchOnlyOperator(expr: Expr, ctx: TranslateCtx): Record<string, unknown> | null {
+  if (expr.type !== "OperatorCall") return null;
+  if (lookupOperator(expr.name)?.matchOnly !== true) return null;
+  const arg = expr.args[0];
+  if (expr.args.length !== 1 || arg === undefined || arg.type === "SpreadElement") return null;
+  // A query document holds VALUES, and the server requires a constant here anyway. A
+  // non-literal argument returns null, falls to `$expr`, and codegen rejects it there
+  // with the message naming the query form.
+  const lit = anyEqualityLiteral(arg, ctx);
+  return lit === null ? null : { [expr.name]: lit.value };
 }
 
 /**

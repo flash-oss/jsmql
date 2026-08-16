@@ -501,8 +501,15 @@ describe("do-not-over-validate — server-accepted shapes must compile (coverage
 });
 
 describe("escape-hatch operators (single-arg, expression-shaped)", () => {
-  it("$sampleRate(0.1) → { $sampleRate: 0.1 }", () => {
-    expect(jsmql.expr("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
+  it("$sampleRate(0.1) → { $sampleRate: 0.1 }, as a $match condition only", () => {
+    // MongoDB has no expression form for $sampleRate, so the query form is the ONLY
+    // valid lowering — an $expr wrap emits MQL the server refuses ("Unrecognized
+    // expression '$sampleRate'"). It composes with ordinary predicates, and jsmql.expr
+    // rejects it because that entry point cannot produce a $match condition.
+    expect(jsmql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
+    expect(jsmql("$match($sampleRate(0.1));")).toEqual([{ $match: { $sampleRate: 0.1 } }]);
+    expect(jsmql("$.age > 18 && $sampleRate(0.1)")).toEqual({ age: { $gt: 18 }, $sampleRate: 0.1 });
+    expect(() => jsmql.expr("$sampleRate(0.1)")).toThrow(/is a query operator/);
   });
 });
 

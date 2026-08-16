@@ -1223,6 +1223,78 @@
       "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$sampleRate(0.1)": {
+      "entry": "jsmql",
+      "src": "$sampleRate(0.1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}",
+      "now": "{\"$sampleRate\":0.1}",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "expr\u0000$sampleRate(0.1)": {
+      "entry": "expr",
+      "src": "$sampleRate(0.1)",
+      "kind": "now-rejected",
+      "was": "{\"$sampleRate\":0.1}",
+      "now": "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "filter\u0000$sampleRate(0.1)": {
+      "entry": "filter",
+      "src": "$sampleRate(0.1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}",
+      "now": "{\"$sampleRate\":0.1}",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "jsmql\u0000$match($sampleRate(0.1));": {
+      "entry": "jsmql",
+      "src": "$match($sampleRate(0.1));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}}]",
+      "now": "[{\"$match\":{\"$sampleRate\":0.1}}]",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "expr\u0000$match($sampleRate(0.1));": {
+      "entry": "expr",
+      "src": "$match($sampleRate(0.1));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}}]",
+      "now": "[{\"$match\":{\"$sampleRate\":0.1}}]",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "pipeline\u0000$match($sampleRate(0.1));": {
+      "entry": "pipeline",
+      "src": "$match($sampleRate(0.1));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}}]",
+      "now": "[{\"$match\":{\"$sampleRate\":0.1}}]",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "jsmql\u0000$.age > 18 && $sampleRate(0.1)": {
+      "entry": "jsmql",
+      "src": "$.age > 18 && $sampleRate(0.1)",
+      "kind": "output",
+      "was": "{\"age\":{\"$gt\":18},\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}",
+      "now": "{\"age\":{\"$gt\":18},\"$sampleRate\":0.1}",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "expr\u0000$.age > 18 && $sampleRate(0.1)": {
+      "entry": "expr",
+      "src": "$.age > 18 && $sampleRate(0.1)",
+      "kind": "now-rejected",
+      "was": "{\"$cond\":{\"if\":{\"$gt\":[\"$age\",18]},\"then\":{\"$sampleRate\":0.1},\"else\":{\"$gt\":[\"$age\",18]}}}",
+      "now": "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "filter\u0000$.age > 18 && $sampleRate(0.1)": {
+      "entry": "filter",
+      "src": "$.age > 18 && $sampleRate(0.1)",
+      "kind": "output",
+      "was": "{\"age\":{\"$gt\":18},\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}",
+      "now": "{\"age\":{\"$gt\":18},\"$sampleRate\":0.1}",
+      "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
     }
   }
 }

@@ -2986,6 +2986,18 @@ function generateStaticObjectEntries(entries: ObjectEntry[], ctx: GenerateCtx): 
  */
 function checkOperatorContext(name: string, ctx: GenerateCtx, pos: number): void {
   const def = lookupOperator(name);
+  // Query-position-only ($sampleRate): the server has no expression form, so emitting
+  // one would be MQL it refuses (HR3). The match translator lowers the valid spelling to
+  // its query form, which means reaching codegen at all proves it was written somewhere
+  // that translator does not run.
+  if (def?.matchOnly) {
+    throw new CodegenError(
+      `${name} is a query operator — it only works as a '$match' condition, and MongoDB has no expression form for it. ` +
+        `Write it as a predicate: '$match(${name}(<value>))' or '$match($.field > 1 && ${name}(<value>))'. ` +
+        `Its argument must be a constant, not a field path.`,
+      pos,
+    );
+  }
   // Window-only: category === "window" → require `window-output` context.
   if (def?.category === "window") {
     if (ctx.accumulatorContext !== "window-output") {
