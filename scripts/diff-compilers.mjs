@@ -217,6 +217,14 @@ function generatedCorpus() {
     "$.a.map(x => x, 1)",
     "$.a.filter(x => x, 1)",
     "$.a.findIndex(x => x, 1)",
+    'typeof $.a === "boolean"',
+    'typeof $.a === "number"',
+    'typeof $.a === "string"',
+    'typeof $.a !== "boolean"',
+    'typeof $.a !== "number"',
+    'typeof $.a === "function"',
+    'typeof $.a.b.c === "number"',
+    '$set({ t: typeof $.a === "boolean" });',
   ];
   out.push(...EDGES);
   const PREDICATES = [

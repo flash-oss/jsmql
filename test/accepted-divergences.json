@@ -2160,6 +2160,78 @@
       "was": "{\"valid\":true,\"errors\":[]}",
       "now": "{\"valid\":false,\"errors\":[{\"message\":\".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.\",\"pos\":22,\"code\":\"CODEGEN_ERROR\"}]",
       "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid. (The `validate` view of the same change: it reports the message AND its `.pos` rather than throwing, which is why this entry diverges where the others already did.)"
+    },
+    "expr\u0000typeof $.a === \"boolean\"": {
+      "entry": "expr",
+      "src": "typeof $.a === \"boolean\"",
+      "kind": "output",
+      "was": "{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}",
+      "now": "{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000typeof $.a === \"number\"": {
+      "entry": "expr",
+      "src": "typeof $.a === \"number\"",
+      "kind": "output",
+      "was": "{\"$eq\":[{\"$type\":\"$a\"},\"number\"]}",
+      "now": "{\"$in\":[{\"$type\":\"$a\"},[\"double\",\"int\",\"long\",\"decimal\"]]}",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000typeof $.a !== \"boolean\"": {
+      "entry": "expr",
+      "src": "typeof $.a !== \"boolean\"",
+      "kind": "output",
+      "was": "{\"$ne\":[{\"$type\":\"$a\"},\"boolean\"]}",
+      "now": "{\"$ne\":[{\"$type\":\"$a\"},\"bool\"]}",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000typeof $.a !== \"number\"": {
+      "entry": "expr",
+      "src": "typeof $.a !== \"number\"",
+      "kind": "output",
+      "was": "{\"$ne\":[{\"$type\":\"$a\"},\"number\"]}",
+      "now": "{\"$not\":[{\"$in\":[{\"$type\":\"$a\"},[\"double\",\"int\",\"long\",\"decimal\"]]}]}",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000typeof $.a.b.c === \"number\"": {
+      "entry": "expr",
+      "src": "typeof $.a.b.c === \"number\"",
+      "kind": "output",
+      "was": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"number\"]}",
+      "now": "{\"$in\":[{\"$type\":\"$a.b.c\"},[\"double\",\"int\",\"long\",\"decimal\"]]}",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "jsmql\u0000$set({ t: typeof $.a === \"boolean\" });": {
+      "entry": "jsmql",
+      "src": "$set({ t: typeof $.a === \"boolean\" });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}}}]",
+      "now": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}}}]",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000$set({ t: typeof $.a === \"boolean\" });": {
+      "entry": "expr",
+      "src": "$set({ t: typeof $.a === \"boolean\" });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}}}]",
+      "now": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}}}]",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "pipeline\u0000$set({ t: typeof $.a === \"boolean\" });": {
+      "entry": "pipeline",
+      "src": "$set({ t: typeof $.a === \"boolean\" });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}}}]",
+      "now": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}}}]",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "update\u0000$set({ t: typeof $.a === \"boolean\" });": {
+      "entry": "update",
+      "src": "$set({ t: typeof $.a === \"boolean\" });",
+      "kind": "output",
+      "was": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}}}]",
+      "now": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}}}]",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
     }
   }
 }

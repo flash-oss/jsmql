@@ -29,6 +29,7 @@ import {
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
+import { typeIsExpr, typeIsFrom } from "./predicate-ir.ts";
 import {
   distinctKeysExpr,
   firstOf,
@@ -2233,10 +2234,20 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     // Direct binary operators → `{ $op: [left, right] }`.
     case "-":
     case "/":
+    case "===":
+    case "!==": {
+      // The Expr cell of the `TypeIs` IR node. Without it, `typeof $.a === "boolean"`
+      // lowered to a raw comparison against JavaScript's own spelling — and MongoDB's
+      // `$type` returns "bool", never "boolean", so the test was false for EVERY document
+      // including one where the field really was a boolean. The identical source in Filter
+      // position was correct, because the query side had the alias table and this side had
+      // nothing. Both cells now read the one vocabulary in `predicate-ir.ts`.
+      const typed = typeofComparison(left, right, op === "!==", ctx);
+      if (typed !== null) return typed;
+      return { [BINARY_OP_TO_MQL[op]]: [_generate(left, ctx), _generate(right, ctx)] };
+    }
     case "%":
     case "**":
-    case "===":
-    case "!==":
     case ">":
     case ">=":
     case "<":
@@ -2250,6 +2261,29 @@ function generateBinaryExpr(op: BinaryOp, left: Expr, right: Expr, ctx: Generate
     case "^":
       return { [BINARY_OP_TO_MQL[op]]: flattenChain(op, left, right, ctx) };
   }
+}
+
+/**
+ * `typeof <x> === "<alias>"`, either way round, as the `TypeIs` node's Expr cell.
+ *
+ * Unlike the Query cell this does NOT need a static field path — an expression operand is
+ * perfectly lowerable here, and only the query form needs something to index on. That
+ * asymmetry is the operand-kind gate: the Query cell states the kinds it accepts, the Expr
+ * cell accepts anything, and a source that fails the former still gets a correct answer.
+ */
+function typeofComparison(left: Expr, right: Expr, negated: boolean, ctx: GenerateCtx): unknown | null {
+  const oriented =
+    left.type === "TypeofExpr" && right.type === "StringLiteral"
+      ? { operand: left.operand, alias: right.value }
+      : right.type === "TypeofExpr" && left.type === "StringLiteral"
+        ? { operand: right.operand, alias: left.value }
+        : null;
+  if (oriented === null) return null;
+  const node = typeIsFrom(oriented.operand, oriented.alias, negated);
+  // An alias jsmql does not recognise (`"function"`, `"bigint"`) keeps the raw comparison,
+  // which is what it always did — this cell narrows nothing.
+  if (node === null) return null;
+  return typeIsExpr(node, _generate(oriented.operand, ctx));
 }
 
 /**

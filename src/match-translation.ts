@@ -20,6 +20,7 @@ import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import { lookupOperator } from "./operators.ts";
+import { typeIsFrom, typeIsQuery } from "./predicate-ir.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -542,69 +543,33 @@ function asModuloFieldAndDivisor(expr: Expr): { field: string; divisor: number }
 }
 
 /**
- * BSON type aliases accepted by MongoDB's `$type` query operator. Restricting
- * the peephole to this set avoids emitting a query that MongoDB would reject
- * at parse time. "number" is included because MQL accepts it as a synonym for
- * the int/long/double/decimal group in the query-doc form (even though the
- * aggregation `$type` expression never *returns* "number").
+ * The Query cell of the `TypeIs` IR node. The alias vocabulary and the gate live in
+ * `predicate-ir.ts`, so this cell and the expression cell cannot disagree about what
+ * `typeof x === "boolean"` means — they used to, and the expression side was wrong.
  */
-const BSON_TYPE_ALIASES: ReadonlySet<string> = new Set([
-  "double",
-  "string",
-  "object",
-  "array",
-  "binData",
-  "undefined",
-  "objectId",
-  "bool",
-  "date",
-  "null",
-  "regex",
-  "dbPointer",
-  "javascript",
-  "symbol",
-  "javascriptWithScope",
-  "int",
-  "timestamp",
-  "long",
-  "decimal",
-  "minKey",
-  "maxKey",
-  "number",
-]);
-
-/**
- * JS's `typeof` returns `"boolean"`, but MongoDB's `$type` query operator uses
- * `"bool"` — so accept either spelling and emit the BSON form. Other JS-only
- * typeof returns (`"function"`, `"symbol"`, `"bigint"`) have no clean BSON
- * analogue and fall through to `$expr`.
- */
-const JS_TO_BSON_TYPE: ReadonlyMap<string, string> = new Map([["boolean", "bool"]]);
-
 function translateTypeofPredicate(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const oriented = orientTypeofAndString(left, right);
   if (oriented === null) return null;
-  const { field, alias: rawAlias } = oriented;
-  const alias = JS_TO_BSON_TYPE.get(rawAlias) ?? rawAlias;
-  if (!BSON_TYPE_ALIASES.has(alias)) return null;
-  return fieldQueryOrNegated(field, { $type: alias }, op);
+  const node = typeIsFrom(oriented.operand, oriented.alias, op === "!==");
+  if (node === null) return null;
+  return typeIsQuery(node, oriented.field);
 }
 
-function orientTypeofAndString(left: Expr, right: Expr): { field: string; alias: string } | null {
-  const lt = asTypeofFieldPath(left);
-  if (lt !== null && right.type === "StringLiteral") {
-    return { field: lt, alias: right.value };
+/**
+ * Orient a `typeof x === "s"` comparison, either way round. Returns the OPERAND as well as
+ * its field path: the path is what the Query cell indexes on, the operand is what the Expr
+ * cell lowers, and the IR node needs both so one orientation serves both cells.
+ */
+function orientTypeofAndString(left: Expr, right: Expr): { field: string; operand: Expr; alias: string } | null {
+  if (left.type === "TypeofExpr" && right.type === "StringLiteral") {
+    const f = asFieldPath(left.operand);
+    if (f !== null) return { field: f, operand: left.operand, alias: right.value };
   }
-  const rt = asTypeofFieldPath(right);
-  if (rt !== null && left.type === "StringLiteral") {
-    return { field: rt, alias: left.value };
+  if (right.type === "TypeofExpr" && left.type === "StringLiteral") {
+    const f = asFieldPath(right.operand);
+    if (f !== null) return { field: f, operand: right.operand, alias: left.value };
   }
   return null;
-}
-
-function asTypeofFieldPath(expr: Expr): string | null {
-  if (expr.type !== "TypeofExpr") return null;
-  return asFieldPath(expr.operand);
 }
 
 function translateEquality(

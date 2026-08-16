@@ -90,6 +90,21 @@ from an `&&` chain of same-path `Contains` nodes, so `$all` is an
 And-normalisation rewrite over `Logical` children rather than a branch inside a
 leaf translator. See [desugar-pass.md](desugar-pass.md).
 
+## Implementation state
+
+The IR lands node by node. `src/predicate-ir.ts` holds the shared vocabulary and the cells;
+each node moves when its two sides are made to read that vocabulary instead of their own.
+
+| Node | State |
+|---|---|
+| 3 `TypeIs` | **shared.** One alias table, both cells derived. The Query cell is gated on a static path and takes the alias directly; the Expr cell accepts any operand and expands a query-only group alias (`number`) into the concrete types `$type` can return. |
+| the other ten | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
+
+`TypeIs` moved first because its two sides provably disagreed: the expression cell compared
+`$type` against JavaScript's own spelling, so `typeof $.a === "boolean"` was false for every
+document while the identical source in Filter position was correct. That is the failure the
+IR exists to make impossible, so it is the node that earns it.
+
 ## Adding a predicate feature
 
 1. Check whether an existing node covers it. Most do — see the absorption table.

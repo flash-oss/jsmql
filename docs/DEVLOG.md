@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: typeof answered differently in a filter and in an expression
+
+`typeof $.a === "boolean"` was FALSE for every document — including one where the field
+really was a boolean. The same source written as a filter was correct.
+
+The cause is exactly the shape the Predicate IR exists to remove. `typeof` had TWO alias
+tables. The query side mapped JavaScript's `"boolean"` onto MongoDB's `"bool"` and gated the
+result against the real BSON aliases. The expression side had no table at all: it lowered
+`typeof x` to `{ $type: … }` and let the generic `===` compare that against the raw
+JavaScript string. MongoDB's `$type` returns `"bool"`, never `"boolean"`, so the comparison
+could not be satisfied. `"number"` failed the same way and worse — it is a query-only
+umbrella alias that `$type` never returns at all, so the expression form was unsatisfiable
+while the query form was right.
+
+`src/predicate-ir.ts` is the first node of the IR: one alias vocabulary, two derived cells.
+The Query cell is gated on a static field path and takes the alias directly. The Expr cell
+accepts any operand — an expression is perfectly lowerable there, and only the query form
+needs something to index on — and expands a group alias into an `$in` over the concrete
+types `$type` can return. That asymmetry IS the operand-kind gate: a source the query form
+cannot index still gets a correct answer rather than no answer.
+
+Verified on a live mongod: for the same three documents the filter selects ids 1, 2, 3 for
+boolean/number/string, and the expression form now returns true for exactly those. Only
+`"boolean"` and `"number"` changed — `"string"`, `"object"` and unrecognised aliases such as
+`"function"` emit precisely what they did before, so the fix narrows nothing.
+
+`TypeIs` went first because it was the node whose two sides provably disagreed. The other ten
+still have two implementations.
+
+---
+
 ## 2026-08-16 — fix: the harness reads the sources it was blind to, and compares validate
 
 The corpus harvester read `jsmql("…")` and `jsmql('…')` and nothing else. Every source

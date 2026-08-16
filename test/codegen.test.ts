@@ -1936,6 +1936,47 @@ describe("string methods", () => {
   });
 });
 
+describe("typeof: the Query and Expr targets agree", () => {
+  // The two targets used to carry SEPARATE alias tables. The query side mapped JavaScript's
+  // "boolean" onto MongoDB's "bool"; the expression side compared `$type` against the raw
+  // JavaScript spelling, and `$type` never returns "boolean" — so the same source selected
+  // documents in Filter position and matched NOTHING in expression position.
+  it("maps JavaScript's spelling to the BSON alias in BOTH targets", () => {
+    expect(jsmql('typeof $.a === "boolean"')).toEqual({ a: { $type: "bool" } });
+    expect(jsmql.expr('typeof $.a === "boolean"')).toEqual({ $eq: [{ $type: "$a" }, "bool"] });
+  });
+
+  it("expands the query-only umbrella alias for the expression target", () => {
+    // `$type` accepts "number" as a QUERY alias but never RETURNS it, so the expression form
+    // has to name the concrete types instead of comparing against the umbrella.
+    expect(jsmql('typeof $.a === "number"')).toEqual({ a: { $type: "number" } });
+    expect(jsmql.expr('typeof $.a === "number"')).toEqual({
+      $in: [{ $type: "$a" }, ["double", "int", "long", "decimal"]],
+    });
+  });
+
+  it("negates in both targets", () => {
+    expect(jsmql('typeof $.a !== "boolean"')).toEqual({ a: { $not: { $type: "bool" } } });
+    expect(jsmql.expr('typeof $.a !== "boolean"')).toEqual({ $ne: [{ $type: "$a" }, "bool"] });
+    expect(jsmql.expr('typeof $.a !== "number"')).toEqual({
+      $not: [{ $in: [{ $type: "$a" }, ["double", "int", "long", "decimal"]] }],
+    });
+  });
+
+  it("leaves an alias neither language knows exactly as it was", () => {
+    // "function" has no BSON analogue. The gate rejects it, so the raw comparison stands and
+    // the query side falls back to $expr — narrowing nothing.
+    expect(jsmql.expr('typeof $.a === "function"')).toEqual({ $eq: [{ $type: "$a" }, "function"] });
+  });
+
+  it("lowers an operand the query target could never index", () => {
+    // The Query cell needs a static path; the Expr cell needs nothing of the sort. That
+    // asymmetry IS the operand-kind gate — a source that fails the query form still gets a
+    // correct answer rather than no answer.
+    expect(jsmql.expr('typeof $.a.b.c === "boolean"')).toEqual({ $eq: [{ $type: "$a.b.c" }, "bool"] });
+  });
+});
+
 describe("method arg-count errors (standardized via checkArity)", () => {
   // The single `checkArity` formatter words every arg-count error as
   // `.<method>(<signature>) <quantity-clause>` — the signature shows the
