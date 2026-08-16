@@ -1,5 +1,6 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { modExpr, modFrom } from "../src/predicate-ir.ts";
 import { ObjectId } from "../src/objectid.ts";
 import { OPERATOR_RETURNS, OPERATORS } from "../src/operators.ts";
 import { requiredReceiverFamily, valueMethodNames } from "../src/codegen.ts";
@@ -1933,6 +1934,22 @@ describe("string methods", () => {
   });
   it("chained toLowerCase then trim", () => {
     expect(jsmql.expr("$.name.toLowerCase().trim()")).toEqual({ $trim: { input: { $toLower: "$name" } } });
+  });
+});
+
+describe("a Predicate IR cell says what the compiler actually emits", () => {
+  // A node can be declared before both sides CALL it — `Mod`'s expression form is still
+  // reached through codegen's generic binary path. That is fine only while the declared cell
+  // and the emitted MQL agree; a cell nobody checks is a comment pretending to be code.
+  it("Mod's Expr cell matches the generic binary lowering", () => {
+    expect(jsmql.expr("$.a % 5 === 0")).toEqual(modExpr(modFrom(5, 0, false), "$a"));
+    expect(jsmql.expr("$.a % 5 !== 0")).toEqual(modExpr(modFrom(5, 0, true), "$a"));
+  });
+
+  it("Mod's Query cell keeps $mod's [divisor, remainder] order", () => {
+    // The single most swappable pair in the surface — 5 is the divisor, 0 the remainder.
+    expect(jsmql("$.a % 5 === 0")).toEqual({ a: { $mod: [5, 0] } });
+    expect(jsmql("$.a % 5 !== 0")).toEqual({ a: { $not: { $mod: [5, 0] } } });
   });
 });
 

@@ -25,6 +25,10 @@ import {
   containsQuery,
   existsFrom,
   existsQuery,
+  modFrom,
+  modQuery,
+  regexMatchFrom,
+  regexMatchQuery,
   orientUndefined,
   typeIsFrom,
   typeIsQuery,
@@ -397,10 +401,7 @@ function translateMatchCall(expr: Expr & { type: "MethodCall" }): Record<string,
   if (field === null) return null;
   const arg = expr.args[0];
   if (arg.type !== "RegexLiteral") return null;
-  // Reconstruct the regex literal as a real JS RegExp so the driver
-  // serialises it as BSON regex (rather than a plain object).
-  const re = new RegExp(arg.pattern, arg.flags);
-  return { [field]: re };
+  return regexMatchQuery(regexMatchFrom(arg.pattern, arg.flags), field);
 }
 
 /**
@@ -544,10 +545,11 @@ function fieldQueryOrNegated(
  * (remainder) must be integer literals; the field path must be a clean
  * `$.<path>` (no method calls, no further arithmetic).
  */
+/** The Query cell of the `Mod` IR node — the `[divisor, remainder]` order lives there. */
 function translateModulo(left: Expr, right: Expr, op: "===" | "!=="): Record<string, unknown> | null {
   const oriented = orientModuloAndInt(left, right);
   if (oriented === null) return null;
-  return fieldQueryOrNegated(oriented.field, { $mod: [oriented.divisor, oriented.remainder] }, op);
+  return modQuery(modFrom(oriented.divisor, oriented.remainder, op === "!=="), oriented.field);
 }
 
 function orientModuloAndInt(left: Expr, right: Expr): { field: string; divisor: number; remainder: number } | null {

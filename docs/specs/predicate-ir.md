@@ -97,10 +97,12 @@ each node moves when its two sides are made to read that vocabulary instead of t
 
 | Node | State |
 |---|---|
+| 4 `Mod` | **shared.** The Query cell owns `$mod`'s `[divisor, remainder]` order; the Expr cell is declared and pinned against codegen's generic binary lowering, which still emits it. |
+| 7 `RegexMatch` | **shared.** The Query cell emits a live `RegExp` (a `$regex` document would arrive as a document, not a BSON regex). |
 | 6 `Contains` (anchored) | **shared.** `.startsWith` / `.endsWith` gained the indexed query form the overview predicted — an escaped prefix/suffix regex, gated on a literal needle and a static path. |
 | 2 `Exists` | **shared.** `$exists` as a query, a `$type`-against-`"missing"` test as an expression. |
 | 3 `TypeIs` | **shared.** One alias table, both cells derived. The Query cell is gated on a static path and takes the alias directly; the Expr cell accepts any operand and expands a query-only group alias (`number`) into the concrete types `$type` can return. |
-| the other eight | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
+| the other six | still two implementations — the Query cell in `src/match-translation.ts`, the Expr cell in `src/codegen.ts` and the method families. |
 
 `TypeIs` moved first because its two sides provably disagreed: the expression cell compared
 `$type` against JavaScript's own spelling, so `typeof $.a === "boolean"` was false for every
@@ -113,6 +115,11 @@ IR exists to make impossible, so it is the node that earns it.
 on a live mongod and compares which come back. It is what makes migrating a node safe: the
 unit tests assert what each side EMITS, and the two sides drifted apart for months while
 every one of those tests passed.
+
+A node may be declared before both sides CALL it — `Mod`'s Expr cell is still reached through
+codegen's generic binary path. That is honest only while the declared cell and the emitted
+MQL agree, so a test asserts exactly that. A cell nobody checks is a comment pretending to be
+code.
 
 Migrate a node by adding its sources to that suite first. A node that already agrees must
 still agree afterwards; a node that does not is a bug to fix, not a shape to preserve — which

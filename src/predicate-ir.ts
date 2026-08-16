@@ -214,3 +214,55 @@ export function containsQuery(node: Contains, path: string): Record<string, unkn
   // is what the index reads.
   return { [path]: new RegExp(node.anchor === "start" ? `^${body}` : `${body}$`) };
 }
+
+/** `Mod` — the node behind `x % d === m` / `!== m`. */
+export type Mod = {
+  readonly kind: "Mod";
+  readonly divisor: number;
+  readonly remainder: number;
+  readonly negated: boolean;
+};
+
+export function modFrom(divisor: number, remainder: number, negated: boolean): Mod {
+  return { kind: "Mod", divisor, remainder, negated };
+}
+
+/**
+ * The Query cell. `$mod` takes `[divisor, remainder]` IN THAT ORDER — the single most
+ * swappable pair in the whole surface, which is why it is written once here rather than at
+ * each site that builds one.
+ */
+export function modQuery(node: Mod, path: string): Record<string, unknown> {
+  const test = { $mod: [node.divisor, node.remainder] };
+  return { [path]: node.negated ? { $not: test } : test };
+}
+
+/**
+ * The Expr cell. Takes the ALREADY-LOWERED operand.
+ *
+ * The expression form keeps the comparison the user wrote — `(x % d) === m` — because there
+ * is no single operator for it; only the query language folds the whole shape into `$mod`.
+ */
+export function modExpr(node: Mod, loweredOperand: unknown): unknown {
+  const rem = { $mod: [loweredOperand, node.divisor] };
+  return { [node.negated ? "$ne" : "$eq"]: [rem, node.remainder] };
+}
+
+/** `RegexMatch` — the node behind `.match(/re/)` and `regex.test(x)`. */
+export type RegexMatch = { readonly kind: "RegexMatch"; readonly pattern: string; readonly flags: string };
+
+export function regexMatchFrom(pattern: string, flags: string): RegexMatch {
+  return { kind: "RegexMatch", pattern, flags };
+}
+
+/**
+ * The Query cell — a live `RegExp`, not a `$regex` document.
+ *
+ * The driver serialises a RegExp instance to a BSON regex, which is the form an index reads
+ * and the form the server expects; a plain object would arrive as a document. The JS-only
+ * flags ride along untouched because the driver normalises them — asserted live in
+ * `test/query-expr-agreement.test.ts`, since MongoDB itself refuses a `g` option.
+ */
+export function regexMatchQuery(node: RegexMatch, path: string): Record<string, unknown> {
+  return { [path]: new RegExp(node.pattern, node.flags) };
+}

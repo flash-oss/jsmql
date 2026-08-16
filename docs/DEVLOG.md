@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: Mod and RegexMatch join the Predicate IR
+
+Two more nodes, both output-neutral — the agreement suite already showed these two targets
+agreeing, so this is the tidying half of the work rather than the bug-finding half.
+
+`Mod` earns its place on one detail: `$mod` takes `[divisor, remainder]`, which is the most
+swappable pair on the whole surface. That order is now written once. `RegexMatch` earns its
+on another: the Query cell must emit a live `RegExp` instance rather than a `$regex`
+document, because the driver serialises the former into the BSON regex an index reads and the
+latter into a plain document.
+
+`Mod`'s Expr cell is declared but not yet CALLED — codegen still reaches that shape through
+its generic binary path. That is honest only while the two agree, so a test asserts the
+declared cell equals the emitted MQL for both the plain and negated forms. A cell nobody
+checks is a comment pretending to be code, and the whole point of the IR is that a cell
+cannot quietly stop describing reality.
+
+Five of eleven nodes now share their vocabulary.
+
+---
+
 ## 2026-08-16 — perf: .startsWith / .endsWith in a filter use an index, and stop aborting
 
 `$.email.startsWith("admin")` in Filter position had no query form. It fell through to
