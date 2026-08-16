@@ -1,5 +1,9 @@
 {
-  "reference": { "commit": "cf4b339", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
+  "reference": {
+    "commit": "cf4b339",
+    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
+    "dirty": false
+  },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -2231,6 +2235,14 @@
       "kind": "output",
       "was": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"boolean\"]}}}]",
       "now": "[{\"$set\":{\"t\":{\"$eq\":[{\"$type\":\"$a\"},\"bool\"]}}}]",
+      "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "expr\u0000typeof $.a.b.c === \"boolean\"": {
+      "entry": "expr",
+      "src": "typeof $.a.b.c === \"boolean\"",
+      "kind": "output",
+      "was": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"boolean\"]}",
+      "now": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"bool\"]}",
       "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
     }
   }
