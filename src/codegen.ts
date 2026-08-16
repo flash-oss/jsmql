@@ -3734,6 +3734,7 @@ function generateMethodCall(
       gen: (e: Expr) => _generate(e, ctx),
       pos: callPos,
       internalVar: (base: string) => internalVar(ctx, base),
+      err: (message: string, pos?: number) => new CodegenError(message, pos ?? callPos),
     });
   }
 
@@ -5022,27 +5023,8 @@ function generateMethodCall(
         method === "mapValues" ? { k: `$$${as}.k`, v: mapped } : { k: { $toString: mapped }, v: `$$${as}.v` };
       return { $arrayToObject: { $map: { input: { $objectToArray: genObj }, as, in: entry } } };
     }
-    case "pick": {
-      const exprArgs = exprArgsOnly(args, "pick");
-      checkArity("pick", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
-      const keys = pickKeys(exprArgs[0], "pick");
-      // Field-select into a fresh object; a missing key drops out (lodash parity).
-      const [vObj, obj] = internalVar(ctx, "obj");
-      const out: Record<string, unknown> = {};
-      for (const k of keys) out[k] = { $getField: { field: k, input: obj } };
-      return { $let: { vars: { [vObj]: genObj }, in: out } };
-    }
-    case "omit": {
-      const exprArgs = exprArgsOnly(args, "omit");
-      checkArity("omit", { sig: "[keys]", exact: 1 }, exprArgs.length, callPos);
-      const keys = pickKeys(exprArgs[0], "omit");
-      const [as, kv] = objIterateeVar(ctx);
-      return {
-        $arrayToObject: {
-          $filter: { input: { $objectToArray: genObj }, as, cond: { $not: [{ $in: [`${kv}.k`, keys] }] } },
-        },
-      };
-    }
+    // .pick → src/methods/object.ts
+    // .omit → src/methods/object.ts
     case "pickBy":
     case "omitBy": {
       const exprArgs = exprArgsOnly(args, method);
@@ -5054,21 +5036,8 @@ function generateMethodCall(
         },
       };
     }
-    case "invert": {
-      checkArity("invert", { sig: "", none: true }, exprArgsOnly(args, "invert").length, callPos);
-      // Swap keys/values (new keys stringified; last wins — lodash parity).
-      const [as, kv] = objIterateeVar(ctx);
-      return {
-        $arrayToObject: {
-          $map: { input: { $objectToArray: genObj }, as, in: { k: { $toString: `${kv}.v` }, v: `${kv}.k` } },
-        },
-      };
-    }
-    case "toPairs": {
-      checkArity("toPairs", { sig: "", none: true }, exprArgsOnly(args, "toPairs").length, callPos);
-      const [as, kv] = objIterateeVar(ctx);
-      return { $map: { input: { $objectToArray: genObj }, as, in: [`${kv}.k`, `${kv}.v`] } };
-    }
+    // .invert → src/methods/object.ts
+    // .toPairs → src/methods/object.ts
     case "fromPairs": {
       checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
       // Receiver is a [[k, v], …] array; stringify keys for $arrayToObject.
@@ -5132,32 +5101,9 @@ function generateMethodCall(
       checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);
       return { $min: [{ $max: [genObj, _generate(exprArgs[0], ctx)] }, _generate(exprArgs[1], ctx)] };
     }
-    case "inRange": {
-      const exprArgs = exprArgsOnly(args, "inRange");
-      checkArity("inRange", { sig: "[start, ]end", allowed: [1, 2] }, exprArgs.length, callPos);
-      // lodash: `.inRange(end)` is [0, end); `.inRange(start, end)` is [start, end);
-      // the bounds swap when start > end (so negative ranges work) — `$min`/`$max`.
-      const lo = exprArgs.length === 2 ? _generate(exprArgs[0], ctx) : 0;
-      const hi = _generate(exprArgs[exprArgs.length === 2 ? 1 : 0], ctx);
-      return { $and: [{ $gte: [genObj, { $min: [lo, hi] }] }, { $lt: [genObj, { $max: [lo, hi] }] }] };
-    }
-    case "round": {
-      const exprArgs = exprArgsOnly(args, "round");
-      checkArity("round", { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
-      // → MongoDB `$round` (half-to-even / banker's rounding, per project decision).
-      const place = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : 0;
-      return { $round: [genObj, place] };
-    }
-    case "ceil":
-    case "floor": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "[precision]", allowed: [0, 1] }, exprArgs.length, callPos);
-      const op = method === "ceil" ? "$ceil" : "$floor";
-      if (exprArgs.length === 0) return { [op]: genObj };
-      // precision p: divide(op(multiply(n, 10^p)), 10^p).
-      const factor = { $pow: [10, _generate(exprArgs[0], ctx)] };
-      return { $divide: [{ [op]: { $multiply: [genObj, factor] } }, factor] };
-    }
+    // .inRange → src/methods/number.ts
+    // .round → src/methods/number.ts
+    // .ceil / .floor → src/methods/number.ts
 
     default: {
       const hint = didYouMean(method, KNOWN_METHODS);

@@ -13,6 +13,8 @@
 
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
 import { LODASH_STRING_METHODS } from "./lodash-string.ts";
+import { NUMBER_METHODS } from "./number.ts";
+import { OBJECT_METHODS } from "./object.ts";
 import { STRING_METHODS } from "./string.ts";
 import type { MethodDef } from "./types.ts";
 
@@ -20,6 +22,8 @@ import type { MethodDef } from "./types.ts";
 const FAMILIES: Record<string, Record<string, MethodDef>> = {
   "date-accessors": DATE_ACCESSOR_METHODS,
   "lodash-string": LODASH_STRING_METHODS,
+  number: NUMBER_METHODS,
+  object: OBJECT_METHODS,
   string: STRING_METHODS,
 };
 

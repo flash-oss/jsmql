@@ -140,6 +140,8 @@ the count reaches zero.
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
 | string | `src/methods/string.ts` | 15 |
+| number | `src/methods/number.ts` | 4 |
+| object (key/value reshapers) | `src/methods/object.ts` | 4 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
@@ -147,7 +149,18 @@ test compare the directory to the registry directly. Shared MQL shape-builders l
 it — `src/mql-shape.ts` (generic: `cond`, the index clamps, the literal readers) and
 `src/mql-string.ts` (string-specific) — not inside it.
 
-Each family file is a **leaf**: it imports only its own types and other leaves. A family file that reaches
+Each family file is a **leaf**: it imports only its own types and other leaves. What a
+lowering needs from the compiler arrives through `LowerInput` as a **service**, never as an
+import:
+
+| Service | For |
+|---|---|
+| `gen(expr)` | lower an argument |
+| `internalVar(base)` | mint a variable name that cannot capture a user parameter |
+| `err(message, pos?)` | reject, with a caret — importing `CodegenError` would create the cycle |
+
+Add a service only when a lowering genuinely cannot be written without it. `LowerInput`
+becoming a grab-bag is the failure `GenerateCtx` already demonstrated. A family file that reaches
 back into `codegen.ts` creates a cycle, and the registry then assembles before the family
 initialises — the lookup silently returns nothing and every method in that file falls
 through to the switch. Express what a lowering needs through `LowerInput` instead.

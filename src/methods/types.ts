@@ -54,6 +54,16 @@ export type LowerInput = {
    * `GenerateCtx` already demonstrated.
    */
   internalVar: (base: string) => [string, string];
+  /**
+   * Reject, with a position. A lowering must be able to refuse its arguments, and
+   * importing `CodegenError` here would make `src/methods/` depend on `codegen.ts` — a
+   * cycle that assembles the registry before the families initialise and silently drops
+   * every method in the file. The factory is injected at dispatch instead.
+   *
+   * `pos` defaults to the call site; pass an argument's own `pos` when the argument is
+   * what is wrong, so the caret lands on it.
+   */
+  err: (message: string, pos?: number) => Error;
 };
 
 /** A cell that cannot exist, with the reason a user reads. */

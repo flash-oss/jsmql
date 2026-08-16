@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the number and object families join the grid
+
+Eight more declarations. `.round` / `.ceil` / `.floor` / `.inRange` become
+`src/methods/number.ts`; `.invert` / `.toPairs` / `.pick` / `.omit` become
+`src/methods/object.ts`. Grouping them makes their shared shape legible — three
+of the four object methods are the same round trip (`$objectToArray`, transform
+the pairs, `$arrayToObject`), and `.pick` is the one that escapes it because a
+fixed key list needs no round trip at all.
+
+`.pick` and `.omit` reject their argument, which needed a third service:
+`LowerInput.err`. Importing `CodegenError` would have recreated the cycle that
+silently dropped nine string methods earlier, so the factory is injected at
+dispatch instead. That is now the documented rule — what a lowering needs from
+the compiler arrives as a service, never as an import, and a service is added
+only when a lowering genuinely cannot be written without it.
+
+`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` stay in the switch, and the
+family file says why: each takes an iteratee whose body is lowered against a scope
+binding the pair variable, and that resolver needs a `GenerateCtx`.
+
+No output change across 2 527 corpus sources. Ratchet: 126.
+
+---
+
 ## 2026-08-16 — refactor: six more string methods, and a second shape leaf
 
 `.charAt`, `.startsWith`, `.endsWith`, `.search`, `.padStart` and `.padEnd` move
