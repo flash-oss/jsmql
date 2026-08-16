@@ -73,6 +73,12 @@ const AGREE: readonly string[] = [
   "$.s.match(/^he/)",
   "/^he/.test($.s)",
   "$.s.match(/HE/i)",
+  // JS-only regex flags. The expression side strips them (`mongoRegexOptions`); the query
+  // side hands the pattern to `new RegExp` and lets the driver serialise it. MongoDB itself
+  // refuses a `g`, so this pair asserts the driver normalises rather than forwarding it —
+  // if that ever changed, the query side would start being rejected and this would catch it.
+  "$.s.match(/^he/g)",
+  "$.s.match(/^HE/gi)",
   // Membership
   '["hello", "Hi"].includes($.s)',
   // Exists — `=== undefined` is an existence test in BOTH targets: `$exists` in the query
