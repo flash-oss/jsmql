@@ -19,6 +19,19 @@ import type { ResolvedCallback, ResolvedIteratee, ResolvedPredicate } from "../m
 /** The receiver family a method requires. Decides which cells are applicable. */
 export type ReceiverFamily = "string" | "array" | "number" | "date" | "object";
 
+/**
+ * What a declaration's `receiver` may say.
+ *
+ * Most methods name ONE family. Some name several, because JavaScript put the same method on
+ * more than one prototype — `.slice` is on `Array` and on `String`, `.size` counts an array's
+ * elements or an object's keys — and their MQL differs per family. A few (`.toString`) apply
+ * to anything at all.
+ *
+ * A multi-family receiver is not a weaker claim than a single one. It is the claim that the
+ * method has one lowering PER family, which is what `byReceiver` makes it state.
+ */
+export type ReceiverSpec = ReceiverFamily | readonly ReceiverFamily[] | "any";
+
 /** The result type, where it is invariant. Drives inference and the chain type-check. */
 export type MethodReturns = "string" | "array" | "bool" | "number" | "object" | "date";
 
@@ -88,6 +101,14 @@ export type LowerInput = {
    * lambda here too.
    */
   callback: () => ResolvedCallback;
+  /**
+   * Refuse a receiver that provably holds ARRAYS, for a method that stringifies it.
+   *
+   * MongoDB has no recursive string conversion, so JavaScript's `[[1,2],[3]].join()` has no
+   * equivalent — and the message has to name the offending receiver, which means reading its
+   * AST. Narrow on purpose: two methods stringify an array, and both need exactly this.
+   */
+  requireStringifiableReceiver: () => void;
 };
 
 /** A cell that cannot exist, with the reason a user reads. */
@@ -112,13 +133,56 @@ export function isUnsupported(cell: unknown): cell is Unsupported {
 
 export type ValueCell = (input: LowerInput) => unknown;
 
+/** The already-bound cells, for a declaration that answers the not-provable case itself. */
+export type CellPicks = Partial<Record<ReceiverFamily, () => unknown>>;
+
+/**
+ * The Expr cell of a method whose lowering depends on WHAT IT WAS CALLED ON — one cell per
+ * receiver family.
+ *
+ * Dispatch probes the receiver against each declared family, in declaration order, and emits
+ * the cell whose family the receiver provably has. Declaration order IS probe order, so the
+ * precedence is visible in the declaration instead of hidden in an if-chain.
+ *
+ * When nothing is provable, the answer is `uncertain` — or, by default, the runtime
+ * `$isArray` dispatch DERIVED from the two cells. Deriving it is the point: ten methods used
+ * to hand-write that same `$cond`, and ten copies of one rule are ten chances for two of them
+ * to disagree about what a bare `$.field` means.
+ */
+export type ByReceiver = {
+  readonly cells: Partial<Record<ReceiverFamily, ValueCell | Unsupported>>;
+  readonly uncertain?: (input: LowerInput, cell: CellPicks) => unknown;
+};
+
+/**
+ * Declare one lowering per receiver family.
+ *
+ * Omit `uncertain` to derive the `$isArray` dispatch, which needs exactly two cells with
+ * `array` among them and neither `unsupported` — there is nothing to dispatch to otherwise.
+ * `test/methods-grid.test.ts` checks that statically, so a declaration that cannot be derived
+ * fails the build rather than a query.
+ */
+export function byReceiver(cells: ByReceiver["cells"], uncertain?: ByReceiver["uncertain"]): ByReceiver {
+  return { cells, uncertain };
+}
+
+export function isByReceiver(value: MethodDef["value"]): value is ByReceiver {
+  return typeof value === "object" && value !== null && "cells" in value;
+}
+
 export type MethodDef = {
-  receiver: ReceiverFamily;
+  receiver: ReceiverSpec;
   returns?: MethodReturns;
   args: MethodArgs;
   /** The Expr cell. Always applicable — every method produces a value somewhere. */
-  value: ValueCell | Unsupported;
+  value: ValueCell | Unsupported | ByReceiver;
 };
+
+/** The families a `receiver` names, empty for `"any"`. */
+export function receiverFamilies(receiver: ReceiverSpec): readonly ReceiverFamily[] {
+  if (receiver === "any") return [];
+  return typeof receiver === "string" ? [receiver] : receiver;
+}
 
 /**
  * Which cells a receiver family can have.
@@ -126,6 +190,6 @@ export type MethodDef = {
  * The stream is a sequence of documents, so only an array receiver can have a Stage
  * cell — every other family's Stage cell is not "unanswered", it cannot exist.
  */
-export function stageCellApplies(receiver: ReceiverFamily): boolean {
-  return receiver === "array";
+export function stageCellApplies(receiver: ReceiverSpec): boolean {
+  return receiverFamilies(receiver).includes("array");
 }

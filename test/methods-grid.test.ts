@@ -16,7 +16,7 @@ import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { valueMethodNames, requiredReceiverFamily } from "../src/codegen.ts";
 import { METHOD_FAMILIES, declaredMethodNames, lookupMethod } from "../src/methods/index.ts";
-import { stageCellApplies } from "../src/methods/types.ts";
+import { isByReceiver, isUnsupported, receiverFamilies, stageCellApplies } from "../src/methods/types.ts";
 
 describe("the registry is assembled from every family file", () => {
   it("imports every family file", () => {
@@ -41,10 +41,15 @@ describe("the registry is assembled from every family file", () => {
 
   it("never resolves an inherited Object.prototype member", () => {
     // A plain `{}` registry would hand back `Object.prototype.toLocaleString` — a truthy
-    // function with no `args` — and dispatch would pass it to the arity checker.
+    // function with no `args` — and dispatch would pass it to the arity checker. `.toString`
+    // and `.toLocaleString` are REAL declarations, so this asserts the shape rather than the
+    // absence: whatever comes back must be a declaration, never an inherited member.
     for (const name of ["toString", "valueOf", "toLocaleString", "constructor", "hasOwnProperty"]) {
       const found = lookupMethod(name);
-      expect(found === undefined || typeof found.value === "function" || "unsupported" in found.value).toBe(true);
+      if (found === undefined) continue;
+      expect(found.args?.sig, `${name} resolved to something that is not a declaration`).toBeDefined();
+      const cell = found.value;
+      expect(typeof cell === "function" || isUnsupported(cell) || isByReceiver(cell)).toBe(true);
     }
   });
 });
@@ -66,8 +71,48 @@ describe("every declaration is complete", () => {
     for (const name of declaredMethodNames()) {
       const def = lookupMethod(name)!;
       const gate = requiredReceiverFamily(name);
+      const families = receiverFamilies(def.receiver);
       if (gate !== null) {
-        expect(gate, `${name}: grid says ${def.receiver}, codegen gate says ${gate}`).toBe(def.receiver);
+        expect(families, `${name}: grid says ${families.join("|")}, codegen gate says ${gate}`).toEqual([gate]);
+      } else {
+        // The gate declines to gate a method it cannot pin to ONE family. A grid declaration
+        // that names exactly one family and is still ungated is a hole in the chain
+        // type-check — `$.s.trim().foo()` would emit MQL the server refuses.
+        expect(families.length === 1, `${name}: names one family but the codegen gate is null`).toBe(false);
+      }
+    }
+  });
+
+  it("a per-receiver value declares exactly the families its receiver names", () => {
+    // Two statements of one fact drift. The cells ARE the families this method distinguishes,
+    // so `receiver` must name the same set — add a third cell and forget to widen `receiver`
+    // and the probe would never reach it.
+    for (const name of declaredMethodNames()) {
+      const def = lookupMethod(name)!;
+      if (!isByReceiver(def.value)) continue;
+      const cells = Object.keys(def.value.cells).sort();
+      // `receiver: "any"` names no family: its cells are refinements of "anything", and the
+      // general answer is `uncertain`.
+      if (def.receiver === "any") {
+        expect(def.value.uncertain, `${name}: an "any" receiver must answer the general case`).toBeDefined();
+        continue;
+      }
+      expect([...receiverFamilies(def.receiver)].sort(), `${name}: cells and receiver disagree`).toEqual(cells);
+    }
+  });
+
+  it("derives the uncertain answer only where it CAN be derived", () => {
+    // Omitting `uncertain` means "build `cond($isArray, array, other)` from the cells". That
+    // needs exactly two cells, `array` among them, and neither `unsupported` — there is
+    // nothing to dispatch to otherwise. Caught here so it can never reach a query.
+    for (const name of declaredMethodNames()) {
+      const def = lookupMethod(name)!;
+      if (!isByReceiver(def.value) || def.value.uncertain !== undefined) continue;
+      const cells = Object.entries(def.value.cells);
+      expect(cells.length, `${name}: a derived dispatch needs exactly two cells`).toBe(2);
+      expect(Object.keys(def.value.cells), `${name}: a derived dispatch needs an 'array' cell`).toContain("array");
+      for (const [family, cell] of cells) {
+        expect(isUnsupported(cell), `${name}: the '${family}' cell can't be unsupported and derived`).toBe(false);
       }
     }
   });
@@ -88,7 +133,7 @@ describe("the migration ratchet", () => {
   // The number of methods still lowering from the switch. It must only ever go DOWN.
   // Lower this line as families migrate; a rise means a method was added to the switch
   // instead of to the grid, which is the habit the grid exists to break.
-  const MAX_UNMIGRATED = 21;
+  const MAX_UNMIGRATED = 9;
 
   it("never grows the set of methods that bypass the grid", () => {
     const unmigrated = valueMethodNames().filter((n) => lookupMethod(n) === undefined);

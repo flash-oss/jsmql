@@ -12,6 +12,8 @@
 // See docs/specs/lowering-grid.md § Where declarations live.
 
 import type { Expr } from "./ast.ts";
+import { CodegenError } from "./errors.ts";
+import { type Gen, literalIndexValue, resolveSliceIndex } from "./mql-shape.ts";
 
 /**
  * A lodash *iteratee* for the array methods, already resolved: the `$map`/`$filter`
@@ -212,4 +214,105 @@ export function takeDropWhile(
   return {
     $let: { vars: { [vArr]: arrExpr }, in: { $let: { vars: { [vFi]: { $indexOfArray: [preds, false] } }, in: body } } },
   };
+}
+
+/**
+ * Lower array `.slice(start, end?)` to MQL `$slice`, faithful to
+ * `Array.prototype.slice`: `start`/`end` are indices (end **exclusive**) and
+ * negatives count from the end. MongoDB's `$slice` is position+**count** based
+ * (and its 3-arg count must be > 0), so we translate rather than pass the JS
+ * args straight through. See docs/specs/method-dispatch.md.
+ */
+export function sliceArray(
+  genObj: unknown,
+  exprArgs: readonly Expr[],
+  gen: Gen,
+  internalVar: (base: string) => [string, string],
+): unknown {
+  if (exprArgs.length === 0) return genObj;
+
+  const startNode = exprArgs[0];
+  const startLit = literalIndexValue(startNode);
+
+  // --- slice(start): every element from `start` to the end ---
+  if (exprArgs.length === 1) {
+    // Negative literal → last |start| elements: the 2-arg `$slice` primitive.
+    if (startLit !== null && startLit < 0) return { $slice: [genObj, startLit] };
+    // slice(0) is a whole-array copy.
+    if (startLit === 0) return genObj;
+    // Positive literal or runtime start → drop the first `start` (a runtime
+    // negative start is resolved from the end by `$slice`'s position arg).
+    // count = max(1, size) so an empty array is `$slice: [[], start, 1]` → []
+    // rather than a rejected count of 0 (same guard as `.drop(n)`).
+    const [vArr, arr] = internalVar("arr");
+    return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, gen(startNode), { $max: [1, { $size: arr }] }] } } };
+  }
+
+  // --- slice(start, end): elements at indices [start, end) ---
+  const endNode = exprArgs[1];
+  const endLit = literalIndexValue(endNode);
+
+  // Both indices are non-negative literals → pure arithmetic, no `$size` needed.
+  if (startLit !== null && startLit >= 0 && endLit !== null && endLit >= 0) {
+    // start 0 → "first `end`". The 2-arg `$slice` tolerates a 0 count (→ []),
+    // so no guard is needed and a 0-length slice needs no special case.
+    if (startLit === 0) return { $slice: [genObj, endLit] };
+    if (endLit <= startLit) return []; // empty range
+    return { $slice: [genObj, startLit, endLit - startLit] };
+  }
+
+  // start 0 (literal), non-literal-or-negative end → "first `end`": resolve the
+  // end index and lean on the 2-arg (count-tolerant) `$slice`.
+  if (startLit === 0) {
+    const [vArr, arr] = internalVar("arr");
+    return {
+      $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, resolveSliceIndex(endNode, gen, { $size: arr })] } },
+    };
+  }
+
+  // General case (negative start, or a runtime index): resolve both indices
+  // against the length, take `end - start` elements from the resolved start,
+  // and guard the empty range (the 3-arg `$slice` count must be > 0). The
+  // slice's own count is `max(count, 1)` — never 0 — so that when the array is
+  // a compile-time literal, MongoDB's optimizer can fold the (unselected) slice
+  // branch instead of rejecting a constant 0-count `$slice`; the outer `$cond`
+  // still returns `[]` for the empty range.
+  const [vArr, arr] = internalVar("arr");
+  const [vK, k] = internalVar("k");
+  const [vF, f] = internalVar("f");
+  const count = { $subtract: [f, k] };
+  return {
+    $let: {
+      vars: { [vArr]: genObj },
+      in: {
+        $let: {
+          vars: {
+            [vK]: resolveSliceIndex(startNode, gen, { $size: arr }),
+            [vF]: resolveSliceIndex(endNode, gen, { $size: arr }),
+          },
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, k, { $max: [count, 1] }] }, []] },
+        },
+      },
+    },
+  };
+}
+
+/** Negate a count that's either a compile-time number or a runtime expression. */
+
+/**
+ * `.includes(x)` / `.indexOf(x)` search for a *value*; they don't take a
+ * predicate (that's JS, not jsmql being strict). When the user passes a lambda
+ * they meant the predicate sibling — `.some` (bool) for `.includes`,
+ * `.findIndex` (index) for `.indexOf` — so point there. Without this the lambda
+ * falls through to the generic "function only valid as a callback to an
+ * iterating array method" rejection, which misleads because `.includes`/
+ * `.indexOf` ARE array methods.
+ */
+export function rejectPredicateOnValueSearch(arg: Expr | undefined, method: string, sibling: string): void {
+  if (arg?.type !== "Lambda") return;
+  const p = arg.params[0] ?? "x";
+  throw new CodegenError(
+    `.${method}() searches for a value — it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => …).`,
+    arg.pos,
+  );
 }

@@ -116,7 +116,11 @@ function datePart(method: string): MethodDef {
 
 export const DATE_METHODS: Record<string, MethodDef> = {
   getTime: {
-    receiver: "date",
+    // NOT date-only, unlike every other method in this file. `$toLong` converts a string or
+    // a number too, and jsmql does not take that away — so the receiver is unconstrained and
+    // one cell serves all of it. (JavaScript puts `.getTime()` on `Date` alone; the chain
+    // type-check declines to gate what the lowering genuinely accepts.)
+    receiver: "any",
     returns: "number",
     args: { sig: "", none: true },
     // Match JS: milliseconds since the epoch, already UTC (there is no `getUTCTime`).

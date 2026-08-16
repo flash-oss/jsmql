@@ -29,6 +29,14 @@ export type MethodArgs = {
   atLeast?: number;
   none?: true;
   /**
+   * A spread argument (`.concat(...items)`) is SPLICED into the argument list rather than
+   * rejected. jsmql refuses spread almost everywhere, because MongoDB reads an operator's
+   * fields by name and a spread cannot be resolved at compile time — but a variadic method
+   * that simply forwards its arguments has nothing to resolve. Whether that is true is a
+   * property of the argument rule, so it is stated here.
+   */
+  spread?: true;
+  /**
    * Counts that parse fine but are wrong for a REASON, paired with the message that reason
    * deserves. Checked before the count rule, so `.isSame(other)` can answer "without a unit
    * that is just '===' — write 'a === b'" instead of "requires 2 or 3 arguments".

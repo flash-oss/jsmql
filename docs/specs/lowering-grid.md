@@ -50,6 +50,56 @@ no declaration is asked to answer a cell that cannot exist.
 | `array` | applicable | applicable | applicable when `returns: "bool"` |
 | `number` / `object` / `date` | applicable | never | applicable when `returns: "bool"` |
 
+## Dual receivers
+
+`receiver` usually names one family. Some methods name several, because JavaScript put the
+same method on more than one prototype — `.slice`, `.indexOf`, `.includes`, `.concat` and
+`.at` are on `Array` **and** on `String`; lodash's `.size` counts an array's elements or an
+object's keys — and their MQL differs per family. A few (`.toString`) apply to anything.
+
+A multi-family receiver is not a weaker claim than a single one. It is the claim that the
+method has one lowering **per** family, which `byReceiver` makes it state:
+
+```ts
+indexOf: {
+  receiver: ["array", "string"],
+  returns:  "number",
+  args:     { sig: "searchValue", exact: 1 },
+  value: byReceiver({
+    array:  ({ recv, args, gen }) => ({ $indexOfArray: [recv, gen(args[0])] }),
+    string: ({ recv, args, gen }) => ({ $indexOfCP:    [recv, gen(args[0])] }),
+  }),
+}
+```
+
+**Declaration order is probe order.** Dispatch tests the receiver against each declared
+family in turn and emits the cell whose family the receiver provably has, so the precedence
+sits in the declaration instead of an if-chain. A family the compiler never proves about a
+receiver (a number, a date) simply never wins the probe — a statement about the inference,
+not about the method.
+
+**The not-provable case is derived.** Omit `uncertain` and dispatch builds
+`cond($isArray, <array cell>, <other cell>)` from the two cells. This is the same move the
+Predicate IR makes with its automatic `$expr` fallback, and for the same reason: ten methods
+used to hand-write that `$cond`, and ten copies of one rule are ten chances for two of them
+to disagree about what a bare `$.field` means.
+
+Deriving needs exactly two cells, `array` among them, and neither `unsupported` — there is
+nothing to dispatch to otherwise. `test/methods-grid.test.ts` checks that statically, so a
+declaration that cannot be derived fails the build rather than a query. A declaration whose
+uncertain answer is *not* that shape states it, and says why:
+
+| Method | Its own `uncertain`, because |
+|---|---|
+| `.at` / `.nth` | a receiver that is neither array nor string is `$$REMOVE`. Reading "not an array" as "string" made `$.aliases.at(0) ?? "anonymous"` yield `""`. |
+| `.lastIndexOf` | its string cell is `unsupported`, so there is no second branch to dispatch to; the array form stands. |
+| `.toString` | "anything else" is a real lowering (`$toString`), not a runtime choice between two. |
+
+`receiver: "any"` names no family at all: the cells are refinements, and `uncertain` is the
+general answer. A multi-family receiver whose single lowering serves every family declares a
+plain `value` function instead of a map — `.clamp` takes a number or a date and lowers the
+same way for both.
+
 ## Every applicable cell must be answered
 
 An applicable cell holds a lowering or `unsupported(reason)`. An unanswered
@@ -135,17 +185,10 @@ grid cannot yet express, plus four methods that need a service nobody else needs
 
 | Left in the switch | Why |
 |---|---|
-| `.indexOf` `.includes` `.at` `.slice` `.concat` `.nth` `.lastIndexOf` `.size` `.toString` `.toLocaleString` | DUAL-receiver. Each works on a string AND an array (or an array and an object), and picks its lowering from what the receiver is inferred to be. The family they would declare is not one of the five. |
 | `.reduce` `.reduceRight` | The accumulator's type is narrowed from the initial value AND the lambda's result together, which no resolved value can carry. |
 | `.findIndex` `.findLastIndex` | They build their own `$zip`-and-`$reduce` scan instead of going through the shared callback resolver. |
 | `.zipWith` | Its iteratee takes one parameter per zipped ARRAY, so the one-parameter resolver cannot serve it. |
-| `.join` | Reads its RECEIVER's shape to reject a nested array. |
-| `.clamp` | Its receiver may be a number OR a date — again no single family. |
 | `.test` `.exec` `.isSubsetOf` `.isSupersetOf` | Intercepted on a RegExp / Set receiver before `generateMethodCall`, so they never reach the grid. |
-
-The dual-receiver row is the one worth solving, because it is ten of the twenty and it is a
-missing CONCEPT rather than a missing service: `receiver` names one family, and these
-methods have two.
 
 `test/methods-grid.test.ts` carries a **ratchet**: the number of methods still lowering
 from the switch may only fall. A rise means a method was added to the switch instead of a
@@ -166,6 +209,7 @@ the count reaches zero.
 | array slicing / zip | `src/methods/array-slicing.ts` | 16 |
 | array callbacks | `src/methods/array-callbacks.ts` | 7 |
 | array reshape (immutable copies / sorts) | `src/methods/array-reshape.ts` | 6 |
+| dual receivers | `src/methods/dual-receiver.ts` | 12 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
 test compare the directory to the registry directly. Shared MQL shape-builders live beside
@@ -187,6 +231,7 @@ import:
 | `predicate(node)` | the same vocabulary read as a boolean |
 | `objIteratee(node)` | resolve a `(value[, key])` iteratee over `$objectToArray` entries |
 | `callback()` | resolve this call's JavaScript array callback, `(element[, index[, array]]) => …` |
+| `requireStringifiableReceiver()` | refuse a receiver that provably holds arrays, for a method that stringifies it |
 
 A leaf HELPER module throws `CodegenError` directly — `src/errors.ts` is a leaf too, and a
 helper reading an AST node always has that node's `pos` to hand. `err` exists for the other

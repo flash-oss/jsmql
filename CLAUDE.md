@@ -101,8 +101,8 @@ src/
   parser.ts       Recursive-descent parser → AST.
   codegen.ts      AST → MQL JSON.
   methods/        The declaration grid: one file per method family, assembled in methods/index.ts. See docs/specs/lowering-grid.md.
-  errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
   arity.ts        The one argument-count rule (`MethodArgs`) + the one checker that words every count error.
+  errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
   mql-shape.ts    Pure MQL shape-builders and literal readers (generic). A leaf both codegen.ts and the families use.
   mql-string.ts   The same, string-specific.
   mql-array.ts    The same, array-specific, plus the resolved-iteratee shape the array family reads.

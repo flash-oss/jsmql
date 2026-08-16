@@ -53,6 +53,16 @@ because the stream is a sequence of documents. `test/methods-grid.test.ts` asser
 family file reaches the assembly, that no name is declared twice, and that the grid agrees
 with codegen's receiver gate.
 
+A method JavaScript put on more than one prototype declares one cell **per receiver family**
+and lets dispatch pick — declaration order is probe order, and the not-provable case is
+DERIVED as `cond($isArray, …)` rather than hand-written per method:
+
+```ts
+indexOf: { receiver: ["array", "string"], returns: "number", args: { sig: "searchValue", exact: 1 },
+           value: byReceiver({ array: ({ recv, args, gen }) => ({ $indexOfArray: [recv, gen(args[0])] }),
+                               string: ({ recv, args, gen }) => ({ $indexOfCP: [recv, gen(args[0])] }) }) }
+```
+
 **The grid is consulted before the switch**, so a declared method never reaches it and the
 switch is the fallback for what has not moved. A ratchet in that test file fails if the
 un-migrated count RISES — adding a method to the switch instead of the grid is the habit

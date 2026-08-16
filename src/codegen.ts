@@ -18,13 +18,22 @@ import { checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
 import { lookupMethod } from "./methods/index.ts";
-import { isUnsupported } from "./methods/types.ts";
+import {
+  type ByReceiver,
+  type CellPicks,
+  isByReceiver,
+  isUnsupported,
+  type LowerInput,
+  type ReceiverFamily as GridReceiverFamily,
+} from "./methods/types.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import {
   distinctKeysExpr,
   firstOf,
+  rejectPredicateOnValueSearch,
+  sliceArray,
   iterateeKeys,
   jsBool,
   lastOf,
@@ -49,6 +58,7 @@ import {
   type Gen,
   isIfNullWrapped,
   isSingleCodePointLiteral,
+  isStringType,
   literalIndexValue,
   mongoRegexOptions,
   resolveSliceIndex,
@@ -57,6 +67,7 @@ import {
 import {
   capitalizeExpr,
   escapeHtmlExpr,
+  sliceString,
   firstCharExpr,
   joinWords,
   normaliseSliceIndex,
@@ -1416,115 +1427,6 @@ function genIn(ctx: GenerateCtx): Gen {
 }
 
 /**
- * Lower array `.slice(start, end?)` to MQL `$slice`, faithful to
- * `Array.prototype.slice`: `start`/`end` are indices (end **exclusive**) and
- * negatives count from the end. MongoDB's `$slice` is position+**count** based
- * (and its 3-arg count must be > 0), so we translate rather than pass the JS
- * args straight through. See docs/specs/method-dispatch.md.
- */
-function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
-  if (exprArgs.length === 0) return genObj;
-
-  const startNode = exprArgs[0];
-  const startLit = literalIndexValue(startNode);
-
-  // --- slice(start): every element from `start` to the end ---
-  if (exprArgs.length === 1) {
-    // Negative literal → last |start| elements: the 2-arg `$slice` primitive.
-    if (startLit !== null && startLit < 0) return { $slice: [genObj, startLit] };
-    // slice(0) is a whole-array copy.
-    if (startLit === 0) return genObj;
-    // Positive literal or runtime start → drop the first `start` (a runtime
-    // negative start is resolved from the end by `$slice`'s position arg).
-    // count = max(1, size) so an empty array is `$slice: [[], start, 1]` → []
-    // rather than a rejected count of 0 (same guard as `.drop(n)`).
-    const [vArr, arr] = internalVar(ctx, "arr");
-    return {
-      $let: {
-        vars: { [vArr]: genObj },
-        in: { $slice: [arr, _generate(startNode, ctx), { $max: [1, { $size: arr }] }] },
-      },
-    };
-  }
-
-  // --- slice(start, end): elements at indices [start, end) ---
-  const endNode = exprArgs[1];
-  const endLit = literalIndexValue(endNode);
-
-  // Both indices are non-negative literals → pure arithmetic, no `$size` needed.
-  if (startLit !== null && startLit >= 0 && endLit !== null && endLit >= 0) {
-    // start 0 → "first `end`". The 2-arg `$slice` tolerates a 0 count (→ []),
-    // so no guard is needed and a 0-length slice needs no special case.
-    if (startLit === 0) return { $slice: [genObj, endLit] };
-    if (endLit <= startLit) return []; // empty range
-    return { $slice: [genObj, startLit, endLit - startLit] };
-  }
-
-  // start 0 (literal), non-literal-or-negative end → "first `end`": resolve the
-  // end index and lean on the 2-arg (count-tolerant) `$slice`.
-  if (startLit === 0) {
-    const [vArr, arr] = internalVar(ctx, "arr");
-    return {
-      $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, resolveSliceIndex(endNode, genIn(ctx), { $size: arr })] } },
-    };
-  }
-
-  // General case (negative start, or a runtime index): resolve both indices
-  // against the length, take `end - start` elements from the resolved start,
-  // and guard the empty range (the 3-arg `$slice` count must be > 0). The
-  // slice's own count is `max(count, 1)` — never 0 — so that when the array is
-  // a compile-time literal, MongoDB's optimizer can fold the (unselected) slice
-  // branch instead of rejecting a constant 0-count `$slice`; the outer `$cond`
-  // still returns `[]` for the empty range.
-  const [vArr, arr] = internalVar(ctx, "arr");
-  const [vK, k] = internalVar(ctx, "k");
-  const [vF, f] = internalVar(ctx, "f");
-  const count = { $subtract: [f, k] };
-  return {
-    $let: {
-      vars: { [vArr]: genObj },
-      in: {
-        $let: {
-          vars: {
-            [vK]: resolveSliceIndex(startNode, genIn(ctx), { $size: arr }),
-            [vF]: resolveSliceIndex(endNode, genIn(ctx), { $size: arr }),
-          },
-          in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr, k, { $max: [count, 1] }] }, []] },
-        },
-      },
-    },
-  };
-}
-
-/** Negate a count that's either a compile-time number or a runtime expression. */
-
-/** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
-function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
-  if (exprArgs.length === 0) return genObj;
-  const start = normaliseSliceIndex(exprArgs[0], genIn(ctx), genObj);
-  if (exprArgs.length === 1) {
-    // For 1-arg `.slice(-n)` on a string, the length is exactly `n` (JS
-    // returns the last n characters). Fold that case so the output isn't
-    // a noisy `strLen - (strLen - n)`.
-    const negativeLiteral = negativeLiteralValue(exprArgs[0]);
-    if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
-    // `strLen - start` is negative when start runs past the end ("".slice(1)).
-    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
-  }
-  const end = normaliseSliceIndex(exprArgs[1], genIn(ctx), genObj);
-  return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
-}
-
-/** Return the absolute value of a negative numeric literal AST node, else null. */
-function negativeLiteralValue(node: Expr): number | null {
-  if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
-  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral" && node.operand.value > 0) {
-    return node.operand.value;
-  }
-  return null;
-}
-
-/**
  * Auto-wrap a RUNTIME-INJECTED string in `$literal` when MongoDB would misread
  * it as a field reference / system variable. This is HR1's only exception: a
  * `"$x"` typed in jsmql *source* passes through verbatim (it IS the field ref —
@@ -2106,9 +2008,6 @@ function generateNumericIndexAccess(
 }
 
 /** Runtime "is this value a BSON string?", for a receiver whose type codegen can't prove. */
-function isStringType(operand: unknown): object {
-  return { $eq: [{ $type: operand }, "string"] };
-}
 
 /**
  * Coerce a computed `$getField` key whose type codegen can't prove.
@@ -3295,6 +3194,59 @@ function utcDate(date: unknown): unknown {
   return date;
 }
 
+/**
+ * Which receiver families the compiler can PROVE, and how.
+ *
+ * A family with no entry is one jsmql never proves about a receiver (a number, a date), so a
+ * declaration naming it always lands in the not-provable case. That is a statement about the
+ * inference, not about the method.
+ */
+const PROVES_RECEIVER: Partial<Record<ReceiverFamily, (o: Expr, ctx: GenerateCtx) => boolean>> = {
+  array: isArrayProducing,
+  string: isStringProducing,
+  object: isObjectProducing,
+};
+
+/**
+ * Lower a method whose meaning depends on WHAT IT WAS CALLED ON.
+ *
+ * Probe the receiver against each declared family in DECLARATION order and emit the cell
+ * whose family the receiver provably has. When nothing is provable, take the declaration's
+ * own `uncertain` answer — or derive the runtime `$isArray` dispatch from its two cells.
+ *
+ * Deriving that `$cond` here is the whole point of the concept: ten methods used to
+ * hand-write it, and ten copies of one rule are ten chances for two of them to disagree
+ * about what a bare `$.field` means.
+ */
+function lowerByReceiver(
+  def: ByReceiver,
+  input: LowerInput,
+  object: Expr,
+  ctx: GenerateCtx,
+  method: string,
+  callPos: number,
+): unknown {
+  const families = Object.keys(def.cells) as ReceiverFamily[];
+  const run = (family: ReceiverFamily): unknown => {
+    const cell = def.cells[family]!;
+    if (isUnsupported(cell)) throw new CodegenError(cell.unsupported, callPos);
+    return cell(input);
+  };
+  for (const family of families) {
+    if (PROVES_RECEIVER[family]?.(object, ctx) === true) return run(family);
+  }
+  const picks: CellPicks = {};
+  for (const family of families) picks[family] = () => run(family);
+  if (def.uncertain !== undefined) return def.uncertain(input, picks);
+  // Derived. `test/methods-grid.test.ts` proves this shape statically for every
+  // declaration, so reaching the guard means a declaration slipped past that test.
+  const other = families.find((f) => f !== "array");
+  if (families.length !== 2 || !families.includes("array") || other === undefined) {
+    internalError(`.${method}() has no 'uncertain' answer and its cells cannot derive one`, callPos);
+  }
+  return cond({ $isArray: input.recv }, run("array"), run(other));
+}
+
 function generateMethodCall(
   object: Expr,
   method: string,
@@ -3375,9 +3327,13 @@ function generateMethodCall(
     // The unsupported answer comes FIRST: a method that cannot be lowered at all has no
     // arity to complain about, and its tailored message is the useful error.
     if (isUnsupported(declared.value)) throw new CodegenError(declared.value.unsupported, callPos);
-    const exprArgs = exprArgsOnly(args, method);
+    // A variadic method that forwards its arguments accepts spread; everything else refuses
+    // it. The argument rule states which, so dispatch reads one flag instead of the
+    // declaration re-deriving it. `checkArity` counts the same either way — a spliced
+    // argument occupies one slot.
+    const exprArgs = declared.args.spread ? spliceSpreadArgs(args) : exprArgsOnly(args, method);
     checkArity(method, declared.args, exprArgs.length, callPos);
-    return declared.value({
+    const input: LowerInput = {
       recv: genObj,
       args: exprArgs,
       gen: (e: Expr) => _generate(e, ctx),
@@ -3387,6 +3343,7 @@ function generateMethodCall(
       iteratee: (node?: Expr) => resolveIteratee(node, method, ctx),
       predicate: (node: Expr) => resolvePredicate(node, method, ctx),
       objIteratee: (node: Expr) => resolveObjIteratee(node, method, ctx),
+      requireStringifiableReceiver: () => rejectNestedArrayStringify(object, method, callPos, ctx),
       callback: () => {
         const lambda = requireLambda(exprArgs, method, callPos, ctx);
         const iter = arrayIterInput(lambda, genObj, ctx, method, object);
@@ -3398,7 +3355,10 @@ function generateMethodCall(
           boolBody: () => iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)),
         };
       },
-    });
+    };
+    return isByReceiver(declared.value)
+      ? lowerByReceiver(declared.value, input, object, ctx, method, callPos)
+      : declared.value(input);
   }
 
   switch (method) {
@@ -3409,96 +3369,18 @@ function generateMethodCall(
     // .split → src/methods/string.ts
     // .startsWith → src/methods/string.ts
     // .endsWith → src/methods/string.ts
-    case "indexOf": {
-      const exprArgs = exprArgsOnly(args, "indexOf");
-      checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
-      rejectPredicateOnValueSearch(exprArgs[0], "indexOf", "findIndex");
-      const needle = _generate(exprArgs[0], ctx);
-      // Type-aware dispatch: known array → $indexOfArray; known string → $indexOfCP;
-      // unknown → runtime $cond on $isArray so the right form runs at query time.
-      if (isArrayProducing(object, ctx)) {
-        return { $indexOfArray: [genObj, needle] };
-      }
-      if (isStringProducing(object, ctx)) {
-        return { $indexOfCP: [genObj, needle] };
-      }
-      return cond({ $isArray: genObj }, { $indexOfArray: [genObj, needle] }, { $indexOfCP: [genObj, needle] });
-    }
-    case "lastIndexOf": {
-      const exprArgs = exprArgsOnly(args, "lastIndexOf");
-      checkArity("lastIndexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
-      if (isStringProducing(object, ctx)) {
-        throw new CodegenError(
-          `.lastIndexOf() on strings isn't supported — MongoDB's \$indexOfCP is forward-only. Use \$op($indexOfCP, str, needle) for first-match indexing.`,
-          callPos,
-        );
-      }
-      const needle = _generate(exprArgs[0], ctx);
-      // Find the first match in the reversed array, then map back to the original index.
-      // Wrap with $let so genObj is evaluated once.
-      const [vArr, arr] = internalVar(ctx, "arr");
-      const [vRev, rev] = internalVar(ctx, "revIdx");
-      return {
-        $let: {
-          vars: { [vArr]: genObj },
-          in: {
-            $let: {
-              vars: { [vRev]: { $indexOfArray: [{ $reverseArray: arr }, needle] } },
-              in: cond({ $eq: [rev, -1] }, -1, { $subtract: [{ $subtract: [{ $size: arr }, 1] }, rev] }),
-            },
-          },
-        },
-      };
-    }
+    // .indexOf → src/methods/dual-receiver.ts
+    // .lastIndexOf → src/methods/dual-receiver.ts
     // .replace / .replaceAll → src/methods/string.ts
-    case "includes": {
-      const exprArgs = exprArgsOnly(args, "includes");
-      checkArity("includes", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
-      rejectPredicateOnValueSearch(exprArgs[0], "includes", "some");
-      const needle = _generate(exprArgs[0], ctx);
-      // Type-aware dispatch: known array → $in; known string → $indexOfCP form;
-      // unknown → runtime $cond so a bare $.field works for either type.
-      if (isArrayProducing(object, ctx)) {
-        return { $in: [needle, genObj] };
-      }
-      if (isStringProducing(object, ctx)) {
-        return { $gte: [{ $indexOfCP: [genObj, needle] }, 0] };
-      }
-      return cond({ $isArray: genObj }, { $in: [needle, genObj] }, { $gte: [{ $indexOfCP: [genObj, needle] }, 0] });
-    }
+    // .includes → src/methods/dual-receiver.ts
     // .match / .matchAll → src/methods/string.ts
     // .search → src/methods/string.ts
     // .padStart / .padEnd → src/methods/string.ts
     // .repeat → src/methods/string.ts
 
     // ── Array methods (no lambda) ───────────────────────────────────────────
-    case "at": {
-      const exprArgs = exprArgsOnly(args, "at");
-      checkArity("at", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      // `.at()` is JS's index-from-the-end reader on BOTH arrays and strings, and
-      // it is the *only* way to spell a negative index (brackets reject one — see
-      // `generateNumericIndexAccess`). Receiver-type dispatch as usual, except the
-      // two branches need different index expressions: `$arrayElemAt` takes a
-      // negative index natively, while `$substrCP` refuses one outright ("the
-      // starting index must be nonnegative integer"), so the string side resolves
-      // it against the length via `normaliseSliceIndex` — the same helper
-      // `.slice`/`.substr` use.
-      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
-    }
-    case "slice": {
-      const exprArgs = exprArgsOnly(args, "slice");
-      checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
-      // A negative index is honoured here — the developer wrote it — but a fraction is
-      // not an index in either language, and `$slice` aborts on one.
-      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY);
-      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY);
-      // Receiver-type dispatch: known array → $slice (native negative-index support);
-      // known string → $substrCP (with compile-time/runtime normalisation of negatives);
-      // unknown → runtime $cond on $isArray so a bare $.field works for either type.
-      if (isStringProducing(object, ctx)) return sliceString(genObj, exprArgs, ctx);
-      if (isArrayProducing(object, ctx)) return sliceArray(genObj, exprArgs, ctx);
-      return cond({ $isArray: genObj }, sliceArray(genObj, exprArgs, ctx), sliceString(genObj, exprArgs, ctx));
-    }
+    // .at → src/methods/dual-receiver.ts
+    // .slice → src/methods/dual-receiver.ts
     // .toReversed → src/methods/array-reshape.ts
     // .toSorted → src/methods/array-reshape.ts
     // .sortBy → src/methods/array-reshape.ts
@@ -3535,62 +3417,9 @@ function generateMethodCall(
         },
       };
     }
-    case "concat": {
-      // Type-aware: known array → $concatArrays; known string → $concat;
-      // unknown → runtime $cond on $isArray so the right form runs at query time.
-      checkArity("concat", { sig: "...items", atLeast: 1 }, args.length, callPos);
-      const tail = args.map((a) => (a.type === "SpreadElement" ? _generate(a.argument, ctx) : _generate(a, ctx)));
-      if (isArrayProducing(object, ctx)) {
-        return { $concatArrays: [genObj, ...tail] };
-      }
-      if (isStringProducing(object, ctx)) {
-        return { $concat: [genObj, ...tail] };
-      }
-      return cond({ $isArray: genObj }, { $concatArrays: [genObj, ...tail] }, { $concat: [genObj, ...tail] });
-    }
-    case "join": {
-      const exprArgs = exprArgsOnly(args, "join");
-      checkArity("join", { sig: "separator", allowed: [0, 1] }, exprArgs.length, callPos);
-      rejectNestedArrayStringify(object, "join", callPos, ctx);
-      const sep = exprArgs.length === 1 ? _generate(exprArgs[0], ctx) : ",";
-      // Reduce: concatenate elements with the separator, omitting it for the first element.
-      // The accumulator carries the running string; an empty start lets us detect "first".
-      return {
-        $reduce: {
-          input: genObj,
-          initialValue: "",
-          in: cond(
-            { $eq: ["$$value", ""] },
-            { $toString: "$$this" },
-            { $concat: ["$$value", sep, { $toString: "$$this" }] },
-          ),
-        },
-      };
-    }
-    case "toString": {
-      checkArity("toString", { sig: "", none: true }, args.length, callPos);
-      // JS Array.prototype.toString is `.join(",")`. For known string receivers
-      // this is a no-op. For other scalars MongoDB's $toString covers it
-      // (numbers, dates → ISO string, booleans, ObjectId, etc.).
-      if (isArrayProducing(object, ctx)) {
-        rejectNestedArrayStringify(object, "toString", callPos, ctx);
-        return {
-          $reduce: {
-            input: genObj,
-            initialValue: "",
-            in: cond(
-              { $eq: ["$$value", ""] },
-              { $toString: "$$this" },
-              { $concat: ["$$value", ",", { $toString: "$$this" }] },
-            ),
-          },
-        };
-      }
-      if (isStringProducing(object, ctx)) {
-        return genObj;
-      }
-      return { $toString: genObj };
-    }
+    // .concat → src/methods/dual-receiver.ts
+    // .join → src/methods/dual-receiver.ts
+    // .toString → src/methods/dual-receiver.ts
     // .flat → src/methods/array-slicing.ts
     // .flatMap → src/methods/array-callbacks.ts
 
@@ -3703,42 +3532,9 @@ function generateMethodCall(
     // ── DX shims: iterator / void / locale methods ──────────────────────────
     // None of these have a sensible lowering to an MQL expression. Throw a
     // pointed error explaining why, with a workaround when one exists.
-    case "toLocaleString":
-      throw new CodegenError(
-        `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,
-        callPos,
-      );
-
-    // ── lodash array methods (value vocabulary) ──────────────────────────────
-    // .sum / .mean / .max / .min → src/methods/lodash-array.ts
-    // .sumBy / .meanBy → src/methods/lodash-array.ts
-    // .minBy / .maxBy → src/methods/lodash-array.ts
-    // .uniq / .sortedUniq → src/methods/lodash-array.ts
-    // .uniqBy / .sortedUniqBy → src/methods/lodash-array.ts
-    // .compact → src/methods/lodash-array.ts
-    // .flatten → src/methods/lodash-array.ts
-    // .chunk → src/methods/array-slicing.ts
-    // ── lodash positional / slicing (array → element or sub-array) ──────────────
-    // .take / .drop / .takeRight / .dropRight → src/methods/array-slicing.ts
-    // .tail / .initial → src/methods/array-slicing.ts
-    // .head / .first → src/methods/array-slicing.ts
-    // .last → src/methods/array-slicing.ts
-    case "nth": {
-      const exprArgs = exprArgsOnly(args, "nth");
-      checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
-      // lodash's `_.nth` reads array-LIKE, strings included (`_.nth("abc", 1) === "b"`),
-      // so it shares `.at`'s receiver dispatch. Emitting a bare `$arrayElemAt` aborted
-      // the query on a string receiver ("first argument must be an array, but is string").
-      return generateIndexFromEitherEnd(object, genObj, exprArgs[0], ctx);
-    }
-    case "size": {
-      checkArity("size", { sig: "", none: true }, exprArgsOnly(args, "size").length, callPos);
-      // lodash size counts array elements OR object keys. Arrays → $size; objects →
-      // key count via $objectToArray. Strings should use `.length` (see docs).
-      if (isArrayProducing(object, ctx)) return sizeOf(genObj);
-      if (isObjectProducing(object, ctx)) return sizeOf({ $objectToArray: genObj });
-      return cond({ $isArray: genObj }, sizeOf(genObj), sizeOf({ $objectToArray: genObj }));
-    }
+    // .toLocaleString → src/methods/dual-receiver.ts
+    // .nth → src/methods/dual-receiver.ts
+    // .size → src/methods/dual-receiver.ts
     // .takeWhile / .dropWhile / .takeRightWhile / .dropRightWhile → src/methods/lodash-array.ts
     // .sample → src/methods/lodash-array.ts
     // .sampleSize → src/methods/array-slicing.ts
@@ -3801,11 +3597,7 @@ function generateMethodCall(
     // .truncate → src/methods/string.ts
 
     // ── lodash number methods (value vocabulary) ─────────────────────────────
-    case "clamp": {
-      const exprArgs = exprArgsOnly(args, "clamp");
-      checkArity("clamp", { sig: "lower, upper", exact: 2 }, exprArgs.length, callPos);
-      return { $min: [{ $max: [genObj, _generate(exprArgs[0], ctx)] }, _generate(exprArgs[1], ctx)] };
-    }
+    // .clamp → src/methods/dual-receiver.ts
     // .inRange → src/methods/number.ts
     // .round → src/methods/number.ts
     // .ceil / .floor → src/methods/number.ts
@@ -4174,6 +3966,11 @@ const KNOWN_METHODS: ReadonlySet<string> = new Set(Object.keys(METHODS));
  * Most methods can't take spread args — only variadic ones (concat). This helper
  * unwraps a CallArg list to a plain Expr list and rejects spreads with a clear error.
  */
+/** The argument list of a method whose rule says a spread is spliced rather than rejected. */
+function spliceSpreadArgs(args: CallArg[]): Expr[] {
+  return args.map((a) => (a.type === "SpreadElement" ? a.argument : a));
+}
+
 function exprArgsOnly(args: CallArg[], method: string): Expr[] {
   return args.map((a) => {
     if (a.type === "SpreadElement") {
@@ -4181,24 +3978,6 @@ function exprArgsOnly(args: CallArg[], method: string): Expr[] {
     }
     return a;
   });
-}
-
-/**
- * `.includes(x)` / `.indexOf(x)` search for a *value*; they don't take a
- * predicate (that's JS, not jsmql being strict). When the user passes a lambda
- * they meant the predicate sibling — `.some` (bool) for `.includes`,
- * `.findIndex` (index) for `.indexOf` — so point there. Without this the lambda
- * falls through to the generic "function only valid as a callback to an
- * iterating array method" rejection, which misleads because `.includes`/
- * `.indexOf` ARE array methods.
- */
-function rejectPredicateOnValueSearch(arg: Expr | undefined, method: string, sibling: string): void {
-  if (arg?.type !== "Lambda") return;
-  const p = arg.params[0] ?? "x";
-  throw new CodegenError(
-    `.${method}() searches for a value — it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => …).`,
-    arg.pos,
-  );
 }
 
 // ── Lambda bodies (expression body or expr-block → nested $let) ───────────────

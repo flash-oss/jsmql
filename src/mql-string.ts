@@ -111,3 +111,29 @@ export function escapeHtmlExpr(s: unknown): unknown {
   for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
   return e;
 }
+
+/** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
+export function sliceString(genObj: unknown, exprArgs: readonly Expr[], gen: Gen): unknown {
+  if (exprArgs.length === 0) return genObj;
+  const start = normaliseSliceIndex(exprArgs[0], gen, genObj);
+  if (exprArgs.length === 1) {
+    // For 1-arg `.slice(-n)` on a string, the length is exactly `n` (JS
+    // returns the last n characters). Fold that case so the output isn't
+    // a noisy `strLen - (strLen - n)`.
+    const negativeLiteral = negativeLiteralValue(exprArgs[0]);
+    if (negativeLiteral !== null) return { $substrCP: [genObj, start, negativeLiteral] };
+    // `strLen - start` is negative when start runs past the end ("".slice(1)).
+    return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(strLenOf(genObj), start))] };
+  }
+  const end = normaliseSliceIndex(exprArgs[1], gen, genObj);
+  return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
+}
+
+/** Return the absolute value of a negative numeric literal AST node, else null. */
+function negativeLiteralValue(node: Expr): number | null {
+  if (node.type === "NumberLiteral" && node.value < 0) return -node.value;
+  if (node.type === "UnaryExpr" && node.op === "-" && node.operand.type === "NumberLiteral" && node.operand.value > 0) {
+    return node.operand.value;
+  }
+  return null;
+}

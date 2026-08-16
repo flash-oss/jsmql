@@ -178,3 +178,8 @@ export function requireIntCount(method: string, sig: string, arg: Expr | undefin
     throw new CodegenError(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
   }
 }
+
+/** The runtime test `.at()` / `.nth()` use to tell a string receiver from anything else. */
+export function isStringType(operand: unknown): object {
+  return { $eq: [{ $type: operand }, "string"] };
+}

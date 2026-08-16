@@ -10,6 +10,46 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — feat: the grid learns dual receivers, and derives the dispatch it used to repeat
+
+`receiver` named ONE family, and twelve methods have two. JavaScript put `.slice`,
+`.indexOf`, `.includes`, `.concat` and `.at` on `Array` **and** on `String`; lodash's `.size`
+counts an array's elements or an object's keys; `.toString` applies to anything. Each of
+them hand-wrote the same thing: probe the receiver, emit one lowering if it is provably an
+array, another if provably a string, and a `cond($isArray, …)` when neither is provable.
+
+`receiver` now accepts a list of families (or `"any"`), and `byReceiver` declares one cell
+per family. Dispatch probes in DECLARATION order — so the precedence is visible in the
+declaration instead of buried in an if-chain — and **derives** the runtime `$cond` from the
+two cells when nothing is provable. That derivation is the point. Ten copies of one rule are
+ten chances for two of them to disagree about what a bare `$.field` means, and there is now
+exactly one place that decides. It is the same move the Predicate IR makes with its
+automatic `$expr` fallback.
+
+Three declarations answer the not-provable case themselves, and each says why it must: `.at`
+and `.nth` fall to `$$REMOVE` for a receiver that is neither (reading "not an array" as
+"string" once made `$.aliases.at(0) ?? "anonymous"` yield `""`), `.lastIndexOf` has an
+`unsupported` string cell so there is no second branch to dispatch to, and `.toString`'s
+"anything else" is a real lowering rather than a choice between two. The other five omit
+`uncertain` entirely; a test proves statically that what they omit can actually be derived.
+
+Two smaller pieces came with it. `MethodArgs` gained `spread`, because `.concat` splices its
+spread arguments where every other method refuses them — that is a property of the argument
+rule, not something a lowering should re-derive. And `LowerInput` gained
+`requireStringifiableReceiver`, which `.toString` and `.join` both need to refuse a receiver
+that provably holds arrays.
+
+The new invariants immediately caught a wrong claim of mine: `.getTime()` was declared
+date-only, but `$toLong` converts a string or a number too and jsmql deliberately does not
+take that away. Its receiver is `"any"`, and the grid now says so.
+
+Ratchet 21 → 9, and what remains is four stated reasons rather than a family. Output-neutral:
+the harness reports the same 218 accepted divergences, and every dual method was re-checked
+on a live `mongod` — both provable branches, and the derived one across documents holding an
+array in one and a string in the next.
+
+---
+
 ## 2026-08-16 — docs: adding a method means writing a declaration, not a switch case
 
 The authoring rule in `CLAUDE.md` still opened with "add a `case \"foo\"` in
