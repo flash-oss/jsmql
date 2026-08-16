@@ -140,8 +140,13 @@ the count reaches zero.
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
 | string (self-contained half) | `src/methods/string.ts` | 9 |
+| lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
 
-`src/methods/` is a **leaf**: it imports only its own types. A family file that reaches
+`src/methods/` holds **method families and nothing else** — that is what lets the assembly
+test compare the directory to the registry directly. Shared MQL shape-builders live beside
+it (`src/mql-string.ts`), not inside it.
+
+Each family file is a **leaf**: it imports only its own types and other leaves. A family file that reaches
 back into `codegen.ts` creates a cycle, and the registry then assembles before the family
 initialises — the lookup silently returns nothing and every method in that file falls
 through to the switch. Express what a lowering needs through `LowerInput` instead.

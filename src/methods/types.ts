@@ -44,6 +44,16 @@ export type LowerInput = {
   gen: (e: Expr) => unknown;
   /** Source offset of the call, for errors. */
   pos: number;
+  /**
+   * Mint a MongoDB variable name that cannot capture a user parameter, gensymmed against
+   * the live scope. Returns `[name, "$$name"]`. Every emitted variable name comes from
+   * here — never a string literal. See src/namespace.ts.
+   *
+   * This is a SERVICE, not a context bag. Add another only when a lowering genuinely
+   * cannot be written without it; `LowerInput` turning into a grab-bag is the failure
+   * `GenerateCtx` already demonstrated.
+   */
+  internalVar: (base: string) => [string, string];
 };
 
 /** A cell that cannot exist, with the reason a user reads. */

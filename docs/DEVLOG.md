@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the lodash case/word methods join the grid
+
+Nine methods — `.capitalize`, `.upperFirst`, `.lowerFirst`, `.words`,
+`.kebabCase`, `.snakeCase`, `.startCase`, `.camelCase`, `.escape` — move to
+`src/methods/lodash-string.ts`. In the switch they were nine `case` labels
+sharing one arity check and a nested switch; as declarations the shape they
+actually share is visible, because seven of them are the same two primitives:
+split into words, rejoin with a separator and a per-word transform.
+
+Their expression builders move to `src/mql-string.ts`. Each takes an
+already-lowered value and returns MQL — no `GenerateCtx` — which is exactly why
+they can be a leaf that `codegen.ts` and the families both import. `strLenOf`
+goes with them, carrying the comment that explains why it coerces: `$strLenCP` is
+the one string primitive that ABORTS on a missing input, so without the coercion
+`.endsWith()` would take down a query where the same predicate spelled
+`.startsWith()` returned false.
+
+`.camelCase` needed a gensymmed binding, so `LowerInput` gained `internalVar`.
+That is a service, not a context bag — the note beside it says to add another
+only when a lowering genuinely cannot be written without one, because
+`GenerateCtx` already demonstrated where a grab-bag ends up.
+
+The shared builders sit BESIDE `src/methods/`, not inside it. Putting them in the
+directory broke the assembly test immediately, and correctly: that test compares
+the directory to the registry, which only works while the directory holds
+families and nothing else.
+
+No output change across 2 527 corpus sources. Ratchet: 140.
+
+---
+
 ## 2026-08-16 — fix: `.trim("x")` is rejected instead of silently discarded
 
 Moving the self-contained string methods into the declaration grid turned up a

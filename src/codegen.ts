@@ -8,7 +8,15 @@ import { isUnsupported } from "./methods/types.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
-import { ASCII_WORDS_RE, HTML_ESCAPE_PAIRS } from "./lodash-shared.ts";
+import {
+  capitalizeExpr,
+  escapeHtmlExpr,
+  firstCharExpr,
+  joinWords,
+  strLenOf,
+  strTail,
+  wordsExpr,
+} from "./mql-string.ts";
 import { type ConstEnv, evalConst } from "./const-eval.ts";
 import { SET_METHODS } from "./ast.ts";
 import type {
@@ -1461,25 +1469,6 @@ function clampNonNegative(value: unknown): unknown {
 /** True when `value` is already an `$ifNull` wrap (e.g. an optional-chain receiver). */
 function isIfNullWrapped(value: unknown): boolean {
   return typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
-}
-
-/**
- * `$strLenCP` of a generated value, tolerant of a missing field.
- *
- * `$strLenCP` is the one string primitive that **aborts the query** on a
- * missing/null input (`Location34471`) — `$indexOfCP` returns null and
- * `$substrCP` returns "". Since a length is something jsmql derives rather than
- * something the user wrote, an absent field would otherwise take down a query
- * through `.endsWith()` while the same predicate spelled `.startsWith()` simply
- * returned false. Coercing here makes the whole string surface behave alike.
- *
- * Folds a literal receiver to its **code point** count: `$strLenCP` counts code
- * points where JS `.length` counts UTF-16 units, so "a👍b" is 3, not 4. A source
- * string starting with `$` is an MQL field reference (HR1), never a literal.
- */
-function strLenOf(value: unknown): unknown {
-  if (typeof value === "string" && !value.startsWith("$")) return [...value].length;
-  return { $strLenCP: isIfNullWrapped(value) ? value : wrapIfNull(value, "") };
 }
 
 /** Subtract `b` from `a`, folding when both operands are numeric literals. */
@@ -3274,49 +3263,6 @@ function generateTemplateLiteral(quasis: string[], expressions: Expr[], ctx: Gen
 
 // ── Method calls ──────────────────────────────────────────────────────────────
 
-// Shared expression builders for the lodash string methods. ASCII-only
-// by design: `$toUpper`/`$toLower` are ASCII, and word splitting matches ASCII
-// alphanumerics (accented text passes through / is treated as separators).
-function strTail(s: unknown, from: number): unknown {
-  return { $substrCP: [s, from, strLenOf(s)] };
-}
-function capitalizeExpr(s: unknown): unknown {
-  return { $concat: [{ $toUpper: { $substrCP: [s, 0, 1] } }, { $toLower: strTail(s, 1) }] };
-}
-function firstCharExpr(s: unknown, op: "$toUpper" | "$toLower"): unknown {
-  return { $concat: [{ [op]: { $substrCP: [s, 0, 1] } }, strTail(s, 1)] };
-}
-// The ASCII words of a string, splitting on non-alphanumerics AND camelCase
-// boundaries — e.g. "foo-barBaz 9" → ["foo", "bar", "Baz", "9"], "FOOBar" →
-// ["FOO", "Bar"]. Pattern (`ASCII_WORDS_RE`) is shared with the compile-time
-// fold (lodash-fold.ts) via lodash-shared.ts so the two can't drift.
-// `$regexFindAll` needs 4.4+.
-// These two take no ctx, so their element vars can't be gensym'd — safe because
-// both bodies are fixed MQL built from the ref itself, never user codegen, so
-// there is nothing inside that could reference an outer param. (`exprVar` still
-// owns the spelling.)
-function wordsExpr(s: unknown): unknown {
-  const w = exprVar("word");
-  return { $map: { input: { $regexFindAll: { input: s, regex: ASCII_WORDS_RE } }, as: w, in: `$$${w}.match` } };
-}
-// Join word expressions with `sep`, optionally transforming each word first.
-function joinWords(words: unknown, sep: string, transform?: (w: unknown) => unknown): unknown {
-  const w = exprVar("w");
-  const items = transform === undefined ? words : { $map: { input: words, as: w, in: transform(`$$${w}`) } };
-  return {
-    $reduce: {
-      input: items,
-      initialValue: "",
-      in: { $cond: [{ $eq: ["$$value", ""] }, "$$this", { $concat: ["$$value", sep, "$$this"] }] },
-    },
-  };
-}
-function escapeHtmlExpr(s: unknown): unknown {
-  let e: unknown = s;
-  for (const [find, replacement] of HTML_ESCAPE_PAIRS) e = { $replaceAll: { input: e, find, replacement } };
-  return e;
-}
-
 // Desugar a bare BUILT-IN callback reference into the one-parameter arrow it stands
 // for, so the point-free spelling lowers to exactly what the explicit arrow does:
 // `.map(Number)` ≡ `.map(v => Number(v))`, `.map(ObjectId)` ≡ `.map(v => ObjectId(v))`,
@@ -3861,7 +3807,13 @@ function generateMethodCall(
     const exprArgs = exprArgsOnly(args, method);
     checkArity(method, declared.args, exprArgs.length, callPos);
     if (isUnsupported(declared.value)) throw new CodegenError(declared.value.unsupported, callPos);
-    return declared.value({ recv: genObj, args: exprArgs, gen: (e: Expr) => _generate(e, ctx), pos: callPos });
+    return declared.value({
+      recv: genObj,
+      args: exprArgs,
+      gen: (e: Expr) => _generate(e, ctx),
+      pos: callPos,
+      internalVar: (base: string) => internalVar(ctx, base),
+    });
   }
 
   switch (method) {
@@ -5296,46 +5248,7 @@ function generateMethodCall(
       };
     }
 
-    // ── lodash string methods (value vocabulary; ASCII-only) ─────────────────
-    case "capitalize":
-    case "upperFirst":
-    case "lowerFirst":
-    case "words":
-    case "kebabCase":
-    case "snakeCase":
-    case "startCase":
-    case "camelCase":
-    case "escape": {
-      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      switch (method) {
-        case "capitalize":
-          return capitalizeExpr(genObj);
-        case "upperFirst":
-          return firstCharExpr(genObj, "$toUpper");
-        case "lowerFirst":
-          return firstCharExpr(genObj, "$toLower");
-        case "words":
-          return wordsExpr(genObj);
-        case "kebabCase":
-          return { $toLower: joinWords(wordsExpr(genObj), "-") };
-        case "snakeCase":
-          return { $toLower: joinWords(wordsExpr(genObj), "_") };
-        case "startCase":
-          return joinWords(wordsExpr(genObj), " ", capitalizeExpr);
-        case "camelCase": {
-          // Pascal-case (capitalize each word, no separator) then lower the first char.
-          const [vPascal, pascal] = internalVar(ctx, "pascal");
-          return {
-            $let: {
-              vars: { [vPascal]: joinWords(wordsExpr(genObj), "", capitalizeExpr) },
-              in: firstCharExpr(pascal, "$toLower"),
-            },
-          };
-        }
-        default:
-          return escapeHtmlExpr(genObj);
-      }
-    }
+    // ── lodash string methods → src/methods/lodash-string.ts ────────────────
     case "truncate": {
       const exprArgs = exprArgsOnly(args, "truncate");
       checkArity("truncate", { sig: "[{ length, omission }]", allowed: [0, 1] }, exprArgs.length, callPos);

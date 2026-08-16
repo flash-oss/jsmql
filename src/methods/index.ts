@@ -12,12 +12,14 @@
 // See docs/specs/lowering-grid.md.
 
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
+import { LODASH_STRING_METHODS } from "./lodash-string.ts";
 import { STRING_METHODS } from "./string.ts";
 import type { MethodDef } from "./types.ts";
 
 /** Every family, in the order a reader would look for them. */
 const FAMILIES: Record<string, Record<string, MethodDef>> = {
   "date-accessors": DATE_ACCESSOR_METHODS,
+  "lodash-string": LODASH_STRING_METHODS,
   string: STRING_METHODS,
 };
 
