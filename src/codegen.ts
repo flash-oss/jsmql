@@ -3,6 +3,8 @@ import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./o
 import { checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import { callbackBlockToValue } from "./callback-block.ts";
 import { didYouMean } from "./levenshtein.ts";
+import { lookupMethod } from "./methods/index.ts";
+import { isUnsupported } from "./methods/types.ts";
 import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
@@ -3849,6 +3851,19 @@ function generateMethodCall(
     if (recv !== null) rejectIncompatibleChain(recv, method, object);
   }
 
+  // The declaration grid is consulted before the switch. A method that has been migrated
+  // to `src/methods/` lowers from its declaration — one place holding its arity rule, its
+  // lowering, and the TypeScript signature generated from the same rule. Everything not
+  // yet migrated falls through to the switch below, and `test/methods-grid.test.ts`
+  // asserts that set only ever shrinks.
+  const declared = lookupMethod(method);
+  if (declared !== undefined) {
+    const exprArgs = exprArgsOnly(args, method);
+    checkArity(method, declared.args, exprArgs.length, callPos);
+    if (isUnsupported(declared.value)) throw new CodegenError(declared.value.unsupported, callPos);
+    return declared.value({ recv: genObj, args: exprArgs, gen: (e: Expr) => _generate(e, ctx), pos: callPos });
+  }
+
   switch (method) {
     // ── String methods ──────────────────────────────────────────────────────
     case "trim":
@@ -4517,47 +4532,8 @@ function generateMethodCall(
     }
 
     // ── Date methods ────────────────────────────────────────────────────────
-    case "getFullYear":
-      return { $year: genObj };
-    case "getMonth":
-      // 1-based, matching MongoDB's $month (NOT JavaScript's 0-based getMonth) —
-      // one month base across the whole language, the same one `.set({ month })`
-      // and `$month` use. See docs/specs/method-dispatch.md § Date methods.
-      return { $month: genObj };
-    case "getDate":
-      return { $dayOfMonth: genObj };
-    case "getDay":
-      // 1-based with Sunday = 1, straight from MongoDB's $dayOfWeek (NOT
-      // JavaScript's 0-based getDay) — the same reasoning as .getMonth().
-      // For the ISO weekday (Monday = 1) use .isoWeekday().
-      return { $dayOfWeek: genObj };
-    case "getHours":
-      return { $hour: genObj };
-    case "getMinutes":
-      return { $minute: genObj };
-    case "getSeconds":
-      return { $second: genObj };
-    case "getMilliseconds":
-      return { $millisecond: genObj };
-    // UTC variants: same operators, anchored to UTC via `timezone: "UTC"`.
-    case "getUTCFullYear":
-      return { $year: utcDate(genObj) };
-    case "getUTCMonth":
-      // 1-based, like `.getMonth()` above.
-      return { $month: utcDate(genObj) };
-    case "getUTCDate":
-      return { $dayOfMonth: utcDate(genObj) };
-    case "getUTCDay":
-      // 1-based with Sunday = 1, like `.getDay()` above.
-      return { $dayOfWeek: utcDate(genObj) };
-    case "getUTCHours":
-      return { $hour: utcDate(genObj) };
-    case "getUTCMinutes":
-      return { $minute: utcDate(genObj) };
-    case "getUTCSeconds":
-      return { $second: utcDate(genObj) };
-    case "getUTCMilliseconds":
-      return { $millisecond: utcDate(genObj) };
+    // The 16 component accessors (.getFullYear / .getUTCHours / …) are declared in
+    // src/methods/date-accessors.ts and dispatched from the grid above.
     case "getTime":
       // Match JS: ms since epoch (already UTC; no getUTCTime exists in JS)
       return { $toLong: genObj };

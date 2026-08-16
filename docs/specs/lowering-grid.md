@@ -125,6 +125,25 @@ JavaScript or lodash runtime carries an ordering guarantee the developer never
 wrote, jsmql takes MongoDB's behaviour and the smaller MQL. See the axiom in
 [../LANG_RULES.md](../LANG_RULES.md).
 
+## Migration state
+
+The grid is being filled family by family. `generateMethodCall` consults it before its
+switch, so a declared method never reaches the switch and an un-declared one is untouched.
+
+`test/methods-grid.test.ts` carries a **ratchet**: the number of methods still lowering
+from the switch may only fall. A rise means a method was added to the switch instead of a
+family file — the habit the grid exists to break. The same test fails if the ratchet drifts
+more than five above the real count, so it cannot quietly become decoration. Delete it when
+the count reaches zero.
+
+| Family | File | Methods |
+|---|---|---|
+| date accessors | `src/methods/date-accessors.ts` | 16 |
+
+A migration must not change output. The differential harness is the check — moving where a
+lowering lives is not licence to move what it emits, and a divergence from a migration
+commit is a bug until proven otherwise.
+
 ## Adding a feature
 
 1. Write one declaration in the family file.

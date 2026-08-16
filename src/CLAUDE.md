@@ -37,6 +37,34 @@ New token types go in the `TokenType` `as const` object (and the derived `TokenT
 
 New syntax forms add a branch in `parseExpression()` and a dedicated `parseXxx()` method. Keep each method focused on a single grammar rule.
 
+## Adding a JS method — the declaration grid
+
+A method migrated to `src/methods/` is ONE declaration: its receiver family, its argument
+rule, and its lowering per cell. The arity check reads that same rule, so a method cannot
+disagree with itself. Add a new method to its family file, never to the switch.
+
+```ts
+getUTCHours: { receiver: "date", returns: "number", args: { sig: "", none: true },
+               value: ({ recv }) => ({ $hour: recv }) }
+```
+
+Applicability is derived from `receiver`: only an array receiver can have a Stage cell,
+because the stream is a sequence of documents. `test/methods-grid.test.ts` asserts every
+family file reaches the assembly, that no name is declared twice, and that the grid agrees
+with codegen's receiver gate.
+
+**The migration is in progress.** Most methods still lower from the `generateMethodCall`
+switch, and the grid is consulted first, so the switch is the fallback. A ratchet in that
+test file fails if the un-migrated count RISES — adding a method to the switch instead of
+the grid is the habit this exists to break. Lower `MAX_UNMIGRATED` with each family you
+move; delete the ratchet when it reaches zero.
+
+The registry is a null-prototype object on purpose: `METHODS` contains names that collide
+with `Object.prototype` (`toString`, `valueOf`, `toLocaleString`), and a plain `{}` would
+resolve those to inherited functions.
+
+See [`docs/specs/lowering-grid.md`](../docs/specs/lowering-grid.md).
+
 ## Extending the codegen
 
 New AST node types add a case in the `_generate(expr, ctx)` switch. The public export is `generate(expr)` which calls `_generate` with `EMPTY_CTX`. All recursive calls must pass `ctx` through — never call `_generate` without it. Helper functions for specific shapes stay private and file-local.

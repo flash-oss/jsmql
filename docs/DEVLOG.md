@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the declaration grid takes its first family
+
+`src/methods/` is the shape every JS method is heading for: one declaration holding
+the receiver family, the argument rule, and the lowering — so the arity check and
+the lowering cannot disagree, because they read the same object.
+
+The date component accessors go first because they are the most uniform family
+and therefore prove the mechanism rather than the exceptions. Sixteen `case`
+labels become a sixteen-row table of method name to MongoDB operator. `.getHours`
+and `.getUTCHours` collapse to the same row: the operators are UTC already, so the
+pair differ only in which name the developer typed.
+
+`generateMethodCall` consults the grid before its switch, so a migrated method
+never reaches the switch and an un-migrated one is untouched. The differential
+harness reports **no output change at all** across 2 524 corpus sources — which is
+the point: a migration that moves where a lowering lives must not move what it
+emits.
+
+Two things the tests caught immediately. The registry needed a null prototype:
+`METHODS` contains `toString`, `valueOf` and `toLocaleString`, so a plain `{}`
+resolved them to inherited functions — truthy, no `args`, straight into the arity
+checker. And `test/methods-grid.test.ts` compares the family directory against the
+assembly, because a family file nobody imports is silently absent, which is the
+class of failure the grid exists to remove.
+
+The migration is in progress, so that file carries a ratchet: 158 methods still
+lower from the switch, and the count may only fall. A rise means a method was
+added to the switch instead of the grid — the habit this is meant to break. The
+ratchet also fails if it drifts more than five above the real count, so it cannot
+quietly become decoration.
+
+---
+
 ## 2026-08-16 — chore: `ArgRules` drops six dimensions nothing ever used
 
 `ArgRules` declared `positionalTypes`, `keyIntBounds`, `exactlyOneOf`,
