@@ -143,3 +143,40 @@ export function literalIndexValue(node: Expr): number | null {
   }
   return null;
 }
+
+/** Negate an already-generated number, folding when it is a literal. */
+export function negate(n: unknown): unknown {
+  return typeof n === "number" ? -n : { $subtract: [0, n] };
+}
+
+/** True when a source node is a negative numeric literal (`-5`, written either way). */
+export function isNegativeLiteral(e: Expr): boolean {
+  if (e.type === "NumberLiteral") return e.value < 0;
+  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") {
+    return e.operand.value > 0;
+  }
+  return false;
+}
+
+/**
+ * Reject a count argument that is a literal but not a whole number >= `min`.
+ *
+ * LITERAL-GATED: a runtime expression passes silently, because only the server can judge
+ * it. A fraction is what this exists for — `$slice` aborts the whole query on one, and a
+ * `.take(1.5)` that compiled would fail at query time rather than at the keyboard.
+ */
+export function requireIntCount(
+  method: string,
+  sig: string,
+  arg: Expr | undefined,
+  min: number,
+  err: (message: string, pos?: number) => Error,
+): void {
+  if (arg === undefined || arg.type !== "NumberLiteral") return;
+  if (!Number.isInteger(arg.value)) {
+    throw err(`.${method}(${sig}) needs a whole number, but got ${arg.value}.`, arg.pos);
+  }
+  if (arg.value < min) {
+    throw err(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
+  }
+}

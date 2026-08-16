@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the positional array methods join the grid
+
+`src/methods/array-slicing.ts` takes 16 — `.take` / `.drop` / `.takeRight` / `.dropRight`,
+`.tail` / `.initial`, `.head` / `.first` / `.last`, `.chunk`, `.sampleSize`, `.flat`,
+`.zip` / `.unzip`, `.zipObject` and `.fromPairs`. Ratchet 68 → 52.
+
+The file states its three server rejections once, at the top, because the workarounds look
+arbitrary otherwise: `$slice`'s 3-argument count must be POSITIVE (so a lowering that could
+compute 0 uses the 2-argument first-n form, or floors the count at 1), `$slice` aborts the
+query on a FRACTION, and `$arrayToObject` needs a string `k`. Four separate lowerings here
+dodge the first one, in three different ways.
+
+`negate`, `isNegativeLiteral` and `requireIntCount` moved to `src/mql-shape.ts` on the way —
+the last one taking the error factory, the same pattern the string family already uses.
+
+Two of the family stay in the switch and the file says why. `.zipWith`'s iteratee takes one
+parameter per zipped ARRAY, so it cannot go through the one-parameter iteratee service;
+`.join` reads its receiver's shape to reject a nested array. Splitting `.zip` out of the
+shared arm left `.zipWith` able to say what it does without an `isWith` flag through every
+line.
+
+Output-neutral; `.take` through `.flat` were re-checked against their JavaScript and lodash
+results on a live `mongod`.
+
+---
+
 ## 2026-08-16 — refactor: the rejection shims become declarations
 
 `src/methods/array-shims.ts` holds the fourteen array methods jsmql answers with a

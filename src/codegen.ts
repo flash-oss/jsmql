@@ -26,6 +26,9 @@ import {
 import {
   clampNonNegative,
   clampNonNegativeIndex,
+  isNegativeLiteral,
+  negate,
+  requireIntCount,
   coerceStringBinding,
   cond,
   foldedSubtract,
@@ -1427,6 +1430,11 @@ function genIn(ctx: GenerateCtx): Gen {
   return (node: Expr) => _generate(node, ctx);
 }
 
+/** The error factory a leaf helper takes, so it can reject without importing `CodegenError`. */
+function codegenErr(message: string, pos?: number): Error {
+  return new CodegenError(message, pos ?? 0);
+}
+
 /**
  * Lower array `.slice(start, end?)` to MQL `$slice`, faithful to
  * `Array.prototype.slice`: `start`/`end` are indices (end **exclusive**) and
@@ -1509,9 +1517,6 @@ function sliceArray(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknow
 }
 
 /** Negate a count that's either a compile-time number or a runtime expression. */
-function negate(n: unknown): unknown {
-  return typeof n === "number" ? -n : { $subtract: [0, n] };
-}
 
 /** Lower `.slice` on a known-string receiver to MQL `$substrCP`. */
 function sliceString(genObj: unknown, exprArgs: Expr[], ctx: GenerateCtx): unknown {
@@ -3683,8 +3688,8 @@ function generateMethodCall(
       checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
       // A negative index is honoured here — the developer wrote it — but a fraction is
       // not an index in either language, and `$slice` aborts on one.
-      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY);
-      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY);
+      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY, codegenErr);
+      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY, codegenErr);
       // Receiver-type dispatch: known array → $slice (native negative-index support);
       // known string → $substrCP (with compile-time/runtime normalisation of negatives);
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
@@ -3923,22 +3928,7 @@ function generateMethodCall(
       }
       return { $toString: genObj };
     }
-    case "flat": {
-      const exprArgs = exprArgsOnly(args, "flat");
-      checkArity("flat", { sig: "depth", allowed: [0, 1] }, exprArgs.length, callPos);
-      // We only support depth=1 (default). MongoDB has no recursive-depth flatten;
-      // emulating arbitrary depths would require unbounded $reduce nesting.
-      if (exprArgs.length === 1) {
-        const arg = exprArgs[0];
-        if (arg.type !== "NumberLiteral" || arg.value !== 1) {
-          throw new CodegenError(
-            `.flat() only supports depth=1 (the default). MongoDB has no recursive flatten primitive.`,
-            callPos,
-          );
-        }
-      }
-      return { $reduce: { input: genObj, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } } };
-    }
+    // .flat → src/methods/array-slicing.ts
     case "flatMap": {
       const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos, ctx);
       const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
@@ -4309,73 +4299,12 @@ function generateMethodCall(
     // .uniqBy / .sortedUniqBy → src/methods/lodash-array.ts
     // .compact → src/methods/lodash-array.ts
     // .flatten → src/methods/lodash-array.ts
-    case "chunk": {
-      const exprArgs = exprArgsOnly(args, "chunk");
-      checkArity("chunk", { sig: "size", exact: 1 }, exprArgs.length, callPos);
-      const size = exprArgs[0];
-      if (size.type !== "NumberLiteral" || !Number.isInteger(size.value) || size.value < 1) {
-        throw new CodegenError(
-          `.chunk(size) requires a positive integer literal (got ${size.type === "NumberLiteral" ? size.value : "a non-literal"}).`,
-          size.pos,
-        );
-      }
-      const [vI, i] = internalVar(ctx, "i");
-      return {
-        $map: { input: { $range: [0, sizeOf(genObj), size.value] }, as: vI, in: { $slice: [genObj, i, size.value] } },
-      };
-    }
+    // .chunk → src/methods/array-slicing.ts
     // ── lodash positional / slicing (array → element or sub-array) ──────────────
-    case "take":
-    case "drop":
-    case "takeRight":
-    case "dropRight": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
-      const nArg = exprArgs[0];
-      if (nArg !== undefined && isNegativeLiteral(nArg)) {
-        const mirror = method === "take" ? ".takeRight(n)" : method === "takeRight" ? ".take(n)" : null;
-        throw new CodegenError(
-          `.${method}(n) needs a non-negative count${mirror ? ` — use ${mirror} to count from the other end` : ""}.`,
-          nArg.pos,
-        );
-      }
-      requireIntCount(method, "n", nArg, 0);
-      const n = nArg !== undefined ? _generate(nArg, ctx) : 1;
-      if (method === "take") return { $slice: [genObj, n] };
-      if (method === "takeRight") return { $slice: [genObj, negate(n)] };
-      // dropRight keeps the first max(0, size-n) — a 2-arg `$slice` (first-count), so a
-      // count of 0 (n ≥ size) is `$slice: [arr, 0]` → `[]`, NOT the 3-arg `$slice: [arr,
-      // 0, 0]` mongod rejects ("Third argument to $slice must be positive").
-      const [vArr, arr] = internalVar(ctx, "arr");
-      if (method === "dropRight") {
-        const keep = { $max: [0, { $subtract: [{ $size: arr }, n] }] };
-        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
-      }
-      // drop: from position n. The count (3rd arg) is max(1, size) so an EMPTY array
-      // is `$slice: [[], n, 1]` → `[]` rather than a rejected 3-arg count of 0.
-      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, n, { $max: [1, { $size: arr }] }] } } };
-    }
-    case "tail":
-    case "initial": {
-      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      // initial = dropRight(1): keep the first max(0, size-1) via 2-arg `$slice`.
-      const [vArr, arr] = internalVar(ctx, "arr");
-      if (method === "initial") {
-        const keep = { $max: [0, { $subtract: [{ $size: arr }, 1] }] };
-        return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, keep] } } };
-      }
-      // tail = drop(1): count max(1, size) guards the empty-array → count-0 rejection.
-      return { $let: { vars: { [vArr]: genObj }, in: { $slice: [arr, 1, { $max: [1, { $size: arr }] }] } } };
-    }
-    case "head":
-    case "first": {
-      checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      return firstOf(genObj);
-    }
-    case "last": {
-      checkArity("last", { sig: "", none: true }, exprArgsOnly(args, "last").length, callPos);
-      return lastOf(genObj);
-    }
+    // .take / .drop / .takeRight / .dropRight → src/methods/array-slicing.ts
+    // .tail / .initial → src/methods/array-slicing.ts
+    // .head / .first → src/methods/array-slicing.ts
+    // .last → src/methods/array-slicing.ts
     case "nth": {
       const exprArgs = exprArgsOnly(args, "nth");
       checkArity("nth", { sig: "[n=0]", allowed: [0, 1] }, exprArgs.length, callPos);
@@ -4394,32 +4323,7 @@ function generateMethodCall(
     }
     // .takeWhile / .dropWhile / .takeRightWhile / .dropRightWhile → src/methods/lodash-array.ts
     // .sample → src/methods/lodash-array.ts
-    case "sampleSize": {
-      // n random elements without replacement: decorate each with a random key, sort
-      // by it, take the first n, undecorate. n past the length yields the whole shuffle.
-      const exprArgs = exprArgsOnly(args, "sampleSize");
-      checkArity("sampleSize", { sig: "[n=1]", allowed: [0, 1] }, exprArgs.length, callPos);
-      if (exprArgs[0] !== undefined && isNegativeLiteral(exprArgs[0])) {
-        throw new CodegenError(`.sampleSize(n) needs a non-negative count.`, exprArgs[0].pos);
-      }
-      requireIntCount("sampleSize", "n", exprArgs[0], 0);
-      const n = exprArgs[0] !== undefined ? _generate(exprArgs[0], ctx) : 1;
-      const [vShuf, shuf] = internalVar(ctx, "shuffled");
-      const [vItem, item] = internalVar(ctx, "item");
-      return {
-        $let: {
-          vars: {
-            [vShuf]: {
-              $sortArray: {
-                input: { $map: { input: genObj, as: vItem, in: { k: { $rand: {} }, v: item } } },
-                sortBy: { k: 1 },
-              },
-            },
-          },
-          in: { $map: { input: { $slice: [shuf, n] }, as: vItem, in: `${item}.v` } },
-        },
-      };
-    }
+    // .sampleSize → src/methods/array-slicing.ts
     // .intersection → src/methods/lodash-array.ts
     // .difference → src/methods/lodash-array.ts
     // .union → src/methods/lodash-array.ts
@@ -4428,84 +4332,40 @@ function generateMethodCall(
     // .differenceBy / .intersectionBy → src/methods/lodash-array.ts
     // .unionBy → src/methods/lodash-array.ts
     // .xorBy → src/methods/lodash-array.ts
-    case "zipObject": {
-      const exprArgs = exprArgsOnly(args, "zipObject");
-      checkArity("zipObject", { sig: "values", exact: 1 }, exprArgs.length, callPos);
-      const values = _generate(exprArgs[0], ctx);
-      // Pair keys with values by index (keys.length); stringify keys for $arrayToObject.
-      const [vI, i] = internalVar(ctx, "i");
-      return {
-        $arrayToObject: {
-          $map: {
-            input: { $range: [0, sizeOf(genObj)] },
-            as: vI,
-            in: { k: { $toString: { $arrayElemAt: [genObj, i] } }, v: { $arrayElemAt: [values, i] } },
-          },
-        },
-      };
-    }
-    case "zip":
+    // .zipObject → src/methods/array-slicing.ts
+    // .zip → src/methods/array-slicing.ts
     case "zipWith": {
-      // `.zip(b, c)` → [[a0,b0,c0], …]; `.zipWith(b, c, fn)` → [fn(a0,b0,c0), …].
-      // Groups run to the LONGEST array; short arrays pad with null (MongoDB fills an
-      // out-of-range $arrayElemAt inside a literal tuple with null — matching lodash).
-      const exprArgs = exprArgsOnly(args, method);
-      const isWith = method === "zipWith";
-      checkArity(
-        method,
-        isWith ? { sig: "...arrays, iteratee", atLeast: 2 } : { sig: "...arrays", atLeast: 1 },
-        exprArgs.length,
-        callPos,
-      );
-      const fn = isWith ? exprArgs[exprArgs.length - 1] : null;
-      const otherArrays = isWith ? exprArgs.slice(0, -1) : exprArgs;
-      const arrays = [genObj, ...otherArrays.map((a) => _generate(a, ctx))];
-      // `$zip` IS this operation. `useLongestLength` gives lodash's padding rule —
-      // groups run to the longest input and short ones fill with null — so the
-      // hand-built `$let` + `$range` + `$max` + per-array `$arrayElemAt` it replaces
-      // produces byte-identical results at a fraction of the size.
+      // `.zipWith(b, c, fn)` → [fn(a0,b0,c0), …]. Groups run to the LONGEST array; short
+      // arrays pad with null, which is `$zip`'s `useLongestLength` and lodash's rule alike.
+      // The iteratee's parameter count is the ARRAY count, so it cannot go through the
+      // one-parameter `iteratee` service the declared array methods use — which is why this
+      // one stays here.
+      const exprArgs = exprArgsOnly(args, "zipWith");
+      checkArity("zipWith", { sig: "...arrays, iteratee", atLeast: 2 }, exprArgs.length, callPos);
+      const fn = exprArgs[exprArgs.length - 1];
+      const arrays = [genObj, ...exprArgs.slice(0, -1).map((a) => _generate(a, ctx))];
       const zipped = { $zip: { inputs: arrays, useLongestLength: true } };
-      if (!isWith) return zipped;
-      if (fn!.type !== "Lambda" || fn!.block !== undefined || fn!.params.length !== arrays.length) {
+      if (fn.type !== "Lambda" || fn.block !== undefined || fn.params.length !== arrays.length) {
         throw new CodegenError(
           `.zipWith(...arrays, iteratee) needs a ${arrays.length}-parameter arrow (one per zipped array).`,
-          fn!.pos,
+          fn.pos,
         );
       }
       // Bind each arrow parameter to its position in the tuple `$zip` produced.
       const [vPair, pair] = internalVar(ctx, "pair");
       const fnVars: Record<string, unknown> = {};
-      fn!.params.forEach((p, k) => {
+      fn.params.forEach((p, k) => {
         fnVars[safeVarName(p)] = { $arrayElemAt: [pair, k] };
       });
       return {
         $map: {
           input: zipped,
           as: vPair,
-          in: { $let: { vars: fnVars, in: _generate(fn!.body as Expr, extendCtx(ctx, fn!.params)) } },
+          in: { $let: { vars: fnVars, in: _generate(fn.body as Expr, extendCtx(ctx, fn.params)) } },
         },
       };
     }
-    case "unzip": {
-      // Inverse of zip: transpose an array of equal-length tuples. Column count =
-      // size of the first tuple ($ifNull → [] guards an empty receiver).
-      checkArity("unzip", { sig: "", none: true }, exprArgsOnly(args, "unzip").length, callPos);
-      const [vT, t] = internalVar(ctx, "t");
-      const [vJ, j] = internalVar(ctx, "j");
-      const [vRow, row] = internalVar(ctx, "row");
-      return {
-        $let: {
-          vars: { [vT]: genObj },
-          in: {
-            $map: {
-              input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: [t, 0] }, []] } }] },
-              as: vJ,
-              in: { $map: { input: t, as: vRow, in: { $arrayElemAt: [row, j] } } },
-            },
-          },
-        },
-      };
-    }
+    // .unzip → src/methods/array-slicing.ts
     // .keyBy → src/methods/lodash-array.ts
     // .groupBy / .countBy → src/methods/lodash-array.ts
     // .partition / .reject → src/methods/lodash-array.ts
@@ -4517,16 +4377,7 @@ function generateMethodCall(
     // .pickBy / .omitBy → src/methods/object.ts
     // .invert → src/methods/object.ts
     // .toPairs → src/methods/object.ts
-    case "fromPairs": {
-      checkArity("fromPairs", { sig: "", none: true }, exprArgsOnly(args, "fromPairs").length, callPos);
-      // Receiver is a [[k, v], …] array; stringify keys for $arrayToObject.
-      const [vP, p] = internalVar(ctx, "p");
-      return {
-        $arrayToObject: {
-          $map: { input: genObj, as: vP, in: [{ $toString: { $arrayElemAt: [p, 0] } }, { $arrayElemAt: [p, 1] }] },
-        },
-      };
-    }
+    // .fromPairs → src/methods/array-slicing.ts
 
     // ── lodash string methods → src/methods/lodash-string.ts ────────────────
     // .truncate → src/methods/string.ts
@@ -4561,23 +4412,6 @@ function generateMethodCall(
  * count is an abort at query time rather than a wrong answer. The check belongs to
  * the argument, not the method, which is why every count-taking method shares it.
  */
-function requireIntCount(method: string, sig: string, arg: Expr | undefined, min: number): void {
-  if (arg === undefined || arg.type !== "NumberLiteral") return;
-  if (!Number.isInteger(arg.value)) {
-    throw new CodegenError(`.${method}(${sig}) needs a whole number, but got ${arg.value}.`, arg.pos);
-  }
-  if (arg.value < min) {
-    throw new CodegenError(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
-  }
-}
-
-function isNegativeLiteral(e: Expr): boolean {
-  if (e.type === "NumberLiteral") return e.value < 0;
-  if (e.type === "UnaryExpr" && e.op === "-" && e.operand.type === "NumberLiteral") {
-    return e.operand.value > 0;
-  }
-  return false;
-}
 
 /**
  * Lower a callback's input shape so the body can reference `(element, index)` —
