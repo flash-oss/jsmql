@@ -53,11 +53,20 @@ because the stream is a sequence of documents. `test/methods-grid.test.ts` asser
 family file reaches the assembly, that no name is declared twice, and that the grid agrees
 with codegen's receiver gate.
 
-**The migration is in progress.** Most methods still lower from the `generateMethodCall`
-switch, and the grid is consulted first, so the switch is the fallback. A ratchet in that
-test file fails if the un-migrated count RISES — adding a method to the switch instead of
-the grid is the habit this exists to break. Lower `MAX_UNMIGRATED` with each family you
-move; delete the ratchet when it reaches zero.
+**The grid is consulted before the switch**, so a declared method never reaches it and the
+switch is the fallback for what has not moved. A ratchet in that test file fails if the
+un-migrated count RISES — adding a method to the switch instead of the grid is the habit
+this exists to break. Lower `MAX_UNMIGRATED` with each family you move; delete the ratchet
+when it reaches zero. What is still in the switch, and why each case resists a declaration,
+is tabulated in the spec — read that before concluding a new method belongs there.
+
+What a lowering needs from the compiler arrives through `LowerInput` as a **service**
+(`gen`, `internalVar`, `err`, `iteratee`, `predicate`, `objIteratee`, `callback`), never as
+an import: a family file that reaches back into `codegen.ts` closes a cycle, the registry
+then assembles before the family initialises, and every method in that file falls silently
+through to the switch with no error anywhere. Before adding a service, check whether the
+helper only needs ONE function out of the context — the index resolvers take a `Gen` and
+live at leaf level for exactly that reason.
 
 The registry is a null-prototype object on purpose: `METHODS` contains names that collide
 with `Object.prototype` (`toString`, `valueOf`, `toLocaleString`), and a plain `{}` would

@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — docs: adding a method means writing a declaration, not a switch case
+
+The authoring rule in `CLAUDE.md` still opened with "add a `case \"foo\"` in
+`generateMethodCall`" — the exact habit the grid was built to break. It now opens with "write
+ONE declaration in the matching family file", and says why the ratchet fails a switch case.
+
+`docs/specs/lowering-grid.md` gained the honest account of what is LEFT in the switch, so
+the remainder reads as a set of stated reasons rather than an unexplained backlog. Ten of
+the twenty are one shape: DUAL-receiver methods (`.indexOf`, `.includes`, `.at`, `.slice`,
+`.concat`, `.nth`, `.lastIndexOf`, `.size`, `.toString`, `.toLocaleString`) that work on a
+string AND an array and pick their lowering from what the receiver is inferred to be. That
+is a missing CONCEPT, not a missing service — `receiver` names one family and these have
+two — and it is the next thing worth solving.
+
+---
+
 ## 2026-08-16 — refactor: the reshaping array methods join the grid
 
 `.toReversed`, `.toSorted`, `.sortBy`, `.orderBy`, `.toSpliced` and `.with` become

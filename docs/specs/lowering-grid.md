@@ -130,6 +130,23 @@ wrote, jsmql takes MongoDB's behaviour and the smaller MQL. See the axiom in
 The grid is being filled family by family. `generateMethodCall` consults it before its
 switch, so a declared method never reaches the switch and an un-declared one is untouched.
 
+What is left in the switch is no longer a backlog of un-done families — it is one shape the
+grid cannot yet express, plus four methods that need a service nobody else needs:
+
+| Left in the switch | Why |
+|---|---|
+| `.indexOf` `.includes` `.at` `.slice` `.concat` `.nth` `.lastIndexOf` `.size` `.toString` `.toLocaleString` | DUAL-receiver. Each works on a string AND an array (or an array and an object), and picks its lowering from what the receiver is inferred to be. The family they would declare is not one of the five. |
+| `.reduce` `.reduceRight` | The accumulator's type is narrowed from the initial value AND the lambda's result together, which no resolved value can carry. |
+| `.findIndex` `.findLastIndex` | They build their own `$zip`-and-`$reduce` scan instead of going through the shared callback resolver. |
+| `.zipWith` | Its iteratee takes one parameter per zipped ARRAY, so the one-parameter resolver cannot serve it. |
+| `.join` | Reads its RECEIVER's shape to reject a nested array. |
+| `.clamp` | Its receiver may be a number OR a date — again no single family. |
+| `.test` `.exec` `.isSubsetOf` `.isSupersetOf` | Intercepted on a RegExp / Set receiver before `generateMethodCall`, so they never reach the grid. |
+
+The dual-receiver row is the one worth solving, because it is ten of the twenty and it is a
+missing CONCEPT rather than a missing service: `receiver` names one family, and these
+methods have two.
+
 `test/methods-grid.test.ts` carries a **ratchet**: the number of methods still lowering
 from the switch may only fall. A rise means a method was added to the switch instead of a
 family file — the habit the grid exists to break. The same test fails if the ratchet drifts
