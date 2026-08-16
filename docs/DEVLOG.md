@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the date family joins the grid, and an arity rule can carry a reason
+
+`src/methods/date.ts` takes the 18 date methods JavaScript does NOT have — `.plus` /
+`.minus`, `.isSame` / `.isBefore` / `.isAfter`, `.startOf` / `.endOf`, `.diff`, `.format`,
+`.set`, `.getTime`, `.toISOString` and the six parts JS has no getter for. The 16 accessors
+JS does have stay in `date-accessors.ts`. Ratchet 52 → 34.
+
+`src/mql-date.ts` is the fifth leaf: the trailing-options rule, the two `$dateFromParts`
+part families, the `.format()` specifier gate and the Moment-token translator. `dateOptions`
+takes a `Gen`, the same shape the index resolvers do.
+
+The migration surfaced a real ordering rule. `.isSame(other)` — no unit — used to be
+intercepted BEFORE the arity check, so it could say "without a unit that is just '===' —
+write 'a === b'" rather than "requires 2 or 3 arguments". Dispatch applies a declaration's
+arity rule first, so the tailored message was being buried. `MethodArgs` now carries
+`reject`: counts that parse fine but are wrong for a REASON, paired with the message that
+reason deserves, checked ahead of the count rule. It is the `unsupported` principle at
+argument-count granularity — where jsmql refuses, the answer IS the message, and a generic
+count complaint wastes the one chance to say what to write instead.
+
+`requireIntCount` went back to throwing `CodegenError` directly, now that `errors.ts` is a
+leaf. That settles the rule: a leaf HELPER throws directly, because it always has an AST
+node's `pos` to hand; `LowerInput.err` exists for the other case, a declaration that wants
+the CALL position defaulted for it.
+
+Output-neutral; nine date lowerings were re-checked on a live `mongod` against the values
+Moment and Luxon give.
+
+---
+
 ## 2026-08-16 — chore: the error classes and the arity checker move to leaves
 
 `CodegenError`, `UnknownIdentifierError` and `internalError` now live in `src/errors.ts`;

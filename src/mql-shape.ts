@@ -7,11 +7,15 @@
 //
 // Everything here takes an ALREADY-LOWERED value (or a literal AST node) and returns MQL
 // or a plain JS value. None of it needs a `GenerateCtx`, which is exactly why it can live
-// at this level.
+// at this level. A helper that REJECTS throws `CodegenError` directly — `errors.ts` is a
+// leaf too, and a helper reading an AST node always has that node's `pos` to hand. The
+// `LowerInput.err` service exists for the other case: a declaration that wants the CALL
+// position defaulted for it.
 //
 // See docs/specs/lowering-grid.md § Where declarations live.
 
 import type { Expr } from "./ast.ts";
+import { CodegenError } from "./errors.ts";
 
 /**
  * Emit a `$cond` in MongoDB's object form `{ if, then, else }` rather than the positional
@@ -165,18 +169,12 @@ export function isNegativeLiteral(e: Expr): boolean {
  * it. A fraction is what this exists for — `$slice` aborts the whole query on one, and a
  * `.take(1.5)` that compiled would fail at query time rather than at the keyboard.
  */
-export function requireIntCount(
-  method: string,
-  sig: string,
-  arg: Expr | undefined,
-  min: number,
-  err: (message: string, pos?: number) => Error,
-): void {
+export function requireIntCount(method: string, sig: string, arg: Expr | undefined, min: number): void {
   if (arg === undefined || arg.type !== "NumberLiteral") return;
   if (!Number.isInteger(arg.value)) {
-    throw err(`.${method}(${sig}) needs a whole number, but got ${arg.value}.`, arg.pos);
+    throw new CodegenError(`.${method}(${sig}) needs a whole number, but got ${arg.value}.`, arg.pos);
   }
   if (arg.value < min) {
-    throw err(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
+    throw new CodegenError(`.${method}(${sig}) needs an integer >= ${min}, but got ${arg.value}.`, arg.pos);
   }
 }

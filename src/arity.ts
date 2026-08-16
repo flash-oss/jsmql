@@ -22,7 +22,23 @@ import { CodegenError } from "./errors.ts";
  * by hand beside a check written by hand is two statements of one fact, and two statements
  * drift.
  */
-export type MethodArgs = { sig: string; exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
+export type MethodArgs = {
+  sig: string;
+  exact?: number;
+  allowed?: readonly number[];
+  atLeast?: number;
+  none?: true;
+  /**
+   * Counts that parse fine but are wrong for a REASON, paired with the message that reason
+   * deserves. Checked before the count rule, so `.isSame(other)` can answer "without a unit
+   * that is just '===' — write 'a === b'" instead of "requires 2 or 3 arguments".
+   *
+   * The same principle as an `unsupported` cell: where jsmql refuses, the answer IS the
+   * message, and burying it behind a generic count complaint wastes the one chance to say
+   * what to write instead.
+   */
+  reject?: Readonly<Record<number, string>>;
+};
 
 /**
  * Validate `count` against `spec` and throw `<prefix><method>(<sig>) <quantity-clause>,
@@ -42,6 +58,8 @@ export function checkArity(
   callPos: number,
   prefix: string = ".",
 ): void {
+  const tailored = spec.reject?.[count];
+  if (tailored !== undefined) throw new CodegenError(tailored, callPos);
   const ok =
     spec.none !== undefined
       ? count === 0

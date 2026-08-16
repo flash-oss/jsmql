@@ -14,6 +14,7 @@
 import { ARRAY_SHIM_METHODS } from "./array-shims.ts";
 import { ARRAY_SLICING_METHODS } from "./array-slicing.ts";
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
+import { DATE_METHODS } from "./date.ts";
 import { LODASH_ARRAY_METHODS } from "./lodash-array.ts";
 import { LODASH_STRING_METHODS } from "./lodash-string.ts";
 import { NUMBER_METHODS } from "./number.ts";
@@ -26,6 +27,7 @@ const FAMILIES: Record<string, Record<string, MethodDef>> = {
   "array-shims": ARRAY_SHIM_METHODS,
   "array-slicing": ARRAY_SLICING_METHODS,
   "date-accessors": DATE_ACCESSOR_METHODS,
+  date: DATE_METHODS,
   "lodash-array": LODASH_ARRAY_METHODS,
   "lodash-string": LODASH_STRING_METHODS,
   number: NUMBER_METHODS,

@@ -1,6 +1,15 @@
 import { checkArity } from "./arity.ts";
 export { checkArity } from "./arity.ts";
 import { CodegenError, internalError, UnknownIdentifierError } from "./errors.ts";
+import {
+  checkDateFormat,
+  DATE_PART_OPERATOR,
+  DATE_PARTS_CALENDAR,
+  DATE_PARTS_CALENDAR_MARKERS,
+  DATE_PARTS_ISO,
+  DATE_PARTS_ISO_MARKERS,
+  dateOptions,
+} from "./mql-date.ts";
 export { CodegenError, internalError, UnknownIdentifierError } from "./errors.ts";
 import { lookupOperator, OPERATOR_RETURNS, operatorsReturning } from "./operators.ts";
 import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
@@ -1403,11 +1412,6 @@ function internalVar(ctx: GenerateCtx, base: string): [string, string] {
  */
 function genIn(ctx: GenerateCtx): Gen {
   return (node: Expr) => _generate(node, ctx);
-}
-
-/** The error factory a leaf helper takes, so it can reject without importing `CodegenError`. */
-function codegenErr(message: string, pos?: number): Error {
-  return new CodegenError(message, pos ?? 0);
 }
 
 /**
@@ -3290,195 +3294,6 @@ function utcDate(date: unknown): unknown {
   return date;
 }
 
-// ── The trailing options argument of a date method ────────────────────────────
-// Every date method takes the same optional last argument: a timezone string
-// (the shorthand, which is what `.plus(2, "hour", "America/New_York")` uses), or
-// an object literal whose keys are the operator's own remaining fields. One rule
-// across the family, so a method that grows a field needs no new argument slot.
-// See docs/specs/method-dispatch.md § Date methods.
-
-/** Per-key literal gate, reusing the operator path's helpers so both spellings
- *  error identically. Every entry no-ops on a non-literal. */
-const DATE_OPTION_CHECK: Record<string, (label: string, value: Expr) => void> = {
-  binSize: (l, v) => checkArgType(l, "binSize", v, "number"),
-  timezone: (l, v) => checkArgType(l, "timezone", v, "string"),
-  startOfWeek: (l, v) => checkArgEnum(l, "startOfWeek", v, "weekday"),
-};
-
-/** Emit order: the operators' own field order, so output reads like the manual.
- *  No operator carries more than three of these, so one total order serves all. */
-const DATE_OPTION_ORDER = ["binSize", "timezone", "startOfWeek"] as const;
-
-type DateOptionKey = (typeof DATE_OPTION_ORDER)[number];
-
-// ── .set(): the two $dateFromParts families ───────────────────────────────────
-// The operator takes calendar parts OR ISO-week parts, never both — mongod says
-// "$dateFromParts does not allow mixing natural dates with ISO dates". Listed in
-// the operator's own field order; the four time parts belong to both.
-const DATE_PARTS_CALENDAR = ["year", "month", "day", "hour", "minute", "second", "millisecond"] as const;
-const DATE_PARTS_ISO = ["isoWeekYear", "isoWeek", "isoDayOfWeek", "hour", "minute", "second", "millisecond"] as const;
-// The keys that decide which family a `.set({ … })` call is in.
-const DATE_PARTS_ISO_MARKERS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"];
-const DATE_PARTS_CALENDAR_MARKERS = ["year", "month", "day"];
-
-// The MQL date parts JavaScript's `Date` has no getter for, under the method
-// names Moment gives them. Each operator takes a bare date, or the
-// `{ date, timezone }` form when a timezone is passed.
-const DATE_PART_OPERATOR: Record<string, string> = {
-  week: "$week",
-  isoWeek: "$isoWeek",
-  isoWeekYear: "$isoWeekYear",
-  isoWeekday: "$isoDayOfWeek",
-  dayOfYear: "$dayOfYear",
-};
-
-// ── .format(): MongoDB's own format specifiers ────────────────────────────────
-// The characters `$dateToString` accepts after a `%`. Verified against mongod,
-// which fails an unknown one at execution time ("Invalid format character
-// '%Q'"), so a literal typo is a certain error and belongs at compile time.
-const DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
-
-// Moment / Luxon format tokens paired with the MQL specifier that does the same
-// job, or `null` where MongoDB has none. Scanned longest-first and left to right,
-// so `MMM` is consumed whole rather than leaving an `M` behind after `MM`.
-const MOMENT_FORMAT_TOKENS: readonly (readonly [string, string | null])[] = [
-  ["YYYY", "%Y"],
-  ["MMMM", null], // month name
-  ["dddd", null], // weekday name
-  ["MMM", null],
-  ["ddd", null],
-  ["DDD", "%j"],
-  ["SSS", "%L"],
-  ["YY", null], // 2-digit year
-  ["MM", "%m"],
-  ["DD", "%d"],
-  ["HH", "%H"],
-  ["hh", null], // 12-hour clock
-  ["ZZ", "%z"],
-  ["mm", "%M"],
-  ["ss", "%S"],
-  ["Do", null], // ordinal day
-];
-
-// Does this look like a Moment/Luxon format rather than an MQL one? Such a
-// string IS valid MQL — it formats as its own literal text — so nothing but the
-// token spelling reveals the mistake, and the mistake is silent otherwise.
-const MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
-
-/**
- * Translate a Moment/Luxon format to MQL specifiers for the error message —
- * never for output. Offers the translation only when nothing is left
- * untranslated: what survives the scan is found by stripping the `%X` pairs and
- * looking for remaining letters, so a token MongoDB has no specifier for gets
- * named rather than silently dropped from a suggestion.
- */
-function momentFormatHint(fmt: string): string {
-  let out = "";
-  let i = 0;
-  outer: while (i < fmt.length) {
-    for (const [token, spec] of MOMENT_FORMAT_TOKENS) {
-      if (!fmt.startsWith(token, i)) continue;
-      out += spec ?? token;
-      i += token.length;
-      continue outer;
-    }
-    out += fmt[i];
-    i++;
-  }
-  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
-  if (missing === null) return ` Did you mean '${out}'?`;
-  return (
-    ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}: it outputs no ` +
-    `month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts ` +
-    `(e.g. ["Jan", …][$.t.getMonth() - 1]).`
-  );
-}
-
-/** Reject a literal `.format` string MongoDB would refuse, or one written in
- *  Moment's token dialect (valid MQL, but it formats as its own text). */
-function checkDateFormat(label: string, arg: Expr): void {
-  const fmt = litString(arg);
-  if (fmt === null) return;
-  for (let i = 0; i < fmt.length; i++) {
-    if (fmt[i] !== "%") continue;
-    const spec = fmt[i + 1];
-    if (spec === undefined || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
-      // The likeliest slip is the wrong case (`%y` for `%Y`), so try that first.
-      const flip = spec === undefined ? undefined : flipCase(spec);
-      const hint = flip !== undefined && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
-      throw new CodegenError(
-        `'${label}' format has an invalid specifier '%${spec ?? ""}'.${hint} MongoDB accepts ` +
-          `%Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
-        arg.pos,
-      );
-    }
-    i++; // consume the specifier character
-  }
-  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
-    throw new CodegenError(
-      `'${label}' takes MongoDB's date format specifiers, not Moment/Luxon tokens — ` +
-        `'${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
-      arg.pos,
-    );
-  }
-}
-
-function flipCase(ch: string): string {
-  const up = ch.toUpperCase();
-  return ch === up ? ch.toLowerCase() : up;
-}
-
-/**
- * Resolve a date method's trailing options argument into the operator fields it
- * contributes. `allowed` is the subset that method's operator accepts; an
- * unknown key is rejected with a suggestion rather than passed to mongod.
- *
- * A written-out object literal is the options form; **anything else** is the
- * timezone shorthand. That split is on what the argument *means*, not merely its
- * node type: MongoDB reads these fields by name from the operator document, so a
- * document of options only ever exists as source the compiler can read — a field
- * path or parameter in this slot can only be a runtime timezone string. Values
- * inside the literal stay free to be paths or parameters.
- */
-function dateOptions(
-  method: string,
-  arg: Expr | undefined,
-  allowed: readonly DateOptionKey[],
-  ctx: GenerateCtx,
-): Record<string, unknown> {
-  if (arg === undefined) return {};
-  const label = `.${method}`;
-  if (arg.type !== "ObjectLiteral") {
-    checkArgType(label, "timezone", arg, "string");
-    return { timezone: _generate(arg, ctx) };
-  }
-  const info = objectInfo(arg);
-  if (info === null || info.hasSpread) {
-    throw new CodegenError(
-      `${label}(…) options must be an object literal with plain keys (${allowed.join(", ")}) — ` +
-        `a spread or computed key can't be read at compile time, and MongoDB needs these field names ` +
-        `written out. Spell the keys and pass field paths or parameters as their values.`,
-      arg.pos,
-    );
-  }
-  for (const [key, value] of info.byKey) {
-    if (allowed.includes(key as DateOptionKey)) continue;
-    throw new CodegenError(
-      `${label}(…) has no option '${key}'.${didYouMean(key, allowed, (s) => s)} ` +
-        `Valid options: ${allowed.join(", ")}.`,
-      value.pos,
-    );
-  }
-  const out: Record<string, unknown> = {};
-  for (const key of DATE_OPTION_ORDER) {
-    const value = info.byKey.get(key);
-    if (value === undefined) continue;
-    DATE_OPTION_CHECK[key](label, value);
-    out[key] = _generate(value, ctx);
-  }
-  return out;
-}
-
 function generateMethodCall(
   object: Expr,
   method: string,
@@ -3663,8 +3478,8 @@ function generateMethodCall(
       checkArity("slice", { sig: "start[, end]", allowed: [0, 1, 2] }, exprArgs.length, callPos);
       // A negative index is honoured here — the developer wrote it — but a fraction is
       // not an index in either language, and `$slice` aborts on one.
-      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY, codegenErr);
-      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY, codegenErr);
+      requireIntCount("slice", "start[, end]", exprArgs[0], Number.NEGATIVE_INFINITY);
+      requireIntCount("slice", "start[, end]", exprArgs[1], Number.NEGATIVE_INFINITY);
       // Receiver-type dispatch: known array → $slice (native negative-index support);
       // known string → $substrCP (with compile-time/runtime normalisation of negatives);
       // unknown → runtime $cond on $isArray so a bare $.field works for either type.
@@ -4048,205 +3863,16 @@ function generateMethodCall(
     // ── Date methods ────────────────────────────────────────────────────────
     // The 16 component accessors (.getFullYear / .getUTCHours / …) are declared in
     // src/methods/date-accessors.ts and dispatched from the grid above.
-    case "getTime":
-      // Match JS: ms since epoch (already UTC; no getUTCTime exists in JS)
-      return { $toLong: genObj };
-    case "toISOString":
-      // `%Y-%m-%dT%H:%M:%S.%LZ` IS `$dateToString`'s default format, so naming it
-      // restates the default. Verified identical on a live mongod.
-      return { $dateToString: { date: genObj } };
-    case "plus":
-    case "minus": {
-      // Date arithmetic: `d.plus(amount, unit[, timezone])` → $dateAdd,
-      // `.minus(...)` → $dateSubtract. Temporal/Luxon method name with Moment's
-      // (amount, unit) argument order — both map 1:1 to the operator's fields.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "amount, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
-      // Gate the literal slots to the same shapes the $dateAdd/$dateSubtract
-      // operator path rejects (unit enum, integer amount) so both spellings error
-      // identically; each no-ops on a non-literal.
-      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
-      checkArgType(`.${method}`, "amount", exprArgs[0], "int-or-long");
-      return {
-        [method === "plus" ? "$dateAdd" : "$dateSubtract"]: {
-          startDate: genObj,
-          unit: _generate(exprArgs[1], ctx),
-          amount: _generate(exprArgs[0], ctx),
-          ...dateOptions(method, exprArgs[2], ["timezone"], ctx),
-        },
-      };
-    }
-    case "set": {
-      // `d.set({ year: 2030 })` → read the parts, override the named ones, rebuild.
-      // Luxon's `.set` (Temporal's `.with`); immutable, like every jsmql method.
-      // Months are 1-based here, the same base `.getMonth()` and `$month` use.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "{ parts }[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
-      const info = objectInfo(exprArgs[0]);
-      if (info === null || info.hasSpread) {
-        throw new CodegenError(
-          `.set({ … }) needs an object literal with plain keys (${DATE_PARTS_CALENDAR.join(", ")}) — ` +
-            `MongoDB reads the parts by name, so a spread or computed key can't be resolved at compile ` +
-            `time. Spell the keys and pass field paths or parameters as their values.`,
-          exprArgs[0].pos,
-        );
-      }
-      const tzArg = info.byKey.get("timezone");
-      if (tzArg !== undefined) {
-        throw new CodegenError(
-          `.set({ … }) takes date parts only — the timezone is the second argument: ` +
-            `.set({ … }, "America/New_York").`,
-          tzArg.pos,
-        );
-      }
-      const keys = [...info.byKey.keys()];
-      const isoKey = keys.find((k) => DATE_PARTS_ISO_MARKERS.includes(k));
-      const calKey = keys.find((k) => DATE_PARTS_CALENDAR_MARKERS.includes(k));
-      if (isoKey !== undefined && calKey !== undefined) {
-        throw new CodegenError(
-          `.set({ … }) can't mix ISO-week parts with calendar parts ('${isoKey}' with '${calKey}') — ` +
-            `MongoDB builds a date from one family or the other. Use ${DATE_PARTS_CALENDAR_MARKERS.join("/")} ` +
-            `or ${DATE_PARTS_ISO_MARKERS.join("/")}, plus any of hour/minute/second/millisecond.`,
-          info.byKey.get(isoKey)!.pos,
-        );
-      }
-      const family: readonly string[] = isoKey !== undefined ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
-      for (const [key, value] of info.byKey) {
-        if (family.includes(key)) continue;
-        throw new CodegenError(
-          `.set({ … }) has no date part '${key}'.${didYouMean(key, family, (s) => s)} ` +
-            `Valid parts: ${family.join(", ")}.`,
-          value.pos,
-        );
-      }
-      const tz = dateOptions(method, exprArgs[1], ["timezone"], ctx);
-      // Every part overridden → nothing to read back, so no $let/$dateToParts.
-      const complete = family.every((k) => info.byKey.has(k));
-      const [partsVar, partsRef] = complete ? ["", ""] : internalVar(ctx, "parts");
-      const rebuilt: Record<string, unknown> = {};
-      for (const key of family) {
-        const value = info.byKey.get(key);
-        if (value !== undefined) checkArgType(".set", key, value, "int-or-long");
-        rebuilt[key] = value !== undefined ? _generate(value, ctx) : `${partsRef}.${key}`;
-      }
-      const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
-      if (complete) return fromParts;
-      const toParts: Record<string, unknown> = { date: genObj, ...tz };
-      if (isoKey !== undefined) toParts.iso8601 = true;
-      return { $let: { vars: { [partsVar]: { $dateToParts: toParts } }, in: fromParts } };
-    }
-    case "isSame":
-    case "isBefore":
-    case "isAfter": {
-      // Compare two dates at a granularity: truncate both to the unit, then
-      // compare. The unit is what earns the method — without one these are `===`,
-      // `<` and `>`, which JSMQL already has, so a unit-less call points there.
-      const exprArgs = exprArgsOnly(args, method);
-      if (exprArgs.length === 1) {
-        const jsOp = method === "isSame" ? "===" : method === "isBefore" ? "<" : ">";
-        throw new CodegenError(
-          `.${method}(other) without a unit is just '${jsOp}' — write 'a ${jsOp} b'. ` +
-            `Pass a unit to compare at that granularity instead: .${method}(other, "day").`,
-          callPos,
-        );
-      }
-      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
-      checkArgType(`.${method}`, "other", exprArgs[0], "date");
-      checkEnum(`.${method}`, "unit", exprArgs[1], TIME_UNIT);
-      const bucketOf = (date: unknown): unknown => ({
-        $dateTrunc: {
-          date,
-          unit: _generate(exprArgs[1], ctx),
-          ...dateOptions(method, exprArgs[2], ["binSize", "timezone", "startOfWeek"], ctx),
-        },
-      });
-      const cmp = method === "isSame" ? "$eq" : method === "isBefore" ? "$lt" : "$gt";
-      return { [cmp]: [bucketOf(genObj), bucketOf(_generate(exprArgs[0], ctx))] };
-    }
-    case "week":
-    case "isoWeek":
-    case "isoWeekYear":
-    case "isoWeekday":
-    case "dayOfYear":
-    case "quarter": {
-      // Date parts JavaScript has no getter for, so there is no JS convention to
-      // honour: these follow MQL's own numbering, which is also Moment's for the
-      // ISO parts (.isoWeekday → 1 = Monday … 7 = Sunday).
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "[timezone]", allowed: [0, 1] }, exprArgs.length, callPos);
-      const opts = dateOptions(method, exprArgs[0], ["timezone"], ctx);
-      const operand = opts.timezone === undefined ? genObj : { date: genObj, ...opts };
-      const op = DATE_PART_OPERATOR[method];
-      // MongoDB has no $quarter. `$ceil` of a `$divide` is a double, so `$toInt`
-      // keeps the result an int like every other date getter.
-      return op === undefined ? { $toInt: { $ceil: { $divide: [{ $month: operand }, 3] } } } : { [op]: operand };
-    }
-    case "format": {
-      // `d.format(fmt)` → $dateToString. Moment's method name with MongoDB's own
-      // format specifiers (`%Y-%m-%d`): translating Moment's token dialect would
-      // dead-end on the tokens MQL has no equivalent for, so the specifiers stay
-      // MQL's and a token-dialect string is rejected with the translation.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "format[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
-      checkArgType(".format", "format", exprArgs[0], "string");
-      checkDateFormat(".format", exprArgs[0]);
-      return {
-        $dateToString: {
-          date: genObj,
-          format: _generate(exprArgs[0], ctx),
-          ...dateOptions(method, exprArgs[1], ["timezone"], ctx),
-        },
-      };
-    }
-    case "startOf": {
-      // `d.startOf(unit)` → $dateTrunc: the bucket key every time-series $group
-      // wants. Moment / Luxon / date-fns all spell it this way.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
-      checkEnum(".startOf", "unit", exprArgs[0], TIME_UNIT);
-      return {
-        $dateTrunc: {
-          date: genObj,
-          unit: _generate(exprArgs[0], ctx),
-          ...dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx),
-        },
-      };
-    }
-    case "endOf": {
-      // `d.endOf(unit)` — MongoDB has no ceiling operator, so this is the
-      // truncate → add one unit → step back 1 ms composition, which lands on
-      // Moment's 23:59:59.999-style inclusive end. `binSize` makes the step the
-      // whole bin; only `timezone` carries to the $dateAdd ($dateAdd has no
-      // binSize/startOfWeek field), and the final millisecond is absolute.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "unit[, timezone]", allowed: [1, 2] }, exprArgs.length, callPos);
-      checkEnum(".endOf", "unit", exprArgs[0], TIME_UNIT);
-      const opts = dateOptions(method, exprArgs[1], ["binSize", "timezone", "startOfWeek"], ctx);
-      const step: Record<string, unknown> = {
-        startDate: { $dateTrunc: { date: genObj, unit: _generate(exprArgs[0], ctx), ...opts } },
-        unit: _generate(exprArgs[0], ctx),
-        amount: opts.binSize ?? 1,
-      };
-      if (opts.timezone !== undefined) step.timezone = opts.timezone;
-      return { $dateSubtract: { startDate: { $dateAdd: step }, unit: "millisecond", amount: 1 } };
-    }
-    case "diff": {
-      // `end.diff(start, unit)` → $dateDiff. The receiver is the LATER date (the
-      // operator's endDate), so the result is receiver − argument — the direction
-      // Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all agree on.
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "other, unit[, timezone]", allowed: [2, 3] }, exprArgs.length, callPos);
-      checkArgType(".diff", "other", exprArgs[0], "date");
-      checkEnum(".diff", "unit", exprArgs[1], TIME_UNIT);
-      return {
-        $dateDiff: {
-          startDate: _generate(exprArgs[0], ctx),
-          endDate: genObj,
-          unit: _generate(exprArgs[1], ctx),
-          ...dateOptions(method, exprArgs[2], ["timezone", "startOfWeek"], ctx),
-        },
-      };
-    }
+    // .getTime → src/methods/date.ts
+    // .toISOString → src/methods/date.ts
+    // .plus / .minus → src/methods/date.ts
+    // .set → src/methods/date.ts
+    // .isSame / .isBefore / .isAfter → src/methods/date.ts
+    // .week / .isoWeek / .isoWeekYear / .isoWeekday / .dayOfYear / .quarter → src/methods/date.ts
+    // .format → src/methods/date.ts
+    // .startOf → src/methods/date.ts
+    // .endOf → src/methods/date.ts
+    // .diff → src/methods/date.ts
 
     // ── DX shims: mutating Array methods ────────────────────────────────────
     // These all mutate the receiver in JavaScript. In expression position

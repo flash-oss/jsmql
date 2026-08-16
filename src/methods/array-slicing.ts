@@ -30,7 +30,7 @@ function countArg(method: string, { args, gen, err }: LowerInput, mirror?: strin
       nArg.pos,
     );
   }
-  requireIntCount(method, "n", nArg, 0, err);
+  requireIntCount(method, "n", nArg, 0);
   return nArg !== undefined ? gen(nArg) : 1;
 }
 

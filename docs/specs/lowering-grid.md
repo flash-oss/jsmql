@@ -139,6 +139,7 @@ the count reaches zero.
 | Family | File | Methods |
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
+| date (arithmetic / compare / format / parts) | `src/methods/date.ts` | 18 |
 | string | `src/methods/string.ts` | 22 |
 | number | `src/methods/number.ts` | 4 |
 | object (key/value reshapers) | `src/methods/object.ts` | 8 |
@@ -165,6 +166,10 @@ import:
 | `iteratee(node?)` | resolve a lodash iteratee — it lowers a lambda body against a scope binding the element, which only the compiler holds |
 | `predicate(node)` | the same vocabulary read as a boolean |
 | `objIteratee(node)` | resolve a `(value[, key])` iteratee over `$objectToArray` entries |
+
+A leaf HELPER module throws `CodegenError` directly — `src/errors.ts` is a leaf too, and a
+helper reading an AST node always has that node's `pos` to hand. `err` exists for the other
+case: a declaration that wants the CALL position defaulted for it.
 
 A resolved iteratee carries its own `innerVar`, for a binding read from *inside* the element
 binding: the user's iteratee parameter is in scope there, so a bare name would capture it.
