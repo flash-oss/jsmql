@@ -1967,6 +1967,21 @@ describe("method arg-count errors (standardized via checkArity)", () => {
     );
     expect(() => jsmql.expr("$.arr.toReversed(1)")).toThrow(".toReversed() takes no arguments, got 1");
   });
+  it("a callback method rejects JavaScript's trailing thisArg instead of dropping it", () => {
+    // `.map(fn, thisArg)` is valid JavaScript, and jsmql used to compile it and silently
+    // discard the second argument — the same shape as `.trim("x")`. The message names what
+    // the argument would have been, because "requires exactly 1 argument" leaves a reader
+    // who knows the JS signature none the wiser.
+    for (const src of ["$.a.map(x => x, 1)", "$.a.filter(x => x, 1)", "$.a.some(x => x, 1)"]) {
+      expect(() => jsmql.expr(src)).toThrow(/takes one argument, got 2 — JavaScript's trailing 'thisArg'/);
+    }
+    // The shape check still wins where it says more than a count could.
+    expect(() => jsmql.expr("$.a.map(5)")).toThrow(".map() requires a lambda as its first argument");
+    // `.reduce` legitimately takes two, and is unaffected.
+    expect(jsmql.expr("$.a.reduce((acc, x) => acc + x, 0)")).toEqual({
+      $reduce: { input: "$a", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+    });
+  });
   it("static-call families (Math./Object./Set./regex.) use the same formatter", () => {
     expect(() => jsmql.expr("Math.pow(2)")).toThrow("Math.pow(base, exponent) requires exactly 2 arguments, got 1");
     expect(() => jsmql.expr("Math.hypot()")).toThrow("Math.hypot(...values) requires at least 1 argument, got 0");

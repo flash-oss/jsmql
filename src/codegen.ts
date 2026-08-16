@@ -3734,7 +3734,7 @@ function generateMethodCall(
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "lambda, initialValue", exact: 2 }, exprArgs.length, callPos);
-      const lambda = requireLambda(exprArgs, method, callPos, ctx);
+      const lambda = requireLambda(exprArgs, method, callPos, ctx, 2);
       if (lambda.params.length < 2 || lambda.params.length > 3) {
         throw new CodegenError(
           `.${method}() lambda must have 2 or 3 parameters (accumulator, element[, index])`,
@@ -4590,7 +4590,19 @@ function requireLambda(
   method: string,
   callerPos: number,
   ctx?: GenerateCtx,
+  takes: number = 1,
 ): { type: "Lambda"; params: string[]; body?: Expr; exprBlock?: ExprBlock; pos: number } {
+  // JavaScript's callback methods take a second `thisArg`, which has no meaning in an
+  // expression that has no `this`. Rejecting it here rather than through an arity rule
+  // keeps ONE error for one mistake: the count and the shape are the same question, and a
+  // count rule would fire first with the less useful of the two answers.
+  if (args.length > takes) {
+    throw new CodegenError(
+      `.${method}(callback) takes ${takes === 1 ? "one argument" : `${takes} arguments`}, got ${args.length}` +
+        ` — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.`,
+      args[takes].pos,
+    );
+  }
   const first = args[0];
   // Bare built-in callback: `.filter(Boolean)` ≡ `.filter(v => Boolean(v))`,
   // `.map(ObjectId)` ≡ `.map(v => ObjectId(v))`.

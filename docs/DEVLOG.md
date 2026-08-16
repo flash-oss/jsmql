@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: a callback method rejects JavaScript's trailing thisArg instead of dropping it
+
+`$.a.map(x => x, 1)` compiled and silently discarded the `1`. So did `.filter`, `.find`,
+`.findLast`, `.some`, `.every`, `.flatMap`, `.findIndex` and `.findLastIndex` — every method
+that reached `requireLambda`, which only ever read `args[0]`.
+
+`.map(fn, thisArg)` is real JavaScript, so this is not a typo the user can be told to look
+up: it is a signature they know, whose second half has no meaning in an expression that has
+no `this`. The message says exactly that. `requireLambda` raises it rather than an arity
+rule, because "is there a callback here?" is one question and a count rule would fire first
+with the worse of the two answers (".map() requires a lambda as its first argument, e.g.
+x => x > 0" tells a reader what to write; "requires exactly 1 argument" does not).
+`.reduce` / `.reduceRight` legitimately take two arguments and pass their own limit.
+
+Same class as the `.trim("x")` fix, and found the same way — by migrating the family to the
+declaration grid, where a method cannot skip its own rule. The differential corpus gained
+three cases so the change is recorded rather than merely believed.
+
+---
+
 ## 2026-08-16 — refactor: the JavaScript array callbacks join the grid
 
 `.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every` and `.flatMap` become

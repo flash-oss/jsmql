@@ -52,7 +52,7 @@
       "entry": "expr",
       "src": "$ = 5",
       "kind": "message",
-      "was": "Cannot replace root with a number \u2014 the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?",
+      "was": "Cannot replace root with a number — the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?",
       "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
       "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
     },
@@ -60,7 +60,7 @@
       "entry": "expr",
       "src": "$ = [1, 2]",
       "kind": "message",
-      "was": "Cannot fan out an array of number \u2014 each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?",
+      "was": "Cannot fan out an array of number — each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?",
       "now": "jsmql.expr() returns one aggregation expression, but received a root-replace `$ = <expr>` (which compiles to a `$replaceWith` stage). Drop the `$ = ` to build the expression alone, or call jsmql.pipeline() / jsmql() for ",
       "reason": "Intended, commit 42d3d7a. jsmql.expr() returns ONE aggregation expression. Root- and stream-replace lower to STAGES, so the expression-only entry point rejects them instead of handing back a stage array. jsmql() and jsmql.pipeline() lower them unchanged."
     },
@@ -228,7 +228,7 @@
       "entry": "jsmql",
       "src": "$year({ date: $.d, timezone: \"UTC\" })",
       "kind": "now-accepted",
-      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$year\"",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -236,7 +236,7 @@
       "entry": "expr",
       "src": "$year({ date: $.d, timezone: \"UTC\" })",
       "kind": "now-accepted",
-      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}}",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -244,7 +244,7 @@
       "entry": "filter",
       "src": "$year({ date: $.d, timezone: \"UTC\" })",
       "kind": "now-accepted",
-      "was": "'$year' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$year' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},null]},null]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},false]},{\"$ne\":[{\"$year\":{\"date\":\"$d\",\"timezone\":\"UTC\"}},\"\"]},{\"$ne\":[{\"$year\"",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -252,7 +252,7 @@
       "entry": "jsmql",
       "src": "$hour({ date: $.d })",
       "kind": "now-accepted",
-      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$d\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},\"\"]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},0]}]}}",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -260,7 +260,7 @@
       "entry": "expr",
       "src": "$hour({ date: $.d })",
       "kind": "now-accepted",
-      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$hour\":{\"date\":\"$d\"}}",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -268,7 +268,7 @@
       "entry": "filter",
       "src": "$hour({ date: $.d })",
       "kind": "now-accepted",
-      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(\u2026).",
+      "was": "'$hour' expects a date, but got an object. Use a field path or new Date(…).",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$hour\":{\"date\":\"$d\"}},null]},null]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},false]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},\"\"]},{\"$ne\":[{\"$hour\":{\"date\":\"$d\"}},0]}]}}",
       "reason": "Intended, commit 4ce80f3. All 13 date accessors take a { date, timezone } document and the server accepts it -- verified on a live mongod. The old rejection made the documented spelling unreachable, and broke the literal-gating invariant by refusing something that is not certainly wrong."
     },
@@ -277,7 +277,7 @@
       "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
       "kind": "now-rejected",
       "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "expr\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
@@ -285,7 +285,7 @@
       "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
       "kind": "now-rejected",
       "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "pipeline\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
@@ -293,7 +293,7 @@
       "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
       "kind": "now-rejected",
       "was": "[{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"t\":\"$total\"}}}],\"as\":\"o\"}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "update\u0000$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });": {
@@ -301,7 +301,7 @@
       "src": "$lookup({ from: \"o\", pipeline: [$ = { t: $.total }], as: \"o\" });",
       "kind": "message",
       "was": "jsmql.update() rejected '$lookup' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "jsmql\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
@@ -309,7 +309,7 @@
       "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
       "kind": "now-rejected",
       "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "expr\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
@@ -317,7 +317,7 @@
       "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
       "kind": "now-rejected",
       "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "pipeline\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
@@ -325,7 +325,7 @@
       "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
       "kind": "now-rejected",
       "was": "[{\"$unionWith\":{\"coll\":\"o\",\"pipeline\":[{\"$set\":{\"\":{\"a\":1}}}]}}]",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "update\u0000$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });": {
@@ -333,7 +333,7 @@
       "src": "$unionWith({ coll: \"o\", pipeline: [$ = { a: 1 }] });",
       "kind": "message",
       "was": "jsmql.update() rejected '$unionWith' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
-      "now": "'$ = \u2026' isn't available inside a literal sub-pipeline array. Write the stage directly instead \u2014 '$replaceWith({ \u2026 })'.",
+      "now": "'$ = …' isn't available inside a literal sub-pipeline array. Write the stage directly instead — '$replaceWith({ … })'.",
       "reason": "Intended, commit 90bc46e. This loop has no slot allocator, so buffering the sugar emitted `$set: {\"\": ...}` -- mongod refuses it with 'FieldPath cannot be constructed with empty string'. Rejected now, naming the stage-call spelling that works there."
     },
     "expr\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
@@ -341,7 +341,7 @@
       "src": "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });",
       "kind": "message",
       "was": "'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write `$$.push({...})`, `$$.push(...$$$.<coll>[.filter(pred)])`, or",
-      "now": "jsmql.expr() does not allow '$$.push(...)' \u2014 collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
+      "now": "jsmql.expr() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
       "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
     },
     "filter\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
@@ -349,7 +349,7 @@
       "src": "$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });",
       "kind": "message",
       "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
-      "now": "jsmql.filter() does not allow '$$.push(...)' \u2014 collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
+      "now": "jsmql.filter() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.",
       "reason": "Intended, commit a2438b2. The union gate walked the tree with a private copy that missed Lambda.exprBlock, so a $$.push inside a block-bodied callback escaped it and produced a misdirecting downstream error. Now uses the complete ast-walk traversal."
     },
     "update\u0000$.x = $.a.map(d => { const q = $$.push({n:d}); return q; });": {
@@ -365,7 +365,7 @@
       "src": "let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));",
       "kind": "message",
       "was": "Unknown identifier 'k'. Did you mean '$.k'?",
-      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) \u2014 so `k` (along with the outer document and the root `$$.length`) is",
+      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) — so `k` (along with the outer document and the root `$$.length`) is",
       "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement."
     },
     "pipeline\u0000let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));": {
@@ -373,7 +373,7 @@
       "src": "let k = $.x; $$ = $$$.orders.map(o => ({ t: o.items.map(v => v + k) }));",
       "kind": "message",
       "was": "Unknown identifier 'k'. Did you mean '$.k'?",
-      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) \u2014 so `k` (along with the outer document and the root `$$.length`) is",
+      "now": "`k` is a `let`/`const` declared before `$$ = $$$.orders`, which replaces the stream with a different collection (a `$unionWith`, which can't correlate) — so `k` (along with the outer document and the root `$$.length`) is",
       "reason": "Intended. extendCtx enumerated 19 of GenerateCtx's 23 fields and dropped sourceSwitch, so a `let` tombstone did not survive a second lambda level and the actionable source-switch message degraded to 'Unknown identifier'. A lambda body is inside everything its surroundings are inside, so the context now spreads. The reference emits the WORSE message; this row records the improvement."
     },
     "jsmql\u0000$.a.zip($.b)": {
@@ -1004,224 +1004,224 @@
       "entry": "jsmql",
       "src": "$$.nosuchmethod({a:1})",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$.nosuchmethod({a:1})": {
       "entry": "pipeline",
       "src": "$$.nosuchmethod({a:1})",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$.nosuchmethod({a:1})": {
       "entry": "update",
       "src": "$$.nosuchmethod({a:1})",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$$.pop({a:1})": {
       "entry": "jsmql",
       "src": "$$.pop({a:1})",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "pipeline\u0000$$.pop({a:1})": {
       "entry": "pipeline",
       "src": "$$.pop({a:1})",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "update\u0000$$.pop({a:1})": {
       "entry": "update",
       "src": "$$.pop({a:1})",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "jsmql\u0000$$ = $$.slise(0, 5);": {
       "entry": "jsmql",
       "src": "$$ = $$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "expr\u0000$$ = $$.slise(0, 5);": {
       "entry": "expr",
       "src": "$$ = $$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$ = $$.slise(0, 5);": {
       "entry": "pipeline",
       "src": "$$ = $$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$ = $$.slise(0, 5);": {
       "entry": "update",
       "src": "$$ = $$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$$ = $$.filter(o => o.active).bogus();": {
       "entry": "jsmql",
       "src": "$$ = $$.filter(o => o.active).bogus();",
       "kind": "message",
-      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
-      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "expr\u0000$$ = $$.filter(o => o.active).bogus();": {
       "entry": "expr",
       "src": "$$ = $$.filter(o => o.active).bogus();",
       "kind": "message",
-      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
-      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$ = $$.filter(o => o.active).bogus();": {
       "entry": "pipeline",
       "src": "$$ = $$.filter(o => o.active).bogus();",
       "kind": "message",
-      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
-      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$ = $$.filter(o => o.active).bogus();": {
       "entry": "update",
       "src": "$$ = $$.filter(o => o.active).bogus();",
       "kind": "message",
-      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
-      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$$.slise(0, 5);": {
       "entry": "jsmql",
       "src": "$$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "expr\u0000$$.slise(0, 5);": {
       "entry": "expr",
       "src": "$$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$.slise(0, 5);": {
       "entry": "pipeline",
       "src": "$$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$.slise(0, 5);": {
       "entry": "update",
       "src": "$$.slise(0, 5);",
       "kind": "message",
-      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
-      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$$.nosuchmethod(\"x\")": {
       "entry": "jsmql",
       "src": "$$.nosuchmethod(\"x\")",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$.nosuchmethod(\"x\")": {
       "entry": "pipeline",
       "src": "$$.nosuchmethod(\"x\")",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$.nosuchmethod(\"x\")": {
       "entry": "update",
       "src": "$$.nosuchmethod(\"x\")",
       "kind": "message",
-      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
-      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$$.pop(\"x\")": {
       "entry": "jsmql",
       "src": "$$.pop(\"x\")",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "pipeline\u0000$$.pop(\"x\")": {
       "entry": "pipeline",
       "src": "$$.pop(\"x\")",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "update\u0000$$.pop(\"x\")": {
       "entry": "update",
       "src": "$$.pop(\"x\")",
       "kind": "message",
-      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
-      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' — it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
       "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
     },
     "jsmql\u0000$$ = $$.dropp();": {
       "entry": "jsmql",
       "src": "$$ = $$.dropp();",
       "kind": "message",
-      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
-      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "expr\u0000$$ = $$.dropp();": {
       "entry": "expr",
       "src": "$$ = $$.dropp();",
       "kind": "message",
-      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
-      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "pipeline\u0000$$ = $$.dropp();": {
       "entry": "pipeline",
       "src": "$$ = $$.dropp();",
       "kind": "message",
-      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
-      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "update\u0000$$ = $$.dropp();": {
       "entry": "update",
       "src": "$$ = $$.dropp();",
       "kind": "message",
-      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
-      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
       "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     },
     "jsmql\u0000$sampleRate(0.1)": {
@@ -1237,7 +1237,7 @@
       "src": "$sampleRate(0.1)",
       "kind": "now-rejected",
       "was": "{\"$sampleRate\":0.1}",
-      "now": "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
+      "now": "$sampleRate is a query operator — it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
       "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
     },
     "filter\u0000$sampleRate(0.1)": {
@@ -1285,7 +1285,7 @@
       "src": "$.age > 18 && $sampleRate(0.1)",
       "kind": "now-rejected",
       "was": "{\"$cond\":{\"if\":{\"$gt\":[\"$age\",18]},\"then\":{\"$sampleRate\":0.1},\"else\":{\"$gt\":[\"$age\",18]}}}",
-      "now": "$sampleRate is a query operator \u2014 it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
+      "now": "$sampleRate is a query operator — it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'",
       "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
     },
     "filter\u0000$.age > 18 && $sampleRate(0.1)": {
@@ -1630,7 +1630,7 @@
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
       "now": ".trim() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     },
     "expr\u0000$.s.trim(\"x\")": {
       "entry": "expr",
@@ -1638,7 +1638,7 @@
       "kind": "now-rejected",
       "was": "{\"$trim\":{\"input\":\"$s\"}}",
       "now": ".trim() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     },
     "filter\u0000$.s.trim(\"x\")": {
       "entry": "filter",
@@ -1646,7 +1646,7 @@
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
       "now": ".trim() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     },
     "jsmql\u0000$.s.toLowerCase(1)": {
       "entry": "jsmql",
@@ -1654,7 +1654,7 @@
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLower\":\"$s\"},null]},null]},{\"$ne\":[{\"$toLower\":\"$s\"},false]},{\"$ne\":[{\"$toLower\":\"$s\"},\"\"]},{\"$ne\":[{\"$toLower\":\"$s\"},0]}]}}",
       "now": ".toLowerCase() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     },
     "expr\u0000$.s.toLowerCase(1)": {
       "entry": "expr",
@@ -1662,7 +1662,7 @@
       "kind": "now-rejected",
       "was": "{\"$toLower\":\"$s\"}",
       "now": ".toLowerCase() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
     },
     "filter\u0000$.s.toLowerCase(1)": {
       "entry": "filter",
@@ -1670,7 +1670,79 @@
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLower\":\"$s\"},null]},null]},{\"$ne\":[{\"$toLower\":\"$s\"},false]},{\"$ne\":[{\"$toLower\":\"$s\"},\"\"]},{\"$ne\":[{\"$toLower\":\"$s\"},0]}]}}",
       "now": ".toLowerCase() takes no arguments, got 1",
-      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded \u2014 `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+      "reason": "Intended. `.trim`/`.toLowerCase` and friends moved to the declaration grid (src/methods/string.ts), and dispatch always applies a declaration's arity rule. Their old switch arms returned WITHOUT an arity check, so an argument was compiled and silently discarded — `.trim(\"x\")` emitted a plain $trim. JavaScript's trim takes no arguments, so rejecting is faithful to both languages; MQL's `chars` option stays reachable through the operator form $trim({input, chars})."
+    },
+    "jsmql\u0000$.a.map(x => x, 1)": {
+      "entry": "jsmql",
+      "src": "$.a.map(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},\"\"]},{\"$ne\":",
+      "now": ".map(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "expr\u0000$.a.map(x => x, 1)": {
+      "entry": "expr",
+      "src": "$.a.map(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}}",
+      "now": ".map(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "filter\u0000$.a.map(x => x, 1)": {
+      "entry": "filter",
+      "src": "$.a.map(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$a\",\"as\":\"x\",\"in\":\"$$x\"}},\"\"]},{\"$ne\":",
+      "now": ".map(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "jsmql\u0000$.a.filter(x => x, 1)": {
+      "entry": "jsmql",
+      "src": "$.a.filter(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$filt",
+      "now": ".filter(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "expr\u0000$.a.filter(x => x, 1)": {
+      "entry": "expr",
+      "src": "$.a.filter(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$filter\":{\"input\":\"$a\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}",
+      "now": ".filter(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "filter\u0000$.a.filter(x => x, 1)": {
+      "entry": "filter",
+      "src": "$.a.filter(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$filt",
+      "now": ".filter(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "jsmql\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "jsmql",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{",
+      "now": ".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "expr\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "expr",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$and\":[{\"$ne\":",
+      "now": ".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
+    },
+    "filter\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "filter",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{",
+      "now": ".findIndex(callback) takes one argument, got 2 — JavaScript's trailing 'thisArg' argument has no meaning in a jsmql expression, which has no 'this'.",
+      "reason": "Intended. JavaScript's callback methods take a trailing `thisArg`, which has no meaning in an expression that has no `this` — jsmql used to accept and SILENTLY DISCARD it. `requireLambda` now rejects it, naming what the argument would have been. Same class as the `.trim(\"x\")` fix; found by migrating the callback family to the grid."
     }
   }
 }
