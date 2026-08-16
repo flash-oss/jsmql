@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: six more string methods, and a second shape leaf
+
+`.charAt`, `.startsWith`, `.endsWith`, `.search`, `.padStart` and `.padEnd` move
+to the grid. What unblocked them was not new machinery but noticing that the
+helpers they needed were already pure: `cond`, `clampNonNegative`,
+`coerceStringBinding`, `foldedSubtract`, `isSingleCodePointLiteral`,
+`mongoRegexOptions` and `literalIndexValue` all take an already-lowered value or
+a literal AST node and return MQL. None needs a `GenerateCtx`.
+
+So they move to `src/mql-shape.ts`, a leaf beside `src/mql-string.ts`. That is the
+pattern for the rest of the migration: a lowering that seems to need codegen
+usually needs a handful of pure builders that happen to live there, and moving
+them is what makes the family declarable.
+
+`.substr`, `.substring`, `.replace`, `.replaceAll`, `.match` and `.matchAll` stay
+in the switch, and the family file says why: the slice-index normalisers read the
+AST *and* lower it, so they take a `GenerateCtx` and cannot be a leaf without more
+surgery. That is a real reason, written down where the next person will look.
+
+No output change across 2 527 corpus sources. Ratchet: 134.
+
+---
+
 ## 2026-08-16 — refactor: the lodash case/word methods join the grid
 
 Nine methods — `.capitalize`, `.upperFirst`, `.lowerFirst`, `.words`,

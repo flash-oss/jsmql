@@ -139,12 +139,13 @@ the count reaches zero.
 | Family | File | Methods |
 |---|---|---|
 | date accessors | `src/methods/date-accessors.ts` | 16 |
-| string (self-contained half) | `src/methods/string.ts` | 9 |
+| string | `src/methods/string.ts` | 15 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
 test compare the directory to the registry directly. Shared MQL shape-builders live beside
-it (`src/mql-string.ts`), not inside it.
+it — `src/mql-shape.ts` (generic: `cond`, the index clamps, the literal readers) and
+`src/mql-string.ts` (string-specific) — not inside it.
 
 Each family file is a **leaf**: it imports only its own types and other leaves. A family file that reaches
 back into `codegen.ts` creates a cycle, and the registry then assembles before the family

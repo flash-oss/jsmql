@@ -5,15 +5,23 @@
 // discard the argument, because the switch arm returned without checking. A method
 // cannot skip its own rule when the rule and the lowering are the same object.
 //
-// NOT YET HERE, and why: `.substr`, `.substring`, `.charAt`, `.startsWith`, `.endsWith`,
-// `.replace`, `.replaceAll`, `.match`, `.matchAll`, `.search`, `.padStart`, `.padEnd`
-// and the lodash string family reach into codegen internals a declaration cannot see
-// yet — `internalVar` for gensymmed bindings, the negative-index normalisers, the
-// string-coercion helper. They stay in the switch until `LowerInput` carries those
-// services. The ratchet in `test/methods-grid.test.ts` counts them.
+// NOT YET HERE, and why: `.substr`, `.substring`, `.replace`, `.replaceAll`, `.match`
+// and `.matchAll` need the slice-index normalisers, which read the AST *and* lower it —
+// they take a `GenerateCtx`, so they cannot be a leaf without more surgery. They stay in
+// the switch; the ratchet in `test/methods-grid.test.ts` counts them.
 //
 // See docs/specs/lowering-grid.md.
 
+import {
+  clampNonNegative,
+  coerceStringBinding,
+  cond,
+  foldedSubtract,
+  isSingleCodePointLiteral,
+  literalIndexValue,
+  mongoRegexOptions,
+} from "../mql-shape.ts";
+import { strLenOf } from "../mql-string.ts";
 import type { MethodDef } from "./types.ts";
 
 /**
@@ -30,6 +38,39 @@ function trimmer(operator: string): MethodDef {
     returns: "string",
     args: { sig: "", none: true },
     value: ({ recv }) => ({ [operator]: { input: recv } }),
+  };
+}
+
+/**
+ * `.padStart(target[, pad])` / `.padEnd(...)`.
+ *
+ * No length guard: when the receiver already reaches `target`, `need` is <= 0, `$range`
+ * is empty, the filler is "", and the concat returns the receiver unchanged. JS pads to
+ * exactly `target` CHARACTERS, truncating a multi-character pad mid-string, so the
+ * repeated filler is trimmed back — except for a one-code-point literal, which already
+ * lands exactly and whose trim would only add noise to the common `.padStart(n, "0")`.
+ */
+function padder(side: "start" | "end"): MethodDef {
+  return {
+    receiver: "string",
+    returns: "string",
+    args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+    value: ({ recv, args, gen, internalVar }) => {
+      const target = gen(args[0]);
+      const pad = args.length === 2 ? gen(args[1]) : " ";
+      const [v, ref] = internalVar("pad");
+      const need = { $subtract: [target, { $strLenCP: ref }] };
+      const repeated = {
+        $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } },
+      };
+      const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+      return {
+        $let: {
+          vars: { [v]: coerceStringBinding(recv) },
+          in: { $concat: side === "start" ? [filler, ref] : [ref, filler] },
+        },
+      };
+    },
   };
 }
 
@@ -60,6 +101,76 @@ export const STRING_METHODS: Record<string, MethodDef> = {
     args: { sig: "separator", exact: 1 },
     value: ({ recv, args, gen }) => ({ $split: [recv, gen(args[0])] }),
   },
+
+  charAt: {
+    receiver: "string",
+    returns: "string",
+    args: { sig: "index", exact: 1 },
+    // JS `.charAt(i)` returns "" for a negative index, so this is the ONE string index
+    // that must not be floored — flooring to 0 would wrongly return the first character.
+    // A literal negative folds away; a runtime one needs the guard.
+    value: ({ recv, args, gen }) => {
+      const lit = literalIndexValue(args[0]);
+      if (lit !== null) return lit < 0 ? "" : { $substrCP: [recv, lit, 1] };
+      const index = gen(args[0]);
+      return cond({ $lt: [index, 0] }, "", { $substrCP: [recv, index, 1] });
+    },
+  },
+
+  startsWith: {
+    receiver: "string",
+    returns: "bool",
+    args: { sig: "searchString", exact: 1 },
+    value: ({ recv, args, gen }) => ({ $eq: [{ $indexOfCP: [recv, gen(args[0])] }, 0] }),
+  },
+
+  endsWith: {
+    receiver: "string",
+    returns: "bool",
+    args: { sig: "searchString", exact: 1 },
+    // Compare the last N code points with the needle, N being the needle's length. The
+    // receiver binds once so a chained one is not re-evaluated, and the start is floored:
+    // a receiver shorter than the needle makes `strLen - N` negative, which `$substrCP`
+    // rejects outright rather than returning false. The binding is coerced so `$strLenCP`
+    // sees a string even when the field is absent.
+    value: ({ recv, args, gen, internalVar }) => {
+      const needle = gen(args[0]);
+      const needleLen = strLenOf(needle);
+      const [vStr, s] = internalVar("str");
+      return {
+        $let: {
+          vars: { [vStr]: coerceStringBinding(recv) },
+          in: {
+            $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle],
+          },
+        },
+      };
+    },
+  },
+
+  search: {
+    receiver: "string",
+    returns: "number",
+    args: { sig: "regex", exact: 1 },
+    // `.search` returns the index of the first match, or -1. `$regexFind` yields an object
+    // with `.idx` on a match and null otherwise, so `$ifNull` supplies the -1.
+    value: ({ recv, args, gen }) => {
+      const pattern = args[0];
+      const opts = pattern.type === "RegexLiteral" ? mongoRegexOptions(pattern.flags) : "";
+      const findCall =
+        pattern.type === "RegexLiteral"
+          ? {
+              $regexFind: opts
+                ? { input: recv, regex: pattern.pattern, options: opts }
+                : { input: recv, regex: pattern.pattern },
+            }
+          : { $regexFind: { input: recv, regex: gen(pattern) } };
+      return { $ifNull: [{ $getField: { field: "idx", input: findCall } }, -1] };
+    },
+  },
+
+  padStart: padder("start"),
+  padEnd: padder("end"),
 
   repeat: {
     receiver: "string",

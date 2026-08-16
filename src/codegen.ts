@@ -9,6 +9,17 @@ import { someExpr } from "./ast-walk.ts";
 import { CORRELATION_VAR_RE, exprVar, LENGTH_SLOT } from "./namespace.ts";
 import { ObjectId } from "./objectid.ts";
 import {
+  clampNonNegative,
+  coerceStringBinding,
+  cond,
+  foldedSubtract,
+  isIfNullWrapped,
+  isSingleCodePointLiteral,
+  literalIndexValue,
+  mongoRegexOptions,
+  wrapIfNull,
+} from "./mql-shape.ts";
+import {
   capitalizeExpr,
   escapeHtmlExpr,
   firstCharExpr,
@@ -1375,22 +1386,6 @@ export function safeVarName(name: string): string {
   return /^[a-z]/.test(name) ? name : "v" + name;
 }
 
-/**
- * Map a JS regex's flags to the subset MongoDB's `$regex*` operators accept as
- * `options`. MongoDB supports only `i`, `m`, `s`, `x`; the JS-only flags
- * (`g`, `u`, `y`, `d`, `v`) are not valid `options` and make the server reject
- * the pipeline ("invalid flag in regex options"). `g` is implied by
- * `$regexFindAll` and irrelevant to `$regexMatch`/`$regexFind`, so dropping it
- * preserves semantics; the rarer `u`/`y`/`d`/`v` have no MQL equivalent and are
- * dropped too. Returns "" when nothing survives (the caller then omits
- * `options` entirely).
- */
-function mongoRegexOptions(jsFlags: string): string {
-  let out = "";
-  for (const ch of jsFlags) if ("imsx".includes(ch) && !out.includes(ch)) out += ch;
-  return out;
-}
-
 /** Pick a $let binding name that doesn't shadow any in-scope lambda param. */
 function gensymInScope(ctx: GenerateCtx, base: string): string {
   if (!ctx.lambdaParams.has(base)) return base;
@@ -1398,23 +1393,6 @@ function gensymInScope(ctx: GenerateCtx, base: string): string {
     const name = `${base}${i}`;
     if (!ctx.lambdaParams.has(name)) return name;
   }
-}
-
-/**
- * Coerce a receiver to a string for a `$let` binding, without double-wrapping.
- */
-function coerceStringBinding(genObj: unknown): unknown {
-  return isIfNullWrapped(genObj) ? genObj : wrapIfNull(genObj, "");
-}
-
-/**
- * True when a generated value is a source string literal exactly one code point
- * long. Repeating such a pad N times lands on exactly N characters, so the
- * padding lowering can skip its trim. Per HR1 a `$`-prefixed source string is a
- * field reference, never a literal — its length is unknown at compile time.
- */
-function isSingleCodePointLiteral(value: unknown): boolean {
-  return typeof value === "string" && !value.startsWith("$") && [...value].length === 1;
 }
 
 /**
@@ -1454,44 +1432,6 @@ function clampNonNegativeIndex(node: Expr, ctx: GenerateCtx): unknown {
 }
 
 /**
- * Floor an already-generated index or length at 0, folding when known.
- * `$substrCP` rejects a negative start (`Location34455`) and a negative length
- * (`Location34454`) outright — it aborts the whole query rather than returning
- * a value — so every index/length jsmql *derives* (rather than passes through
- * from a literal) goes through here. `$max` ignores nulls, so a floored value
- * stays safe when the receiver is missing.
- */
-function clampNonNegative(value: unknown): unknown {
-  if (typeof value === "number") return Math.max(0, value);
-  return { $max: [0, value] };
-}
-
-/** True when `value` is already an `$ifNull` wrap (e.g. an optional-chain receiver). */
-function isIfNullWrapped(value: unknown): boolean {
-  return typeof value === "object" && value !== null && "$ifNull" in value && Object.keys(value).length === 1;
-}
-
-/** Subtract `b` from `a`, folding when both operands are numeric literals. */
-function foldedSubtract(a: unknown, b: unknown): unknown {
-  if (typeof a === "number" && typeof b === "number") return a - b;
-  return { $subtract: [a, b] };
-}
-
-/**
- * Emit a `$cond` in MongoDB's object form `{ if, then, else }` rather than the
- * positional array `[if, then, else]`. Both are valid MQL, but the named-key
- * form is far easier to read in emitted output — a DX win for anyone inspecting
- * what jsmql produced. Every internal `$cond` jsmql emits goes through here.
- */
-function cond(
-  ifExpr: unknown,
-  thenExpr: unknown,
-  elseExpr: unknown,
-): { $cond: { if: unknown; then: unknown; else: unknown } } {
-  return { $cond: { if: ifExpr, then: thenExpr, else: elseExpr } };
-}
-
-/**
  * Normalise a JS-style `.slice` index against a string length. JS treats
  * negative indices as `len + idx`, floored at 0; MQL `$substrCP` rejects
  * negatives. Folds literal negatives into `$strLenCP - n` at compile time;
@@ -1515,21 +1455,6 @@ function normaliseSliceIndex(node: Expr, ctx: GenerateCtx, genObj: unknown): unk
   }
   const gen = _generate(node, ctx);
   return cond({ $lt: [gen, 0] }, clampNonNegative({ $add: [gen, strLenOf(genObj)] }), gen);
-}
-
-/** Signed integer value of a slice-index literal (`5` or `-5`), else null
- *  (runtime expression, or a non-integer literal we don't fold). */
-function literalIndexValue(node: Expr): number | null {
-  if (node.type === "NumberLiteral" && Number.isInteger(node.value)) return node.value;
-  if (
-    node.type === "UnaryExpr" &&
-    node.op === "-" &&
-    node.operand.type === "NumberLiteral" &&
-    Number.isInteger(node.operand.value)
-  ) {
-    return -node.operand.value;
-  }
-  return null;
 }
 
 /**
@@ -2294,10 +2219,6 @@ function generateIndexFromEitherEnd(object: Expr, genObj: unknown, index: Expr |
   // is `$$REMOVE`: neither language has this accessor on a number or a document,
   // and missing is how MQL spells the absent result.
   return cond({ $isArray: genObj }, elemAt(), cond(isStringType(genObj), charAt(), "$$REMOVE"));
-}
-
-function wrapIfNull(value: unknown, fallback: unknown): unknown {
-  return { $ifNull: [value, fallback] };
 }
 
 // `.length` / `["length"]` of `object`. Known string → `$strLenCP`, known array
@@ -3848,48 +3769,10 @@ function generateMethodCall(
       const end = clampNonNegativeIndex(exprArgs[1], ctx);
       return { $substrCP: [genObj, start, clampNonNegative(foldedSubtract(end, start))] };
     }
-    case "charAt": {
-      const exprArgs = exprArgsOnly(args, "charAt");
-      checkArity("charAt", { sig: "index", exact: 1 }, exprArgs.length, callPos);
-      // JS .charAt(i) returns "" for a negative index, so this is the one string
-      // index that must NOT be floored — flooring to 0 would wrongly return the
-      // first character. Fold a literal negative away; guard a runtime one.
-      const lit = literalIndexValue(exprArgs[0]);
-      if (lit !== null) return lit < 0 ? "" : { $substrCP: [genObj, lit, 1] };
-      const index = _generate(exprArgs[0], ctx);
-      return cond({ $lt: [index, 0] }, "", { $substrCP: [genObj, index, 1] });
-    }
+    // .charAt → src/methods/string.ts
     // .split → src/methods/string.ts
-    case "startsWith": {
-      const exprArgs = exprArgsOnly(args, "startsWith");
-      checkArity("startsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
-      return { $eq: [{ $indexOfCP: [genObj, _generate(exprArgs[0], ctx)] }, 0] };
-    }
-    case "endsWith": {
-      const exprArgs = exprArgsOnly(args, "endsWith");
-      checkArity("endsWith", { sig: "searchString", exact: 1 }, exprArgs.length, callPos);
-      const needle = _generate(exprArgs[0], ctx);
-      // Compares the last N codepoints of the input with the needle, where N is
-      // the needle's length. The receiver is bound once so a chained one isn't
-      // re-evaluated, and the start is floored: a receiver shorter than the
-      // needle makes `strLen - N` negative, which $substrCP rejects outright
-      // (it aborts the query rather than returning false).
-      // The receiver is coerced once at the binding, so `$strLenCP` inside sees
-      // a string even when the field is absent. A literal needle folds to its
-      // code-point count, which also stops it being spliced in three times.
-      const needleLen = strLenOf(needle);
-      // `needle` is generated in the OUTER scope but lands inside the $let, so the
-      // binding is gensym'd against the in-scope params.
-      const [vStr, s] = internalVar(ctx, "str");
-      return {
-        $let: {
-          vars: { [vStr]: coerceStringBinding(genObj) },
-          in: {
-            $eq: [{ $substrCP: [s, clampNonNegative(foldedSubtract({ $strLenCP: s }, needleLen)), needleLen] }, needle],
-          },
-        },
-      };
-    }
+    // .startsWith → src/methods/string.ts
+    // .endsWith → src/methods/string.ts
     case "indexOf": {
       const exprArgs = exprArgsOnly(args, "indexOf");
       checkArity("indexOf", { sig: "searchValue", exact: 1 }, exprArgs.length, callPos);
@@ -3992,59 +3875,8 @@ function generateMethodCall(
       }
       return { $regexFindAll: { input: genObj, regex: _generate(pattern, ctx) } };
     }
-    case "search": {
-      const exprArgs = exprArgsOnly(args, "search");
-      checkArity("search", { sig: "regex", exact: 1 }, exprArgs.length, callPos);
-      const pattern = exprArgs[0];
-      // .search returns the index of the first match, or -1. $regexFind returns
-      // an object with .idx for matches; null on no match. We surface .idx with
-      // an $ifNull fallback to -1 to match JS semantics exactly.
-      const searchOpts = pattern.type === "RegexLiteral" ? mongoRegexOptions(pattern.flags) : "";
-      const findCall =
-        pattern.type === "RegexLiteral"
-          ? {
-              $regexFind: searchOpts
-                ? { input: genObj, regex: pattern.pattern, options: searchOpts }
-                : { input: genObj, regex: pattern.pattern },
-            }
-          : { $regexFind: { input: genObj, regex: _generate(pattern, ctx) } };
-      return { $ifNull: [{ $getField: { field: "idx", input: findCall } }, -1] };
-    }
-    case "padStart":
-    case "padEnd": {
-      const exprArgs = exprArgsOnly(args, method);
-      checkArity(method, { sig: "targetLength[, padString]", allowed: [1, 2] }, exprArgs.length, callPos);
-      const target = _generate(exprArgs[0], ctx);
-      const pad = exprArgs.length === 2 ? _generate(exprArgs[1], ctx) : " ";
-      // If str length >= target, return str. Otherwise build the filler by
-      // repeating `pad`, then concat it on the appropriate side.
-      // `target`/`pad` are generated in the OUTER scope but land inside the $let, so
-      // the binding must not capture a name they can reference (`.padStart(s.n)`
-      // inside `.map(s => …)` used to re-resolve `s` against the receiver string).
-      const [v, ref] = internalVar(ctx, "pad");
-      const need = { $subtract: [target, { $strLenCP: ref }] };
-      const repeated = {
-        $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } },
-      };
-      // JS pads to exactly `targetLength` CHARACTERS, truncating a multi-character
-      // pad mid-string ("gold".padStart(9, "US") === "USUSUgold"). Repeating it
-      // `need` times over-fills, so trim back to `need`. A one-code-point literal
-      // already lands exactly, and skipping its trim keeps the common
-      // `.padStart(n, "0")` output unchanged. The length is floored because the
-      // optimizer may fold this branch even when the $cond selects the other one.
-      const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-      const concatOrder = method === "padStart" ? [filler, ref] : [ref, filler];
-      // The binding itself is coerced, not just the `$strLenCP` argument: an
-      // uncoerced receiver would leave the trailing `$concat` returning null on
-      // a missing field rather than the fully-padded string JS gives for "".
-      //
-      // No length guard: when the receiver already reaches `target`, `need` is <= 0, so
-      // `$range: [0, need]` is empty, the filler is "", and the concat returns the
-      // receiver unchanged. A `$cond` on `$strLenCP >= target` would select between two
-      // expressions that agree — verified on a live mongod across over-long, exact,
-      // short, empty and missing receivers, single- and multi-character pads, both sides.
-      return { $let: { vars: { [v]: coerceStringBinding(genObj) }, in: { $concat: concatOrder } } };
-    }
+    // .search → src/methods/string.ts
+    // .padStart / .padEnd → src/methods/string.ts
     // .repeat → src/methods/string.ts
 
     // ── Array methods (no lambda) ───────────────────────────────────────────
