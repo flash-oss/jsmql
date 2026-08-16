@@ -148,11 +148,13 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
   // the offending call instead of at the chain root.
   describe("chain links caret at the offending call", () => {
     it("an unknown stream method points at that method, not at `$$`", () => {
-      const src = "$$.filter(p => p.a > 1).uniq().take(2);";
+      // `.flat` has no stream form (it flattens arrays; a stream holds documents), so
+      // it still errors — and the caret must sit on it rather than on the `$$` head.
+      const src = "$$.filter(p => p.a > 1).flat(1).take(2);";
       const result = jsmql.validate(src);
       expect(result.valid).toBe(false);
       assertPosInRange(src, result.errors[0].pos);
-      expect(src.slice(result.errors[0].pos)).toMatch(/^uniq/);
+      expect(src.slice(result.errors[0].pos)).toMatch(/^flat/);
     });
 
     it("a type-incompatible receiver points at the call that produced it", () => {

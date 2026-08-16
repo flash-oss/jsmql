@@ -124,6 +124,7 @@ import {
   lowerDictBuildWrap,
   lowerReduceWrap,
   streamMethodNames,
+  STREAM_UNSUPPORTED,
   VALUE_TERMINAL_METHODS,
   type ArrayReducerWrap,
   type MethodCallNode,
@@ -1660,6 +1661,13 @@ function unknownStreamMethod(m: MethodCallNode, receiver: string, container: Con
         `'$unionWith' — e.g. '$$.filter(<pred>).concat({ … })'.${statementNote}`,
       m.pos,
     );
+  }
+  // A method that works on an in-document array but not on the stream has a REASON, and
+  // the reason is what the developer needs — the list below tells them what else exists
+  // but never why this one is missing. See STREAM_UNSUPPORTED.
+  const why = STREAM_UNSUPPORTED[m.method];
+  if (why !== undefined) {
+    return new CodegenError(`'.${m.method}(...)' isn't available on '${receiver}' — it ${why}`, m.pos);
   }
   const names = streamMethodNames();
   // Suggest only names that actually work HERE — `.push` is deliberately absent.

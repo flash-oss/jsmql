@@ -2221,6 +2221,12 @@ declare global {
     keyBy(field: string): JsmqlForeignRef;
     /** One document per distinct key → `$group` + `$replaceWith`. */
     uniqBy(field: string): JsmqlForeignRef;
+    /** One document per distinct WHOLE document → `$group` + `$replaceWith`. */
+    uniq(): JsmqlForeignRef;
+    /** Alias of `.uniq()` — MongoDB's `$group` needs no sorted input. */
+    sortedUniq(): JsmqlForeignRef;
+    /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
+    sortedUniqBy(field: string): JsmqlForeignRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
     pick(fields: string[]): JsmqlForeignRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
@@ -2569,6 +2575,12 @@ declare global {
     keyBy(field: string): JsmqlCollectionRef;
     /** One document per distinct key → `$group` + `$replaceWith`. */
     uniqBy(field: string): JsmqlCollectionRef;
+    /** One document per distinct WHOLE document → `$group` + `$replaceWith`. */
+    uniq(): JsmqlCollectionRef;
+    /** Alias of `.uniq()` — MongoDB's `$group` needs no sorted input. */
+    sortedUniq(): JsmqlCollectionRef;
+    /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
+    sortedUniqBy(field: string): JsmqlCollectionRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
     pick(fields: string[]): JsmqlCollectionRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */

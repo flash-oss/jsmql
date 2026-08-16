@@ -3088,6 +3088,8 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.countBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
 | `.keyBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
 | `.uniqBy(<key>)` | One field key | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
+| `.uniq()` | None | `$group` keyed on the WHOLE document + `$replaceWith` — one document per distinct document |
+| `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
 
 `.filter(<pred>)` can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
 

@@ -7,6 +7,13 @@
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { requiredReceiverFamily, valueMethodNames } from "../src/codegen.ts";
+import {
+  STREAM_HANDLED_ELSEWHERE,
+  STREAM_UNSUPPORTED,
+  VALUE_TERMINAL_METHODS,
+  streamMethodNames,
+} from "../src/stream-methods.ts";
 import { truthy, truthyAnd } from "./truthy.ts";
 
 describe(".slice(start, end?) — on $$ (top-level stream)", () => {
@@ -1646,5 +1653,44 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(/'\.keyBy\("status"\)'/);
     expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(/'\.uniqBy\("status"\)'/);
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(/'\.sortBy\("status"\)'/);
+  });
+});
+
+describe("the Stage cell of every array-receiver method is answered", () => {
+  // The grid rule: a method whose receiver is an array CAN have a stream form, so it
+  // must carry an answer — a lowering in STREAM_METHODS, a tailored value-position
+  // message via VALUE_TERMINAL_METHODS, or a written reason in STREAM_UNSUPPORTED.
+  // An unanswered one falls to the generic "not a chainable stream method" list, which
+  // tells the developer what else exists but never why this one is absent.
+  const arrayReceiver = valueMethodNames().filter((n) => requiredReceiverFamily(n) === "array");
+  const answered = (n: string) =>
+    streamMethodNames().includes(n) ||
+    VALUE_TERMINAL_METHODS.has(n) ||
+    STREAM_UNSUPPORTED[n] !== undefined ||
+    STREAM_HANDLED_ELSEWHERE[n] !== undefined;
+
+  it("leaves no array-receiver method without an answer", () => {
+    const unanswered = arrayReceiver.filter((n) => !answered(n));
+    expect(unanswered, `these array-receiver methods have no Stage-cell answer:\n  ${unanswered.join(", ")}`).toEqual(
+      [],
+    );
+  });
+
+  it("has no reason for a method that actually works on a stream", () => {
+    // A name in both tables is a contradiction: the reason would never be reached.
+    const both = streamMethodNames().filter((n) => STREAM_UNSUPPORTED[n] !== undefined);
+    expect(both, `these have a stream lowering AND an unsupported reason: ${both.join(", ")}`).toEqual([]);
+  });
+
+  it("has no reason for a name that is not a method", () => {
+    const stray = Object.keys(STREAM_UNSUPPORTED).filter((n) => !valueMethodNames().includes(n));
+    expect(stray, `unknown names in STREAM_UNSUPPORTED: ${stray.join(", ")}`).toEqual([]);
+  });
+
+  it("gives each reason as a sentence that says what to do instead", () => {
+    for (const [name, why] of Object.entries(STREAM_UNSUPPORTED)) {
+      expect(why.length, `${name}'s reason is too short to be useful`).toBeGreaterThan(30);
+      expect(why, `${name}'s reason should end in a full stop`).toMatch(/\.$/);
+    }
   });
 });

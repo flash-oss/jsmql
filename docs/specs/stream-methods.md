@@ -457,3 +457,28 @@ errors are not) and consistent with the existing `$$.push(...)` statement sugar.
 stream-methods registry is integrated into the `$$$.<coll>` expression-position walker
 via `peelForeignChain`, and any stream method may now head the chain — see
 [lookup-stage.md](./lookup-stage.md).)
+
+## The Stage cell is answered for every array-receiver method
+
+A method whose receiver is an array **can** have a stream form, so the grid says it must
+carry an answer. There are four, and no fifth:
+
+| Answer | Where |
+|---|---|
+| a lowering | `STREAM_METHODS` in `src/stream-methods.ts` |
+| a tailored value-position message | `VALUE_TERMINAL_METHODS` — the method collapses the stream to one value, and the message says where it *does* work |
+| a written reason | `STREAM_UNSUPPORTED` — why this one cannot work on a stream, and what to write instead |
+| handled outside this registry | `STREAM_HANDLED_ELSEWHERE` — `.filter` / `.reject` / `.find` / `.reduce`, each named with its real home |
+
+`test/stream-methods.test.ts` fails when an array-receiver method has none of the four, when
+a name appears in two of them, or when a reason is too short to be useful.
+
+The reason matters more than the rejection. A generic "not a chainable stream method" list
+tells the developer what else exists but never why *this* one is absent, which is the
+difference between a rejection and a dead end. A reason that cannot be written convincingly
+is a gap announcing itself — that is how `.uniq`, `.sortedUniq` and `.sortedUniqBy` were
+found and given lowerings.
+
+The generic list still exists, and is still correct, for a name jsmql does not recognise at
+all — a typo has no reason to give, so it gets the vocabulary and a `didYouMean` suggestion.
+

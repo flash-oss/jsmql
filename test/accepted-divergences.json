@@ -999,6 +999,230 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\",\"format\":\"%Y-%m-%dT%H:%M:%S.%LZ\"}},false]},{\"$ne\":[{\"$dateToStr",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateToString\":{\"date\":\"$ts\"}},null]},null]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},false]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}},\"\"]},{\"$ne\":[{\"$dateToString\":{\"date\":\"$ts\"}}",
       "reason": "Intended. Two restatements of a MongoDB default removed: `.getUTCxxx()` names UTC through its own method name and UTC is the operator default, so the single-argument form says the same thing; and `%Y-%m-%dT%H:%M:%S.%LZ` IS $dateToString's default format. Verified identical on a live mongod across ordinary dates, the epoch, and a missing field. A timezone the developer TYPED is still kept in the object form."
+    },
+    "jsmql\u0000$$.nosuchmethod({a:1})": {
+      "entry": "jsmql",
+      "src": "$$.nosuchmethod({a:1})",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$.nosuchmethod({a:1})": {
+      "entry": "pipeline",
+      "src": "$$.nosuchmethod({a:1})",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$.nosuchmethod({a:1})": {
+      "entry": "update",
+      "src": "$$.nosuchmethod({a:1})",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$$.pop({a:1})": {
+      "entry": "jsmql",
+      "src": "$$.pop({a:1})",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "pipeline\u0000$$.pop({a:1})": {
+      "entry": "pipeline",
+      "src": "$$.pop({a:1})",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "update\u0000$$.pop({a:1})": {
+      "entry": "update",
+      "src": "$$.pop({a:1})",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "jsmql\u0000$$ = $$.slise(0, 5);": {
+      "entry": "jsmql",
+      "src": "$$ = $$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "expr\u0000$$ = $$.slise(0, 5);": {
+      "entry": "expr",
+      "src": "$$ = $$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$ = $$.slise(0, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$ = $$.slise(0, 5);": {
+      "entry": "update",
+      "src": "$$ = $$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$$ = $$.filter(o => o.active).bogus();": {
+      "entry": "jsmql",
+      "src": "$$ = $$.filter(o => o.active).bogus();",
+      "kind": "message",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "expr\u0000$$ = $$.filter(o => o.active).bogus();": {
+      "entry": "expr",
+      "src": "$$ = $$.filter(o => o.active).bogus();",
+      "kind": "message",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.active).bogus();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.active).bogus();",
+      "kind": "message",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$ = $$.filter(o => o.active).bogus();": {
+      "entry": "update",
+      "src": "$$ = $$.filter(o => o.active).bogus();",
+      "kind": "message",
+      "was": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "now": "'.bogus(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSize, .co",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$$.slise(0, 5);": {
+      "entry": "jsmql",
+      "src": "$$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "expr\u0000$$.slise(0, 5);": {
+      "entry": "expr",
+      "src": "$$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$.slise(0, 5);": {
+      "entry": "pipeline",
+      "src": "$$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$.slise(0, 5);": {
+      "entry": "update",
+      "src": "$$.slise(0, 5);",
+      "kind": "message",
+      "was": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "now": "'.slise(...)' is not a chainable stream method on '$$'. Did you mean '.slice'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .sh",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$$.nosuchmethod(\"x\")": {
+      "entry": "jsmql",
+      "src": "$$.nosuchmethod(\"x\")",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$.nosuchmethod(\"x\")": {
+      "entry": "pipeline",
+      "src": "$$.nosuchmethod(\"x\")",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$.nosuchmethod(\"x\")": {
+      "entry": "update",
+      "src": "$$.nosuchmethod(\"x\")",
+      "kind": "message",
+      "was": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "now": "'.nosuchmethod(...)' is not a chainable stream method on '$$'. Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuffle, .sampleSi",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "jsmql\u0000$$.pop(\"x\")": {
+      "entry": "jsmql",
+      "src": "$$.pop(\"x\")",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "pipeline\u0000$$.pop(\"x\")": {
+      "entry": "pipeline",
+      "src": "$$.pop(\"x\")",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "update\u0000$$.pop(\"x\")": {
+      "entry": "update",
+      "src": "$$.pop(\"x\")",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop(...)' isn't available on '$$' \u2014 it removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+      "reason": "Intended. An array-receiver method with no stream form now carries a WRITTEN reason (STREAM_UNSUPPORTED) instead of falling to the generic 'not a chainable stream method' list. The list says what else exists; it never said why this one is absent. Every reason names what to write instead."
+    },
+    "jsmql\u0000$$ = $$.dropp();": {
+      "entry": "jsmql",
+      "src": "$$ = $$.dropp();",
+      "kind": "message",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "expr\u0000$$ = $$.dropp();": {
+      "entry": "expr",
+      "src": "$$ = $$.dropp();",
+      "kind": "message",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "pipeline\u0000$$ = $$.dropp();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.dropp();",
+      "kind": "message",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
+    },
+    "update\u0000$$ = $$.dropp();": {
+      "entry": "update",
+      "src": "$$ = $$.dropp();",
+      "kind": "message",
+      "was": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "now": "'.dropp(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods \u2014 any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shu",
+      "reason": "Intended, knock-on. The generic 'not a chainable stream method' message lists what IS chainable, and .uniq / .sortedUniq / .sortedUniqBy joined that list when they gained stream lowerings. The rejection itself is unchanged; only the enumeration grew."
     }
   }
 }

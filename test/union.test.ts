@@ -152,10 +152,14 @@ describe("$$.push — error cases", () => {
     expect(() => jsmql("$$.push()")).toThrow(/requires at least one argument/);
   });
 
-  it("wrong method on $$ → stream-method registry error that still names .push", () => {
-    expect(() => jsmql('$$.pop("x")')).toThrow(
-      /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
+  it("an unrecognised method on $$ → registry error that still names .push", () => {
+    // A name nobody recognises takes the generic path, which lists what IS chainable
+    // and names both append routes. A method jsmql KNOWS but cannot lower on a stream
+    // (`.pop`, `.flat`, …) gets its own reason instead — see STREAM_UNSUPPORTED.
+    expect(() => jsmql('$$.nosuchmethod("x")')).toThrow(
+      /'\.nosuchmethod\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
     );
+    expect(() => jsmql('$$.pop("x")')).toThrow(/removes the last element by mutating.*'\.slice\(0, -1\)'/);
   });
 
   it("push used as RHS / value → reject with statement-only message", () => {
@@ -245,7 +249,7 @@ describe("chain errors only ever name syntax that works here", () => {
 
   // `.pop` used to be answered with `.push`, which isn't a chain method either.
   it("suggests a real chain method for a near-miss", () => {
-    expect(() => jsmql("$$ = $$.pop();")).toThrow(/Did you mean '\.drop'\?/);
+    expect(() => jsmql("$$ = $$.dropp();")).toThrow(/Did you mean '\.drop'\?/);
   });
 });
 

@@ -1647,6 +1647,29 @@ const UNIQ_BY: StreamMethodDef = {
   },
 };
 
+// `.uniq()` is `.uniqBy` keyed on the WHOLE document — same `$group` + `$replaceWith`,
+// with `$$ROOT` as the discriminator. `.sortedUniq` / `.sortedUniqBy` are the same
+// again: lodash's "input is already sorted" precondition is an optimisation hint its
+// runtime uses, never something the developer asked for in the output, so `$group`
+// (which needs no such precondition) is the MongoDB-native answer. See SR2.
+const UNIQ: StreamMethodDef = {
+  name: "uniq",
+  validate(args, callPos) {
+    if (args.length !== 0) {
+      throw new CodegenError(`.uniq() takes no arguments, got ${args.length}.`, callPos);
+    }
+  },
+  lower() {
+    return {
+      stages: [{ $group: { _id: "$$ROOT", [GROUP_TMP]: { $first: "$$ROOT" } } }, { $replaceWith: `$${GROUP_TMP}` }],
+      clearLets: true,
+    };
+  },
+};
+
+const SORTED_UNIQ: StreamMethodDef = { ...UNIQ, name: "sortedUniq" };
+const SORTED_UNIQ_BY: StreamMethodDef = { ...UNIQ_BY, name: "sortedUniqBy" };
+
 // ── .flatMap(d => d.<path>) → $unwind ─────────────────────────────────────────
 //
 // Only bare-field-path bodies are supported. The lambda body must walk back
@@ -2425,6 +2448,98 @@ function classifyConcatCall(expr: Expr, accParam: string, dParam: string): Array
 // NB `.keyBy`/`.countBy`/`.groupBy` are NOT here: they also collapse to an object,
 // but DO have a stream lowering (a one-doc `$arrayToObject` stream), so they work in
 // BOTH positions — see COUNT_BY / GROUP_BY / KEY_BY.
+
+/**
+ * Why a method that works on an in-document array does NOT work on the stream.
+ *
+ * The grid rule: an array-receiver method's Stage cell is APPLICABLE, so it must carry
+ * an answer — a lowering in `STREAM_METHODS`, or a reason here. A generic "not a
+ * chainable stream method" list tells the developer what else exists but never why this
+ * one is absent, which is the difference between a rejection and a dead end.
+ *
+ * `test/stream-methods.test.ts` fails if an array-receiver method has neither.
+ *
+ * The value-collapsing terminals (`.sum`, `.size`, `.every`, …) are NOT here: they get
+ * a tailored message of their own from `VALUE_TERMINAL_METHODS`, which also tells the
+ * developer where they DO work (a value position).
+ */
+
+/**
+ * Array-receiver methods whose Stage cell IS answered, but not by this registry.
+ * Naming them keeps the completeness test honest — without this the four would look
+ * unanswered, and padding `STREAM_UNSUPPORTED` with them would be a lie (they work).
+ */
+export const STREAM_HANDLED_ELSEWHERE: Record<string, string> = {
+  filter: "lowered by pipeline.ts as the chain's $match (it heads a chain as well as extending one)",
+  reject: "lowered by pipeline.ts as a negated $match",
+  find: "heads a $lookup — see lookup-translation.ts",
+  reduce: "carries its own tailored message naming the three wrap shapes, in pipeline.ts",
+};
+
+export const STREAM_UNSUPPORTED: Record<string, string> = {
+  // ── mutate the array in place; a stream has no place to mutate ──
+  reverse: "reverses in place. A stream has no in-place form — use '.sort(<key>)' to order it, or '$sort' directly.",
+  splice: "mutates in place. Narrow the stream with '.filter(<pred>)' / '.slice(start, end)' instead.",
+  push: "appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'.",
+  pop: "removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'.",
+  shift: "removes the first element by mutating. Use '.drop(1)'.",
+  unshift: "prepends by mutating. Build the new head as its own stream and '.concat(...)' this one onto it.",
+  fill: "overwrites every element in place. Use '.map(d => …)' to produce new documents.",
+  copyWithin: "copies a range in place, addressing elements by position. A stream has no stable positions.",
+
+  // ── position-addressed; the stream has no index ──
+  toSpliced: "addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'.",
+  with: "replaces the element at an index. Use '.map(d => …)' with a condition on the document.",
+  toReversed:
+    "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+  takeRight: "counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
+  dropRight: "counts from the END. Sort by the opposite key and use '.drop(n)'.",
+  initial:
+    "drops the LAST element, which needs the whole stream buffered. Sort by the opposite key and use '.drop(1)'.",
+  takeRightWhile: "scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'.",
+  dropRightWhile: "scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'.",
+
+  // ── produce something that is not a stream of documents ──
+  flat: "flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",
+  flatten:
+    "flattens nested ARRAYS; a stream holds documents. Use '.flatMap(d => d.<field>)' to expand an array field into documents.",
+  chunk:
+    "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
+  zip: "pairs elements positionally across arrays. A stream has no positions to pair on — join on a key instead with '$$$.<coll>.find(<pred>)'.",
+  zipWith: "pairs elements positionally across arrays. Join on a key with '$$$.<coll>.find(<pred>)'.",
+  unzipWith: "transposes an array of tuples. A stream holds documents, not tuples.",
+  entries: "yields [index, value] pairs, and a stream has no index.",
+  keys: "yields the array's indices, and a stream has no index.",
+  values: "yields the array's elements, which for a stream is the stream itself — the call has no effect.",
+  forEach:
+    "returns nothing in JavaScript, so there is no stream for the next link to receive. Use '.map(d => …)' if you meant to transform.",
+
+  // ── need a second array to compare against ──
+  without: "excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'.",
+  compact:
+    "drops falsy elements. Every stream element is a document, which is never falsy — use '.reject(<pred>)' for the condition you mean.",
+  xor: "compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'.",
+  xorBy: "compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'.",
+  differenceBy: "compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches.",
+  intersectionBy: "compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches.",
+  unionBy: "merges a second array. Append another source with '.concat(...)' — that is '$unionWith'.",
+  intersection: "compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches.",
+  difference: "compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches.",
+  union: "merges a second array. Append another source with '.concat(...)' — that is '$unionWith'.",
+
+  // ── collapse the stream to one value; a stream must stay a stream ──
+  join: "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
+  findIndex: "returns an index, and a stream has no index.",
+  findLast:
+    "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
+  findLastIndex: "returns an index, and a stream has no index.",
+  reduceRight:
+    "folds from the END, which needs the whole stream buffered, and collapses it to one value. Use the '.reduce' wrap forms — see the '.reduce' error for the three shapes.",
+  fromPairs: "builds ONE object from pairs, so the result is a value rather than a stream.",
+  zipObject: "builds ONE object from keys and values, so the result is a value rather than a stream.",
+  unzip: "transposes into ONE array of arrays, so the result is a value rather than a stream.",
+};
+
 export const VALUE_TERMINAL_METHODS: ReadonlySet<string> = new Set([
   "head",
   "first",
@@ -2469,6 +2584,9 @@ const STREAM_METHODS: Record<string, StreamMethodDef> = {
   countBy: COUNT_BY,
   keyBy: KEY_BY,
   uniqBy: UNIQ_BY,
+  uniq: UNIQ,
+  sortedUniq: SORTED_UNIQ,
+  sortedUniqBy: SORTED_UNIQ_BY,
   pick: PICK,
   omit: OMIT,
   flatMap: FLAT_MAP,

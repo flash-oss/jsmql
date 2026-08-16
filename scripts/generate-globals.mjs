@@ -201,6 +201,9 @@ const STREAM_METHOD_SIGNATURES = {
   },
   keyBy: { doc: "Key documents by a field → the lodash object `{ <key>: <last doc> }`.", params: "(field: string)" },
   uniqBy: { doc: "One document per distinct key → `$group` + `$replaceWith`.", params: "(field: string)" },
+  uniq: { doc: "One document per distinct WHOLE document → `$group` + `$replaceWith`.", params: "()" },
+  sortedUniq: { doc: "Alias of `.uniq()` — MongoDB's `$group` needs no sorted input.", params: "()" },
+  sortedUniqBy: { doc: "Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input.", params: "(field: string)" },
   pick: {
     doc: "Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named).",
     params: "(fields: string[])",

@@ -7476,9 +7476,13 @@ describe("context-reference prefixes ($$, $$$, $$$$)", () => {
       expect(r.errors[0].pos).toBe(0);
     });
     it("wrong method on $$ surfaces the stream-method registry error, noting .push", () => {
-      expect(() => jsmql("$$.pop({a:1})")).toThrow(
-        /'\.pop\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
+      // An UNRECOGNISED name takes the generic path: it lists what is chainable and
+      // names both append routes. A method jsmql knows but cannot lower on a stream
+      // gets its own reason instead — see STREAM_UNSUPPORTED.
+      expect(() => jsmql("$$.nosuchmethod({a:1})")).toThrow(
+        /'\.nosuchmethod\(\.\.\.\)' is not a chainable stream method on '\$\$'.*'\.concat\(\.\.\.\)' mid-chain, or '\$\$\.push\(\.\.\.\)' as a statement/,
       );
+      expect(() => jsmql("$$.pop({a:1})")).toThrow(/removes the last element by mutating/);
     });
   });
 
