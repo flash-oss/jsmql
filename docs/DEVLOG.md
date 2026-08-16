@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — chore: the error classes and the arity checker move to leaves
+
+`CodegenError`, `UnknownIdentifierError` and `internalError` now live in `src/errors.ts`;
+`checkArity` and its rule type live in `src/arity.ts`. `codegen.ts` re-exports both sets, so
+no import path outside those two files changed.
+
+The reason is structural. Throwing is not a compiler service, and neither is counting
+arguments — but declaring them in `codegen.ts` meant every module that merely REJECTS
+something depended on the whole compiler. For the modules `codegen.ts` imports back
+(`literal-gate.ts`, `operator-validation.ts`, and any future method family that needs a
+literal gate) that dependency closes a cycle, and a cycle here is not a style complaint: it
+evaluates the importer first, which is how nine string methods once fell silently out of the
+registry with no error anywhere. `literal-gate.ts` is now a true leaf, and
+`operator-validation.ts` keeps only a type-only edge, which has no runtime existence.
+
+`arity.ts` also collapses a real duplicate: `Arity` in `codegen.ts` and `MethodArgs` in
+`src/methods/types.ts` were the same five fields written twice. One type now, read by the
+grid's declarations, the `$op(...)` validator, the stage validators and the static-call
+families alike.
+
+Output-neutral; the harness reports the same 209 accepted divergences.
+
+---
+
 ## 2026-08-16 — refactor: the positional array methods join the grid
 
 `src/methods/array-slicing.ts` takes 16 — `.take` / `.drop` / `.takeRight` / `.dropRight`,

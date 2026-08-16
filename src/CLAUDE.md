@@ -85,11 +85,18 @@ Name resolution, arity, and the sub-pipeline placement rules live in the leaf mo
 
 ## Error classes
 
+The classes live in [`errors.ts`](errors.ts), a LEAF — `codegen.ts` re-exports them, so the
+existing import path still works. They are declared apart from the compiler on purpose:
+rejecting something is not a compiler service, and every validator that merely throws would
+otherwise depend on the whole of `codegen.ts` and close an import cycle with the modules
+`codegen.ts` imports back. `checkArity` and its one `MethodArgs` rule sit in
+[`arity.ts`](arity.ts) for the same reason.
+
 | Class          | Where thrown | Has `.pos`                                                              |
 | -------------- | ------------ | ----------------------------------------------------------------------- |
 | `LexError`     | `lexer.ts`   | yes (offending character)                                               |
 | `ParseError`   | `parser.ts`  | yes (offending token)                                                   |
-| `CodegenError` | `codegen.ts` | yes (forwarded from the AST node that triggered the error — every node carries `pos` populated by the parser) |
+| `CodegenError` | thrown from `codegen.ts` and every validator; declared in `errors.ts` | yes (forwarded from the AST node that triggered the error — every node carries `pos` populated by the parser) |
 | `FunctionInputError` | `parser.ts` | yes (offset in the stringified arrow source)                       |
 | `JsmqlInterpolationError` | `index.ts` | no (use `.slot` / `.key` — the template-tag source is split across the `strings`/`values` arrays) |
 

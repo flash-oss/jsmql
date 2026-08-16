@@ -100,6 +100,12 @@ src/
   stages.ts       Aggregation pipeline stage registry.
   parser.ts       Recursive-descent parser → AST.
   codegen.ts      AST → MQL JSON.
+  methods/        The declaration grid: one file per method family, assembled in methods/index.ts. See docs/specs/lowering-grid.md.
+  errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
+  arity.ts        The one argument-count rule (`MethodArgs`) + the one checker that words every count error.
+  mql-shape.ts    Pure MQL shape-builders and literal readers (generic). A leaf both codegen.ts and the families use.
+  mql-string.ts   The same, string-specific.
+  mql-array.ts    The same, array-specific, plus the resolved-iteratee shape the array family reads.
   index.ts        Public API: the `jsmql` callable + its properties, polymorphic over string / arrow / template tag.
   cli.ts          The `jsmql` command-line bin (thin `jq`-style wrapper over index.ts). See docs/specs/cli.md.
   mongoose.ts     `@koresar/jsmql/mongoose` plugin. See docs/specs/mongoose-plugin.md.

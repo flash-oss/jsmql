@@ -12,6 +12,7 @@
 //
 // See docs/specs/lowering-grid.md.
 
+import type { MethodArgs } from "../arity.ts";
 import type { Expr } from "../ast.ts";
 import type { ResolvedIteratee, ResolvedPredicate } from "../mql-array.ts";
 
@@ -21,19 +22,9 @@ export type ReceiverFamily = "string" | "array" | "number" | "date" | "object";
 /** The result type, where it is invariant. Drives inference and the chain type-check. */
 export type MethodReturns = "string" | "array" | "bool" | "number" | "object" | "date";
 
-/**
- * The one argument rule. Read by the compile-time arity check AND by the TypeScript
- * signature generator — a signature written by hand beside a check written by hand is
- * two statements of one fact, and two statements drift.
- */
-export type MethodArgs = {
-  /** How the arguments read in an error message, e.g. `"start[, end]"`. */
-  sig: string;
-  exact?: number;
-  allowed?: readonly number[];
-  atLeast?: number;
-  none?: true;
-};
+// The one argument rule lives in `src/arity.ts`, next to the checker that reads it — the
+// grid's declarations, the `$op(...)` validator and the static-call families all use it.
+export type { MethodArgs } from "../arity.ts";
 
 /** What a lowering receives: the generated receiver, the raw argument nodes, and services. */
 export type LowerInput = {

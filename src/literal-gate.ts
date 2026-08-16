@@ -17,7 +17,7 @@
 // See docs/specs/pipeline-validation.md and docs/specs/operator-validation.md.
 
 import type { Expr } from "./ast.ts";
-import { CodegenError } from "./codegen.ts";
+import { CodegenError } from "./errors.ts";
 import { closestNameTo } from "./levenshtein.ts";
 
 // ── Literal-inspection helpers (the gate) ───────────────────────────────────────

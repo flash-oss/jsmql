@@ -1,3 +1,7 @@
+import { checkArity } from "./arity.ts";
+export { checkArity } from "./arity.ts";
+import { CodegenError, internalError, UnknownIdentifierError } from "./errors.ts";
+export { CodegenError, internalError, UnknownIdentifierError } from "./errors.ts";
 import { lookupOperator, OPERATOR_RETURNS, operatorsReturning } from "./operators.ts";
 import { checkArgEnum, checkArgType, TIME_UNIT, validateOperatorArgs } from "./operator-validation.ts";
 import { checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
@@ -73,26 +77,6 @@ import type {
   FuncDecl,
 } from "./ast.ts";
 
-export class CodegenError extends Error {
-  readonly pos: number;
-  constructor(message: string, pos: number = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-}
-
-/**
- * Throw a `CodegenError` flagged as a jsmql bug. Use for invariants the
- * parser is supposed to uphold — if a user ever sees one of these messages,
- * something has slipped past the parser's validation and we want them to
- * report it. Keeps the wording consistent across every internal-only throw
- * site so they're trivially greppable.
- */
-export function internalError(detail: string, pos: number = 0): never {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
 /**
  * How every user-facing error spells the cross-collection lookup surface — one
  * constant so the phrasing can't drift between throw sites.
@@ -117,15 +101,6 @@ export const LOOKUP_SYNTAX = "'$$$.<coll>.<method>(...)'";
  * one.
  */
 const STREAM_BLOCK_FORM = "a stream-chain callback (e.g. `$$$.<coll>.aggregate((o) => { … })`)";
-
-export class UnknownIdentifierError extends CodegenError {
-  identifier: string;
-  constructor(identifier: string, pos: number = 0) {
-    super(`Unknown identifier '${identifier}'. Did you mean '$.${identifier}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier;
-  }
-}
 
 // ── Context ───────────────────────────────────────────────────────────────────
 
@@ -4949,56 +4924,6 @@ function rejectPredicateOnValueSearch(arg: Expr | undefined, method: string, sib
     `.${method}() searches for a value — it doesn't take a function. To test elements against a predicate, use .${sibling}(${p} => …).`,
     arg.pos,
   );
-}
-
-/**
- * Argument-count spec for a method/static call. Exactly one of
- * `exact` / `allowed` / `atLeast` / `none` is set. `sig` is the parameter
- * signature shown in the error — e.g. `"start[, count]"` renders as
- * `.substr(start[, count])`; `""` renders the bare `.toReversed()`.
- */
-type Arity = { sig: string; exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
-
-/**
- * The single place every argument-count error is worded, so the surface stays
- * consistent (see the error-consistency rules in CLAUDE.md). Validates `count`
- * against `spec` and throws `<prefix><method>(<sig>) <quantity-clause>, got <N>`
- * on mismatch — `.charAt(index) requires exactly 1 argument, got 0`,
- * `.slice(start[, end]) requires 0, 1, or 2 arguments, got 3`,
- * `Math.hypot(...values) requires at least 1 argument, got 0`. The trailing
- * `, got <N>` tells the user exactly what they passed. The caller passes the
- * count it validates (`exprArgs.length` for most; raw `args.length` for the few
- * that count spread args). `prefix` is `"."` for instance methods (the default)
- * or `"Math."` / `"Object."` / `"Set."` / `"regex."` for the static families.
- */
-export function checkArity(method: string, spec: Arity, count: number, callPos: number, prefix: string = "."): void {
-  const ok =
-    spec.none !== undefined
-      ? count === 0
-      : spec.exact !== undefined
-        ? count === spec.exact
-        : spec.allowed !== undefined
-          ? spec.allowed.includes(count)
-          : count >= spec.atLeast!;
-  if (ok) return;
-  let quantity: string;
-  if (spec.none !== undefined) {
-    quantity = "takes no arguments";
-  } else if (spec.exact !== undefined) {
-    quantity = `requires exactly ${spec.exact} argument${spec.exact === 1 ? "" : "s"}`;
-  } else if (spec.allowed !== undefined) {
-    quantity = `requires ${formatCountList(spec.allowed)} arguments`;
-  } else {
-    quantity = `requires at least ${spec.atLeast} argument${spec.atLeast === 1 ? "" : "s"}`;
-  }
-  throw new CodegenError(`${prefix}${method}(${spec.sig}) ${quantity}, got ${count}`, callPos);
-}
-
-/** Render an allowed-count list the way the messages read: `[1,2]` → "1 or 2",
- *  `[0,1,2]` → "0, 1, or 2". */
-function formatCountList(ns: readonly number[]): string {
-  if (ns.length === 2) return `${ns[0]} or ${ns[1]}`;
-  return `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 }
 
 // ── Lambda bodies (expression body or expr-block → nested $let) ───────────────

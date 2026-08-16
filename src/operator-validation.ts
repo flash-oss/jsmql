@@ -19,7 +19,9 @@
 // after assertNoSpread, before shape dispatch. See docs/specs/operator-validation.md.
 
 import type { CallArg, Expr } from "./ast.ts";
-import { checkArity, CodegenError, type GenerateCtx } from "./codegen.ts";
+import { checkArity } from "./arity.ts";
+import type { GenerateCtx } from "./codegen.ts";
+import { CodegenError } from "./errors.ts";
 import { closestNameTo, didYouMean } from "./levenshtein.ts";
 import { arrayElements, checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
 import type { ArgRules, ArgType, EnumRef } from "./operators.ts";
