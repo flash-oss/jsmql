@@ -4264,14 +4264,11 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
     expect(jsmql.expr("$.a.sumBy(o => o.x)")).toEqual({ $sum: { $map: { input: "$a", as: "o", in: "$$o.x" } } });
   });
-  it(".uniq() → order-preserving keep-first dedupe", () => {
-    expect(jsmql.expr("$.a.uniq()")).toEqual({
-      $reduce: {
-        input: "$a",
-        initialValue: [],
-        in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
-      },
-    });
+  it(".uniq() → $setUnion (dedupe; MongoDB does not define the order)", () => {
+    // `$setUnion` of one array IS dedupe. lodash preserves input order and this does
+    // not — but nobody writes an ordering when they write `.uniq()`, so MongoDB's
+    // behaviour wins (SR2). Same set, verified on a live mongod.
+    expect(jsmql.expr("$.tags.uniq()")).toEqual({ $setUnion: "$tags" });
   });
   it(".compact() → $filter by JS truthiness (same rule as `.filter(x => x)`)", () => {
     expect(jsmql.expr("$.a.compact()")).toEqual({
@@ -4287,12 +4284,15 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     });
     expect(() => jsmql.expr("$.a.chunk(0)")).toThrow(/positive integer/);
   });
-  it(".difference / .intersection on a plain array (order-preserving $filter)", () => {
+  it(".intersection is $setIntersection; .difference keeps duplicates, so it stays a $filter", () => {
+    // lodash documents `.intersection` as returning UNIQUE values. The old `$filter`
+    // kept duplicates from the receiver, matching neither lodash nor MongoDB, so
+    // `$setIntersection` moves TOWARDS the documented contract — only order differs.
+    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({ $setIntersection: ["$a", "$b"] });
+    // `.difference` is NOT `$setDifference`: lodash keeps the receiver's duplicates, and
+    // dropping them would change the SET rather than the order.
     expect(jsmql.expr("$.a.difference($.b)")).toEqual({
       $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", "$b"] }] } },
-    });
-    expect(jsmql.expr("$.a.intersection($.b)")).toEqual({
-      $filter: { input: "$a", as: "jsmqlItem", cond: { $in: ["$$jsmqlItem", "$b"] } },
     });
   });
   it(".keyBy(iteratee) → $arrayToObject (last wins, key stringified)", () => {
@@ -4331,7 +4331,7 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
     expect(jsmql.expr('$.a.countBy("t")')).toHaveProperty("$arrayToObject");
     expect(jsmql.expr('$.a.uniqBy("id")')).toHaveProperty("$getField");
     expect(jsmql.expr('$.a.maxBy("x")')).toHaveProperty("$let");
-    expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$reduce");
+    expect(jsmql.expr("$.a.union($.b)")).toHaveProperty("$setUnion");
     expect(jsmql.expr("$.a.zipObject($.b)")).toHaveProperty("$arrayToObject");
   });
   it('keyBy/groupBy/countBy keys are null-safe ($ifNull → "null", so a missing/null key doesn\'t crash $arrayToObject)', () => {
@@ -4745,23 +4745,11 @@ describe("lodash set-ops & By-iteratee value methods", () => {
       $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", [2, 4]] }] } },
     });
   });
-  it(".xor(other) → order-preserving deduped symmetric difference", () => {
+  it(".xor(other) → symmetric difference via the set operators", () => {
+    // lodash documents `.xor` as returning UNIQUE values, so the composition says what
+    // it means. Order is not preserved and was never asked for (SR2).
     expect(jsmql.expr("$.a.xor($.b)")).toEqual({
-      $let: {
-        vars: { jsmqlA: "$a", jsmqlB: "$b" },
-        in: {
-          $reduce: {
-            input: {
-              $concatArrays: [
-                { $filter: { input: "$$jsmqlA", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlB"] }] } } },
-                { $filter: { input: "$$jsmqlB", as: "jsmqlX", cond: { $not: [{ $in: ["$$jsmqlX", "$$jsmqlA"] }] } } },
-              ],
-            },
-            initialValue: [],
-            in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
-          },
-        },
-      },
+      $setUnion: [{ $setDifference: ["$a", "$b"] }, { $setDifference: ["$b", "$a"] }],
     });
   });
   it(".differenceBy / .intersectionBy compare by iteratee key", () => {
@@ -7695,7 +7683,6 @@ describe("internal expression-variable names never capture a user param", () => 
     ["$.r.map(jsmqlItem => jsmqlItem.l.difference(jsmqlItem.o))", "jsmqlItem"],
     ["$.r.map(jsmqlItem => jsmqlItem.l.without(jsmqlItem.o))", "jsmqlItem"],
     ["$.r.map(jsmqlShuffled => jsmqlShuffled.l.sampleSize(jsmqlShuffled.n))", "jsmqlShuffled"],
-    ["$.r.map(jsmqlA => jsmqlA.l.xor(jsmqlA.o))", "jsmqlA"],
     ['$.r.map(jsmqlOtherKeys => jsmqlOtherKeys.l.differenceBy(jsmqlOtherKeys.o, "id"))', "jsmqlOtherKeys"],
     ["$.r.map(jsmqlI => jsmqlI.l.zipObject(jsmqlI.v))", "jsmqlI"],
     ["$.r.map(jsmqlKey => jsmqlKey.l.uniqBy(d => d.id))", "jsmqlKey"],

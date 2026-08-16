@@ -329,6 +329,12 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   // A case that early-returns asserts NOTHING and still reads as green. Counting the
   // ones that actually compared is what stops the suite hollowing out as cases are
   // added — see the floor below.
+  // Methods whose MQL lowering is a set operator. MongoDB leaves their result order
+  // unspecified (verified: `$setUnion` sorted a string array, `$setDifference` did not),
+  // so the fold is compared on membership rather than sequence. See SR2 in LANG_RULES.
+  const UNORDERED_RESULT = /\.(uniq|union|intersection|xor)\(/;
+  const asBag = (v: unknown): unknown => (Array.isArray(v) ? [...v].map((x) => JSON.stringify(x)).sort() : v);
+
   let compared = 0;
   const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases];
 
@@ -339,6 +345,14 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
       const server = await serverValue(call, val);
       if (server === SERVER_ERROR) return; // lowering errors on this input → no value to compare
       compared += 1;
+      if (UNORDERED_RESULT.test(call)) {
+        // MongoDB does not define the order `$setUnion` / `$setIntersection` /
+        // `$setDifference` return, so ANY order is a valid server result and comparing
+        // sequences would fail on a difference that carries no meaning. The fold must
+        // still agree on WHICH values survive — that part is the contract.
+        expect(asBag(folded)).toEqual(asBag(server));
+        return;
+      }
       expect(folded).toEqual(server);
     });
   }

@@ -1295,6 +1295,334 @@
       "was": "{\"age\":{\"$gt\":18},\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sampleRate\":0.1},null]},null]},{\"$ne\":[{\"$sampleRate\":0.1},false]},{\"$ne\":[{\"$sampleRate\":0.1},\"\"]},{\"$ne\":[{\"$sampleRate\":0.1},0]}]}}",
       "now": "{\"age\":{\"$gt\":18},\"$sampleRate\":0.1}",
       "reason": "Intended. $sampleRate is query-position-only: MongoDB has no expression form, so the old $expr wrap emitted MQL the server refused with \"Unrecognized expression '$sampleRate'\". The new `matchOnly` flag on OperatorDef makes the match translator lower it to its query form and codegen reject it everywhere else. Verified on a live mongod in $match, in a compound predicate, and through find(). Closes the last known HR3 violation."
+    },
+    "jsmql\u0000$.tags.uniq().at(-1)": {
+      "entry": "jsmql",
+      "src": "$.tags.uniq().at(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]},null]},null]},{",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},null]},null]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},false]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},\"\"]},{\"$ne\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.tags.uniq().at(-1)": {
+      "entry": "expr",
+      "src": "$.tags.uniq().at(-1)",
+      "kind": "output",
+      "was": "{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]}",
+      "now": "{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.tags.uniq().at(-1)": {
+      "entry": "filter",
+      "src": "$.tags.uniq().at(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]},null]},null]},{",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},null]},null]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},false]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$tags\"},-1]},\"\"]},{\"$ne\":",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.tags.uniq()": {
+      "entry": "jsmql",
+      "src": "$.tags.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$tags\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$tags\"},false]},{\"$ne\":[{\"$setUnion\":\"$tags\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$tags\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.tags.uniq()": {
+      "entry": "expr",
+      "src": "$.tags.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$tags\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.tags.uniq()": {
+      "entry": "filter",
+      "src": "$.tags.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$tags\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$tags\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$tags\"},false]},{\"$ne\":[{\"$setUnion\":\"$tags\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$tags\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.a.intersection($.b)": {
+      "entry": "jsmql",
+      "src": "$.a.intersection($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$in\":[\"$$jsmqlItem\",\"$b\"]}}},null]},null]},{\"$ne\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$in\":[\"$$jsmqlItem\",\"$b\"]}}},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setIntersection\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]}",
+      "reason": "Intended, and a SET change not just an order change. lodash documents .intersection as returning UNIQUE values; the old $filter kept the receiver's duplicates, matching neither lodash nor MongoDB ([3,3,2] for a=[3,3,2,1] b=[3,2]). $setIntersection is unique, so this moves TOWARDS the documented contract. Verified on a live mongod."
+    },
+    "expr\u0000$.a.intersection($.b)": {
+      "entry": "expr",
+      "src": "$.a.intersection($.b)",
+      "kind": "output",
+      "was": "{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$in\":[\"$$jsmqlItem\",\"$b\"]}}}",
+      "now": "{\"$setIntersection\":[\"$a\",\"$b\"]}",
+      "reason": "Intended, and a SET change not just an order change. lodash documents .intersection as returning UNIQUE values; the old $filter kept the receiver's duplicates, matching neither lodash nor MongoDB ([3,3,2] for a=[3,3,2,1] b=[3,2]). $setIntersection is unique, so this moves TOWARDS the documented contract. Verified on a live mongod."
+    },
+    "filter\u0000$.a.intersection($.b)": {
+      "entry": "filter",
+      "src": "$.a.intersection($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$in\":[\"$$jsmqlItem\",\"$b\"]}}},null]},null]},{\"$ne\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$in\":[\"$$jsmqlItem\",\"$b\"]}}},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setIntersection\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]}",
+      "reason": "Intended, and a SET change not just an order change. lodash documents .intersection as returning UNIQUE values; the old $filter kept the receiver's duplicates, matching neither lodash nor MongoDB ([3,3,2] for a=[3,3,2,1] b=[3,2]). $setIntersection is unique, so this moves TOWARDS the documented contract. Verified on a live mongod."
+    },
+    "jsmql\u0000$.a.union($.b)": {
+      "entry": "jsmql",
+      "src": "$.a.union($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$concatArrays\":[\"$a\",\"$b\"]},\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.a.union($.b)": {
+      "entry": "expr",
+      "src": "$.a.union($.b)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$concatArrays\":[\"$a\",\"$b\"]},\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":[\"$a\",\"$b\"]}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.a.union($.b)": {
+      "entry": "filter",
+      "src": "$.a.union($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$concatArrays\":[\"$a\",\"$b\"]},\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.a.uniq().nth(-1)": {
+      "entry": "jsmql",
+      "src": "$.a.uniq().nth(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]},null]},null]},{\"$n",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},null]},null]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},false]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},\"\"]},{\"$ne\":[{\"$array",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.a.uniq().nth(-1)": {
+      "entry": "expr",
+      "src": "$.a.uniq().nth(-1)",
+      "kind": "output",
+      "was": "{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]}",
+      "now": "{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.a.uniq().nth(-1)": {
+      "entry": "filter",
+      "src": "$.a.uniq().nth(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},-1]},null]},null]},{\"$n",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},null]},null]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},false]},{\"$ne\":[{\"$arrayElemAt\":[{\"$setUnion\":\"$a\"},-1]},\"\"]},{\"$ne\":[{\"$array",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.a.xor($.b)": {
+      "entry": "jsmql",
+      "src": "$.a.xor($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlA\":\"$a\",\"jsmqlB\":\"$b\"},\"in\":{\"$reduce\":{\"input\":{\"$concatArrays\":[{\"$filter\":{\"input\":\"$$jsmqlA\",\"as\":\"jsmqlX\",\"cond\":{\"$not\":[{\"$in\":[\"$$jsmqlX\",\"$$jsmqlB\"]}]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[{\"$setDifference\":[\"$a\",\"$b\"]},{\"$setDifference\":[\"$b\",\"$a\"]}]},null]},null]},{\"$ne\":[{\"$setUnion\":[{\"$setDifference\":[\"$a\",\"$b\"]},{\"$setDifference\":[\"$b\",\"$a\"]}]},fals",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.a.xor($.b)": {
+      "entry": "expr",
+      "src": "$.a.xor($.b)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlA\":\"$a\",\"jsmqlB\":\"$b\"},\"in\":{\"$reduce\":{\"input\":{\"$concatArrays\":[{\"$filter\":{\"input\":\"$$jsmqlA\",\"as\":\"jsmqlX\",\"cond\":{\"$not\":[{\"$in\":[\"$$jsmqlX\",\"$$jsmqlB\"]}]}}},{\"$filter\":{\"input\":\"$$jsmqlB\",\"as",
+      "now": "{\"$setUnion\":[{\"$setDifference\":[\"$a\",\"$b\"]},{\"$setDifference\":[\"$b\",\"$a\"]}]}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.a.xor($.b)": {
+      "entry": "filter",
+      "src": "$.a.xor($.b)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlA\":\"$a\",\"jsmqlB\":\"$b\"},\"in\":{\"$reduce\":{\"input\":{\"$concatArrays\":[{\"$filter\":{\"input\":\"$$jsmqlA\",\"as\":\"jsmqlX\",\"cond\":{\"$not\":[{\"$in\":[\"$$jsmqlX\",\"$$jsmqlB\"]}]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[{\"$setDifference\":[\"$a\",\"$b\"]},{\"$setDifference\":[\"$b\",\"$a\"]}]},null]},null]},{\"$ne\":[{\"$setUnion\":[{\"$setDifference\":[\"$a\",\"$b\"]},{\"$setDifference\":[\"$b\",\"$a\"]}]},fals",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.a.sortedUniq()": {
+      "entry": "jsmql",
+      "src": "$.a.sortedUniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$a\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$a\"},false]},{\"$ne\":[{\"$setUnion\":\"$a\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$a\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.a.sortedUniq()": {
+      "entry": "expr",
+      "src": "$.a.sortedUniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$a\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.a.sortedUniq()": {
+      "entry": "filter",
+      "src": "$.a.sortedUniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$a\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$a\"},false]},{\"$ne\":[{\"$setUnion\":\"$a\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$a\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.a.uniq()": {
+      "entry": "jsmql",
+      "src": "$.a.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$a\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$a\"},false]},{\"$ne\":[{\"$setUnion\":\"$a\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$a\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.a.uniq()": {
+      "entry": "expr",
+      "src": "$.a.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$a\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.a.uniq()": {
+      "entry": "filter",
+      "src": "$.a.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$a\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$a\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$a\"},false]},{\"$ne\":[{\"$setUnion\":\"$a\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$a\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.r = $$$.orders.filter(o => o.userId === $._id).map(\"productIds\").flatten().uniq();": {
+      "entry": "jsmql",
+      "src": "$.r = $$$.orders.filter(o => o.userId === $._id).map(\"productIds\").flatten().uniq();",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"r\":{\"$reduce\":{\"input\":{\"$reduce\":{\"input\":{\"$map\":{\"inpu",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"r\":{\"$setUnion\":{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$__",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "pipeline\u0000$.r = $$$.orders.filter(o => o.userId === $._id).map(\"productIds\").flatten().uniq();": {
+      "entry": "pipeline",
+      "src": "$.r = $$$.orders.filter(o => o.userId === $._id).map(\"productIds\").flatten().uniq();",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"r\":{\"$reduce\":{\"input\":{\"$reduce\":{\"input\":{\"$map\":{\"inpu",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"r\":{\"$setUnion\":{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$__",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.arr.uniq()": {
+      "entry": "jsmql",
+      "src": "$.arr.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$arr\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inp",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$arr\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$arr\"},false]},{\"$ne\":[{\"$setUnion\":\"$arr\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$arr\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.arr.uniq()": {
+      "entry": "expr",
+      "src": "$.arr.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$arr\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$arr\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.arr.uniq()": {
+      "entry": "filter",
+      "src": "$.arr.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$arr\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inp",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$arr\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$arr\"},false]},{\"$ne\":[{\"$setUnion\":\"$arr\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$arr\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.s.uniq()": {
+      "entry": "jsmql",
+      "src": "$.s.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$s\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$s\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$s\"},false]},{\"$ne\":[{\"$setUnion\":\"$s\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$s\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.s.uniq()": {
+      "entry": "expr",
+      "src": "$.s.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$s\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$s\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.s.uniq()": {
+      "entry": "filter",
+      "src": "$.s.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$s\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$s\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$s\"},false]},{\"$ne\":[{\"$setUnion\":\"$s\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$s\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.n.uniq()": {
+      "entry": "jsmql",
+      "src": "$.n.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$n\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$n\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$n\"},false]},{\"$ne\":[{\"$setUnion\":\"$n\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$n\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.n.uniq()": {
+      "entry": "expr",
+      "src": "$.n.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$n\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$n\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.n.uniq()": {
+      "entry": "filter",
+      "src": "$.n.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$n\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$n\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$n\"},false]},{\"$ne\":[{\"$setUnion\":\"$n\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$n\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000$.obj.uniq()": {
+      "entry": "jsmql",
+      "src": "$.obj.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$obj\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inp",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$obj\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$obj\"},false]},{\"$ne\":[{\"$setUnion\":\"$obj\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$obj\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000$.obj.uniq()": {
+      "entry": "expr",
+      "src": "$.obj.uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$obj\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":\"$obj\"}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000$.obj.uniq()": {
+      "entry": "filter",
+      "src": "$.obj.uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$obj\",\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inp",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":\"$obj\"},null]},null]},{\"$ne\":[{\"$setUnion\":\"$obj\"},false]},{\"$ne\":[{\"$setUnion\":\"$obj\"},\"\"]},{\"$ne\":[{\"$setUnion\":\"$obj\"},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "jsmql\u0000[1,2,3].uniq()": {
+      "entry": "jsmql",
+      "src": "[1,2,3].uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[[1,2,3]]},null]},null]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},false]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},\"\"]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "expr\u0000[1,2,3].uniq()": {
+      "entry": "expr",
+      "src": "[1,2,3].uniq()",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}}",
+      "now": "{\"$setUnion\":[[1,2,3]]}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
+    },
+    "filter\u0000[1,2,3].uniq()": {
+      "entry": "filter",
+      "src": "[1,2,3].uniq()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":[],\"in\":{\"$cond\":[{\"$in\":[\"$$this\",\"$$value\"]},\"$$value\",{\"$concatArrays\":[\"$$value\",[\"$$this\"]]}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"in",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[[1,2,3]]},null]},null]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},false]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},\"\"]},{\"$ne\":[{\"$setUnion\":[[1,2,3]]},0]}]}}",
+      "reason": "Intended, order-only. .uniq / .union / .xor now lower to the set operators MongoDB ships instead of hand-built order-preserving $reduce chains. Same set, verified on a live mongod across duplicate, empty, single and document-valued inputs. MongoDB does not define set-operator order and nobody writes an ordering when they write .uniq() -- SR2. $.tags.uniq() 144 chars -> 21; $.a.xor($.b) 403 -> 77. .difference deliberately KEEPS its $filter: lodash keeps the receiver's duplicates there, so $setDifference would change the set."
     }
   }
 }

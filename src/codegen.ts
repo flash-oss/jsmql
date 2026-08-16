@@ -4889,14 +4889,11 @@ function generateMethodCall(
     case "sortedUniq": // MQL has no sorted-array optimisation; alias of the general form.
     case "uniq": {
       checkArity(method, { sig: "", none: true }, exprArgsOnly(args, method).length, callPos);
-      // Order-preserving, keep-first dedupe ($setUnion would reorder).
-      return {
-        $reduce: {
-          input: genObj,
-          initialValue: [],
-          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
-        },
-      };
+      // `$setUnion` of one array IS dedupe. It does not preserve input order, and lodash
+      // does — but nobody writes an ordering when they write `.uniq()`, so MongoDB's
+      // behaviour wins over a hand-built order-preserving `$reduce` (SR2). Same set,
+      // verified on a live mongod; 144 characters become 26.
+      return { $setUnion: singleArrayArg(genObj) };
     }
     case "sortedUniqBy": // alias of .uniqBy (no sorted-array optimisation in MQL)
     case "uniqBy": {
@@ -5058,28 +5055,31 @@ function generateMethodCall(
         },
       };
     }
-    case "difference":
     case "intersection": {
-      // On a plain array receiver (Set receivers were intercepted earlier). Order-
-      // preserving vs `$setDifference`/`$setIntersection`.
+      // lodash documents `.intersection` as returning UNIQUE values, which the old
+      // `$filter` did not do — it kept duplicates from the receiver, matching neither
+      // lodash nor MongoDB. `$setIntersection` is unique, so this moves TOWARDS the
+      // documented contract; only the order differs, and order is the unwritten part.
+      const exprArgs = exprArgsOnly(args, method);
+      checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
+      return { $setIntersection: [genObj, _generate(exprArgs[0], ctx)] };
+    }
+    case "difference": {
+      // NOT `$setDifference`: lodash's `.difference` keeps duplicates from the receiver
+      // (`[3,1,1]`, not `[3,1]`), and dropping them would change the SET, not just the
+      // order. The developer wrote `.difference`, whose meaning includes those elements.
       const exprArgs = exprArgsOnly(args, method);
       checkArity(method, { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
       const [vItem, item] = internalVar(ctx, "item");
-      const inOther = { $in: [item, other] };
-      return { $filter: { input: genObj, as: vItem, cond: method === "intersection" ? inOther : { $not: [inOther] } } };
+      return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, other] }] } } };
     }
     case "union": {
       const exprArgs = exprArgsOnly(args, "union");
       checkArity("union", { sig: "other", exact: 1 }, exprArgs.length, callPos);
-      // Order-preserving unique of the concatenation.
-      return {
-        $reduce: {
-          input: { $concatArrays: [genObj, _generate(exprArgs[0], ctx)] },
-          initialValue: [],
-          in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
-        },
-      };
+      // `$setUnion` IS the deduped union. Order is not preserved, and is not something
+      // `.union(...)` asks for — see SR2.
+      return { $setUnion: [genObj, _generate(exprArgs[0], ctx)] };
     }
     case "without": {
       // lodash `without(arr, ...values)` — exclude the given values (variadic).
@@ -5090,28 +5090,14 @@ function generateMethodCall(
       return { $filter: { input: genObj, as: vItem, cond: { $not: [{ $in: [item, values] }] } } };
     }
     case "xor": {
-      // Symmetric difference of two arrays (chain `.xor(b).xor(c)` for more), order-
-      // preserving + deduped: uniq( A∖B ++ B∖A ) by value.
+      // Symmetric difference. lodash documents `.xor` as returning UNIQUE values, so the
+      // set-operator composition says exactly what it means: everything in one side and
+      // not the other, both ways. Order is not preserved and was never asked for (SR2).
+      // Verified same-set on a live mongod across ragged, equal and empty inputs.
       const exprArgs = exprArgsOnly(args, "xor");
       checkArity("xor", { sig: "other", exact: 1 }, exprArgs.length, callPos);
       const other = _generate(exprArgs[0], ctx);
-      const [vA, a] = internalVar(ctx, "a");
-      const [vB, b] = internalVar(ctx, "b");
-      const [vX, x] = internalVar(ctx, "x");
-      const notInB = { $filter: { input: a, as: vX, cond: { $not: [{ $in: [x, b] }] } } };
-      const notInA = { $filter: { input: b, as: vX, cond: { $not: [{ $in: [x, a] }] } } };
-      return {
-        $let: {
-          vars: { [vA]: genObj, [vB]: other },
-          in: {
-            $reduce: {
-              input: { $concatArrays: [notInB, notInA] },
-              initialValue: [],
-              in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
-            },
-          },
-        },
-      };
+      return { $setUnion: [{ $setDifference: [genObj, other] }, { $setDifference: [other, genObj] }] };
     }
     case "differenceBy":
     case "intersectionBy": {

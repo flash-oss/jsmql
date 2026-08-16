@@ -1746,7 +1746,7 @@ $.items.minBy("score")  / .maxBy("score")   // the element with the min/max key
 $.items.sortBy("age") / .sortBy(x => x.age) // ascending sort by a key (alias of .toSorted)
 $.items.orderBy(["age", "name"], ["desc", "asc"])  // multi-key sort (parallel keys + directions)
 $.items.orderBy({ age: -1, name: 1 })              // …or a { field: dir } object (directions inline)
-$.tags.uniq()                               // order-preserving keep-first dedupe
+$.tags.uniq()                               // dedupe → $setUnion (MongoDB does not define the order)
 $.items.uniqBy("id")                        // dedupe by key, keep first
 $.items.keyBy("id")                         // { <id>: <last item with that id> }
 $.items.groupBy("type")                     // { <type>: [items…] }
@@ -1757,7 +1757,8 @@ $.items.reject({ active: false })           // items NOT matching
 $.xs.chunk(3)                               // [[…3], […3], [rest]]   (size: positive int literal)
 $.xs.flatten()                              // one level (with an $isArray guard)
 $.xs.compact()                              // drop JS-falsy (false/null/0/""/missing) — same as .filter(Boolean)
-$.a.difference($.b) / .intersection($.b) / .union($.b)   // order-preserving set ops
+$.a.union($.b) / .intersection($.b) / .xor($.b)          // $setUnion / $setIntersection / composed — unique values, order undefined
+$.a.difference($.b)                                      // keeps the receiver's duplicates, as lodash does — a $filter, not $setDifference
 $.a.without(2, 4)                           // exclude the given values (variadic)
 $.a.xor($.b)                                // symmetric difference (chain .xor(c) for more)
 $.a.differenceBy($.b, "id")                 // set ops compared BY an iteratee key…
@@ -1775,7 +1776,7 @@ $.a.sampleSize(3)                           // 3 random elements, without replac
 
 > Predicate-run methods take an arrow (`x => …`) or a `_.matches` object (`{ active: true }`), stopping at the first element the predicate rejects (JS truthiness, as in `.filter` — see [Truthy and falsy](#truthy-and-falsy)). The `*RightWhile` pair scans the reversed array and reverses the result back. `sample`/`sampleSize` use `$rand`, so they return a **different result on every run** (non-deterministic, like the stream `.sample()` → `$sample`); `sampleSize` draws **without replacement** and returns the whole (shuffled) array when `n` exceeds the length.
 
-> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash); a missing/null key coerces to the string `"null"`, but an object/array key still *errors*. **A stringified key stays a string.** `Object.keys(<a countBy result>)` therefore hands back hex strings, and on the server a string never equals an `ObjectId` — so a join on such a key silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` ([ObjectId](#objectid-literals) lowers to `$toObjectId`). Group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). Set ops are order-preserving `$filter`/dedupe forms (not `$setDifference`, which reorders). All shapes were verified against a live mongod.
+> **Footguns.** `keyBy`/`groupBy`/`countBy` **stringify** the key (`$toString` — matching lodash); a missing/null key coerces to the string `"null"`, but an object/array key still *errors*. **A stringified key stays a string.** `Object.keys(<a countBy result>)` therefore hands back hex strings, and on the server a string never equals an `ObjectId` — so a join on such a key silently matches nothing. Cast the key back first: `Object.keys(counts).map(id => ObjectId(id))` ([ObjectId](#objectid-literals) lowers to `$toObjectId`). Group order is unspecified; `groupBy`/`countBy` are O(n²). `.sum`/`.mean`/… ignore non-numeric elements (MQL `$sum`/`$avg` semantics). `.uniq`/`.union`/`.intersection`/`.xor` lower to MongoDB's set operators: **unique values, in no defined order** (`$setUnion` sorted one sample, `$setDifference` did not — do not rely on either). lodash preserves input order and jsmql does not; nobody writes an ordering when they write `.uniq()`. `.difference` is the exception and stays a `$filter`, because lodash keeps the receiver's duplicates there and dropping them would change the values, not just their order. All shapes were verified against a live mongod.
 
 > **Chaining that can't type-check is rejected.** When a method is chained on a receiver whose type is provably wrong for it, jsmql throws at compile time instead of emitting MQL the server would reject — e.g. `.every(p).map(f)` (a boolean has no methods), `s.toUpperCase().map(f)` (a string isn't an array), `a.countBy("t").take(3)` (an object isn't an array), and, over a lookup, `$$$.orders.find(p).take(5)` (`.find` returns one document). The check only fires when the receiver type is **100% certain**: an element of unknown type (`arr.find(p).map(f)` — the element could itself be an array) or a result whose type depends on its arguments (`n.clamp(a, b)`) still compiles.
 

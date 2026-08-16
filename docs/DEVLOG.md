@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the set methods lower to MongoDB's set operators
+
+`.uniq`, `.union`, `.intersection` and `.xor` each built an order-preserving
+`$reduce` or `$filter` by hand, reproducing lodash's input order. Nobody writes
+an ordering when they write `.uniq()` — SR2 — so all four now lower to the
+operators MongoDB ships. `$.tags.uniq()` drops from 144 characters to 21, and
+`$.a.xor($.b)` from 403 to 77.
+
+Two of the four needed more than an order argument.
+
+`.intersection` was returning `[3,3,2]` for `a=[3,3,2,1]`, `b=[3,2]` — it kept
+the receiver's duplicates, which matches **neither** lodash (documented as
+returning unique values) nor `$setIntersection`. Switching moves it toward the
+documented contract, so this one changes the set and not only its order.
+
+`.difference` is deliberately left alone. lodash documents it as keeping the
+receiver's duplicates, and `$setDifference` drops them — that would change which
+values come back, which is the developer's written meaning rather than an
+unwritten ordering. It stays a `$filter`.
+
+Every shape was compared against the reference compiler on a live mongod over
+duplicate, empty, single-element and document-valued inputs. `fold-consistency`
+now compares these four on membership rather than sequence: MongoDB does not
+define set-operator order, so any order is a valid server result and comparing
+sequences would fail on a difference that carries no meaning.
+
+---
+
 ## 2026-08-16 — fix: `$sampleRate` emits its query form instead of invalid MQL
 
 `$match($sampleRate(0.1))` compiled to an `$expr` wrap containing

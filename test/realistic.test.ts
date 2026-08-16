@@ -118,16 +118,14 @@ $ = candidateProductIds
         {
           $set: {
             "__jsmql.var.myProductIds": {
-              $reduce: {
-                input: {
-                  $reduce: {
-                    input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
-                    initialValue: [],
-                    in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
-                  },
+              // `.uniq()` is `$setUnion` of the flattened array — MongoDB's dedupe.
+              // It does not preserve input order, and `.uniq()` never asked for one.
+              $setUnion: {
+                $reduce: {
+                  input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
+                  initialValue: [],
+                  in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
                 },
-                initialValue: [],
-                in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
               },
             },
           },

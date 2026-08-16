@@ -826,16 +826,12 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $set: {
           r: {
-            $reduce: {
-              input: {
-                $reduce: {
-                  input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
-                  initialValue: [],
-                  in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
-                },
+            $setUnion: {
+              $reduce: {
+                input: { $map: { input: "$__jsmql.tmp.1", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } },
+                initialValue: [],
+                in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
               },
-              initialValue: [],
-              in: { $cond: [{ $in: ["$$this", "$$value"] }, "$$value", { $concatArrays: ["$$value", ["$$this"]] }] },
             },
           },
         },
