@@ -23,7 +23,7 @@ import { checkArity } from "./arity.ts";
 import type { GenerateCtx } from "./codegen.ts";
 import { CodegenError } from "./errors.ts";
 import { closestNameTo, didYouMean } from "./levenshtein.ts";
-import { arrayElements, checkEnum, litNumber, litString, objectInfo } from "./literal-gate.ts";
+import { arrayElements, checkEnum, litNumber, litString, objectInfo, requirePresentKeys } from "./literal-gate.ts";
 import type { ArgRules, ArgType, EnumRef } from "./operators.ts";
 import { lookupOperator } from "./operators.ts";
 import { STAGES } from "./stages.ts";
@@ -69,10 +69,17 @@ const BSON_TYPE_NAME = [
 ] as const;
 const REGEX_FLAGS = "imxs"; // MongoDB allows only these regex option flags (a JS 'g'/'y' is rejected).
 
-/** Validate a literal-string slot against an enum ref. No-op on a non-literal (gate). */
+/**
+ * Validate a literal-string slot against an enum ref. No-op on a non-literal (gate).
+ *
+ * The sibling of `checkEnum` in `literal-gate.ts`, and NOT interchangeable with it: an
+ * operator's enum slot is an expression slot, a stage's is literal-only. See the note on
+ * `checkEnum` for why routing either through the other breaks it.
+ */
 export function checkArgEnum(name: string, key: string, value: Expr, ref: EnumRef): void {
   // HR1: a source `"$x"` is the field reference `$x` (a runtime value), not a
   // literal enum value — these slots accept a runtime expression, so no-op.
+  // Verified: `$dateTrunc({ date: $.d, unit: "$u" })` runs on mongod.
   const lit = litString(value);
   if (lit !== null && lit.startsWith("$")) return;
   if (ref === "regexFlags") {
@@ -437,14 +444,10 @@ function validateObjectKeys(
     }
   }
 
-  // Required-keys (a spread might supply a missing one — skip then).
-  if (!hasSpread) {
-    for (const k of required) {
-      if (!presentKeys.includes(k)) {
-        throw new CodegenError(`'${name}' requires the '${k}' field, but it is missing.`, pos);
-      }
-    }
-  }
+  // Required keys — the SAME rule stages apply, from the same place. `presentKeys` is what
+  // makes one helper serve both: an operator call may be positional, where there is no
+  // object body to read them off.
+  requirePresentKeys(name, presentKeys, required, pos, hasSpread);
 
   // Enum slots: a literal-string value outside the closed set throws (didYouMean);
   // a non-literal value no-ops (the gate). Runs in both call forms.

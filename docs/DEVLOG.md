@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: one required-key rule, and two enum checkers that must stay two
+
+The argument-vocabulary unification, done on the narrow basis its own audit argued for:
+merge what is genuinely one rule, and leave what only looks like one.
+
+**Required keys were one rule written twice.** `requireKeys` in `literal-gate.ts` and a loop
+in `operator-validation.ts` had the same behaviour and a byte-identical message, differing
+only in how each learned which keys a body carried. `requirePresentKeys` is now the single
+rule; it takes the present KEY LIST rather than an object, which is what lets both call it —
+an operator call may be POSITIONAL, where there is no object body to read keys off. Twelve
+stage sites and the operator path share it.
+
+**The enum checkers are NOT one rule, and merging them would have been a bug.** They look
+like duplicates: same message shape, same closed-set idea. They differ in whether a source
+`"$x"` is skipped, and that difference is load-bearing, because the SLOTS differ in kind. An
+operator's enum slot is an EXPRESSION slot — `$dateTrunc({ date: $.d, unit: "$u" })` runs on
+mongod and returns the truncated date — so a `$`-string there is a field reference (HR1) that
+only the server can judge, and skipping it is right. A stage's enum slot is literal-only:
+mongod answers `$bucketAuto({ granularity: "$g" })` with "Unknown rounding granularity '$g'"
+and `$merge`'s `whenMatched: "$g"` with "Enumeration value '$g' … is not a valid value", so
+the field reference IS a certain violation and belongs at the keyboard. Both checked on a
+live server.
+
+Routing stages through the operator checker would emit MQL the server refuses (HR3); routing
+operators through the stage checker would reject a valid query. So the gates stay two, the
+WORDING stays one, and each now carries the reason plus a test that pins it — a future
+attempt to merge them fails loudly instead of quietly breaking one side.
+
+That is the whole of the argument-vocabulary work as scoped. The rest of what the plan
+proposed — one `args` shape across operators, stages and methods — was superficial
+similarity, and forcing it would have cost more than the duplication does.
+
+Output-neutral: 302 accepted rows, nothing unclassified.
+
+---
+
 ## 2026-08-16 — fix: jsmql.pipeline() rejected a source jsmql() compiled
 
 `jsmql("$.o = $$$.orders.find(o => o.uid === 1)")` produced a two-stage pipeline.

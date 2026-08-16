@@ -112,14 +112,36 @@ export function arrayElements(e: Expr): Expr[] | null {
 
 // ── Shared check helpers ────────────────────────────────────────────────────────
 
-/** Require `keys` to be present on an object-literal body (skips if a spread hides them). */
-export function requireKeys(stage: string, info: ObjectInfo, bodyPos: number, keys: readonly string[]): void {
-  if (info.hasSpread) return;
+/**
+ * Require `keys` to be present, given the keys a body actually carries.
+ *
+ * THE one required-key rule, for stages and operators alike — the two had identical loops
+ * and a byte-identical message, differing only in how they knew which keys were present: a
+ * stage body is always an object literal, while an operator call may be POSITIONAL, where
+ * the present keys come from the shape rather than from an `ObjectInfo`. Taking the key list
+ * rather than the object is what lets both call it.
+ *
+ * `hasSpread` skips the check: a spread might supply the missing key, and the literal-gating
+ * invariant says a validator inspects only what it can see in full.
+ */
+export function requirePresentKeys(
+  label: string,
+  presentKeys: readonly string[],
+  keys: readonly string[],
+  pos: number,
+  hasSpread: boolean,
+): void {
+  if (hasSpread) return;
   for (const k of keys) {
-    if (!info.byKey.has(k)) {
-      throw new CodegenError(`'${stage}' requires the '${k}' field, but it is missing.`, bodyPos);
+    if (!presentKeys.includes(k)) {
+      throw new CodegenError(`'${label}' requires the '${k}' field, but it is missing.`, pos);
     }
   }
+}
+
+/** [requirePresentKeys] for an object-literal body. */
+export function requireKeys(stage: string, info: ObjectInfo, bodyPos: number, keys: readonly string[]): void {
+  requirePresentKeys(stage, [...info.byKey.keys()], keys, bodyPos, info.hasSpread);
 }
 
 /**
@@ -138,6 +160,22 @@ export function requireObjectBody(stage: string, body: Expr, required: readonly 
 }
 
 /** Throw if a literal-string slot value is outside the allowed enum (with a "Did you mean"). */
+/**
+ * Reject a literal-string slot outside a closed set.
+ *
+ * NOT the same rule as `checkArgEnum` in `operator-validation.ts`, and deliberately so — the
+ * two look like duplicates and are not. An OPERATOR's enum slot is an EXPRESSION slot: the
+ * server evaluates it, so `$dateTrunc({ date: $.d, unit: $.u })` runs and a source `"$u"` is
+ * a field reference (HR1) that only the server can judge. `checkArgEnum` therefore skips a
+ * `$`-prefixed string. A STAGE's enum slot is literal-only: mongod rejects
+ * `$bucketAuto({ granularity: "$g" })` outright ("Unknown rounding granularity '$g'"), and
+ * so does `$merge`'s `whenMatched`, so the field reference IS a certain violation and
+ * belongs at the keyboard. Both verified on a live mongod.
+ *
+ * Routing either through the other would break it: stages would emit MQL the server refuses
+ * (HR3), operators would reject a valid query. What the two DO share is the wording, and
+ * that is shared here rather than restated.
+ */
 export function checkEnum(stage: string, field: string, value: Expr, allowed: readonly string[]): void {
   const s = litString(value);
   if (s === null || allowed.includes(s)) return;

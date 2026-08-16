@@ -1936,6 +1936,25 @@ describe("string methods", () => {
   });
 });
 
+describe("enum slots: an operator's is an expression slot, a stage's is not", () => {
+  // `checkArgEnum` and `checkEnum` look like duplicates and are NOT. Unifying them would
+  // break one side, so this pins the difference: verified on a live mongod, an operator's
+  // enum slot evaluates an expression while a stage's is read literally.
+  it("an operator's enum slot accepts a field reference — the server evaluates it", () => {
+    expect(jsmql.expr("$dateTrunc({ date: $.d, unit: $.u })")).toEqual({ $dateTrunc: { date: "$d", unit: "$u" } });
+    // Written as an HR1 `$`-string, same thing.
+    expect(jsmql.expr('$dateTrunc({ date: $.d, unit: "$u" })')).toEqual({ $dateTrunc: { date: "$d", unit: "$u" } });
+  });
+
+  it("a stage's enum slot rejects one — mongod refuses it, so it is a certain violation", () => {
+    // "Unknown rounding granularity '$g'" / "Enumeration value '$g' … is not a valid value."
+    expect(() => jsmql('$bucketAuto({ groupBy: $.x, buckets: 2, granularity: "$g" });')).toThrow(
+      /granularity must be one of/,
+    );
+    expect(() => jsmql('$merge({ into: "x", whenMatched: "$g" });')).toThrow(/whenMatched must be one of/);
+  });
+});
+
 describe("typeof: the Query and Expr targets agree", () => {
   // The two targets used to carry SEPARATE alias tables. The query side mapped JavaScript's
   // "boolean" onto MongoDB's "bool"; the expression side compared `$type` against the raw

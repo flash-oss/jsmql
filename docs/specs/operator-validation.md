@@ -220,3 +220,26 @@ Operators whose rules can't be exercised on a local mongod (Queryable-Encryption
 `$encStr*`, server-8.1+ `$hash`/`$hexHash`) and the version-dependent single-shape
 `$meta` keyword set are not type/enum-checked (HR3: jsmql throws only what it can
 confirm).
+
+## Why the two enum checkers are not one
+
+`checkArgEnum` here and `checkEnum` in `literal-gate.ts` share a message shape and check
+different things. They are not interchangeable, and merging them breaks one side:
+
+| | Slot kind | A source `"$x"` | Rule |
+|---|---|---|---|
+| operator (`checkArgEnum`) | EXPRESSION slot — the server evaluates it | a field reference (HR1) | skip: only the server can judge it |
+| stage (`checkEnum`) | literal-only | still just a string to mongod | reject: a certain violation |
+
+Verified on a live mongod: `$dateTrunc({ date: "$d", unit: "$u" })` runs and returns the
+truncated date, while `$bucketAuto({ granularity: "$g" })` fails with "Unknown rounding
+granularity '$g'" and `$merge`'s `whenMatched: "$g"` with "Enumeration value '$g' … is not a
+valid value."
+
+Routing stages through the operator checker would emit MQL the server refuses (HR3);
+routing operators through the stage checker would reject a valid query. What the two do
+share — the wording and the `didYouMean` tail — is shared, not restated.
+
+The REQUIRED-key rule is genuinely one rule, and is one function:
+`requirePresentKeys` in `literal-gate.ts`. It takes the present KEYS rather than an object,
+because an operator call may be positional and have no object body to read them from.
