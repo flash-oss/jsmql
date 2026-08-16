@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — perf: .startsWith / .endsWith in a filter use an index, and stop aborting
+
+`$.email.startsWith("admin")` in Filter position had no query form. It fell through to
+`{ $expr: { $eq: [{ $indexOfCP: ["$email", "admin"] }, 0] } }`, and that is two problems at
+once.
+
+`$expr` cannot use an index. Measured on a live mongod with an index on the field:
+`{ email: /^admin/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. On any collection
+worth indexing, that is the difference between a lookup and a full scan.
+
+Worse, `$indexOfCP` ERRORS on a non-string input. One numeric value anywhere in that field
+aborted the entire query — not a wrong answer, a dead query. The regex simply does not match
+those documents.
+
+The anchored Query cell of the `Contains` IR node now emits a real BSON regex: a `RegExp`
+instance rather than a `$regex` document, because that is what the driver serialises into the
+form the index reads. It is gated on a LITERAL needle and a static field path — a runtime
+needle cannot be baked into a pattern, a computed receiver has nothing to index, and an HR1
+`"$x"` needle is a field reference rather than a literal. All three keep the expression
+fallback, which is exactly what the operand-kind gate is for.
+
+Regex metacharacters in the needle are escaped through a replacer FUNCTION, not a replacement
+string: `String.replace` reads `$&` and `$$` as substitution patterns, so a needle containing
+`$` would otherwise corrupt itself. `.startsWith("a.b")` matches the literal `a.b`.
+
+The overview of docs/specs/predicate-ir.md predicted this one — "they gain an indexed query
+form the day the anchored case gets one". It has.
+
+---
+
 ## 2026-08-16 — feat: `=== undefined` is an existence test in expression position too
 
 `$.a === undefined` lowered to `{ a: { $exists: false } }` as a filter and THREW everywhere

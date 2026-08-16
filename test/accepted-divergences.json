@@ -2520,6 +2520,182 @@
       "was": "'undefined' is only meaningful in '$match' position (where it lowers to '$exists'). In aggregation expressions, use 'null' for the present-but-null case, or move the comparison into a '$match' stage.",
       "now": "{\"$ne\":[{\"$type\":\"$x\"},\"missing\"]}",
       "reason": "Intended, a NEW CAPABILITY the developer asked for: `x === undefined` is an EXISTENCE test in both targets. It already lowered to `$exists` in query position; expression position THREW, on the stated belief that the aggregation language cannot distinguish a missing field from a present-but-null one. It can: `$type` answers \"missing\" for an absent field and \"null\" for an explicit null, which is exactly the line `$exists` draws. The `Exists` node in src/predicate-ir.ts now owns both cells. Verified on a live mongod over {a:5}, {a:null}, {} — both targets select only the third for `=== undefined`, and `=== null` still selects only the second, so null is not collapsed into missing."
+    },
+    "jsmql\u0000$.email.startsWith(\"admin\")": {
+      "entry": "jsmql",
+      "src": "$.email.startsWith(\"admin\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$email\",\"admin\"]},0]}}",
+      "now": "{\"email\":\"«regexp:^admin/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.email.startsWith(\"admin\")": {
+      "entry": "filter",
+      "src": "$.email.startsWith(\"admin\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$email\",\"admin\"]},0]}}",
+      "now": "{\"email\":\"«regexp:^admin/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.file.endsWith(\".pdf\")": {
+      "entry": "jsmql",
+      "src": "$.file.endsWith(\".pdf\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$file\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},4]}]},4]},\".pdf\"]}}}}",
+      "now": "{\"file\":\"«regexp:\\\\.pdf$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.file.endsWith(\".pdf\")": {
+      "entry": "filter",
+      "src": "$.file.endsWith(\".pdf\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$file\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},4]}]},4]},\".pdf\"]}}}}",
+      "now": "{\"file\":\"«regexp:\\\\.pdf$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.file.endsWith(\"a👍b\")": {
+      "entry": "jsmql",
+      "src": "$.file.endsWith(\"a👍b\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$file\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},3]}]},3]},\"a👍b\"]}}}}",
+      "now": "{\"file\":\"«regexp:a👍b$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.file.endsWith(\"a👍b\")": {
+      "entry": "filter",
+      "src": "$.file.endsWith(\"a👍b\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$file\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},3]}]},3]},\"a👍b\"]}}}}",
+      "now": "{\"file\":\"«regexp:a👍b$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.arr.startsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.arr.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$arr\",\"a\"]},0]}}",
+      "now": "{\"arr\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.arr.startsWith('a')": {
+      "entry": "filter",
+      "src": "$.arr.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$arr\",\"a\"]},0]}}",
+      "now": "{\"arr\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.arr.endsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.arr.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"arr\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.arr.endsWith('a')": {
+      "entry": "filter",
+      "src": "$.arr.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$arr\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"arr\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.s.startsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.s.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$s\",\"a\"]},0]}}",
+      "now": "{\"s\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.s.startsWith('a')": {
+      "entry": "filter",
+      "src": "$.s.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$s\",\"a\"]},0]}}",
+      "now": "{\"s\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.s.endsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.s.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"s\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.s.endsWith('a')": {
+      "entry": "filter",
+      "src": "$.s.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$s\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"s\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.n.startsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.n.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$n\",\"a\"]},0]}}",
+      "now": "{\"n\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.n.startsWith('a')": {
+      "entry": "filter",
+      "src": "$.n.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$n\",\"a\"]},0]}}",
+      "now": "{\"n\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.n.endsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.n.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"n\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.n.endsWith('a')": {
+      "entry": "filter",
+      "src": "$.n.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$n\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"n\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.obj.startsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.obj.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$obj\",\"a\"]},0]}}",
+      "now": "{\"obj\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.obj.startsWith('a')": {
+      "entry": "filter",
+      "src": "$.obj.startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"$obj\",\"a\"]},0]}}",
+      "now": "{\"obj\":\"«regexp:^a/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "jsmql\u0000$.obj.endsWith('a')": {
+      "entry": "jsmql",
+      "src": "$.obj.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"obj\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
+    },
+    "filter\u0000$.obj.endsWith('a')": {
+      "entry": "filter",
+      "src": "$.obj.endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"$obj\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"obj\":\"«regexp:a$/»\"}",
+      "reason": "Intended, and a PERFORMANCE + ROBUSTNESS fix. `.startsWith(lit)` / `.endsWith(lit)` had no query form and fell through to `{ $expr: … }`, which is two problems. `$expr` CANNOT USE AN INDEX — measured on a live mongod with an index on the field: `{ s: /^he/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so a single numeric value anywhere in the collection ABORTED THE WHOLE QUERY; the regex simply does not match those documents. The anchored Query cell of the `Contains` IR node now emits a real BSON regex (a RegExp instance, not a `$regex` document, so the driver serialises what the index reads). Gated on a LITERAL needle and a static field path — a runtime needle or a computed receiver keeps the expression fallback, and an HR1 `\"$x\"` needle is a field reference, not a literal. Regex metacharacters in the needle are escaped with a replacer FUNCTION, so a needle containing `$` cannot corrupt itself through String.replace's substitution patterns. Verified: query and expr select the same ids for `he`, `lo` and the metacharacter case `a.b`."
     }
   }
 }

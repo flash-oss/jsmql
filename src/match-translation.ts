@@ -20,7 +20,15 @@ import type { Expr, BinaryOp } from "./ast.ts";
 import { ObjectId } from "./objectid.ts";
 import { isOpaqueBsonValue, generateBool, mqlForBinaryOp, foldConstantDate } from "./codegen.ts";
 import { lookupOperator } from "./operators.ts";
-import { existsFrom, existsQuery, orientUndefined, typeIsFrom, typeIsQuery } from "./predicate-ir.ts";
+import {
+  containsFrom,
+  containsQuery,
+  existsFrom,
+  existsQuery,
+  orientUndefined,
+  typeIsFrom,
+  typeIsQuery,
+} from "./predicate-ir.ts";
 import type { GenerateCtx } from "./codegen.ts";
 
 export type MatchTranslation = {
@@ -267,9 +275,30 @@ function translateBooleanMethodCall(
   ctx: TranslateCtx,
 ): Record<string, unknown> | null {
   if (expr.method === "includes") return translateIncludesCall(expr, ctx);
+  if (expr.method === "startsWith") return translateAnchoredCall(expr, "start");
+  if (expr.method === "endsWith") return translateAnchoredCall(expr, "end");
   if (expr.method === "match") return translateMatchCall(expr);
   if (expr.method === "some") return translateSomeCall(expr, ctx);
   return null;
+}
+
+/**
+ * The Query cell of an ANCHORED `Contains` — `.startsWith(lit)` / `.endsWith(lit)`.
+ *
+ * Gated on a static field path and a LITERAL needle; a runtime needle cannot be baked into a
+ * pattern, so it keeps the expression fallback.
+ */
+function translateAnchoredCall(
+  expr: Expr & { type: "MethodCall" },
+  anchor: "start" | "end",
+): Record<string, unknown> | null {
+  if (expr.args.length !== 1) return null;
+  const field = asFieldPath(expr.object);
+  if (field === null) return null;
+  const arg = expr.args[0];
+  // A source `"$x"` is a field REFERENCE (HR1), not a literal needle.
+  if (arg.type !== "StringLiteral" || arg.value.startsWith("$")) return null;
+  return containsQuery(containsFrom(expr.object, arg.value, anchor), field);
 }
 
 /**

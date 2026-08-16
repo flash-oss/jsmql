@@ -66,9 +66,14 @@ const AGREE: readonly string[] = [
   // Mod
   "$.a % 2 === 0",
   "$.a % 2 !== 0",
-  // Contains, anchored
+  // Contains, anchored — an INDEXED prefix/suffix regex as a query, `$indexOfCP` /
+  // `$substrCP` as an expression. Both must select the same documents.
   '$.s.startsWith("he")',
   '$.s.endsWith("lo")',
+  '$.s.startsWith("H")',
+  '$.s.endsWith("o")',
+  // A needle carrying regex metacharacters must be escaped, not interpreted.
+  '$.s.startsWith("h.")',
   // RegexMatch
   "$.s.match(/^he/)",
   "/^he/.test($.s)",

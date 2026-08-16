@@ -172,3 +172,45 @@ export function existsExpr(node: Exists, loweredOperand: unknown): unknown {
   const actual = { $type: loweredOperand };
   return { [node.present ? "$ne" : "$eq"]: [actual, MISSING] };
 }
+
+/** `Contains` — the node behind `.includes` / `.startsWith` / `.endsWith`. */
+export type Contains = {
+  readonly kind: "Contains";
+  readonly operand: Expr;
+  /** The literal needle. Only a literal can be baked into an anchored pattern. */
+  readonly needle: string;
+  readonly anchor: "start" | "end";
+};
+
+/**
+ * Escape a literal needle for use inside a regex, using a REPLACER FUNCTION.
+ *
+ * A replacement STRING would be wrong here: `String.replace` reads `$&`, `$1` and `$$` as
+ * substitution patterns, so a needle containing `$` would corrupt itself.
+ */
+function escapeRegexLiteral(needle: string): string {
+  return needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => `\\${m}`);
+}
+
+export function containsFrom(operand: Expr, needle: string, anchor: "start" | "end"): Contains {
+  return { kind: "Contains", operand, needle, anchor };
+}
+
+/**
+ * The Query cell for an ANCHORED contains — an indexable prefix/suffix regex.
+ *
+ * This is the cell the spec anticipated: `.startsWith` and `.endsWith` used to have no query
+ * form at all and fell through to `{ $expr: … }`, which is TWO problems. `$expr` cannot use
+ * an index — measured: `{ s: /^he/ }` plans an IXSCAN where the `$expr` form plans a
+ * COLLSCAN. And the expression form calls `$indexOfCP`, which ERRORS on a non-string, so one
+ * numeric value anywhere in the collection aborted the whole query. The regex simply does
+ * not match those documents.
+ *
+ * Gated on a literal needle and a static path; anything else keeps the expression fallback.
+ */
+export function containsQuery(node: Contains, path: string): Record<string, unknown> {
+  const body = escapeRegexLiteral(node.needle);
+  // A real RegExp, not a `$regex` document: the driver serialises it as a BSON regex, which
+  // is what the index reads.
+  return { [path]: new RegExp(node.anchor === "start" ? `^${body}` : `${body}$`) };
+}
