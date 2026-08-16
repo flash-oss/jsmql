@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: a lookup inside a sub-pipeline read as missing, silently
+
+`$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(...)] })` put the `$lookup` in the
+OUTER pipeline and left `{$set: {o: "$__jsmql.tmp.1"}}` inside the union. The union's
+pipeline runs over collection `c`, whose documents have never seen that scratch slot — so
+`o` was missing on every unioned document, with no error anywhere. The same held for
+`$lookup.pipeline` and for a `$facet` branch.
+
+The cause is the one the desugar-pass spec predicts: an entry point that does not test for a
+form. `extractFromStageElement` walks a stage body for buried lookups and hoists them to a
+prologue, which is right for an ordinary body — `$project({ o: $$$.orders.find(…) })` must
+hoist. But it descended into sub-pipeline fields too, and a sub-pipeline is a DIFFERENT
+pipeline's scope. The literal-sub-pipeline lowerer never got the chance to reject it, because
+the extractor had already rewritten it away.
+
+The extractor now leaves a stage's declared `subPipelineFields` alone — including `$facet`'s
+`"*"`, whose branch names belong to the user and so cannot be listed — and the sub-pipeline
+lowerer rejects the form beside its four existing siblings (`$ = …`, `$$ = …`,
+`$$$.<coll> = …`, `$$.push(…)`), naming the two spellings that do work. Hoisting from an
+ordinary stage body is untouched and now has a corpus source holding it there.
+
+Found by the audit for the desugar pass, which is exactly the class of defect that pass is
+meant to make impossible: sugar recognised during lowering has to be recognised at every
+place lowering begins, and this was one that was not.
+
+---
+
 ## 2026-08-16 — fix: typeof answered differently in a filter and in an expression
 
 `typeof $.a === "boolean"` was FALSE for every document — including one where the field

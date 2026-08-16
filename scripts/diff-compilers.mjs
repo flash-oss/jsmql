@@ -225,6 +225,10 @@ function generatedCorpus() {
     'typeof $.a === "function"',
     'typeof $.a.b.c === "number"',
     '$set({ t: typeof $.a === "boolean" });',
+    '$unionWith({ coll: "c", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });',
+    '$lookup({ from: "o", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: "o" });',
+    "$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+    "$project({ o: $$$.orders.find(o => o.uid === 1) });",
   ];
   out.push(...EDGES);
   const PREDICATES = [

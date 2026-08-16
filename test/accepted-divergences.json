@@ -1,9 +1,5 @@
 {
-  "reference": {
-    "commit": "cf4b339",
-    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
-    "dirty": false
-  },
+  "reference": { "commit": "cf4b339", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -2244,6 +2240,102 @@
       "was": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"boolean\"]}",
       "now": "{\"$eq\":[{\"$type\":\"$a.b.c\"},\"bool\"]}",
       "reason": "Intended, and a BUG FIX. MongoDB's `$type` expression returns \"bool\" and \"int\"/\"double\"/\"long\"/\"decimal\" — never JavaScript's \"boolean\" or the query-only umbrella \"number\". The expression cell compared `$type` against JavaScript's own spelling, so `typeof $.a === \"boolean\"` was FALSE for every document, including one where the field really was a boolean; the identical source in Filter position was correct, because the query side had an alias table and the expression side had none. Both cells now read the one vocabulary in src/predicate-ir.ts: \"boolean\" maps to \"bool\", and the group alias \"number\" becomes an $in over the concrete types $type can return. Verified on a live mongod — query and expr now select the same documents. Only \"boolean\" and \"number\" changed; \"string\"/\"object\" and unrecognised aliases such as \"function\" emit exactly what they did before."
+    },
+    "jsmql\u0000$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "jsmql",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$unionWith\":{\"coll\":\"c\",\"pipeline\":[{\"$match\":{\"a\":{\"$gt\":0}}},{\"$set\":{\"o\":\"",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "pipeline\u0000$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "pipeline",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$unionWith\":{\"coll\":\"c\",\"pipeline\":[{\"$match\":{\"a\":{\"$gt\":0}}},{\"$set\":{\"o\":\"",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "validate\u0000$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "validate",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$match($.a > 0), $.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from ",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "jsmql\u0000$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });": {
+      "entry": "jsmql",
+      "src": "$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"items\",\"pipeline\":[{\"$match\":{\"k\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"x\":\"$__jsmql.tmp.1\"}}],\"as\":\"o\"}},{\"$",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "pipeline\u0000$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });": {
+      "entry": "pipeline",
+      "src": "$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"items\",\"pipeline\":[{\"$match\":{\"k\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$lookup\":{\"from\":\"o\",\"pipeline\":[{\"$set\":{\"x\":\"$__jsmql.tmp.1\"}}],\"as\":\"o\"}},{\"$",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "validate\u0000$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });": {
+      "entry": "validate",
+      "src": "$lookup({ from: \"o\", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: \"o\" });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from ",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "jsmql\u0000$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "jsmql",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$unionWith\":{\"coll\":\"c\",\"pipeline\":[{\"$set\":{\"o\":\"$__jsmql.tmp.1\"}}]}},{\"$uns",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "pipeline\u0000$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "pipeline",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$unionWith\":{\"coll\":\"c\",\"pipeline\":[{\"$set\":{\"o\":\"$__jsmql.tmp.1\"}}]}},{\"$uns",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "validate\u0000$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "validate",
+      "src": "$unionWith({ coll: \"c\", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from ",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "jsmql\u0000$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "jsmql",
+      "src": "$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$facet\":{\"a\":[{\"$set\":{\"o\":\"$__jsmql.tmp.1\"}}]}}]",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "pipeline\u0000$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "pipeline",
+      "src": "$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"uid\":1}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$facet\":{\"a\":[{\"$set\":{\"o\":\"$__jsmql.tmp.1\"}}]}}]",
+      "now": "'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from this one. Write the '$lookup' stage d",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
+    },
+    "validate\u0000$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });": {
+      "entry": "validate",
+      "src": "$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — the '$lookup' it needs would have to run in the OUTER pipeline, against a different stream from ",
+      "reason": "Intended, and a BUG FIX for a SILENT WRONG ANSWER. A lookup assignment written inside a literal sub-pipeline array used to have its `$lookup` hoisted into the OUTER pipeline while the reference to its result stayed inside — and the inner pipeline runs over a different collection, whose documents never carry the outer scratch slot, so the field read as MISSING on every document with no error anywhere. The extractor no longer descends into a stage's declared `subPipelineFields` (that is another pipeline's scope), and the sub-pipeline lowerer rejects the form with a message naming the two things that do work. Sibling of the `$ = …`, `$$ = …`, `$$$.<coll> = …` and `$$.push(...)` rejections already in that same guard. A lookup in an ORDINARY stage body still hoists exactly as before — `$project({ o: $$$.orders.find(...) })` is unchanged, and is now in the corpus to keep it that way."
     }
   }
 }

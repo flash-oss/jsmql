@@ -1682,3 +1682,29 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
     expect(jsmql(wrap("$.a = 1"))).toEqual([{ $lookup: { from: "o", pipeline: [{ $set: { a: 1 } }], as: "o" } }]);
   });
 });
+
+describe("a lookup inside a literal sub-pipeline array", () => {
+  // It used to HOIST: the `$lookup` landed in the outer pipeline and the reference to its
+  // result stayed inside, where the stream is a different collection whose documents never
+  // carry the outer scratch slot. The field read as missing, on every document, silently.
+  const NAMES = /isn't available inside a literal sub-pipeline array/;
+  it("is rejected in every sub-pipeline container", () => {
+    expect(() => jsmql('$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });')).toThrow(
+      NAMES,
+    );
+    expect(() => jsmql('$lookup({ from: "o", pipeline: [$.x = $$$.items.find(i => i.k === 1)], as: "o" });')).toThrow(
+      NAMES,
+    );
+    expect(() => jsmql("$facet({ a: [$.o = $$$.orders.find(o => o.uid === 1)] });")).toThrow(NAMES);
+  });
+
+  it("still hoists out of an ORDINARY stage body", () => {
+    // The fix is about a sub-pipeline being another pipeline's scope, not about hoisting.
+    expect(jsmql("$project({ o: $$$.orders.find(o => o.uid === 1) });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $project: { o: "$__jsmql.tmp.1" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});

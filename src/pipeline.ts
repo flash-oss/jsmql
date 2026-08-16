@@ -17,6 +17,7 @@ import type {
   Expr,
   BinaryOp,
   ArrayElement,
+  ObjectEntry,
   UpdateOp,
   AssignExpr,
   Pipeline,
@@ -84,6 +85,7 @@ import {
   detectLookupCall,
   lowerLookup,
   lookupSlotType,
+  containsLookupCall,
   extractLookupCalls,
   createSlotAllocator,
   predicateReferencesOuterDoc,
@@ -2230,6 +2232,19 @@ function generatePipelineWithCtx(ast: Expr, startCtx: GenerateCtx, container: Co
         op.pos,
       );
     }
+    if (containsLookupCall(op.value, ctx)) {
+      // Not merely unsupported — it used to emit the WRONG ANSWER. The `$lookup` was hoisted
+      // to the outer pipeline while the reference to its result stayed in here, and this
+      // pipeline runs over a different collection whose documents never carry the outer slot,
+      // so the field silently read as missing.
+      throw new CodegenError(
+        `'$.<field> = $$$.<coll>.find(…)' isn't available inside a literal sub-pipeline array — ` +
+          `the '$lookup' it needs would have to run in the OUTER pipeline, against a different ` +
+          `stream from this one. Write the '$lookup' stage directly here, or do the lookup in the ` +
+          `outer pipeline and reference its result.`,
+        op.pos,
+      );
+    }
   };
   let everHadLet = ctxHasLets(startCtx); // shouldn't happen for sub-pipelines, but safe
   const validator = makePipelineValidator(container);
@@ -2713,11 +2728,17 @@ function extractFromStageElement(
   out: unknown[],
 ): ArrayElement {
   if (el.type === "OperatorCall") {
+    const subFields = subPipelineFieldsOf(el.name);
     const args = el.args.map((arg): CallArg => {
       if (arg.type === "SpreadElement") {
         const { stages, rewritten } = extractLookupCalls(arg.argument, ctx, allocSlot, lowerBlockFn);
         for (const s of stages) out.push(s);
         return { type: "SpreadElement", argument: rewritten, pos: arg.pos };
+      }
+      // An object-style stage body carries this stage's sub-pipeline fields, and those are
+      // a DIFFERENT pipeline's scope. See `withoutSubPipelines`.
+      if (arg.type === "ObjectLiteral" && subFields.length > 0) {
+        return withoutSubPipelines(arg, subFields, ctx, allocSlot, lowerBlockFn, out);
       }
       const { stages, rewritten } = extractLookupCalls(arg, ctx, allocSlot, lowerBlockFn);
       for (const s of stages) out.push(s);
@@ -2733,6 +2754,11 @@ function extractFromStageElement(
         for (const s of stages) out.push(s);
         return { type: "SpreadElement" as const, argument: rewritten, pos: entry.pos };
       }
+      const subFields = entry.key.kind === "static" ? subPipelineFieldsOf(entry.key.name) : [];
+      if (entry.value.type === "ObjectLiteral" && subFields.length > 0) {
+        const value = withoutSubPipelines(entry.value, subFields, ctx, allocSlot, lowerBlockFn, out);
+        return { type: "KeyValueEntry" as const, key: entry.key, value, pos: entry.pos };
+      }
       const { stages, rewritten } = extractLookupCalls(entry.value, ctx, allocSlot, lowerBlockFn);
       for (const s of stages) out.push(s);
       return { type: "KeyValueEntry" as const, key: entry.key, value: rewritten, pos: entry.pos };
@@ -2740,6 +2766,42 @@ function extractFromStageElement(
     return { type: "ObjectLiteral", entries, pos: el.pos };
   }
   return el;
+}
+
+/** The sub-pipeline fields a stage declares, or none when it is not a stage. */
+function subPipelineFieldsOf(name: string): readonly string[] {
+  return STAGES[name]?.subPipelineFields ?? [];
+}
+
+/**
+ * Walk a stage body for buried lookups, but LEAVE its sub-pipeline fields alone.
+ *
+ * A sub-pipeline is a different pipeline's scope. Hoisting a lookup out of one puts the
+ * `$lookup` in the OUTER pipeline while the reference to its result stays inside — and the
+ * inner pipeline runs over a different collection, whose documents never carry the outer
+ * slot. `$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(…)] })` emitted the
+ * `$lookup` outside and left `{$set:{o:"$__jsmql.tmp.1"}}` inside, so `o` silently read as
+ * missing on every unioned document. The sub-pipeline's own lowerer owns those elements.
+ */
+function withoutSubPipelines(
+  body: Extract<Expr, { type: "ObjectLiteral" }>,
+  subFields: readonly string[],
+  ctx: GenerateCtx,
+  allocSlot: SlotAllocator,
+  lowerBlockFn: SubPipelineLowerer,
+  out: unknown[],
+): Extract<Expr, { type: "ObjectLiteral" }> {
+  const entries = body.entries.map((entry): ObjectEntry => {
+    if (entry.type === "SpreadElement") return entry;
+    // `"*"` means every value is a sub-pipeline — `$facet`, whose branch names are the
+    // user's own, so the registry cannot list them.
+    if (subFields.includes("*")) return entry;
+    if (entry.key.kind === "static" && subFields.includes(entry.key.name)) return entry;
+    const { stages, rewritten } = extractLookupCalls(entry.value, ctx, allocSlot, lowerBlockFn);
+    for (const s of stages) out.push(s);
+    return { type: "KeyValueEntry" as const, key: entry.key, value: rewritten, pos: entry.pos };
+  });
+  return { type: "ObjectLiteral", entries, pos: body.pos };
 }
 
 // ── `$$.length` stream-cardinality materialisation ──────────────────────────────
