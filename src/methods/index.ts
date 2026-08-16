@@ -11,6 +11,7 @@
 //
 // See docs/specs/lowering-grid.md.
 
+import { ARRAY_SHIM_METHODS } from "./array-shims.ts";
 import { DATE_ACCESSOR_METHODS } from "./date-accessors.ts";
 import { LODASH_ARRAY_METHODS } from "./lodash-array.ts";
 import { LODASH_STRING_METHODS } from "./lodash-string.ts";
@@ -21,6 +22,7 @@ import type { MethodDef } from "./types.ts";
 
 /** Every family, in the order a reader would look for them. */
 const FAMILIES: Record<string, Record<string, MethodDef>> = {
+  "array-shims": ARRAY_SHIM_METHODS,
   "date-accessors": DATE_ACCESSOR_METHODS,
   "lodash-array": LODASH_ARRAY_METHODS,
   "lodash-string": LODASH_STRING_METHODS,

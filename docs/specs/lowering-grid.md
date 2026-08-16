@@ -144,6 +144,7 @@ the count reaches zero.
 | object (key/value reshapers) | `src/methods/object.ts` | 8 |
 | lodash string (case/word) | `src/methods/lodash-string.ts` | 9 |
 | lodash array (value vocabulary) | `src/methods/lodash-array.ts` | 33 |
+| array shims (mutators / iterators) | `src/methods/array-shims.ts` | 14 |
 
 `src/methods/` holds **method families and nothing else** — that is what lets the assembly
 test compare the directory to the registry directly. Shared MQL shape-builders live beside

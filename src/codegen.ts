@@ -3576,9 +3576,11 @@ function generateMethodCall(
   // asserts that set only ever shrinks.
   const declared = lookupMethod(method);
   if (declared !== undefined) {
+    // The unsupported answer comes FIRST: a method that cannot be lowered at all has no
+    // arity to complain about, and its tailored message is the useful error.
+    if (isUnsupported(declared.value)) throw new CodegenError(declared.value.unsupported, callPos);
     const exprArgs = exprArgsOnly(args, method);
     checkArity(method, declared.args, exprArgs.length, callPos);
-    if (isUnsupported(declared.value)) throw new CodegenError(declared.value.unsupported, callPos);
     return declared.value({
       recv: genObj,
       args: exprArgs,
@@ -4289,82 +4291,10 @@ function generateMethodCall(
     // the call to `$.<field> = $.<field>.<immutable>(...)` before codegen
     // sees it — so reaching these throws means the user used a mutator in
     // expression position.
-    case "sort":
-      throw new CodegenError(
-        `.sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
-        callPos,
-      );
-    case "reverse":
-      throw new CodegenError(
-        `.reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
-        callPos,
-      );
-    case "splice":
-      throw new CodegenError(
-        `.splice() mutates the array in JavaScript. In expression position, use '.toSpliced(start, deleteCount, ...items)' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
-        callPos,
-      );
-    case "push":
-      throw new CodegenError(
-        `.push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.`,
-        callPos,
-      );
-    case "pop":
-      throw new CodegenError(
-        `.pop() mutates the array in JavaScript. In expression position, use '.at(-1)' to read the last element or '.slice(0, -1)' for everything-but-last — or call it at statement position (top-level on a '$.<field>' receiver) to drop the last element.`,
-        callPos,
-      );
-    case "shift":
-      throw new CodegenError(
-        `.shift() mutates the array in JavaScript. In expression position, use '.at(0)' to read the first element or '.slice(1)' for everything-but-first — or call it at statement position (top-level on a '$.<field>' receiver) to drop the first element.`,
-        callPos,
-      );
-    case "unshift":
-      throw new CodegenError(
-        `.unshift() mutates the array in JavaScript. In expression position, use '.concat()' with the new items first or spread '[...newItems, ...arr]' — or call it at statement position (top-level on a '$.<field>' receiver) to prepend in place.`,
-        callPos,
-      );
-    case "fill":
-      throw new CodegenError(
-        `.fill() mutates the array in JavaScript. In expression position there is no direct immutable replacement (build from a $range or pass a pre-filled array as a parameter) — or call it at statement position (top-level on a '$.<field>' receiver) to fill the field in place.`,
-        callPos,
-      );
-    case "copyWithin":
-      throw new CodegenError(
-        `.copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.`,
-        callPos,
-      );
-    case "unzipWith":
-      // lodash's iteratee gets each group spread as separate args — its arity is the
-      // receiver's (runtime) row count, which a fixed-parameter arrow can't express.
-      throw new CodegenError(
-        `.unzipWith(fn) isn't supported — its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => …)' instead, where 'group' is one unzipped column.`,
-        callPos,
-      );
 
     // ── DX shims: iterator / void / locale methods ──────────────────────────
     // None of these have a sensible lowering to an MQL expression. Throw a
     // pointed error explaining why, with a workaround when one exists.
-    case "forEach":
-      throw new CodegenError(
-        `.forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.`,
-        callPos,
-      );
-    case "entries":
-      throw new CodegenError(
-        `.entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.`,
-        callPos,
-      );
-    case "keys":
-      throw new CodegenError(
-        `.keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.`,
-        callPos,
-      );
-    case "values":
-      throw new CodegenError(
-        `.values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.`,
-        callPos,
-      );
     case "toLocaleString":
       throw new CodegenError(
         `.toLocaleString() is locale-dependent and isn't expressible as a MongoDB expression. Use '.join(...)' with explicit formatting, or '$dateToString' for dates.`,

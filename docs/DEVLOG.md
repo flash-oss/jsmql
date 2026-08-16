@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the rejection shims become declarations
+
+`src/methods/array-shims.ts` holds the fourteen array methods jsmql answers with a
+REJECTION — the nine mutators (`.sort`, `.push`, `.fill`, …) and the five iterator/void
+methods (`.forEach`, `.keys`, …). Each is one `unsupported(reason)` declaration, which is
+what that cell was designed for: not a gap, but the recorded answer carrying the text the
+user reads. Ratchet 82 → 68.
+
+Dispatch now checks the unsupported answer BEFORE it counts arguments. A method that cannot
+be lowered at all has no arity to complain about, and its tailored message is the useful
+error — `.push(1, 2)` should say "use '.concat(x)'", not "requires exactly 1 argument".
+`NO_ARITY` in `src/methods/types.ts` states that absence as a decision instead of inventing
+a rule nothing reads.
+
+All fourteen declare the array family even though the lowering only throws, so a chain
+type-check on a non-array receiver fires first — "use '.toSorted()'" is the wrong advice for
+a string. `.toLocaleString` is the one that stays in the switch: it is genuinely universal
+in JavaScript (Number, Date and Array all carry it), so it has no family to declare.
+
+Output-neutral, message-for-message: all fourteen errors were re-read verbatim, and the
+statement-position mutator rewrites (`$.tags.push("x");` → `$set`/`$concatArrays`) are
+untouched — they never reach `generateMethodCall`.
+
+---
+
 ## 2026-08-16 — refactor: the object iteratee methods join the grid
 
 `.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` complete `src/methods/object.ts`, which

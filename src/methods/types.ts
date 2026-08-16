@@ -92,6 +92,15 @@ export type LowerInput = {
 /** A cell that cannot exist, with the reason a user reads. */
 export type Unsupported = { unsupported: string };
 
+/**
+ * The `args` rule for a declaration whose cell is `unsupported`.
+ *
+ * Dispatch rejects such a method BEFORE it counts arguments — the tailored message is the
+ * useful error, and an arity complaint about a method that cannot be lowered at all is
+ * noise. So there is no rule to state, and this says that rather than inventing one.
+ */
+export const NO_ARITY: MethodArgs = { sig: "", atLeast: 0 };
+
 export function unsupported(reason: string): Unsupported {
   return { unsupported: reason };
 }
