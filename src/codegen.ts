@@ -3386,6 +3386,17 @@ function generateMethodCall(
       iteratee: (node?: Expr) => resolveIteratee(node, method, ctx),
       predicate: (node: Expr) => resolvePredicate(node, method, ctx),
       objIteratee: (node: Expr) => resolveObjIteratee(node, method, ctx),
+      callback: () => {
+        const lambda = requireLambda(exprArgs, method, callPos, ctx);
+        const iter = arrayIterInput(lambda, genObj, ctx, method, object);
+        return {
+          input: iter.input,
+          as: iter.asName,
+          paired: iter.paired,
+          body: () => iter.wrap(genLambdaBody(lambda, iter.bodyCtx)),
+          boolBody: () => iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)),
+        };
+      },
     });
   }
 
@@ -3624,15 +3635,7 @@ function generateMethodCall(
         },
       };
     }
-    case "findLast": {
-      const lambda = requireLambda(exprArgsOnly(args, "findLast"), "findLast", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "findLast", object);
-      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
-      if (!iter.paired) {
-        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] };
-      }
-      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, -1] }, 1] };
-    }
+    // .findLast → src/methods/array-callbacks.ts
     case "findIndex":
     case "findLastIndex": {
       const lambda = requireLambda(exprArgsOnly(args, method), method, callPos, ctx);
@@ -3719,70 +3722,14 @@ function generateMethodCall(
       return { $toString: genObj };
     }
     // .flat → src/methods/array-slicing.ts
-    case "flatMap": {
-      const lambda = requireLambda(exprArgsOnly(args, "flatMap"), "flatMap", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "flatMap", object);
-      return {
-        $reduce: {
-          input: { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } },
-          initialValue: [],
-          in: { $concatArrays: ["$$value", "$$this"] },
-        },
-      };
-    }
+    // .flatMap → src/methods/array-callbacks.ts
 
     // ── Array methods (lambda) ──────────────────────────────────────────────
-    case "map": {
-      const lambda = requireLambda(exprArgsOnly(args, "map"), "map", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "map", object);
-      return { $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBody(lambda, iter.bodyCtx)) } };
-    }
-    case "filter": {
-      const lambda = requireLambda(exprArgsOnly(args, "filter"), "filter", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "filter", object);
-      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
-      if (!iter.paired) {
-        return { $filter: { input: iter.input, as: iter.asName, cond } };
-      }
-      // Paired (index used): filter the (index, element) pairs, then project
-      // back to elements.
-      const [vPair, pair] = internalVar(ctx, "pair");
-      return {
-        $map: {
-          input: { $filter: { input: iter.input, as: iter.asName, cond } },
-          as: vPair,
-          in: { $arrayElemAt: [pair, 1] },
-        },
-      };
-    }
-    case "find": {
-      const lambda = requireLambda(exprArgsOnly(args, "find"), "find", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "find", object);
-      const cond = iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx));
-      if (!iter.paired) {
-        return { $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] };
-      }
-      // Paired (index used): find first matching pair, then extract its element.
-      return { $arrayElemAt: [{ $arrayElemAt: [{ $filter: { input: iter.input, as: iter.asName, cond } }, 0] }, 1] };
-    }
-    case "some": {
-      const lambda = requireLambda(exprArgsOnly(args, "some"), "some", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "some", object);
-      return {
-        $anyElementTrue: {
-          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) },
-        },
-      };
-    }
-    case "every": {
-      const lambda = requireLambda(exprArgsOnly(args, "every"), "every", callPos, ctx);
-      const iter = arrayIterInput(lambda, genObj, ctx, "every", object);
-      return {
-        $allElementsTrue: {
-          $map: { input: iter.input, as: iter.asName, in: iter.wrap(genLambdaBoolBody(lambda, iter.bodyCtx)) },
-        },
-      };
-    }
+    // .map → src/methods/array-callbacks.ts
+    // .filter → src/methods/array-callbacks.ts
+    // .find → src/methods/array-callbacks.ts
+    // .some → src/methods/array-callbacks.ts
+    // .every → src/methods/array-callbacks.ts
     case "reduce":
     case "reduceRight": {
       const exprArgs = exprArgsOnly(args, method);

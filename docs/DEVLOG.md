@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — refactor: the JavaScript array callbacks join the grid
+
+`.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every` and `.flatMap` become
+`src/methods/array-callbacks.ts`, on one new service: `LowerInput.callback()`. Ratchet
+34 → 27.
+
+It is richer than `iteratee` and had to be. A JavaScript callback's PARAMETERS decide what
+gets iterated — reference the index and the input becomes a `$zip` of index and element
+rather than the array — and they decide what the body's scope binds. Only the compiler can
+build that. What comes back is leaf-shaped: the input, the element variable, whether the
+input holds pairs, and the lowered body. The two body forms (value and boolean) are lazy,
+because lowering one mints variable names and producing both eagerly would advance the
+gensym counter for a body nobody emits.
+
+`paired` is the one thing each declaration handles, and handles differently: `.map` has
+nothing to undo (the callback's result IS the element), `.filter` projects back out of the
+pair with a `$map`, `.find` takes element 1 of the matched pair, and `.some` / `.every`
+ignore it entirely because they collapse to a boolean either way.
+
+The arity rule for these is `resolverChecksArgs(sig)`. A callback method asks ONE question —
+"is there a callback here?" — and the answer has to name the shape (".map() requires a
+lambda as its first argument, e.g. x => x > 0"), which no count can. Splitting that into a
+count rule plus a shape check would produce two errors for one mistake and let the worse one
+win.
+
+Output-neutral; eight callback lowerings, including the index-referencing forms, were
+re-checked against their JavaScript results on a live `mongod`.
+
+---
+
 ## 2026-08-16 — refactor: the date family joins the grid, and an arity rule can carry a reason
 
 `src/methods/date.ts` takes the 18 date methods JavaScript does NOT have — `.plus` /

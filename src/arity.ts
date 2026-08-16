@@ -88,3 +88,17 @@ function formatCountList(ns: readonly number[]): string {
   if (ns.length === 2) return `${ns[0]} or ${ns[1]}`;
   return `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 }
+
+/**
+ * The rule for a declaration whose argument check belongs to its RESOLVER rather than to a
+ * count.
+ *
+ * A callback method asks one question — "is there a callback here?" — and the answer has to
+ * name the SHAPE (".map() requires a lambda as its first argument, e.g. x => x > 0"), which
+ * no count can. Splitting that into a count rule plus a shape check would produce two errors
+ * for one mistake and let the worse one win. `sig` still describes the parameter, because
+ * the TypeScript signature generator reads it.
+ */
+export function resolverChecksArgs(sig: string): MethodArgs {
+  return { sig, atLeast: 0 };
+}

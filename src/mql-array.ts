@@ -42,6 +42,29 @@ export type ResolvedIteratee = {
 export type ResolvedPredicate = { as: string; cond: unknown; innerVar: (base: string) => [string, string] };
 
 /**
+ * A JavaScript array CALLBACK — `(element[, index[, array]]) => …` — already resolved
+ * against the receiver.
+ *
+ * The bodies are lazy because lowering one mints variable names: producing both eagerly
+ * would advance the gensym counter for a body the caller never emits. Each method calls
+ * exactly one of them.
+ */
+export type ResolvedCallback = {
+  /** What `$map` / `$filter` iterates: the array, or a `$zip` of index and element. */
+  input: unknown;
+  as: string;
+  /**
+   * True when `input` holds (index, element) PAIRS, which happens only when the callback
+   * actually references its index parameter. The caller must then project back to elements.
+   */
+  paired: boolean;
+  /** The lowered body, already wrapped for a third `array` parameter if there is one. */
+  body: () => unknown;
+  /** The same body lowered in BOOLEAN position, for a predicate. */
+  boolBody: () => unknown;
+};
+
+/**
  * Wrap a *literal array* operand one level deeper for the positional single-array-argument
  * operators (`$size`, `$first`, `$last`, `$reverseArray`) so it can't be read as the
  * argument LIST. MongoDB splices a bare array there: `{ $size: [1, 2] }` is two arguments

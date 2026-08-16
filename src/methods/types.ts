@@ -14,7 +14,7 @@
 
 import type { MethodArgs } from "../arity.ts";
 import type { Expr } from "../ast.ts";
-import type { ResolvedIteratee, ResolvedPredicate } from "../mql-array.ts";
+import type { ResolvedCallback, ResolvedIteratee, ResolvedPredicate } from "../mql-array.ts";
 
 /** The receiver family a method requires. Decides which cells are applicable. */
 export type ReceiverFamily = "string" | "array" | "number" | "date" | "object";
@@ -78,6 +78,16 @@ export type LowerInput = {
    * the SAME name the body was built against.
    */
   objIteratee: (node: Expr) => { as: string; body: unknown };
+  /**
+   * Resolve this call's JavaScript array callback — `(element[, index[, array]]) => …`.
+   *
+   * Richer than `iteratee`: the callback's parameters decide what is iterated (referencing
+   * the index makes the input a `$zip` of index and element) and what the body's scope
+   * binds. Only the compiler can build that, and it takes the ARGUMENTS from the call
+   * rather than a node, because the shorthand forms and the bare-built-in form resolve to a
+   * lambda here too.
+   */
+  callback: () => ResolvedCallback;
 };
 
 /** A cell that cannot exist, with the reason a user reads. */
