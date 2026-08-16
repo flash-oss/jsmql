@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — fix: the differential harness pins the compiler it compares against
+
+The harness's reference is "the checkout this worktree hangs off". That checkout belongs to
+whoever else is working in it, and it moved during a session — onto a branch two commits
+ahead of the frozen master the refactor was supposed to be measured against.
+
+Nothing was harmed: both commits were landing-page work and the reference's `src/` tree is
+byte-identical to frozen master, so every output-neutral claim made so far stands. But that
+was luck, and the harness could not have told anyone otherwise — it printed the reference
+PATH and nothing about which compiler was at it.
+
+It now reads the reference's commit and the git TREE hash of its `src/`, and prints both.
+Only `src/` counts: a reference that moved for docs is the same compiler, and the tree hash
+says so without a diff. `--accept` stamps that identity into
+`test/accepted-divergences.json`, and a later run whose reference has a different `src/`
+tree — or uncommitted edits in it — exits 3 and explains why. Every accepted row is a
+judgement about one specific compiler; against a different one, a real regression reads as
+an already-accepted divergence.
+
+The guard was checked by faking a moved tree hash: exit 3, with the recorded and actual
+trees named. That matters more now than it did — the three largest migrations left all
+justify themselves with "UNCLASSIFIED: 0".
+
+---
+
 ## 2026-08-16 — feat: the grid learns dual receivers, and derives the dispatch it used to repeat
 
 `receiver` named ONE family, and twelve methods have two. JavaScript put `.slice`,

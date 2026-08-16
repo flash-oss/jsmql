@@ -84,3 +84,21 @@ Probe those through the JS API.
 The harness compares the one-shot entry points. It does not cover `jsmql.compile(…)(params)`,
 whose divergences need a params fixture per case, nor the template-tag form. A change to
 binding resolution needs its own test — the `.reduce` binding fix is the worked example.
+
+## The reference is pinned, not assumed
+
+The reference defaults to the checkout this worktree hangs off — a checkout that belongs to
+whoever else is working in it, and that can move under a run. A sibling session checking out
+a branch changes what "no divergence" means, and every neutrality claim measured against it
+changes silently with it.
+
+So the harness reads the reference's identity and prints it: the commit, and the git TREE
+hash of its `src/`. Only `src/` counts — a reference that moved for docs or a landing page is
+the same compiler, and the tree hash says so directly.
+
+`--accept` stamps that identity into `test/accepted-divergences.json`. A later run whose
+reference has a different `src/` tree, or uncommitted edits in `src/`, **fails with exit 3**
+and says so, because every accepted row is a judgement about one specific compiler: against a
+different one, a real regression can read as an already-accepted divergence.
+
+Restore the reference, or re-judge the rows against the new one with `--accept`.

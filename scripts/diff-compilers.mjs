@@ -19,6 +19,7 @@
 // Exit code is 1 while any UNACCEPTED divergence remains, so CI can gate on it.
 
 import { readFileSync, writeFileSync, existsSync, readdirSync } from "node:fs";
+import { spawnSync } from "node:child_process";
 import { dirname, resolve, join } from "node:path";
 import { fileURLToPath, pathToFileURL } from "node:url";
 
@@ -47,6 +48,33 @@ if (!existsSync(refEntry)) {
   console.error(`diff-compilers: no compiler at ${refEntry}. Pass --ref <path>.`);
   process.exit(2);
 }
+
+/**
+ * The identity of the reference COMPILER — the git commit its `src/` is at, plus whether
+ * that `src/` has uncommitted edits.
+ *
+ * The reference is "the checkout this worktree hangs off", and that checkout belongs to
+ * whoever else is working in it. It can move under a run: a sibling session checking out a
+ * branch changes what "no divergence" means, and every neutrality claim measured against it
+ * silently changes with it. Reading the identity costs nothing and makes the move visible.
+ *
+ * Only `src/` counts. A reference that moved for docs or a landing page is the same compiler.
+ */
+function referenceIdentity() {
+  const git = (args) => {
+    const r = spawnSync("git", ["-C", refRoot, ...args], { encoding: "utf8" });
+    return r.status === 0 ? r.stdout.trim() : null;
+  };
+  const commit = git(["rev-parse", "--short", "HEAD"]);
+  if (commit === null) return { commit: "unknown", srcTree: "unknown", dirty: false };
+  // The TREE hash of src/ — identical across two commits that never touched the compiler,
+  // which is exactly the distinction that matters here.
+  const srcTree = git(["rev-parse", "HEAD:src"]) ?? "unknown";
+  const dirty = git(["status", "--porcelain", "--", "src"]) !== "";
+  return { commit, srcTree, dirty };
+}
+
+const refId = referenceIdentity();
 
 const { jsmql: ref } = await import(pathToFileURL(refEntry).href);
 const { jsmql: cur } = await import(pathToFileURL(join(root, "src", "index.ts")).href);
@@ -220,7 +248,9 @@ for (const src of CORPUS) {
 }
 
 if (flag("--accept")) {
-  const next = { rows: { ...accepted.rows } };
+  // Stamp WHICH compiler these rows were judged against. A row accepted against one
+  // reference says nothing about a different one.
+  const next = { reference: refId, rows: { ...accepted.rows } };
   for (const r of rows) {
     // Record what actually changed, not just that something did. A reviewer reads this
     // file to judge whether the change was right, and cannot do that from a key alone.
@@ -248,11 +278,31 @@ const byKind = (list) =>
     return acc;
   }, {});
 
+const recordedTree = accepted.reference?.srcTree;
+const referenceMoved = recordedTree !== undefined && recordedTree !== refId.srcTree;
+
 console.log(`reference : ${refRoot}`);
+console.log(
+  `  at      : ${refId.commit}  src-tree ${refId.srcTree.slice(0, 12)}${refId.dirty ? "  (src/ DIRTY)" : ""}`,
+);
 console.log(`corpus    : ${CORPUS.length} sources × ${ENTRIES.length} entry points`);
 console.log(`divergent : ${rows.length}  ${JSON.stringify(byKind(rows))}`);
 console.log(`accepted  : ${rows.length - unaccepted.length}`);
 console.log(`UNCLASSIFIED: ${unaccepted.length}`);
+
+if (referenceMoved || refId.dirty) {
+  console.error("");
+  console.error("diff-compilers: THE REFERENCE COMPILER IS NOT THE ONE THESE ROWS WERE JUDGED AGAINST.");
+  if (referenceMoved) {
+    console.error(`  accepted rows recorded against src-tree ${String(recordedTree).slice(0, 12)}`);
+    console.error(`  this run compared against       src-tree ${refId.srcTree.slice(0, 12)}`);
+  }
+  if (refId.dirty) console.error(`  ${refRoot}/src has uncommitted edits`);
+  console.error("  Every 'accepted' row above is measured against a different compiler, so a real");
+  console.error("  regression can read as an already-accepted divergence. Restore the reference, or");
+  console.error("  re-judge the rows against this one with --accept.");
+  process.exit(3);
+}
 if (unreasoned.length > 0) console.log(`accepted-but-unreasoned: ${unreasoned.length}`);
 
 const show = flag("--verbose") ? rows : unaccepted;
