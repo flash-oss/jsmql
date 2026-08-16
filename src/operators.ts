@@ -46,7 +46,6 @@ export type ArgRules = {
   // ref / op call / param NO-OPs the check (only literals are judged).
   singleType?: ArgType; // single-shape arg
   elementType?: ArgType; // every literal element of a variadic list
-  positionalTypes?: readonly ArgType[]; // fixed positional slots
   // OBJECT-body rules (object form / object-shape positional). `required ∪
   // optional` is the closed key set; an out-of-set key throws didYouMean unless
   // `closedKeys: false`.
@@ -55,13 +54,18 @@ export type ArgRules = {
   closedKeys?: boolean;
   enums?: Record<string, EnumRef>;
   keyTypes?: Record<string, ArgType>;
-  keyIntBounds?: Record<string, { min?: number; max?: number }>;
-  // Structural key-group rules.
-  exactlyOneOf?: readonly string[];
-  atLeastOneOf?: readonly string[];
-  mutuallyExclusive?: readonly (readonly string[])[];
-  branches?: { key: string; required: readonly string[] };
 };
+
+// Five more key-group dimensions were declared here and never populated by any operator:
+// `keyIntBounds`, `exactlyOneOf`, `atLeastOneOf`, `mutuallyExclusive`, `branches`. A rule
+// nothing produces and nothing reads is not a capability — it is a claim the registry
+// cannot back, and it makes the vocabulary look wider than it is. They are gone.
+//
+// Two of them describe checks that DO exist, hand-written in `stage-validation.ts`
+// (`$setWindowFields` window `documents`/`range`, `$fill` output `value`/`method`). Those
+// are STAGE body rules, and `StageDef` has no `args` field yet — so the shared vocabulary
+// gets rebuilt from what the stages actually need, not from what was guessed in advance.
+// See docs/specs/lowering-grid.md.
 
 export const OPERATOR_CATEGORIES = [
   "arithmetic",

@@ -346,12 +346,6 @@ export function validateOperatorArgs(
     if (rules.elementType !== undefined) {
       for (const el of operandExprs(args)) checkArgType(name, "", el, rules.elementType);
     }
-    if (rules.positionalTypes !== undefined) {
-      const ops = operandExprs(args);
-      rules.positionalTypes.forEach((t, i) => {
-        if (ops[i] !== undefined) checkArgType(name, "", ops[i], t);
-      });
-    }
   }
 
   // ── object-shape: required / unknown keys + key enums / types ────────────────

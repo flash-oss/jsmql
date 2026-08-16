@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — chore: `ArgRules` drops six dimensions nothing ever used
+
+`ArgRules` declared `positionalTypes`, `keyIntBounds`, `exactlyOneOf`,
+`atLeastOneOf`, `mutuallyExclusive` and `branches`. No operator populated any of
+them. `positionalTypes` even had a live read path in the validator, walking a
+field that was always undefined; the other five were read by nothing at all.
+
+A rule nothing produces and nothing reads is not a capability. It is a claim the
+registry cannot back, and it makes the vocabulary look wider than it is — which
+matters now, because the argument vocabulary is about to be shared across all
+four feature kinds and a reader needs to know what it really does.
+
+Two of the six describe checks that genuinely exist, hand-written in
+`stage-validation.ts`: `$setWindowFields`'s window cannot carry both `documents`
+and `range`, and a `$fill` output field cannot carry both `value` and `method`.
+Those are STAGE body rules, and `StageDef` has no `args` field yet. So the shared
+vocabulary gets rebuilt from what the stages actually need rather than from what
+was guessed in advance — the comment left in `operators.ts` says so, and points
+at the grid spec.
+
+---
+
 ## 2026-08-16 — refactor: the set methods lower to MongoDB's set operators
 
 `.uniq`, `.union`, `.intersection` and `.xor` each built an order-preserving

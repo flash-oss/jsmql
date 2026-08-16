@@ -31,10 +31,12 @@ Validation is driven by an optional `args?: ArgRules` field on each `OperatorDef
 ([`src/operators.ts`](../../src/operators.ts)), attached with the `withArgs(def,
 rules)` wrapper (the sibling of `acc(...)`). Every field is optional; an operator
 with no `args` is validated by **shape alone**. The full surface — `arity`,
-`singleType` / `elementType` / `positionalTypes`, `required` / `optional` /
-`closedKeys`, `enums`, `keyTypes` / `keyIntBounds`, `exactlyOneOf` /
-`atLeastOneOf` / `mutuallyExclusive`, `branches` — is declared on the `ArgRules`
-type and filled in per operator. Named enum sets (`timeUnit` / `weekday` /
+`singleType` / `elementType`, `required` / `optional` / `closedKeys`, `enums`,
+`keyTypes` — is declared on the `ArgRules` type and filled in per operator.
+`ArgRules` states only what some operator actually uses: a dimension nothing
+populates and nothing reads is a claim the registry cannot back, so it does not
+belong in the type. When a stage or operator needs a rule the vocabulary lacks,
+the rule is added together with its first real user. Named enum sets (`timeUnit` / `weekday` /
 `bsonTypeName` / `regexFlags` / `metaKeyword`) are resolved in
 `operator-validation.ts`, so registry rows stay one-liners.
 
@@ -179,7 +181,7 @@ $convert({ input: $.s, to: "intt" })  → ✗ "Did you mean 'int'?"   ($convert 
 $regexMatch({ …, options: "gi" })    → ✗ "invalid regex flag 'g'"
 ```
 
-### literal-type slots (`singleType` / `elementType` / `positionalTypes` / `keyTypes`)
+### literal-type slots (`singleType` / `elementType` / `keyTypes`)
 A literal of a type the slot can never accept (no MongoDB coercion) throws.
 `ArgType` is one of `number` / `integer` / `int-or-long` / `string` / `bool` /
 `object` / `array` / `date` / `timestamp` / `number-or-date`. The gate is strict:
