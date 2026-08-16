@@ -105,6 +105,17 @@ each node moves when its two sides are made to read that vocabulary instead of t
 document while the identical source in Filter position was correct. That is the failure the
 IR exists to make impossible, so it is the node that earns it.
 
+## The acceptance harness
+
+`test/query-expr-agreement.test.ts` runs both lowerings of one source over the same documents
+on a live mongod and compares which come back. It is what makes migrating a node safe: the
+unit tests assert what each side EMITS, and the two sides drifted apart for months while
+every one of those tests passed.
+
+Migrate a node by adding its sources to that suite first. A node that already agrees must
+still agree afterwards; a node that does not is a bug to fix, not a shape to preserve — which
+is how `TypeIs` was found.
+
 ## Adding a predicate feature
 
 1. Check whether an existing node covers it. Most do — see the absorption table.

@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-16 — test: the two predicate targets are compared on a live server
+
+Before migrating nine more nodes into the Predicate IR, the question worth answering was
+which of them actually disagree. `test/query-expr-agreement.test.ts` answers it the only way
+that works: run BOTH lowerings of one source over the SAME documents on a real mongod and
+compare the ids that come back.
+
+That is the query/expr analogue of `parity.test.ts`, and it exists because unit tests
+structurally cannot catch this class. `typeof $.a === "boolean"` selected documents as a
+filter and matched nothing as an expression, with a passing `toEqual` on each side, because
+each side was individually self-consistent.
+
+Twenty-seven predicates agree, verified on the server. Three diverge, and TWO of those were
+undocumented:
+
+- **Ordered comparison against a missing field.** `{age:{$lt:18}}` requires the field to
+  exist; `{$lt:["$age",18]}` reads a missing field as sorting before every number in BSON
+  order, so the expression form matches a document the query form does not. Divergence 3.
+- **`.includes()` on a receiver whose type cannot be proved.** The query form is MongoDB's
+  `{s:"ell"}` — equality OR array-membership — while the expression form dispatches on
+  `$isArray` and does a substring test for a string. Divergence 4. It is reached ONLY for a
+  bare field path: a receiver jsmql can prove is a string fails `asFieldPath`, takes the
+  `$expr` fallback, and agrees. So the divergence sits exactly where the type is unknowable
+  and never where it is known, which is the defensible half of it.
+
+The source comment on that second one claimed it was "Documented in
+match-query-translation.md". It was not. Both are now, and both are asserted live.
+
+The divergences are asserted to STILL diverge, not merely tolerated: repairing one fails the
+suite and forces its row to move to the agreeing set, so a fix cannot land unnoticed.
+
+---
+
 ## 2026-08-16 — refactor: one required-key rule, and two enum checkers that must stay two
 
 The argument-vocabulary unification, done on the narrow basis its own audit argued for:

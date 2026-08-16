@@ -60,6 +60,16 @@ The comparison is **order-insensitive on purpose**. Parity is contracted on whic
 
 Two coverage floors sit beside the cases, because a comparison suite that quietly stops comparing is worse than none: one asserts every case names a genuinely dual-declared method, the other fails when the shared surface grows without cases joining it. Self-skips (green) when no mongod is reachable, like `fold-consistency.test.ts`. When you give a method a second lowering, add a case here.
 
+### `query-expr-agreement.test.ts` — the two targets must select the same documents
+
+A predicate reaches MQL by two roads: the QUERY language in Filter / `$match` position, the aggregation-EXPRESSION language everywhere else. Two lowerings of one source, in two files, sharing no code — the same shape `parity.test.ts` guards on the value/stream axis, and it drifts the same way.
+
+It already had. `typeof $.a === "boolean"` selected documents as a filter and matched **nothing** as an expression, because the query side carried a BSON alias table and the expression side compared `$type` against JavaScript's own spelling. No unit test could see it: each side was individually self-consistent, and both had passing `toEqual`s.
+
+So this suite runs **both** lowerings of the same source over the **same** documents on a real mongod and compares the ids that come back. Legitimate differences live in a `DIVERGE` table with a reason each, and are asserted to **still** differ — so repairing one fails the suite and forces the row to move, rather than letting a fix land silently. Self-skips when no mongod is reachable, with the usual all-or-nothing coverage guard.
+
+Add a case here whenever you touch predicate lowering on either side. This is the acceptance harness for migrating a node into the Predicate IR — see [`docs/specs/predicate-ir.md`](../docs/specs/predicate-ir.md).
+
 ### `integration.test.ts` — jsmql MQL run against a live MongoDB
 
 The only suite that runs jsmql's emitted MQL on a **real** server and asserts on the documents that come back — closing the gap a `toEqual(<MQL>)` can't (it proves what jsmql *emits*, not that mongod *runs* it correctly). Each case compiles a jsmql source, runs it read-only against a deterministic fixture dataset, and checks the result; expected values are derived from a live run, never guessed. It runs against a **dedicated, auth-enabled mongod on `:27018`** (separate from your primary instance), with a server-enforced read-only user so a test run can't mutate the data. The dataset, the instance lifecycle, and the read-only design all live in [`test/fixtures/`](fixtures/CLAUDE.md). The suite **skips itself** (green, not failing) when that instance isn't up/seeded, so `npm test` stays green without it; run `npm run fixture:up` first to exercise it. This is the natural home for the "verify it actually runs" discipline below — when in doubt about a shape, add a case here instead of trusting a green `toEqual`.

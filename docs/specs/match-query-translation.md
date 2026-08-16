@@ -136,6 +136,12 @@ These are intentional trade-offs — the query-language behavior matches what mo
 
 2. **`{ field: { $ne: x } }`** matches when `field` is present and not equal to `x`. **Missing-field docs are excluded.** `$expr: { $ne: [...] }` evaluates `$field` as `null` for missing fields and would match. Document carefully when relying on either shape.
 
+3. **Ordered comparison against a missing field.** `{ age: { $lt: 18 } }` requires the field to EXIST. `$expr: { $lt: ["$age", 18] }` evaluates `$age` as missing, which sorts before every number in BSON order — so a document with no `age` matches the expression form and not the query form. Same for `>`, `>=`, `<=`.
+
+4. **`.includes()` on a receiver whose type can't be proved.** `$.tags.includes("vip")` becomes `{ tags: "vip" }`, MongoDB's "equals, or is an array containing" — which is exactly what `.includes` means on an array, and is indexed. In EXPRESSION position the same source dispatches on `$isArray` at runtime and does a SUBSTRING test when the value is a string. So on a string field the two select different documents. A receiver jsmql can prove is a string (`$.s.trim().includes(…)`, a string literal) never takes the query form at all — it falls back to `$expr` and the two agree. For a substring query on a bare field path, reach for `.match(/…/)`, which is indexable and unambiguous.
+
+`test/query-expr-agreement.test.ts` runs both lowerings of the same source over the same documents on a live mongod and asserts each of these — the agreements AND the divergences. A divergence that is ever repaired fails that suite, so a fix cannot land silently.
+
 3. **Field-to-field comparison.** `{ a: "$b" }` is a literal-string match against `"$b"`, NOT a field comparison. We avoid this entirely by refusing to translate `BinaryExpr` where both sides resolve as field paths — those stay in `$expr`.
 
 4. **Null and missing.** `===`/`!==` are JS-strict — missing fields are not null. `==`/`!=` (null-only) are loose — missing fields are treated as null. The two shapes compile to distinct MQL (`$type: "null"` vs bare `null`) on both code paths so the translated and residual fall-back paths agree on semantics. Users who want aggregation's "$eq with null is strict" behaviour use `===`; users who want query-language's "field: null matches missing" behaviour use `==`.

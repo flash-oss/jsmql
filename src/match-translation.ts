@@ -284,7 +284,14 @@ function translateBooleanMethodCall(
  * (which handles both array and string substring via `$cond` + `$indexOfCP`):
  * here we only emit the array-element form. For string-substring queries,
  * users reach for `.match(/.../)` (or the explicit `$op($indexOfCP, …)`).
- * Documented in `docs/specs/match-query-translation.md`.
+ *
+ * Reached ONLY for a bare field path, which is the case jsmql cannot type — a receiver it
+ * can prove is a string (`$.s.trim().includes(…)`, a string literal) fails `asFieldPath`,
+ * takes the `$expr` fallback, and agrees with expression position. So the divergence exists
+ * exactly where the type is unknowable, never where it is known.
+ *
+ * Divergence 4 in `docs/specs/match-query-translation.md`, and asserted live in
+ * `test/query-expr-agreement.test.ts`.
  */
 function translateIncludesCall(expr: Expr & { type: "MethodCall" }, ctx: TranslateCtx): Record<string, unknown> | null {
   if (expr.args.length !== 1) return null;

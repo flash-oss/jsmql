@@ -1,0 +1,169 @@
+// test/query-expr-agreement.test.ts — the two targets must select the same documents.
+//
+// A predicate can reach MQL by two different roads. In Filter position (or a `$match` body)
+// it becomes the QUERY language: `{ age: { $gt: 18 } }`. Anywhere else it becomes the
+// aggregation-EXPRESSION language: `{ $gt: ["$age", 18] }`. Those are two lowerings of one
+// source, written in two files, sharing no code — which is precisely the shape that lets
+// them drift apart without anyone noticing.
+//
+// They already had: `typeof $.a === "boolean"` selected documents as a filter and matched
+// NOTHING as an expression, for months, because the query side carried a BSON alias table
+// and the expression side compared `$type` against JavaScript's own spelling. No unit test
+// could see it, because each side was individually self-consistent.
+//
+// So this suite asks the only question that catches that class: run BOTH lowerings of the
+// same source over the SAME documents on a real mongod, and compare which documents come
+// back. It is the query/expr analogue of `parity.test.ts`, which asks the same question of
+// the value and stream forms.
+//
+// Where the two legitimately differ, the row says so and says WHY — see
+// docs/specs/match-query-translation.md § Documented semantic divergences. A divergence
+// without a row fails the suite.
+//
+// Self-skips (green) when no mongod is reachable, like the other server-backed suites, and
+// carries the coverage guard that goes with that: a suite that quietly stops comparing is
+// worse than no suite.
+
+import { MongoClient, type Collection } from "mongodb";
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { jsmql } from "../src/index.ts";
+
+const URI = process.env.JSMQL_MONGO_URI ?? "mongodb://127.0.0.1:27017";
+
+/**
+ * Deliberately mixed: a missing field, an empty string, a false, an explicit null, a
+ * negative, a float. Every one of those is a place the two languages are known to reason
+ * differently about absence and truthiness.
+ */
+const DOCS = [
+  { _id: 1, a: 5, s: "hello", t: true, n: null, d: new Date("2024-05-17T00:00:00Z") },
+  { _id: 2, a: 0, s: "", t: false, n: 1, d: new Date("2020-01-01T00:00:00Z") },
+  { _id: 3, a: -2, s: "Hi", t: true, d: new Date("2024-05-17T00:00:00Z") }, // n missing
+  { _id: 4, s: "hello world", n: null }, // a, t, d missing
+  { _id: 5, a: 5.5, s: "HELLO", t: false, n: "x", d: new Date("2030-01-01T00:00:00Z") },
+];
+
+/** A predicate whose two lowerings must select the same documents. */
+const AGREE: readonly string[] = [
+  // Cmp — equality, ordered, and the two null modes.
+  "$.a === 5",
+  "$.a !== 5",
+  "$.a > 0",
+  "$.a >= 5",
+  "$.a === null",
+  "$.n === null",
+  "$.n !== null",
+  "$.n == null",
+  "$.n != null",
+  "$.t === true",
+  "$.t === false",
+  "$.s === 'hello'",
+  "$.d > new Date('2024-01-01')",
+  // TypeIs — shared through src/predicate-ir.ts, and the reason this suite exists.
+  'typeof $.a === "number"',
+  'typeof $.t === "boolean"',
+  'typeof $.s === "string"',
+  // Mod
+  "$.a % 2 === 0",
+  "$.a % 2 !== 0",
+  // Contains, anchored
+  '$.s.startsWith("he")',
+  '$.s.endsWith("lo")',
+  // RegexMatch
+  "$.s.match(/^he/)",
+  "/^he/.test($.s)",
+  "$.s.match(/HE/i)",
+  // Membership
+  '["hello", "Hi"].includes($.s)',
+  // Logical
+  "$.a > 0 && $.s === 'hello'",
+  "$.a > 0 || $.t === false",
+  "!($.a > 0)",
+];
+
+/**
+ * A predicate whose two lowerings legitimately differ, with the reason. Each is a
+ * MongoDB-semantics fact, not a jsmql choice — but jsmql picks which one the user gets, so
+ * the difference is contracted here rather than discovered.
+ */
+const DIVERGE: readonly { src: string; why: string }[] = [
+  {
+    src: "$.a < 0",
+    why:
+      "Ordered comparison against a MISSING field. The query form `{a:{$lt:0}}` requires the " +
+      "field to exist; the expression form compares `$a` as missing, which sorts BEFORE every " +
+      "number in BSON order, so `missing < 0` is true. Divergence 3 in match-query-translation.md.",
+  },
+  { src: "$.a <= 0", why: "Same as `<` — ordered comparison against a missing field." },
+  {
+    src: '$.s.includes("ell")',
+    why:
+      "`.includes` on a receiver whose type jsmql cannot prove. The query form is MongoDB's " +
+      "`{s:'ell'}`, which means equality OR array-membership; the expression form dispatches on " +
+      "`$isArray` at runtime and does a SUBSTRING test for a string. Divergence 4 in " +
+      "match-query-translation.md. A provably-string receiver (`$.s.trim().includes(…)`) takes " +
+      "the `$expr` fallback and does agree.",
+  },
+];
+
+let client: MongoClient | null = null;
+let coll: Collection | null = null;
+
+beforeAll(async () => {
+  try {
+    const c = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
+    await c.connect();
+    await c.db("admin").command({ ping: 1 });
+    client = c;
+    coll = c.db("jsmql_query_expr_agreement").collection("t");
+    await coll.deleteMany({});
+    await coll.insertMany(DOCS.map((d) => ({ ...d })));
+  } catch {
+    client = null;
+    coll = null;
+  }
+});
+
+afterAll(async () => {
+  await client?.close();
+});
+
+const ids = (rows: { _id: unknown }[]): number[] => rows.map((r) => r._id as number).sort((x, y) => x - y);
+
+/** The documents each lowering selects, or null when this run has no server. */
+async function bothSides(src: string): Promise<{ query: number[]; expr: number[] } | null> {
+  if (coll === null) return null;
+  const query = ids(await coll.find(jsmql(src) as Record<string, unknown>).toArray());
+  const rows = await coll.aggregate([{ $addFields: { __v: jsmql.expr(src) } }, { $match: { __v: true } }]).toArray();
+  return { query, expr: ids(rows) };
+}
+
+describe("the Query and Expr targets select the same documents", () => {
+  let compared = 0;
+
+  for (const src of AGREE) {
+    it(src, async () => {
+      const r = await bothSides(src);
+      if (r === null) return; // no server — self-skip, guarded below
+      compared++;
+      expect(r.expr, `${src}\n  query selected ${JSON.stringify(r.query)}`).toEqual(r.query);
+    });
+  }
+
+  it("compared every case, or none at all", () => {
+    // A suite that silently degrades to zero comparisons looks exactly like one that passed.
+    expect(compared === AGREE.length || compared === 0).toBe(true);
+  });
+});
+
+describe("the documented divergences still diverge", () => {
+  for (const { src, why } of DIVERGE) {
+    it(src, async () => {
+      const r = await bothSides(src);
+      if (r === null) return;
+      // Asserted in BOTH directions on purpose. If a divergence is ever repaired, this fails
+      // and the row must be moved to AGREE — a fix should not be able to land silently.
+      expect(r.expr, `${src} no longer diverges — move it to AGREE.\n  ${why}`).not.toEqual(r.query);
+    });
+  }
+});
