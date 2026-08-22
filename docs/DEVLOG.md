@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-23 — feat: four registries describe the whole language, one phase each
+
+`src/registry/` holds what the language HAS, split by compiler phase so each file has one
+key space and one job: `tokens.ts` (56 rows, keyed by spelling, or by a class name for the
+six tokens that have none), `keywords.ts` (11 rows, keyed by the word), `productions.ts`
+(71 rows, keyed by a descriptive name) and `names.ts` (414 rows, keyed by the name as
+typed). `vocabulary.ts` carries the shared types.
+
+Emitting MQL is one facet of an entry, not the definition of one. The two lexical files
+hold no MQL at all — the lexer is their only reader and cannot use a renderer, so a
+renderer there would be a fact in the wrong phase. That single rule is what makes `.` and
+`;` expressible: the dot renders nothing (the pair it forms does, and which node that is
+differs for each of its six left-hand classes), and `;` carries `forcesShape: "pipeline"`,
+which is the whole reason the Filter-versus-Pipeline reroute ladder exists.
+
+A MongoDB name and a JavaScript name are never one key, and the type checker holds it: a
+`mongo` row's key must begin with `$`, a `name` row's key must not. 32 names exist both
+ways — `$sort`/`sort`, `$filter`/`filter`, `$max`/`max`, `$set`/`set` — and they are not
+interchangeable, so folding either pair into one row is now a compile error rather than a
+judgement call. Eleven further audits run in the type system, each verified by feeding it
+wrong data: a production naming a token that does not exist, an `after` naming no rule, a
+`becomes` naming no AST node, a `forbiddenIn` naming no key, a `category` outside
+`OPERATOR_CATEGORIES`.
+
+`where` is written out on every row and cannot contradict the renderers beside it: naming a
+position requires that renderer, omitting it requires a refusal that says why, and both
+directions fail to compile. `group` and `window` are separate positions because
+`$setWindowFields.output` is a separate slot, proven both ways on a live mongod — `$rank` is
+a window function and not a group operator, `$mergeObjects` the reverse. Where a position is
+reachable only through the automatic `$expr` wrap the row says `viaFallback`; where the
+native form belongs to another rule it says `composedInto`, so `remainder` records that
+`$.a % 2 === 0` folds to an indexable `{a:{$mod:[2,0]}}` rather than claiming there is no
+query form at all.
+
+527 of the 552 rows are generated from the sources of truth — the vendored MongoDB spec, the
+lexer's own `TOKEN_DISPLAY`, and the existing operator/stage/method registries. That split
+is deliberate and was learned the hard way: an audit of an earlier hand-written draft found
+a defect in every one of its 34 hand-authored rows, including a method that does not exist,
+while all 218 generated descriptions were byte-identical to source. The 25 that remain
+hand-written are the only ones that cannot be derived — the keywords, the reference roots,
+the callable globals, and the four names outside `METHODS` — and each states only a fact a
+probe confirmed. Every name-keyed lookup in the generators is a `Map`, which has no
+prototype to leak.
+
+---
+
 ## 2026-08-16 — refactor: the Predicate IR is complete — every query shape is stated once
 
 The remaining six nodes join `src/predicate-ir.ts`: `Cmp` (equality, ordered, and the two

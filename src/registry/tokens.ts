@@ -1,0 +1,165 @@
+// REGISTRY 1 of 4 — the token table. LEXICAL phase.
+//
+// Keyed by the SPELLING, except for the 6 tokens that have none —
+// number, bigint, string, regex, templateText, identifier — which are keyed by a class name and
+// marked `variable`.
+//
+// `token` holds a LIST where one spelling maps to more than one token type because the
+// lexer classifies it by position: a backtick is TemplateStart or TemplateEnd depending
+// on which end it sits at, and `/` is Slash or RegexLiteral depending on the preceding
+// token. A single `TokenName` could not state either fact.
+//
+// This file holds NO MQL. The lexer is its only reader and a lexer cannot use a
+// renderer, so a renderer here would be a fact in the wrong phase. What each token
+// MEANS lives in productions.ts; what each NAME means lives in names.ts.
+//
+// Reserved words are not here — the lexer promotes them to their own token types, and
+// that promotion is what keywords.ts is about.
+//
+// Generated from the lexer's TOKEN_DISPLAY by tmp/gen-tokens.mjs, so the table cannot
+// drift from the tokeniser it describes.
+
+import type { TokenName } from "./vocabulary.ts";
+
+export type TokenSpec<C extends string = never> = {
+  doc: string;
+  /**
+   * The lexer TokenType this row describes — or every type it can be, when the lexer
+   * decides between them by position.
+   */
+  token: TokenName | readonly TokenName[];
+  role:
+    | "open"
+    | "close"
+    /** Opens and closes itself, so it has no separate closer row. */
+    | "delimiter"
+    | "separator"
+    | "binder"
+    | "arrow"
+    | "spread"
+    | "operator"
+    | "literal"
+    | "name"
+    | "reference";
+  /** For a closer: the key of its opener. Audited below. */
+  closes?: C;
+  /** true when the token has no fixed spelling, so the key is a class name. */
+  variable?: true;
+};
+
+export type TokenEntry<C extends string = never> = TokenSpec<C> & { kind: "token" };
+
+// `C` defaults to `never`, never to its constraint: a row with no `closes` would
+// otherwise resolve `C` to `string` and flood the audit's union, and the check would
+// pass while checking nothing.
+const token = <const C extends string = never>(e: TokenSpec<C>): TokenEntry<C> => ({ ...e, kind: "token" });
+
+export const TOKENS = {
+  "(": token({ doc: "The `(` token.", token: "LParen", role: "open" }),
+  ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
+  "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
+  "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
+  "{": token({ doc: "The `{` token.", token: "LBrace", role: "open" }),
+  "}": token({ doc: "The `}` token.", token: "RBrace", role: "close", closes: "{" }),
+  ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
+  ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
+  ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
+  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder" }),
+  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder" }),
+  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference" }),
+  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference" }),
+  $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
+  $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
+  $$$$: token({ doc: "The `$$$$` token.", token: "QuadDollar", role: "reference" }),
+  "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
+  "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
+  "-": token({ doc: "The `-` token.", token: "Minus", role: "operator" }),
+  "*": token({ doc: "The `*` token.", token: "Star", role: "operator" }),
+  "**": token({ doc: "The `**` token.", token: "StarStar", role: "operator" }),
+  "/": token({
+    doc: "Division, or the start of a regex literal. The lexer chooses on the PRECEDING token: `a / b` is division, a leading `/` begins a regex.",
+    token: ["Slash", "RegexLiteral"],
+    role: "operator",
+  }),
+  "%": token({ doc: "The `%` token.", token: "Percent", role: "operator" }),
+  "++": token({ doc: "The `++` token.", token: "PlusPlus", role: "operator" }),
+  "--": token({ doc: "The `--` token.", token: "MinusMinus", role: "operator" }),
+  "=": token({ doc: "The `=` token.", token: "Eq", role: "operator" }),
+  "+=": token({ doc: "The `+=` token.", token: "PlusEq", role: "operator" }),
+  "-=": token({ doc: "The `-=` token.", token: "MinusEq", role: "operator" }),
+  "*=": token({ doc: "The `*=` token.", token: "StarEq", role: "operator" }),
+  "/=": token({
+    doc: "Divide-and-assign, or a regex beginning with `=`. Same preceding-token rule as `/`.",
+    token: ["SlashEq", "RegexLiteral"],
+    role: "operator",
+  }),
+  "==": token({ doc: "The `==` token.", token: "EqEq", role: "operator" }),
+  "===": token({ doc: "The `===` token.", token: "EqEqEq", role: "operator" }),
+  "!=": token({ doc: "The `!=` token.", token: "BangEq", role: "operator" }),
+  "!==": token({ doc: "The `!==` token.", token: "BangEqEq", role: "operator" }),
+  ">": token({ doc: "The `>` token.", token: "Gt", role: "operator" }),
+  ">=": token({ doc: "The `>=` token.", token: "GtEq", role: "operator" }),
+  "<": token({ doc: "The `<` token.", token: "Lt", role: "operator" }),
+  "<=": token({ doc: "The `<=` token.", token: "LtEq", role: "operator" }),
+  "&&": token({ doc: "The `&&` token.", token: "AmpAmp", role: "operator" }),
+  "||": token({ doc: "The `||` token.", token: "PipePipe", role: "operator" }),
+  "!": token({ doc: "The `!` token.", token: "Bang", role: "operator" }),
+  "&": token({ doc: "The `&` token.", token: "Amp", role: "operator" }),
+  "|": token({ doc: "The `|` token.", token: "Pipe", role: "operator" }),
+  "^": token({ doc: "The `^` token.", token: "Caret", role: "operator" }),
+  "~": token({ doc: "The `~` token.", token: "Tilde", role: "operator" }),
+  "??": token({ doc: "The `??` token.", token: "QuestQuest", role: "operator" }),
+  "?": token({ doc: "The `?` token.", token: "Quest", role: "operator" }),
+  "=>": token({ doc: "The `=>` token.", token: "Arrow", role: "arrow" }),
+  number: token({
+    doc: "A numeric literal. `0x` followed by 24 hex digits is re-read as an ObjectId — see productions.ts.",
+    token: "Number",
+    role: "literal",
+    variable: true,
+  }),
+  bigint: token({ doc: "A BigInt literal.", token: "BigInt", role: "literal", variable: true }),
+  string: token({ doc: "A quoted string literal.", token: "String", role: "literal", variable: true }),
+  regex: token({ doc: "A regular-expression literal.", token: "RegexLiteral", role: "literal", variable: true }),
+  "`": token({
+    doc: "Opens and closes a template literal. The lexer classifies it by position — the opening backtick is TemplateStart, the closing one TemplateEnd — so it pairs with itself rather than with a separate closer.",
+    token: ["TemplateStart", "TemplateEnd"],
+    role: "delimiter",
+  }),
+  templateText: token({
+    doc: "The literal text between a template literal's delimiters. Free text, including the empty string.",
+    token: "TemplateChars",
+    role: "literal",
+    variable: true,
+  }),
+  "${": token({
+    doc: "Opens an interpolation inside a template literal. Nothing closes it: the `}` that ends the interpolation emits no token at all, so this is the one opener with no matching close row.",
+    token: "TemplateExprStart",
+    role: "open",
+  }),
+  identifier: token({
+    doc: "A bare name. What it means is resolved in names.ts.",
+    token: "Ident",
+    role: "name",
+    variable: true,
+  }),
+};
+
+export type TokenKey = keyof typeof TOKENS;
+
+// ── audit: every `closes` names a key of this same table ─────────────────────
+
+type FieldOf<K extends TokenKey, F extends string> = F extends keyof (typeof TOKENS)[K]
+  ? NonNullable<(typeof TOKENS)[K][F]>
+  : never;
+
+type Mentioned<F extends string> = {
+  [K in TokenKey]: [FieldOf<K, F>] extends [never]
+    ? never
+    : FieldOf<K, F> extends readonly (infer V)[]
+      ? V
+      : FieldOf<K, F>;
+}[TokenKey];
+
+type DanglingCloses = Exclude<Mentioned<"closes">, TokenKey>;
+const _closesResolves: [DanglingCloses] extends [never] ? true : DanglingCloses = true;
+void _closesResolves;
