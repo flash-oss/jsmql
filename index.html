@@ -15,15 +15,15 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>JSMQL — write MongoDB aggregation queries in JavaScript</title>
+    <title>Compile JS you know to the MQL for DB-side performance efficiency</title>
     <meta
       name="description"
-      content="JSMQL is a strict JavaScript subset that compiles to MongoDB MQL JSON. Write queries, aggregation pipelines and updates in the syntax you already know."
+      content="JSMQL is a subset of JavaScript that compiles to MongoDB's MQL. Write hard MQL in the simple JS syntax you already know."
     />
     <link rel="canonical" href="https://jsmql.js.org/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://jsmql.js.org/" />
-    <meta property="og:title" content="JSMQL — write MongoDB aggregation queries in JavaScript" />
+    <meta property="og:title" content="JSMQL — write complex MongoDB queries in simple JavaScript" />
     <meta
       property="og:description"
       content="A strict JavaScript subset that compiles to MongoDB MQL JSON. Filters, pipelines, expressions and updates in the syntax you already know."
@@ -465,7 +465,7 @@
   <body>
     <header class="bar">
       <strong>JSMQL</strong>
-      <span class="tag">JavaScript-subset language for MongoDB aggregation expressions</span>
+      <span class="tag">Subset of JavaScript which compiles to the MongoDB query language</span>
       <nav>
         <a href="playground.html">Playground</a>
         <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Syntax</a>
@@ -495,7 +495,7 @@
 
     <div class="hero">
       <div class="wrap">
-        <h1>Write MongoDB queries in JavaScript</h1>
+        <h1>Write complex MongoDB queries in simple JavaScript</h1>
         <p class="lede">
           JSMQL is a strict subset of JavaScript that compiles to MongoDB MQL JSON. Filters, aggregation pipelines,
           expressions and updates — in the syntax you already know.
@@ -503,7 +503,7 @@
         <p class="sub">
           MongoDB 8.0 deprecated server-side JavaScript through <code>$function</code>, <code>$accumulator</code> and
           <code>$where</code>. JSMQL is the replacement: it compiles ahead of time to native MQL, so the server runs
-          ordinary operators. Nothing is evaluated as JavaScript at query time, and indexes still apply.
+          ordinary operators.
         </p>
 
         <div class="cta">
@@ -740,41 +740,38 @@ $ = candidateProductIds
       <div class="wrap">
         <h2>Why JSMQL</h2>
         <p class="section-intro">
-          MQL is a fine thing for a machine to read and an awkward thing for a person to write. JSMQL keeps the output —
-          it is still MQL, and still the same MQL for the same input — and changes only what you type.
+          MQL is a fine thing for a machine to read and an awkward thing for a person to write.
         </p>
         <div class="grid">
           <div class="card">
             <h3>Your editor already understands it</h3>
             <p>
               It is JavaScript syntax, so highlighting, bracket matching and formatting work with no plugin. Import
-              <code>@koresar/jsmql/globals</code> and the MongoDB operators autocomplete as well.
+              <code>@koresar/jsmql/globals</code> for the autocomplete.
             </p>
           </div>
           <div class="card">
             <h3>Indexes keep working</h3>
             <p>
-              A comparison against a field lowers to a query document, not to
-              <code>$expr</code>. JSMQL reaches for <code>$expr</code> only when the query genuinely needs server-side
-              evaluation.
+              JSMQL makes all the effort to utilise collection indexes. Otherwise <code>$expr</code> operator is used.
             </p>
           </div>
           <div class="card">
             <h3>Errors tell you what to write</h3>
             <p>
-              An unsupported construct is rejected with the JavaScript form that does work, and a misspelled method is
-              met with the closest name. Every error carries a source position.
+              An unsupported syntax is rejected with error message which suggests alternatives. Every error points to
+              the source JSMQL position.
             </p>
           </div>
           <div class="card">
-            <h3>Parameters bind once</h3>
+            <h3>Pre-compile for runtime performance</h3>
             <p>
-              <code>jsmql.compile()</code> parses a parameterised arrow once and returns a function that binds arguments
-              per call. The output stays a literal document, so it stays index-friendly.
+              <code>jsmql.compile((arg1, arg2) => ..some JSMQL code..)</code> parses a parameterised function once and
+              returns a function that binds arguments per call.
             </p>
           </div>
           <div class="card">
-            <h3>Values interpolate safely</h3>
+            <h3>Value interpolation safety</h3>
             <p>
               The <code>jsmql``</code> template tag places runtime values as literals rather than as source text, so a
               value can never be read as syntax.
@@ -784,7 +781,7 @@ $ = candidateProductIds
             <h3>Drop it in where you are</h3>
             <p>
               Use the library, the mongoose plugin, or the <code>jsmql</code> command line, which reads source and
-              writes MQL JSON the way <code>jq</code> does.
+              writes MQL the way <code>jq</code> does.
             </p>
           </div>
         </div>
