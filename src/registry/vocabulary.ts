@@ -220,7 +220,16 @@ export type Family =
   | "Object"
   | "Number"
   | "Date"
-  | "Array";
+  | "Array"
+  /**
+   * The cluster, reached through `$$$$`. A receiver family like the rest, because
+   * the diagnostic source stages split by SCOPE and the wrong prefix is an error:
+   *   $$.indexStats();    → [{ "$indexStats": {} }]
+   *   $$$$.indexStats();  → "'indexStats' is a collection-scoped system stage"
+   *   $$$$.currentOp();   → [{ "$currentOp": {} }]
+   *   $$.currentOp();     → "'currentOp' is a cluster-scoped system stage"
+   */
+  | "cluster";
 
 /** What may sit on either side of a binder. Coarser than `Family` on purpose. */
 export type OperandClass = "value" | "namespace" | "name" | "collection" | "database" | "cluster";

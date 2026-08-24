@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — feat: the source stages, the guard, and the two chain links that had no row
+
+Twelve names the language accepts had no row of any kind. Nine are the diagnostic source
+stages, and they split by SCOPE, which is a fact the wrong prefix turns into an error:
+`$$.indexStats();` → `[{"$indexStats":{}}]` while `$$$$.indexStats();` is *"'indexStats' is a
+collection-scoped system stage"*, and `currentOp` is the mirror image. Four are
+collection-scoped and five cluster-scoped, measured by driving both prefixes through the
+compiler. `Family` gains `"cluster"` so `$$$$` names the family its members resolve against,
+the same mechanism every other receiver already uses — the alternative was a bespoke field for
+one case.
+
+`assert(condition[, message]);` is receiver-less AND statement-only, which is exactly the
+shape `GlobalSpec` could not hold until it gained the four extra cells: a global with only
+`filter` and `expr` had nowhere to put a `$match` guard. `shuffle` and `aggregate` are
+chainable links that `STREAM_METHODS` declares and the registry had missed.
+
+`aggregate` also carries the callback-block rule, which had no field. On every other name a
+`{ … }` body is a JavaScript callback and a stage inside it is refused with a rewrite hint —
+`$$ = $$.map(d => { $sort({a:1}); });` is *"takes a JavaScript callback"* — while
+`$$ = $$.aggregate(o => { $sort({a:1}); });` lowers to `[{"$sort":{"a":1}}]`. So `blockBody`
+is stated on the one name that differs, and its absence means JavaScript.
+
+---
+
 ## 2026-08-24 — feat: the namespace members the registry never described
 
 `Family` declared `Math`, `Object`, `Number` and `Array`, and not one row belonged to any of

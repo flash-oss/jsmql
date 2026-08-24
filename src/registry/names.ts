@@ -86,6 +86,13 @@ type NameSpec<W extends readonly Position[], O extends On> = {
    * Absent means the name must always be called.
    */
   asReference?: boolean;
+  /**
+   * What a `{ … }` body on this name MEANS. Absent = "javascript", which is every
+   * name but one: a stage inside such a block is refused with a rewrite hint.
+   *   $$ = $$.map(d => { $sort({a:1}); });        → "takes a JavaScript callback"
+   *   $$ = $$.aggregate(o => { $sort({a:1}); });  → [{ "$sort": { "a": 1 } }]
+   */
+  blockBody?: "javascript" | "stages";
   returns: Returns;
   where: W;
   only?: readonly Only[];
@@ -6331,6 +6338,190 @@ export const NAMES = {
   // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // ── source stages, chain links and the guard, reached by name ──
+  collStats: name({
+    doc: "'$.collStats()' — the '$collStats' source stage. First stage only, and $-scoped: '$$.collStats()' is refused.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'collStats()' is a source stage, not a filter predicate."),
+    expr: unsupported("'collStats()' is a source stage, not a value."),
+    stream: unsupported("'collStats()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'collStats()' is a source stage, not an accumulator."),
+    window: unsupported("'collStats()' is a source stage, not a window function."),
+  }),
+
+  indexStats: name({
+    doc: "'$.indexStats()' — the '$indexStats' source stage. First stage only, and $-scoped: '$$.indexStats()' is refused.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'indexStats()' is a source stage, not a filter predicate."),
+    expr: unsupported("'indexStats()' is a source stage, not a value."),
+    stream: unsupported("'indexStats()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'indexStats()' is a source stage, not an accumulator."),
+    window: unsupported("'indexStats()' is a source stage, not a window function."),
+  }),
+
+  listSearchIndexes: name({
+    doc: "'$.listSearchIndexes()' — the '$listSearchIndexes' source stage. First stage only, and $-scoped: '$$.listSearchIndexes()' is refused.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'listSearchIndexes()' is a source stage, not a filter predicate."),
+    expr: unsupported("'listSearchIndexes()' is a source stage, not a value."),
+    stream: unsupported("'listSearchIndexes()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'listSearchIndexes()' is a source stage, not an accumulator."),
+    window: unsupported("'listSearchIndexes()' is a source stage, not a window function."),
+  }),
+
+  planCacheStats: name({
+    doc: "'$.planCacheStats()' — the '$planCacheStats' source stage. First stage only, and $-scoped: '$$.planCacheStats()' is refused.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'planCacheStats()' is a source stage, not a filter predicate."),
+    expr: unsupported("'planCacheStats()' is a source stage, not a value."),
+    stream: unsupported("'planCacheStats()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'planCacheStats()' is a source stage, not an accumulator."),
+    window: unsupported("'planCacheStats()' is a source stage, not a window function."),
+  }),
+
+  currentOp: name({
+    doc: "'$$.currentOp()' — the '$currentOp' source stage. First stage only, and $$-scoped: '$.currentOp()' is refused.",
+    call: true,
+    on: "cluster",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'currentOp()' is a source stage, not a filter predicate."),
+    expr: unsupported("'currentOp()' is a source stage, not a value."),
+    stream: unsupported("'currentOp()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'currentOp()' is a source stage, not an accumulator."),
+    window: unsupported("'currentOp()' is a source stage, not a window function."),
+  }),
+
+  listLocalSessions: name({
+    doc: "'$$.listLocalSessions()' — the '$listLocalSessions' source stage. First stage only, and $$-scoped: '$.listLocalSessions()' is refused.",
+    call: true,
+    on: "cluster",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'listLocalSessions()' is a source stage, not a filter predicate."),
+    expr: unsupported("'listLocalSessions()' is a source stage, not a value."),
+    stream: unsupported("'listLocalSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'listLocalSessions()' is a source stage, not an accumulator."),
+    window: unsupported("'listLocalSessions()' is a source stage, not a window function."),
+  }),
+
+  listSampledQueries: name({
+    doc: "'$$.listSampledQueries()' — the '$listSampledQueries' source stage. First stage only, and $$-scoped: '$.listSampledQueries()' is refused.",
+    call: true,
+    on: "cluster",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'listSampledQueries()' is a source stage, not a filter predicate."),
+    expr: unsupported("'listSampledQueries()' is a source stage, not a value."),
+    stream: unsupported("'listSampledQueries()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'listSampledQueries()' is a source stage, not an accumulator."),
+    window: unsupported("'listSampledQueries()' is a source stage, not a window function."),
+  }),
+
+  listSessions: name({
+    doc: "'$$.listSessions()' — the '$listSessions' source stage. First stage only, and $$-scoped: '$.listSessions()' is refused.",
+    call: true,
+    on: "cluster",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'listSessions()' is a source stage, not a filter predicate."),
+    expr: unsupported("'listSessions()' is a source stage, not a value."),
+    stream: unsupported("'listSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'listSessions()' is a source stage, not an accumulator."),
+    window: unsupported("'listSessions()' is a source stage, not a window function."),
+  }),
+
+  shardedDataDistribution: name({
+    doc: "'$$.shardedDataDistribution()' — the '$shardedDataDistribution' source stage. First stage only, and $$-scoped: '$.shardedDataDistribution()' is refused.",
+    call: true,
+    on: "cluster",
+    returns: "stream",
+    where: ["statement"],
+    only: ["stageFirst"],
+    filter: unsupported("'shardedDataDistribution()' is a source stage, not a filter predicate."),
+    expr: unsupported("'shardedDataDistribution()' is a source stage, not a value."),
+    stream: unsupported(
+      "'shardedDataDistribution()' must be the pipeline's first stage, so it cannot be a chain link.",
+    ),
+    statement: pending("src/system-stage-translation.ts"),
+    group: unsupported("'shardedDataDistribution()' is a source stage, not an accumulator."),
+    window: unsupported("'shardedDataDistribution()' is a source stage, not a window function."),
+  }),
+
+  shuffle: name({
+    doc: "'.shuffle()' — random order, by stamping a '$rand' field, sorting on it and dropping it.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["stream"],
+    filter: unsupported("'.shuffle()' reorders a stream; it is not a filter predicate."),
+    expr: unsupported(
+      "'.shuffle()' reorders a stream of documents, which is not a value. To shuffle an array use '.sampleSize(n)'.",
+    ),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.shuffle()' is a chain link. Write '$ = $.shuffle();'."),
+    group: unsupported("'.shuffle()' is not an accumulator."),
+    window: unsupported("'.shuffle()' is not a window function."),
+  }),
+
+  aggregate: name({
+    doc: "'.aggregate(pipeline)' — splices raw stages into the chain. Takes an array or a block body.",
+    call: true,
+    on: "stream",
+    returns: "stream",
+    where: ["stream"],
+    blockBody: "stages",
+    filter: unsupported("'.aggregate()' splices stages; it is not a filter predicate."),
+    expr: unsupported("'.aggregate()' produces pipeline stages, not a value."),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.aggregate()' is a chain link. Write '$ = $.aggregate([…]);'."),
+    group: unsupported("'.aggregate()' is not an accumulator."),
+    window: unsupported("'.aggregate()' is not a window function."),
+  }),
+
+  assert: global_({
+    doc: "'assert(condition[, message]);' — a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
+    token: "Ident",
+    newKeyword: "forbidden",
+    asReference: false,
+    returns: "unknown",
+    where: ["statement"],
+    filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
+    expr: unsupported("'assert(...)' emits a '$match' guard stage, not a value."),
+    stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
+    statement: pending("src/pipeline.ts", { sig: "condition[, message]", allowed: [1, 2] }),
+    group: unsupported("'assert(...)' is not an accumulator."),
+    window: unsupported("'assert(...)' is not a window function."),
+  }),
+
   // ── the other namespaces, their members, and the bare callables ──
   assign: name({
     doc: "'Object.assign(target, ...sources)' — emits $mergeObjects. At statement position it writes the target.",
@@ -7073,6 +7264,7 @@ export const NAMES = {
     doc: "Cluster scope, for the diagnostic source stages: `$$$$.currentOp(...)`.",
     token: "QuadDollar",
     provides: "cluster",
+    family: "cluster",
     // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
     // statement. There is no stream form — a cross-database READ is refused
     // outright ("Cross-database reads aren't supported"), so listing "stream"
