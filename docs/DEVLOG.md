@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: the lexical rules a longest-match table cannot imply, and the lexemes rules really consume
+
+Four lexer decisions now sit in [src/registry/tokens.ts](src/registry/tokens.ts) instead of
+only in code. A longest-match table over the spellings would read `$$$$$` as `$$$$` followed
+by `$` — two valid tokens and no error — where the lexer says *"Up to 4 levels of context
+reference are supported ('$.', '$$', '$$$', '$$$$')"*, so `$$$$` carries a `maxRun`. `/` and
+`/=` are classified on the PRECEDING token rather than on themselves, which is a `chooseBy`.
+`{` counts depth so a template interpolation knows which `}` closes it, and that `}` emits no
+token at all — the one closer whose row produces nothing. `EOF` had no row despite being a
+token the lexer appends and `TOKEN_DISPLAY` names, so coverage was 68 of 69 types; it is now
+keyed `endOfInput`.
+
+Twenty production rules listed fewer lexemes than they consume, which matters because `tokens`
+is the only statement of what triggers a rule. `methodCall` omitted `?.` and the `$` of a
+stage link, so `$.s?.trim()` and `$$ = $$.$sort({a:1})` had no producing rule.
+`destructuringParam` omitted the four context-ref keys that are its whole point — a toolbox
+slot's keys are `Dollar` / `DoubleDollar` / `TripleDollar` / `QuadDollar` tokens, not
+identifiers — and the `:` of the `key: alias` rename it documents. `collectionWrite` named only
+the same-database spelling while `$$$$.reporting.summary = $$;` → `[{"$out":{"db":"reporting",
+"coll":"summary"}}]` is equally legal, and `streamReplacement` omitted the `$$$` of a source
+switch and the brackets of the three reduce-wrap shapes. Two rules listed a lexeme they do NOT
+consume: `memberAccess` claimed `:` (`$.a:b` is *"Unexpected token ':'"*) and `templateLiteral`
+claimed the interpolation's closing `}`.
+
+---
+
 ## 2026-08-24 — fix: productions state which comparison folds them, and the JavaScript they must refuse
 
 `composedInto` had been a guess. Each owner set is now measured: every literal kind was

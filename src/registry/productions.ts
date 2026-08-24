@@ -518,7 +518,7 @@ export const PRODUCTIONS = {
 
   memberAccess: production({
     doc: "Reads a field, or dispatches a name onto a receiver.",
-    tokens: ["."],
+    tokens: [".", "identifier"],
     becomes: "MemberAccess",
     precedence: 14,
     associativity: "left",
@@ -569,7 +569,7 @@ export const PRODUCTIONS = {
 
   indexAccess: production({
     doc: "Reads an element by index, or a field by computed name.",
-    tokens: ["[", "]"],
+    tokens: ["[", "]", "?."],
     becomes: "IndexAccess",
     precedence: 14,
     associativity: "left",
@@ -601,7 +601,7 @@ export const PRODUCTIONS = {
 
   methodCall: production({
     doc: "Applies a name to a receiver: `$.s.trim()`.",
-    tokens: [".", "(", ")", ","],
+    tokens: [".", "(", ")", ",", "?.", "$", "identifier"],
     becomes: "MethodCall",
     precedence: 14,
     associativity: "left",
@@ -617,7 +617,7 @@ export const PRODUCTIONS = {
 
   operatorCall: production({
     doc: "The `$op(...)` escape hatch. Which operators exist is in names.ts.",
-    tokens: ["$", "(", ")", ","],
+    tokens: ["$", "(", ")", ",", "identifier"],
     becomes: "OperatorCall",
     on: "any",
     returns: "unknown",
@@ -630,7 +630,7 @@ export const PRODUCTIONS = {
 
   namespacedCall: production({
     doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`, `Array.from(...)`.",
-    tokens: [".", "(", ")", ","],
+    tokens: [".", "(", ")", ",", "identifier"],
     becomes: ["MathCall", "ObjectCall", "NumberStatic", "DateNow", "DateUTC", "ArrayFrom", "MathConst"],
     on: "any",
     returns: "unknown",
@@ -643,7 +643,7 @@ export const PRODUCTIONS = {
 
   constructorCall: production({
     doc: "`new Date(…)`, `new Set(…)`, `new ObjectId(…)`. What each constructor means is in names.ts.",
-    tokens: ["new", "(", ")", ","],
+    tokens: ["new", "(", ")", ",", "identifier"],
     becomes: ["NewDate", "NewSet", "ObjectIdLiteral"],
     on: "any",
     returns: "unknown",
@@ -663,7 +663,7 @@ export const PRODUCTIONS = {
 
   typeCast: production({
     doc: "`Number(x)`, `String(x)`, `Boolean(x)` — a bare global conversion.",
-    tokens: ["(", ")"],
+    tokens: ["(", ")", "identifier"],
     becomes: "TypeCast",
     on: "any",
     returns: "unknown",
@@ -689,7 +689,7 @@ export const PRODUCTIONS = {
 
   fieldReference: production({
     doc: "`$.name` — a field of the current document.",
-    tokens: ["$."],
+    tokens: ["$.", "identifier"],
     becomes: "FieldRef",
     on: "any",
     returns: "unknown",
@@ -914,7 +914,7 @@ export const PRODUCTIONS = {
 
   objectLiteral: production({
     doc: "A document. At the top level it is the query document itself; with one stage-name key it is a stage.",
-    tokens: ["{", "}", ":", ","],
+    tokens: ["{", "}", ":", ",", "[", "]"],
     becomes: "ObjectLiteral",
     on: "any",
     returns: "unknown",
@@ -966,7 +966,7 @@ export const PRODUCTIONS = {
 
   arrowFunction: production({
     doc: "A callback: parameters, then a body.",
-    tokens: ["=>", "(", ")", ","],
+    tokens: ["=>", "(", ")", ",", "{", "}", "return", "identifier"],
     becomes: "Lambda",
     on: "any",
     returns: "unknown",
@@ -979,7 +979,7 @@ export const PRODUCTIONS = {
 
   destructuringParam: production({
     doc: "`({ a, b }, { $ }) => …` binds each named parameter. The ONLY parameter form: a plain name is refused, one level deep, renaming allowed, no defaults, no rest.",
-    tokens: ["{", "}", ","],
+    tokens: ["{", "}", ",", "(", ")", "identifier", ":", "$", "$$", "$$$", "$$$$"],
     becomes: { notANode: "produces ParamBinding[], which the parser holds beside the tree rather than in it" },
     on: "any",
     returns: "unknown",
@@ -1005,7 +1005,7 @@ export const PRODUCTIONS = {
 
   constantBinding: production({
     doc: "Binds a name for the statements that follow.",
-    tokens: ["const", "="],
+    tokens: ["const", "=", "identifier"],
     becomes: "LetDecl",
     on: "any",
     returns: "unknown",
@@ -1018,7 +1018,7 @@ export const PRODUCTIONS = {
 
   mutableBinding: production({
     doc: "Binds a reassignable name.",
-    tokens: ["let", "="],
+    tokens: ["let", "=", "identifier"],
     becomes: "LetDecl",
     on: "any",
     returns: "unknown",
@@ -1031,7 +1031,7 @@ export const PRODUCTIONS = {
 
   functionBinding: production({
     doc: "A reusable expression over parameters. `function` is NOT reserved — it lexes as an identifier.",
-    tokens: ["identifier", "const", "=", "=>", "(", ")"],
+    tokens: ["identifier", "const", "=", "=>", "(", ")", "let", "{", "}", "return"],
     becomes: "FuncDecl",
     on: "any",
     returns: "unknown",
@@ -1044,7 +1044,7 @@ export const PRODUCTIONS = {
 
   fieldDeletion: production({
     doc: "Removes a field.",
-    tokens: ["delete"],
+    tokens: ["delete", "$.", ","],
     becomes: "DeleteStmt",
     on: "any",
     returns: "unknown",
@@ -1057,7 +1057,7 @@ export const PRODUCTIONS = {
 
   fieldAssignment: production({
     doc: "Writes a value to a field. `+=` `-=` `*=` `/=` desugar into the same node.",
-    tokens: ["=", "+=", "-=", "*=", "/=", ","],
+    tokens: ["=", "+=", "-=", "*=", "/=", ",", "(", ")"],
     becomes: ["AssignExpr", "UpdateFilter"],
     on: "any",
     returns: "unknown",
@@ -1112,7 +1112,7 @@ export const PRODUCTIONS = {
   // ── sugar: overlapping triggers, so precedence is declared ─────────────────
   letReassignment: production({
     doc: "`name = <expr>` rebinds a `let`. Tried before every other assignment form.",
-    tokens: ["identifier", "="],
+    tokens: ["identifier", "=", "+=", "-=", "*=", "/=", "++", "--"],
     becomes: "AssignExpr",
     on: "any",
     returns: "unknown",
@@ -1126,7 +1126,7 @@ export const PRODUCTIONS = {
 
   streamReplacement: production({
     doc: "`$$ = $$.<chain>` replaces the stream with the chain's stages.",
-    tokens: ["$$", "="],
+    tokens: ["$$", "=", "$$$", "[", "]", "{", "}"],
     becomes: "AssignExpr",
     on: "any",
     returns: "unknown",
@@ -1154,7 +1154,7 @@ export const PRODUCTIONS = {
 
   collectionWrite: production({
     doc: "`$$$.<coll> = $$` writes the stream to a collection.",
-    tokens: ["$$$", "="],
+    tokens: ["$$$", "=", "$$$$", ".", "[", "]", "string"],
     becomes: "AssignExpr",
     on: "any",
     returns: "unknown",
@@ -1169,7 +1169,7 @@ export const PRODUCTIONS = {
 
   foreignJoin: production({
     doc: "`$.o = $$$.<coll>.find(<pred>)` joins another collection.",
-    tokens: ["$.", "$$$", "="],
+    tokens: ["$.", "$$$", "=", ".", "(", ")", "=>", "const", "let", "identifier"],
     becomes: "AssignExpr",
     on: "any",
     returns: "unknown",
