@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: the JavaScript name rows now agree with the compiler on receiver, result and arity
+
+The 162 remaining `name` rows had their `on`, `returns`, `where`, argument rule and `pending`
+target regenerated from the compiler's own tables. Twenty-eight of them are legal links in a
+`$$ = $$…` chain and none said so: `on` named only the value receiver, so no stream renderer
+could ever be written against them, and `returns` named a flat kind where a stream receiver
+yields a stream. Both are now per family — `$$ = $$.map(d => ({a: d.a})).take(2)` returns a
+stream at every step, `$.rows.map(f)` returns an array, and one row states both.
+
+The stream-legal set was MEASURED by driving `$$ = $$.<name>(…)` through the compiler rather
+than read off `STREAM_METHODS`, which under-reports: `filter` and `reject` are legal links
+whose lowering lives in [src/pipeline.ts](src/pipeline.ts). The same probe caught two rows
+claiming a position they do not have — `find` and `reduce` — where the compiler says
+*"'.find(...)' is not allowed in a chain on '$$' … Use '$$.filter(<predicate>).take(1)'"*. It
+also found that `takeWhile` and `dropWhile` need an order already established, which no field
+could hold, so `Only` gains `"afterSort"`: `$$ = $$.sortBy("x").takeWhile(d => d.x > 1)`
+works and the bare form does not.
+
+Seven names lower to accumulators mongod accepts in `$setWindowFields.output` and were
+refusing it, while their own operator rows already listed `"window"` — `.sum()` emits `{$sum:
+…}`, and `$sum` says `["value","group","window"]`. `.sumBy` and `.meanBy` emit the same
+accumulator shape as `.sum` and `.mean` and were denied `"group"`. Nine names are still
+lowered in [src/codegen.ts](src/codegen.ts) rather than the grid, so their argument rules were
+blank; each is now taken from the compiler's own error text, which keeps the registry's `sig`
+and the message a user reads identical. `.slice` and `.concat` preserve their receiver's
+family, which the compiler proves and the row had understated as `"unknown"`. `.lastIndexOf`
+serves two families and refuses one of them — *"MongoDB's `$indexOfCP` is forward-only"* — so
+it becomes a per-family cell rather than one flat rule that hid the refusal.
+
+---
+
 ## 2026-08-24 — fix: fifteen name rows described the form that does not exist
 
 Fifteen rows claimed `where: ["value"]` with a working expression cell, for names whose value

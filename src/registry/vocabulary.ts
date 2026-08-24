@@ -291,11 +291,15 @@ export type Position = "value" | "filter" | "stream" | "statement" | "group" | "
  *   "update"      one of the stages an update pipeline accepts — the whitelist
  *                 `jsmql.update` enforces. Without it $set and $sort look alike,
  *                 and only one of them is legal there.
+ *   "afterSort"   a chain link that needs an ORDER already established:
+ *                   $$ = $$.takeWhile(d => d.x > 1);
+ *                     → ".takeWhile(<predicate>) needs a preceding sort"
+ *                   $$ = $$.sortBy("x").takeWhile(d => d.x > 1);   works
  *
  * There is no "streamEnd". A link that may not continue a chain says so in its
  * own `stream` cell, which is the same fact where a reader already looks.
  */
-export type Only = "stageFirst" | "stageLast" | "update";
+export type Only = "stageFirst" | "stageLast" | "update" | "afterSort";
 
 /** The result type. `.filter` on an array is an array; on a stream, a stream. */
 export type Returns =
