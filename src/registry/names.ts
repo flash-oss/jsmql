@@ -25,7 +25,6 @@ import type {
   Arity,
   BodyRule,
   Cell,
-  Either,
   Emit,
   Emitter,
   ExprIn,
@@ -52,15 +51,24 @@ import type {
 } from "./vocabulary.ts";
 import { op, pending, Range, Anchored, unsupported, viaFallback } from "./vocabulary.ts";
 
-type RootSpec = {
+type RootSpec<W extends readonly Position[]> = {
   doc: string;
   token: TokenName;
   /** The class a binder sees on this root's left-hand side. */
   provides: OperandClass;
   /** The receiver family a name bound to this root is resolved against. */
   family?: Family;
-  where: readonly Position[];
-  expr?: Rule<ExprIn, unknown>;
+  where: W;
+  // A root is gated like every other entry. Before these six cells existed, the
+  // three context refs said `where: ["stream"]` while their only stated message
+  // read "'$$' is a statement, not an aggregation expression" — one construct,
+  // two registries, two answers, and nothing to catch it.
+  filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
+  expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
+  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
+  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
+  group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
+  window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
 };
 
 type NameSpec<W extends readonly Position[], O extends On> = {
@@ -74,7 +82,10 @@ type NameSpec<W extends readonly Position[], O extends On> = {
   only?: readonly Only[];
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown>;
-  stage: Cell<Either<Lists<W, "stream">, Lists<W, "statement">>, Of<O>, StageIn, Stage[]>;
+  /** A link in a `$$ = $$…` chain. */
+  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, Stage[]>;
+  /** A `;`-separated statement. SEPARATE from `stream` — see Position. */
+  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, Stage[]>;
   group: Cell<Lists<W, "group">, Of<O>, GroupIn, unknown>;
   /** $setWindowFields.output — a DIFFERENT slot from $group. See MongoSpec.window. */
   window: Cell<Lists<W, "window">, Of<O>, GroupIn, unknown>;
@@ -101,8 +112,17 @@ type MongoSpec<W extends readonly Position[], F extends readonly string[] = read
   shape?: "single" | "array" | "none" | "flex" | { object: BodyRule };
   /** Stage-position facts. Meaningful when `where` includes "stream". */
   body?: BodyRule | Pending;
-  /** Body keys whose value is itself a sub-pipeline. "*" = every value. */
+  /**
+   * DOTTED PATHS to the body fields that hold a nested pipeline. A `*` segment
+   * means "every key of this object". A flat key list could not reach
+   * $rankFusion's, which sit one level down and are user-named:
+   *   $lookup      → ["pipeline"]
+   *   $merge       → ["whenMatched"]          only when it is not a keyword
+   *   $rankFusion  → ["input.pipelines.*"]
+   */
   subPipelineFields?: readonly string[];
+  /** See MongoOpParts.minVersion. */
+  minVersion?: string;
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
@@ -113,7 +133,14 @@ type MongoSpec<W extends readonly Position[], F extends readonly string[] = read
    * $rank is a window function and not a group operator; $mergeObjects the reverse.
    */
   window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
-  stage: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
+  /** A link in a `$$ = $$…` chain. */
+  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
+  /**
+   * A top-level `;`-separated statement. SEPARATE from `stream`: `$match(…);`
+   * and `$$ = $$.$match(…)` are both legal and a stage row must be able to say
+   * so, while `$$.push(...)` is a statement whose chain-link form is refused.
+   */
+  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
 };
 
 type GlobalSpec<W extends readonly Position[]> = {
@@ -130,9 +157,15 @@ type GlobalSpec<W extends readonly Position[]> = {
   only?: readonly Only[];
   filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
   expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
+  // `assert(cond);` is receiver-less AND statement-only. With only the two cells
+  // above, it had nowhere to be written at all.
+  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
+  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
+  group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
+  window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
 };
 
-export type RootEntry = RootSpec & { kind: "root" };
+export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On> = NameSpec<W, O> & { kind: "name" };
 export type MongoEntry<W extends readonly Position[], F extends readonly string[] = readonly never[]> = MongoSpec<
   W,
@@ -143,7 +176,7 @@ export type GlobalEntry<W extends readonly Position[]> = GlobalSpec<W> & { kind:
 // Every generic defaults to the EMPTY type, never to its constraint — a row with
 // no `forbiddenIn` would otherwise widen `F` to `readonly string[]` and the
 // audit below would pass while checking nothing.
-const root = (e: RootSpec): RootEntry => ({ ...e, kind: "root" });
+const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W> => ({ ...e, kind: "root" });
 const name = <const W extends readonly Position[], const O extends On>(e: NameSpec<W, O>): NameEntry<W, O> => ({
   ...e,
   kind: "name",
@@ -163,7 +196,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$abs' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$abs' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$abs' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$abs' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$abs' is not a statement — see its 'where'."),
   }),
 
   $add: mongo({
@@ -175,7 +209,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$add' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$add' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$add' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$add' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$add' is not a statement — see its 'where'."),
   }),
 
   $ceil: mongo({
@@ -187,7 +222,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$ceil' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ceil' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$ceil' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$ceil' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$ceil' is not a statement — see its 'where'."),
   }),
 
   $divide: mongo({
@@ -199,7 +235,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$divide' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$divide' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$divide' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$divide' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$divide' is not a statement — see its 'where'."),
   }),
 
   $exp: mongo({
@@ -211,7 +248,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$exp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$exp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$exp' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$exp' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$exp' is not a statement — see its 'where'."),
   }),
 
   $floor: mongo({
@@ -223,7 +261,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$floor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$floor' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$floor' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$floor' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$floor' is not a statement — see its 'where'."),
   }),
 
   $ln: mongo({
@@ -235,7 +274,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$ln' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ln' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$ln' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$ln' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$ln' is not a statement — see its 'where'."),
   }),
 
   $log: mongo({
@@ -247,7 +287,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$log' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$log' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$log' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$log' is not a statement — see its 'where'."),
   }),
 
   $log10: mongo({
@@ -259,7 +300,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$log10' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$log10' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$log10' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$log10' is not a statement — see its 'where'."),
   }),
 
   $mod: mongo({
@@ -271,7 +313,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$mod' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$mod' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$mod' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$mod' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$mod' is not a statement — see its 'where'."),
   }),
 
   $multiply: mongo({
@@ -283,7 +326,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$multiply' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$multiply' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$multiply' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$multiply' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$multiply' is not a statement — see its 'where'."),
   }),
 
   $pow: mongo({
@@ -295,7 +339,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$pow' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$pow' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$pow' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$pow' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$pow' is not a statement — see its 'where'."),
   }),
 
   $round: mongo({
@@ -310,7 +355,8 @@ export const NAMES = {
     },
     group: unsupported("'$round' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$round' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$round' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$round' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$round' is not a statement — see its 'where'."),
   }),
 
   $sigmoid: mongo({
@@ -322,7 +368,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$sigmoid' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sigmoid' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sigmoid' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sigmoid' is not a statement — see its 'where'."),
   }),
 
   $sqrt: mongo({
@@ -334,7 +381,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$sqrt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sqrt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sqrt' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sqrt' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sqrt' is not a statement — see its 'where'."),
   }),
 
   $subtract: mongo({
@@ -346,7 +394,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$subtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$subtract' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$subtract' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$subtract' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$subtract' is not a statement — see its 'where'."),
   }),
 
   $trunc: mongo({
@@ -361,7 +410,8 @@ export const NAMES = {
     },
     group: unsupported("'$trunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trunc' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$trunc' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$trunc' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$trunc' is not a statement — see its 'where'."),
   }),
 
   $bitAnd: mongo({
@@ -373,7 +423,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$bitAnd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitAnd' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$bitAnd' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bitAnd' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bitAnd' is not a statement — see its 'where'."),
   }),
 
   $bitNot: mongo({
@@ -385,7 +436,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$bitNot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitNot' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$bitNot' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bitNot' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bitNot' is not a statement — see its 'where'."),
   }),
 
   $bitOr: mongo({
@@ -397,7 +449,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$bitOr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitOr' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$bitOr' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bitOr' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bitOr' is not a statement — see its 'where'."),
   }),
 
   $bitXor: mongo({
@@ -409,7 +462,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$bitXor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitXor' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$bitXor' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bitXor' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bitXor' is not a statement — see its 'where'."),
   }),
 
   $sin: mongo({
@@ -421,7 +475,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$sin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sin' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sin' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sin' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sin' is not a statement — see its 'where'."),
   }),
 
   $cos: mongo({
@@ -433,7 +488,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$cos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cos' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$cos' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$cos' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$cos' is not a statement — see its 'where'."),
   }),
 
   $tan: mongo({
@@ -445,7 +501,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$tan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tan' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$tan' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$tan' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$tan' is not a statement — see its 'where'."),
   }),
 
   $asin: mongo({
@@ -457,7 +514,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$asin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asin' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$asin' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$asin' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$asin' is not a statement — see its 'where'."),
   }),
 
   $acos: mongo({
@@ -469,7 +527,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$acos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acos' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$acos' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$acos' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$acos' is not a statement — see its 'where'."),
   }),
 
   $atan: mongo({
@@ -481,7 +540,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$atan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$atan' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$atan' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$atan' is not a statement — see its 'where'."),
   }),
 
   $atan2: mongo({
@@ -493,7 +553,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$atan2' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan2' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$atan2' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$atan2' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$atan2' is not a statement — see its 'where'."),
   }),
 
   $sinh: mongo({
@@ -505,7 +566,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$sinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sinh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sinh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sinh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sinh' is not a statement — see its 'where'."),
   }),
 
   $cosh: mongo({
@@ -517,7 +579,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$cosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cosh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$cosh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$cosh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$cosh' is not a statement — see its 'where'."),
   }),
 
   $tanh: mongo({
@@ -529,7 +592,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$tanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tanh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$tanh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$tanh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$tanh' is not a statement — see its 'where'."),
   }),
 
   $asinh: mongo({
@@ -541,7 +605,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$asinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asinh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$asinh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$asinh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$asinh' is not a statement — see its 'where'."),
   }),
 
   $acosh: mongo({
@@ -553,7 +618,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$acosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acosh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$acosh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$acosh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$acosh' is not a statement — see its 'where'."),
   }),
 
   $atanh: mongo({
@@ -565,7 +631,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$atanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atanh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$atanh' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$atanh' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$atanh' is not a statement — see its 'where'."),
   }),
 
   $degreesToRadians: mongo({
@@ -577,7 +644,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$degreesToRadians' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$degreesToRadians' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$degreesToRadians' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$degreesToRadians' is not a statement — see its 'where'."),
   }),
 
   $radiansToDegrees: mongo({
@@ -589,7 +657,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$radiansToDegrees' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$radiansToDegrees' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$radiansToDegrees' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$radiansToDegrees' is not a statement — see its 'where'."),
   }),
 
   $cmp: mongo({
@@ -601,7 +670,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$cmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cmp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$cmp' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$cmp' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$cmp' is not a statement — see its 'where'."),
   }),
 
   $eq: mongo({
@@ -616,7 +686,8 @@ export const NAMES = {
     },
     group: unsupported("'$eq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$eq' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$eq' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$eq' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$eq' is not a statement — see its 'where'."),
   }),
 
   $ne: mongo({
@@ -631,7 +702,8 @@ export const NAMES = {
     },
     group: unsupported("'$ne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ne' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$ne' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$ne' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$ne' is not a statement — see its 'where'."),
   }),
 
   $gt: mongo({
@@ -646,7 +718,8 @@ export const NAMES = {
     },
     group: unsupported("'$gt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$gt' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$gt' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$gt' is not a statement — see its 'where'."),
   }),
 
   $gte: mongo({
@@ -661,7 +734,8 @@ export const NAMES = {
     },
     group: unsupported("'$gte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gte' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$gte' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$gte' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$gte' is not a statement — see its 'where'."),
   }),
 
   $lt: mongo({
@@ -676,7 +750,8 @@ export const NAMES = {
     },
     group: unsupported("'$lt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$lt' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$lt' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$lt' is not a statement — see its 'where'."),
   }),
 
   $lte: mongo({
@@ -691,7 +766,8 @@ export const NAMES = {
     },
     group: unsupported("'$lte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lte' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$lte' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$lte' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$lte' is not a statement — see its 'where'."),
   }),
 
   $and: mongo({
@@ -703,7 +779,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$and' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$and' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$and' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$and' is not a statement — see its 'where'."),
   }),
 
   $or: mongo({
@@ -715,7 +792,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$or' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$or' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$or' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$or' is not a statement — see its 'where'."),
   }),
 
   $not: mongo({
@@ -727,7 +805,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$not' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$not' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$not' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$not' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$not' is not a statement — see its 'where'."),
   }),
 
   $cond: mongo({
@@ -739,7 +818,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$cond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$cond' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$cond' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$cond' is not a statement — see its 'where'."),
   }),
 
   $ifNull: mongo({
@@ -751,7 +831,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$ifNull' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ifNull' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$ifNull' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$ifNull' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$ifNull' is not a statement — see its 'where'."),
   }),
 
   $switch: mongo({
@@ -763,7 +844,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$switch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$switch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$switch' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$switch' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$switch' is not a statement — see its 'where'."),
   }),
 
   $concat: mongo({
@@ -775,7 +857,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$concat' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$concat' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$concat' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$concat' is not a statement — see its 'where'."),
   }),
 
   $indexOfBytes: mongo({
@@ -787,7 +870,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$indexOfBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$indexOfBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$indexOfBytes' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$indexOfBytes' is not a statement — see its 'where'."),
   }),
 
   $indexOfCP: mongo({
@@ -799,7 +883,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$indexOfCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$indexOfCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$indexOfCP' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$indexOfCP' is not a statement — see its 'where'."),
   }),
 
   $ltrim: mongo({
@@ -811,7 +896,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$ltrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ltrim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$ltrim' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$ltrim' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$ltrim' is not a statement — see its 'where'."),
   }),
 
   $rtrim: mongo({
@@ -823,7 +909,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$rtrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rtrim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$rtrim' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$rtrim' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$rtrim' is not a statement — see its 'where'."),
   }),
 
   $trim: mongo({
@@ -835,7 +922,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$trim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$trim' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$trim' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$trim' is not a statement — see its 'where'."),
   }),
 
   $regexFind: mongo({
@@ -847,7 +935,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$regexFind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFind' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$regexFind' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$regexFind' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$regexFind' is not a statement — see its 'where'."),
   }),
 
   $regexFindAll: mongo({
@@ -859,7 +948,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$regexFindAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFindAll' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$regexFindAll' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$regexFindAll' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$regexFindAll' is not a statement — see its 'where'."),
   }),
 
   $regexMatch: mongo({
@@ -871,7 +961,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$regexMatch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexMatch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$regexMatch' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$regexMatch' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$regexMatch' is not a statement — see its 'where'."),
   }),
 
   $replaceAll: mongo({
@@ -883,7 +974,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$replaceAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceAll' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$replaceAll' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$replaceAll' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$replaceAll' is not a statement — see its 'where'."),
   }),
 
   $replaceOne: mongo({
@@ -895,7 +987,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$replaceOne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceOne' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$replaceOne' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$replaceOne' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$replaceOne' is not a statement — see its 'where'."),
   }),
 
   $split: mongo({
@@ -907,7 +1000,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$split' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$split' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$split' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$split' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$split' is not a statement — see its 'where'."),
   }),
 
   $strLenBytes: mongo({
@@ -919,7 +1013,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$strLenBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$strLenBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$strLenBytes' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$strLenBytes' is not a statement — see its 'where'."),
   }),
 
   $strLenCP: mongo({
@@ -931,7 +1026,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$strLenCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$strLenCP' is not a statement — see its 'where'."),
   }),
 
   $strcasecmp: mongo({
@@ -943,7 +1039,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$strcasecmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$strcasecmp' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$strcasecmp' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$strcasecmp' is not a statement — see its 'where'."),
   }),
 
   $substr: mongo({
@@ -955,7 +1052,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$substr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substr' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$substr' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$substr' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$substr' is not a statement — see its 'where'."),
   }),
 
   $substrBytes: mongo({
@@ -967,7 +1065,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$substrBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$substrBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$substrBytes' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$substrBytes' is not a statement — see its 'where'."),
   }),
 
   $substrCP: mongo({
@@ -979,7 +1078,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$substrCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$substrCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$substrCP' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$substrCP' is not a statement — see its 'where'."),
   }),
 
   $toLower: mongo({
@@ -991,7 +1091,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toLower' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLower' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toLower' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toLower' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toLower' is not a statement — see its 'where'."),
   }),
 
   $toUpper: mongo({
@@ -1003,7 +1104,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toUpper' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUpper' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toUpper' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toUpper' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toUpper' is not a statement — see its 'where'."),
   }),
 
   $encStrContains: mongo({
@@ -1015,7 +1117,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$encStrContains' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrContains' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$encStrContains' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$encStrContains' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$encStrContains' is not a statement — see its 'where'."),
   }),
 
   $encStrEndsWith: mongo({
@@ -1027,7 +1130,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$encStrEndsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrEndsWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$encStrEndsWith' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$encStrEndsWith' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$encStrEndsWith' is not a statement — see its 'where'."),
   }),
 
   $encStrNormalizedEq: mongo({
@@ -1039,7 +1143,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$encStrNormalizedEq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrNormalizedEq' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$encStrNormalizedEq' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$encStrNormalizedEq' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$encStrNormalizedEq' is not a statement — see its 'where'."),
   }),
 
   $encStrStartsWith: mongo({
@@ -1051,7 +1156,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$encStrStartsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrStartsWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$encStrStartsWith' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$encStrStartsWith' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$encStrStartsWith' is not a statement — see its 'where'."),
   }),
 
   $arrayElemAt: mongo({
@@ -1063,7 +1169,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$arrayElemAt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$arrayElemAt' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$arrayElemAt' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$arrayElemAt' is not a statement — see its 'where'."),
   }),
 
   $arrayToObject: mongo({
@@ -1075,7 +1182,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$arrayToObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$arrayToObject' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$arrayToObject' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$arrayToObject' is not a statement — see its 'where'."),
   }),
 
   $concatArrays: mongo({
@@ -1087,7 +1195,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
-    stage: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$concatArrays' is not a statement — see its 'where'."),
   }),
 
   $filter: mongo({
@@ -1099,7 +1208,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$filter' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$filter' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$filter' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$filter' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$filter' is not a statement — see its 'where'."),
   }),
 
   $first: mongo({
@@ -1111,7 +1221,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$first' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$first' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$first' is not a statement — see its 'where'."),
   }),
 
   $firstN: mongo({
@@ -1123,7 +1234,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$firstN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$firstN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$firstN' is not a statement — see its 'where'."),
   }),
 
   $in: mongo({
@@ -1138,7 +1250,8 @@ export const NAMES = {
     },
     group: unsupported("'$in' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$in' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$in' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$in' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$in' is not a statement — see its 'where'."),
   }),
 
   $indexOfArray: mongo({
@@ -1150,7 +1263,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$indexOfArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$indexOfArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$indexOfArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$indexOfArray' is not a statement — see its 'where'."),
   }),
 
   $isArray: mongo({
@@ -1162,7 +1276,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$isArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$isArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$isArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$isArray' is not a statement — see its 'where'."),
   }),
 
   $last: mongo({
@@ -1174,7 +1289,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$last' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$last' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$last' is not a statement — see its 'where'."),
   }),
 
   $lastN: mongo({
@@ -1186,7 +1302,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$lastN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$lastN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$lastN' is not a statement — see its 'where'."),
   }),
 
   $map: mongo({
@@ -1198,7 +1315,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$map' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$map' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$map' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$map' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$map' is not a statement — see its 'where'."),
   }),
 
   $maxN: mongo({
@@ -1210,7 +1328,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$maxN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$maxN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$maxN' is not a statement — see its 'where'."),
   }),
 
   $minN: mongo({
@@ -1222,7 +1341,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$minN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$minN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$minN' is not a statement — see its 'where'."),
   }),
 
   $objectToArray: mongo({
@@ -1234,7 +1354,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$objectToArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$objectToArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$objectToArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$objectToArray' is not a statement — see its 'where'."),
   }),
 
   $range: mongo({
@@ -1246,7 +1367,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$range' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$range' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$range' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$range' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$range' is not a statement — see its 'where'."),
   }),
 
   $reduce: mongo({
@@ -1258,7 +1380,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$reduce' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reduce' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$reduce' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$reduce' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$reduce' is not a statement — see its 'where'."),
   }),
 
   $reverseArray: mongo({
@@ -1270,7 +1393,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$reverseArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$reverseArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$reverseArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$reverseArray' is not a statement — see its 'where'."),
   }),
 
   $size: mongo({
@@ -1282,7 +1406,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$size' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$size' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$size' is not a statement — see its 'where'."),
   }),
 
   $slice: mongo({
@@ -1294,7 +1419,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$slice' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$slice' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$slice' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$slice' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$slice' is not a statement — see its 'where'."),
   }),
 
   $sortArray: mongo({
@@ -1306,7 +1432,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$sortArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sortArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sortArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sortArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sortArray' is not a statement — see its 'where'."),
   }),
 
   $zip: mongo({
@@ -1318,7 +1445,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$zip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$zip' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$zip' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$zip' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$zip' is not a statement — see its 'where'."),
   }),
 
   $allElementsTrue: mongo({
@@ -1330,7 +1458,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$allElementsTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$allElementsTrue' is not a statement — see its 'where'."),
   }),
 
   $anyElementTrue: mongo({
@@ -1342,7 +1471,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$anyElementTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$anyElementTrue' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$anyElementTrue' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$anyElementTrue' is not a statement — see its 'where'."),
   }),
 
   $setDifference: mongo({
@@ -1354,7 +1484,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$setDifference' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setDifference' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$setDifference' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setDifference' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setDifference' is not a statement — see its 'where'."),
   }),
 
   $setEquals: mongo({
@@ -1366,7 +1497,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$setEquals' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setEquals' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setEquals' is not a statement — see its 'where'."),
   }),
 
   $setIntersection: mongo({
@@ -1378,7 +1510,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$setIntersection' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setIntersection' is not a statement — see its 'where'."),
   }),
 
   $setIsSubset: mongo({
@@ -1390,7 +1523,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: unsupported("'$setIsSubset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$setIsSubset' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setIsSubset' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setIsSubset' is not a statement — see its 'where'."),
   }),
 
   $setUnion: mongo({
@@ -1402,7 +1536,8 @@ export const NAMES = {
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     group: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
-    stage: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setUnion' is not a statement — see its 'where'."),
   }),
 
   $getField: mongo({
@@ -1414,7 +1549,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$getField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$getField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$getField' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$getField' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$getField' is not a statement — see its 'where'."),
   }),
 
   $mergeObjects: mongo({
@@ -1432,7 +1568,8 @@ export const NAMES = {
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$mergeObjects' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$mergeObjects' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$mergeObjects' is not a statement — see its 'where'."),
   }),
 
   $setField: mongo({
@@ -1444,7 +1581,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$setField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$setField' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$setField' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$setField' is not a statement — see its 'where'."),
   }),
 
   $unsetField: mongo({
@@ -1456,7 +1594,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$unsetField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unsetField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$unsetField' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$unsetField' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$unsetField' is not a statement — see its 'where'."),
   }),
 
   $dateAdd: mongo({
@@ -1468,7 +1607,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateAdd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateAdd' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateAdd' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateAdd' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateAdd' is not a statement — see its 'where'."),
   }),
 
   $dateDiff: mongo({
@@ -1482,7 +1622,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateDiff' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateDiff' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateDiff' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateDiff' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateDiff' is not a statement — see its 'where'."),
   }),
 
   $dateFromParts: mongo({
@@ -1500,7 +1641,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateFromParts' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateFromParts' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateFromParts' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateFromParts' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateFromParts' is not a statement — see its 'where'."),
   }),
 
   $dateFromString: mongo({
@@ -1514,7 +1656,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateFromString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateFromString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateFromString' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateFromString' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateFromString' is not a statement — see its 'where'."),
   }),
 
   $dateSubtract: mongo({
@@ -1526,7 +1669,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateSubtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateSubtract' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateSubtract' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateSubtract' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateSubtract' is not a statement — see its 'where'."),
   }),
 
   $dateToParts: mongo({
@@ -1538,7 +1682,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateToParts' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToParts' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateToParts' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateToParts' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateToParts' is not a statement — see its 'where'."),
   }),
 
   $dateToString: mongo({
@@ -1550,7 +1695,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateToString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateToString' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateToString' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateToString' is not a statement — see its 'where'."),
   }),
 
   $dateTrunc: mongo({
@@ -1562,7 +1708,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dateTrunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateTrunc' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dateTrunc' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dateTrunc' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dateTrunc' is not a statement — see its 'where'."),
   }),
 
   $dayOfMonth: mongo({
@@ -1574,7 +1721,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dayOfMonth' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dayOfMonth' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dayOfMonth' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dayOfMonth' is not a statement — see its 'where'."),
   }),
 
   $dayOfWeek: mongo({
@@ -1586,7 +1734,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dayOfWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dayOfWeek' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dayOfWeek' is not a statement — see its 'where'."),
   }),
 
   $dayOfYear: mongo({
@@ -1598,7 +1747,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$dayOfYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$dayOfYear' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$dayOfYear' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$dayOfYear' is not a statement — see its 'where'."),
   }),
 
   $hour: mongo({
@@ -1610,7 +1760,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$hour' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hour' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$hour' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$hour' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$hour' is not a statement — see its 'where'."),
   }),
 
   $isoDayOfWeek: mongo({
@@ -1622,7 +1773,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$isoDayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$isoDayOfWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$isoDayOfWeek' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$isoDayOfWeek' is not a statement — see its 'where'."),
   }),
 
   $isoWeek: mongo({
@@ -1634,7 +1786,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$isoWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$isoWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$isoWeek' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$isoWeek' is not a statement — see its 'where'."),
   }),
 
   $isoWeekYear: mongo({
@@ -1646,7 +1799,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$isoWeekYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$isoWeekYear' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$isoWeekYear' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$isoWeekYear' is not a statement — see its 'where'."),
   }),
 
   $millisecond: mongo({
@@ -1658,7 +1812,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$millisecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$millisecond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$millisecond' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$millisecond' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$millisecond' is not a statement — see its 'where'."),
   }),
 
   $minute: mongo({
@@ -1670,7 +1825,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$minute' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$minute' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$minute' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$minute' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$minute' is not a statement — see its 'where'."),
   }),
 
   $month: mongo({
@@ -1682,7 +1838,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$month' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$month' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$month' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$month' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$month' is not a statement — see its 'where'."),
   }),
 
   $second: mongo({
@@ -1694,7 +1851,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$second' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$second' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$second' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$second' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$second' is not a statement — see its 'where'."),
   }),
 
   $toDate: mongo({
@@ -1706,7 +1864,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toDate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDate' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toDate' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toDate' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toDate' is not a statement — see its 'where'."),
   }),
 
   $week: mongo({
@@ -1718,7 +1877,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$week' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$week' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$week' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$week' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$week' is not a statement — see its 'where'."),
   }),
 
   $year: mongo({
@@ -1730,7 +1890,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$year' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$year' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$year' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$year' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$year' is not a statement — see its 'where'."),
   }),
 
   $tsIncrement: mongo({
@@ -1742,7 +1903,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$tsIncrement' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$tsIncrement' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$tsIncrement' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$tsIncrement' is not a statement — see its 'where'."),
   }),
 
   $tsSecond: mongo({
@@ -1754,7 +1916,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$tsSecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$tsSecond' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$tsSecond' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$tsSecond' is not a statement — see its 'where'."),
   }),
 
   $convert: mongo({
@@ -1766,7 +1929,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$convert' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$convert' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$convert' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$convert' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$convert' is not a statement — see its 'where'."),
   }),
 
   $isNumber: mongo({
@@ -1778,7 +1942,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$isNumber' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isNumber' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$isNumber' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$isNumber' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$isNumber' is not a statement — see its 'where'."),
   }),
 
   $toArray: mongo({
@@ -1790,7 +1955,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toArray' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toArray' is not a statement — see its 'where'."),
   }),
 
   $toBool: mongo({
@@ -1802,7 +1968,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toBool' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toBool' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toBool' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toBool' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toBool' is not a statement — see its 'where'."),
   }),
 
   $toDecimal: mongo({
@@ -1814,7 +1981,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toDecimal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toDecimal' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toDecimal' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toDecimal' is not a statement — see its 'where'."),
   }),
 
   $toDouble: mongo({
@@ -1826,7 +1994,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toDouble' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDouble' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toDouble' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toDouble' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toDouble' is not a statement — see its 'where'."),
   }),
 
   $toInt: mongo({
@@ -1838,7 +2007,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toInt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toInt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toInt' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toInt' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toInt' is not a statement — see its 'where'."),
   }),
 
   $toLong: mongo({
@@ -1850,7 +2020,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toLong' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLong' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toLong' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toLong' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toLong' is not a statement — see its 'where'."),
   }),
 
   $toObject: mongo({
@@ -1862,7 +2033,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObject' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toObject' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toObject' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toObject' is not a statement — see its 'where'."),
   }),
 
   $toObjectId: mongo({
@@ -1874,7 +2046,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toObjectId' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toObjectId' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toObjectId' is not a statement — see its 'where'."),
   }),
 
   $toString: mongo({
@@ -1886,7 +2059,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toString' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toString' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toString' is not a statement — see its 'where'."),
   }),
 
   $toUUID: mongo({
@@ -1898,7 +2072,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toUUID' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUUID' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toUUID' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toUUID' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toUUID' is not a statement — see its 'where'."),
   }),
 
   $type: mongo({
@@ -1910,7 +2085,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$type' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$type' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$type' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$type' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$type' is not a statement — see its 'where'."),
   }),
 
   $literal: mongo({
@@ -1922,7 +2098,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$literal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$literal' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$literal' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$literal' is not a statement — see its 'where'."),
   }),
 
   $let: mongo({
@@ -1934,7 +2111,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$let' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$let' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$let' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$let' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$let' is not a statement — see its 'where'."),
   }),
 
   $accumulator: mongo({
@@ -1952,7 +2130,8 @@ export const NAMES = {
     expr: unsupported("'$accumulator' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: unsupported("'$accumulator' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$accumulator' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$accumulator' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$accumulator' is not a statement — see its 'where'."),
   }),
 
   $function: mongo({
@@ -1964,7 +2143,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$function' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$function' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$function' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$function' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$function' is not a statement — see its 'where'."),
   }),
 
   $binarySize: mongo({
@@ -1976,7 +2156,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$binarySize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$binarySize' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$binarySize' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$binarySize' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$binarySize' is not a statement — see its 'where'."),
   }),
 
   $bsonSize: mongo({
@@ -1988,7 +2169,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$bsonSize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$bsonSize' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bsonSize' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bsonSize' is not a statement — see its 'where'."),
   }),
 
   $meta: mongo({
@@ -2000,7 +2182,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$meta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$meta' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$meta' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$meta' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$meta' is not a statement — see its 'where'."),
   }),
 
   $createObjectId: mongo({
@@ -2012,7 +2195,8 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$createObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$createObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$createObjectId' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$createObjectId' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$createObjectId' is not a statement — see its 'where'."),
   }),
 
   $hash: mongo({
@@ -2024,7 +2208,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$hash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hash' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$hash' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$hash' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$hash' is not a statement — see its 'where'."),
   }),
 
   $hexHash: mongo({
@@ -2036,7 +2221,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$hexHash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hexHash' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$hexHash' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$hexHash' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$hexHash' is not a statement — see its 'where'."),
   }),
 
   $rand: mongo({
@@ -2048,7 +2234,8 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$rand' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rand' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$rand' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$rand' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$rand' is not a statement — see its 'where'."),
   }),
 
   $sampleRate: mongo({
@@ -2060,7 +2247,8 @@ export const NAMES = {
     expr: unsupported("'$sampleRate' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sampleRate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sampleRate' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$sampleRate' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sampleRate' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sampleRate' is not a statement — see its 'where'."),
   }),
 
   $toHashedIndexKey: mongo({
@@ -2072,7 +2260,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$toHashedIndexKey' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$toHashedIndexKey' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$toHashedIndexKey' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$toHashedIndexKey' is not a statement — see its 'where'."),
   }),
 
   $addToSet: mongo({
@@ -2084,7 +2273,8 @@ export const NAMES = {
     expr: unsupported("'$addToSet' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$addToSet' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$addToSet' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$addToSet' is not a statement — see its 'where'."),
   }),
 
   $avg: mongo({
@@ -2105,7 +2295,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$avg' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$avg' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$avg' is not a statement — see its 'where'."),
   }),
 
   $count: mongo({
@@ -2123,7 +2314,8 @@ export const NAMES = {
     expr: unsupported("'$count' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$count' is not a statement — see its 'where'."),
   }),
 
   $max: mongo({
@@ -2144,7 +2336,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$max' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$max' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$max' is not a statement — see its 'where'."),
   }),
 
   $median: mongo({
@@ -2156,7 +2349,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$median' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$median' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$median' is not a statement — see its 'where'."),
   }),
 
   $min: mongo({
@@ -2177,7 +2371,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$min' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$min' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$min' is not a statement — see its 'where'."),
   }),
 
   $percentile: mongo({
@@ -2189,7 +2384,8 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$percentile' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$percentile' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$percentile' is not a statement — see its 'where'."),
   }),
 
   $push: mongo({
@@ -2201,7 +2397,8 @@ export const NAMES = {
     expr: unsupported("'$push' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$push' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$push' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$push' is not a statement — see its 'where'."),
   }),
 
   $stdDevPop: mongo({
@@ -2222,7 +2419,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$stdDevPop' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$stdDevPop' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$stdDevPop' is not a statement — see its 'where'."),
   }),
 
   $stdDevSamp: mongo({
@@ -2243,7 +2441,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$stdDevSamp' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$stdDevSamp' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$stdDevSamp' is not a statement — see its 'where'."),
   }),
 
   $sum: mongo({
@@ -2264,7 +2463,8 @@ export const NAMES = {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
     },
-    stage: unsupported("'$sum' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$sum' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$sum' is not a statement — see its 'where'."),
   }),
 
   $bottom: mongo({
@@ -2276,7 +2476,8 @@ export const NAMES = {
     expr: unsupported("'$bottom' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$bottom' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bottom' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bottom' is not a statement — see its 'where'."),
   }),
 
   $bottomN: mongo({
@@ -2288,7 +2489,8 @@ export const NAMES = {
     expr: unsupported("'$bottomN' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$bottomN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$bottomN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$bottomN' is not a statement — see its 'where'."),
   }),
 
   $top: mongo({
@@ -2300,7 +2502,8 @@ export const NAMES = {
     expr: unsupported("'$top' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: unsupported("'$top' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$top' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$top' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$top' is not a statement — see its 'where'."),
   }),
 
   $topN: mongo({
@@ -2312,7 +2515,8 @@ export const NAMES = {
     expr: unsupported("'$topN' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     window: unsupported("'$topN' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: unsupported("'$topN' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$topN' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$topN' is not a statement — see its 'where'."),
   }),
 
   $covariancePop: mongo({
@@ -2324,7 +2528,8 @@ export const NAMES = {
     expr: unsupported("'$covariancePop' is not valid in expression position — see its 'where'."),
     group: unsupported("'$covariancePop' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
-    stage: unsupported("'$covariancePop' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$covariancePop' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$covariancePop' is not a statement — see its 'where'."),
   }),
 
   $covarianceSamp: mongo({
@@ -2336,7 +2541,8 @@ export const NAMES = {
     expr: unsupported("'$covarianceSamp' is not valid in expression position — see its 'where'."),
     group: unsupported("'$covarianceSamp' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
-    stage: unsupported("'$covarianceSamp' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$covarianceSamp' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$covarianceSamp' is not a statement — see its 'where'."),
   }),
 
   $denseRank: mongo({
@@ -2348,7 +2554,8 @@ export const NAMES = {
     expr: unsupported("'$denseRank' is not valid in expression position — see its 'where'."),
     group: unsupported("'$denseRank' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stage: unsupported("'$denseRank' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$denseRank' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$denseRank' is not a statement — see its 'where'."),
   }),
 
   $derivative: mongo({
@@ -2360,7 +2567,8 @@ export const NAMES = {
     expr: unsupported("'$derivative' is not valid in expression position — see its 'where'."),
     group: unsupported("'$derivative' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$derivative' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$derivative' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$derivative' is not a statement — see its 'where'."),
   }),
 
   $documentNumber: mongo({
@@ -2372,7 +2580,8 @@ export const NAMES = {
     expr: unsupported("'$documentNumber' is not valid in expression position — see its 'where'."),
     group: unsupported("'$documentNumber' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stage: unsupported("'$documentNumber' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$documentNumber' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$documentNumber' is not a statement — see its 'where'."),
   }),
 
   $expMovingAvg: mongo({
@@ -2384,7 +2593,8 @@ export const NAMES = {
     expr: unsupported("'$expMovingAvg' is not valid in expression position — see its 'where'."),
     group: unsupported("'$expMovingAvg' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$expMovingAvg' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$expMovingAvg' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$expMovingAvg' is not a statement — see its 'where'."),
   }),
 
   $integral: mongo({
@@ -2396,7 +2606,8 @@ export const NAMES = {
     expr: unsupported("'$integral' is not valid in expression position — see its 'where'."),
     group: unsupported("'$integral' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$integral' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$integral' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$integral' is not a statement — see its 'where'."),
   }),
 
   $linearFill: mongo({
@@ -2408,7 +2619,8 @@ export const NAMES = {
     expr: unsupported("'$linearFill' is not valid in expression position — see its 'where'."),
     group: unsupported("'$linearFill' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$linearFill' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$linearFill' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$linearFill' is not a statement — see its 'where'."),
   }),
 
   $locf: mongo({
@@ -2420,7 +2632,8 @@ export const NAMES = {
     expr: unsupported("'$locf' is not valid in expression position — see its 'where'."),
     group: unsupported("'$locf' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$locf' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$locf' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$locf' is not a statement — see its 'where'."),
   }),
 
   $rank: mongo({
@@ -2432,7 +2645,8 @@ export const NAMES = {
     expr: unsupported("'$rank' is not valid in expression position — see its 'where'."),
     group: unsupported("'$rank' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stage: unsupported("'$rank' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$rank' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$rank' is not a statement — see its 'where'."),
   }),
 
   $shift: mongo({
@@ -2444,7 +2658,8 @@ export const NAMES = {
     expr: unsupported("'$shift' is not valid in expression position — see its 'where'."),
     group: unsupported("'$shift' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
-    stage: unsupported("'$shift' is not valid in stage position — see its 'where'."),
+    stream: unsupported("'$shift' is not valid in stage position — see its 'where'."),
+    statement: unsupported("'$shift' is not a statement — see its 'where'."),
   }),
 
   $addFields: mongo({
@@ -2457,7 +2672,8 @@ export const NAMES = {
     expr: unsupported("'$addFields' is not valid in expression position — see its 'where'."),
     group: unsupported("'$addFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$addFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$addFields' is not a statement — see its 'where'."),
   }),
 
   $bucket: mongo({
@@ -2470,7 +2686,8 @@ export const NAMES = {
     expr: unsupported("'$bucket' is not valid in expression position — see its 'where'."),
     group: unsupported("'$bucket' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucket' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$bucket' is not a statement — see its 'where'."),
   }),
 
   $bucketAuto: mongo({
@@ -2483,7 +2700,8 @@ export const NAMES = {
     expr: unsupported("'$bucketAuto' is not valid in expression position — see its 'where'."),
     group: unsupported("'$bucketAuto' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$bucketAuto' is not a statement — see its 'where'."),
   }),
 
   $changeStream: mongo({
@@ -2497,7 +2715,8 @@ export const NAMES = {
     expr: unsupported("'$changeStream' is not valid in expression position — see its 'where'."),
     group: unsupported("'$changeStream' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$changeStream' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$changeStream' is not a statement — see its 'where'."),
   }),
 
   $changeStreamSplitLargeEvent: mongo({
@@ -2513,7 +2732,8 @@ export const NAMES = {
     window: unsupported(
       "'$changeStreamSplitLargeEvent' is not valid in a $setWindowFields output position — see its 'where'.",
     ),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$changeStreamSplitLargeEvent' is not a statement — see its 'where'."),
   }),
 
   $collStats: mongo({
@@ -2527,7 +2747,8 @@ export const NAMES = {
     expr: unsupported("'$collStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$collStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$collStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$collStats' is not a statement — see its 'where'."),
   }),
 
   $currentOp: mongo({
@@ -2541,7 +2762,8 @@ export const NAMES = {
     expr: unsupported("'$currentOp' is not valid in expression position — see its 'where'."),
     group: unsupported("'$currentOp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$currentOp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$currentOp' is not a statement — see its 'where'."),
   }),
 
   $densify: mongo({
@@ -2554,7 +2776,8 @@ export const NAMES = {
     expr: unsupported("'$densify' is not valid in expression position — see its 'where'."),
     group: unsupported("'$densify' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$densify' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$densify' is not a statement — see its 'where'."),
   }),
 
   $documents: mongo({
@@ -2568,7 +2791,8 @@ export const NAMES = {
     expr: unsupported("'$documents' is not valid in expression position — see its 'where'."),
     group: unsupported("'$documents' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$documents' is not a statement — see its 'where'."),
   }),
 
   $facet: mongo({
@@ -2581,7 +2805,8 @@ export const NAMES = {
     expr: unsupported("'$facet' is not valid in expression position — see its 'where'."),
     group: unsupported("'$facet' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$facet' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$facet' is not a statement — see its 'where'."),
   }),
 
   $fill: mongo({
@@ -2594,7 +2819,8 @@ export const NAMES = {
     expr: unsupported("'$fill' is not valid in expression position — see its 'where'."),
     group: unsupported("'$fill' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$fill' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$fill' is not a statement — see its 'where'."),
   }),
 
   $geoNear: mongo({
@@ -2608,7 +2834,8 @@ export const NAMES = {
     expr: unsupported("'$geoNear' is not valid in expression position — see its 'where'."),
     group: unsupported("'$geoNear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$geoNear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$geoNear' is not a statement — see its 'where'."),
   }),
 
   $graphLookup: mongo({
@@ -2621,7 +2848,8 @@ export const NAMES = {
     expr: unsupported("'$graphLookup' is not valid in expression position — see its 'where'."),
     group: unsupported("'$graphLookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$graphLookup' is not a statement — see its 'where'."),
   }),
 
   $group: mongo({
@@ -2634,7 +2862,8 @@ export const NAMES = {
     expr: unsupported("'$group' is not valid in expression position — see its 'where'."),
     group: unsupported("'$group' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$group' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$group' is not a statement — see its 'where'."),
   }),
 
   $indexStats: mongo({
@@ -2648,7 +2877,8 @@ export const NAMES = {
     expr: unsupported("'$indexStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$indexStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$indexStats' is not a statement — see its 'where'."),
   }),
 
   $limit: mongo({
@@ -2661,7 +2891,8 @@ export const NAMES = {
     expr: unsupported("'$limit' is not valid in expression position — see its 'where'."),
     group: unsupported("'$limit' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$limit' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$limit' is not a statement — see its 'where'."),
   }),
 
   $listLocalSessions: mongo({
@@ -2675,7 +2906,8 @@ export const NAMES = {
     expr: unsupported("'$listLocalSessions' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listLocalSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$listLocalSessions' is not a statement — see its 'where'."),
   }),
 
   $listSampledQueries: mongo({
@@ -2689,7 +2921,8 @@ export const NAMES = {
     expr: unsupported("'$listSampledQueries' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSampledQueries' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSampledQueries' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$listSampledQueries' is not a statement — see its 'where'."),
   }),
 
   $listSearchIndexes: mongo({
@@ -2703,7 +2936,8 @@ export const NAMES = {
     expr: unsupported("'$listSearchIndexes' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSearchIndexes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSearchIndexes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$listSearchIndexes' is not a statement — see its 'where'."),
   }),
 
   $listSessions: mongo({
@@ -2717,7 +2951,8 @@ export const NAMES = {
     expr: unsupported("'$listSessions' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$listSessions' is not a statement — see its 'where'."),
   }),
 
   $lookup: mongo({
@@ -2730,7 +2965,8 @@ export const NAMES = {
     expr: unsupported("'$lookup' is not valid in expression position — see its 'where'."),
     group: unsupported("'$lookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$lookup' is not a statement — see its 'where'."),
   }),
 
   $match: mongo({
@@ -2743,7 +2979,8 @@ export const NAMES = {
     expr: unsupported("'$match' is not valid in expression position — see its 'where'."),
     group: unsupported("'$match' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$match' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$match' is not a statement — see its 'where'."),
   }),
 
   $merge: mongo({
@@ -2757,7 +2994,8 @@ export const NAMES = {
     expr: unsupported("'$merge' is not valid in expression position — see its 'where'."),
     group: unsupported("'$merge' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$merge' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$merge' is not a statement — see its 'where'."),
   }),
 
   $out: mongo({
@@ -2771,7 +3009,8 @@ export const NAMES = {
     expr: unsupported("'$out' is not valid in expression position — see its 'where'."),
     group: unsupported("'$out' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$out' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$out' is not a statement — see its 'where'."),
   }),
 
   $planCacheStats: mongo({
@@ -2785,7 +3024,8 @@ export const NAMES = {
     expr: unsupported("'$planCacheStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$planCacheStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$planCacheStats' is not a statement — see its 'where'."),
   }),
 
   $project: mongo({
@@ -2798,7 +3038,8 @@ export const NAMES = {
     expr: unsupported("'$project' is not valid in expression position — see its 'where'."),
     group: unsupported("'$project' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$project' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$project' is not a statement — see its 'where'."),
   }),
 
   $rankFusion: mongo({
@@ -2811,7 +3052,8 @@ export const NAMES = {
     expr: unsupported("'$rankFusion' is not valid in expression position — see its 'where'."),
     group: unsupported("'$rankFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rankFusion' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$rankFusion' is not a statement — see its 'where'."),
   }),
 
   $redact: mongo({
@@ -2824,7 +3066,8 @@ export const NAMES = {
     expr: unsupported("'$redact' is not valid in expression position — see its 'where'."),
     group: unsupported("'$redact' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$redact' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$redact' is not a statement — see its 'where'."),
   }),
 
   $replaceRoot: mongo({
@@ -2837,7 +3080,8 @@ export const NAMES = {
     expr: unsupported("'$replaceRoot' is not valid in expression position — see its 'where'."),
     group: unsupported("'$replaceRoot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceRoot' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$replaceRoot' is not a statement — see its 'where'."),
   }),
 
   $replaceWith: mongo({
@@ -2850,7 +3094,8 @@ export const NAMES = {
     expr: unsupported("'$replaceWith' is not valid in expression position — see its 'where'."),
     group: unsupported("'$replaceWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$replaceWith' is not a statement — see its 'where'."),
   }),
 
   $sample: mongo({
@@ -2863,7 +3108,8 @@ export const NAMES = {
     expr: unsupported("'$sample' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sample' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sample' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$sample' is not a statement — see its 'where'."),
   }),
 
   $scoreFusion: mongo({
@@ -2876,7 +3122,8 @@ export const NAMES = {
     expr: unsupported("'$scoreFusion' is not valid in expression position — see its 'where'."),
     group: unsupported("'$scoreFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$scoreFusion' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$scoreFusion' is not a statement — see its 'where'."),
   }),
 
   $search: mongo({
@@ -2890,7 +3137,8 @@ export const NAMES = {
     expr: unsupported("'$search' is not valid in expression position — see its 'where'."),
     group: unsupported("'$search' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$search' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$search' is not a statement — see its 'where'."),
   }),
 
   $searchMeta: mongo({
@@ -2904,7 +3152,8 @@ export const NAMES = {
     expr: unsupported("'$searchMeta' is not valid in expression position — see its 'where'."),
     group: unsupported("'$searchMeta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$searchMeta' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$searchMeta' is not a statement — see its 'where'."),
   }),
 
   $set: mongo({
@@ -2917,7 +3166,8 @@ export const NAMES = {
     expr: unsupported("'$set' is not valid in expression position — see its 'where'."),
     group: unsupported("'$set' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$set' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$set' is not a statement — see its 'where'."),
   }),
 
   $setWindowFields: mongo({
@@ -2930,7 +3180,8 @@ export const NAMES = {
     expr: unsupported("'$setWindowFields' is not valid in expression position — see its 'where'."),
     group: unsupported("'$setWindowFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setWindowFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$setWindowFields' is not a statement — see its 'where'."),
   }),
 
   $shardedDataDistribution: mongo({
@@ -2946,7 +3197,8 @@ export const NAMES = {
     window: unsupported(
       "'$shardedDataDistribution' is not valid in a $setWindowFields output position — see its 'where'.",
     ),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$shardedDataDistribution' is not a statement — see its 'where'."),
   }),
 
   $skip: mongo({
@@ -2959,7 +3211,8 @@ export const NAMES = {
     expr: unsupported("'$skip' is not valid in expression position — see its 'where'."),
     group: unsupported("'$skip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$skip' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$skip' is not a statement — see its 'where'."),
   }),
 
   $sort: mongo({
@@ -2972,7 +3225,8 @@ export const NAMES = {
     expr: unsupported("'$sort' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sort' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sort' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$sort' is not a statement — see its 'where'."),
   }),
 
   $sortByCount: mongo({
@@ -2985,7 +3239,8 @@ export const NAMES = {
     expr: unsupported("'$sortByCount' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sortByCount' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sortByCount' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$sortByCount' is not a statement — see its 'where'."),
   }),
 
   $unionWith: mongo({
@@ -2998,7 +3253,8 @@ export const NAMES = {
     expr: unsupported("'$unionWith' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unionWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unionWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$unionWith' is not a statement — see its 'where'."),
   }),
 
   $unset: mongo({
@@ -3011,7 +3267,8 @@ export const NAMES = {
     expr: unsupported("'$unset' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$unset' is not a statement — see its 'where'."),
   }),
 
   $unwind: mongo({
@@ -3024,7 +3281,8 @@ export const NAMES = {
     expr: unsupported("'$unwind' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unwind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unwind' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$unwind' is not a statement — see its 'where'."),
   }),
 
   $vectorSearch: mongo({
@@ -3038,7 +3296,8 @@ export const NAMES = {
     expr: unsupported("'$vectorSearch' is not valid in expression position — see its 'where'."),
     group: unsupported("'$vectorSearch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$vectorSearch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stage: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    statement: unsupported("'$vectorSearch' is not a statement — see its 'where'."),
   }),
 
   trim: name({
@@ -3049,7 +3308,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.trim()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.trim()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.trim()' is not a statement — see its 'where'."),
     group: unsupported("'.trim()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.trim()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3062,7 +3322,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.trimStart()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.trimStart()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.trimStart()' is not a statement — see its 'where'."),
     group: unsupported("'.trimStart()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.trimStart()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3077,7 +3338,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.trimLeft()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.trimLeft()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.trimLeft()' is not a statement — see its 'where'."),
     group: unsupported("'.trimLeft()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.trimLeft()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3092,7 +3354,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.trimEnd()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.trimEnd()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.trimEnd()' is not a statement — see its 'where'."),
     group: unsupported("'.trimEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.trimEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3105,7 +3368,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.trimRight()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.trimRight()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.trimRight()' is not a statement — see its 'where'."),
     group: unsupported("'.trimRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.trimRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3120,7 +3384,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toLowerCase()' is not a statement — see its 'where'."),
     group: unsupported("'.toLowerCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toLowerCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3135,7 +3400,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toUpperCase()' is not a statement — see its 'where'."),
     group: unsupported("'.toUpperCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toUpperCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3150,7 +3416,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, count]", allowed: [1, 2] }),
-    stage: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.substr()' is not a statement — see its 'where'."),
     group: unsupported("'.substr()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.substr()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3163,7 +3430,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, end]", allowed: [0, 1, 2] }),
-    stage: unsupported("'.substring()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.substring()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.substring()' is not a statement — see its 'where'."),
     group: unsupported("'.substring()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.substring()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3178,7 +3446,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "index", exact: 1 }),
-    stage: unsupported("'.charAt()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.charAt()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.charAt()' is not a statement — see its 'where'."),
     group: unsupported("'.charAt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.charAt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3191,7 +3460,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "separator", exact: 1 }),
-    stage: unsupported("'.split()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.split()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.split()' is not a statement — see its 'where'."),
     group: unsupported("'.split()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.split()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3204,7 +3474,8 @@ export const NAMES = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
-    stage: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.startsWith()' is not a statement — see its 'where'."),
     group: unsupported("'.startsWith()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.startsWith()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3219,7 +3490,8 @@ export const NAMES = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
-    stage: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.endsWith()' is not a statement — see its 'where'."),
     group: unsupported("'.endsWith()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.endsWith()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3234,7 +3506,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "find, replacement", exact: 2 }),
-    stage: unsupported("'.replace()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.replace()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.replace()' is not a statement — see its 'where'."),
     group: unsupported("'.replace()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.replace()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3247,7 +3520,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "find, replacement", exact: 2 }),
-    stage: unsupported("'.replaceAll()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.replaceAll()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.replaceAll()' is not a statement — see its 'where'."),
     group: unsupported("'.replaceAll()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.replaceAll()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3262,7 +3536,8 @@ export const NAMES = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/methods/", { sig: "regex", exact: 1 }),
-    stage: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.match()' is not a statement — see its 'where'."),
     group: unsupported("'.match()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.match()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3275,7 +3550,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "regex", exact: 1 }),
-    stage: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.matchAll()' is not a statement — see its 'where'."),
     group: unsupported("'.matchAll()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.matchAll()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3290,7 +3566,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "regex", exact: 1 }),
-    stage: unsupported("'.search()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.search()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.search()' is not a statement — see its 'where'."),
     group: unsupported("'.search()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.search()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3303,7 +3580,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "targetLength[, padString]", allowed: [1, 2] }),
-    stage: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.padStart()' is not a statement — see its 'where'."),
     group: unsupported("'.padStart()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.padStart()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3318,7 +3596,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "targetLength[, padString]", allowed: [1, 2] }),
-    stage: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.padEnd()' is not a statement — see its 'where'."),
     group: unsupported("'.padEnd()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.padEnd()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3331,7 +3610,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "count", exact: 1 }),
-    stage: unsupported("'.repeat()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.repeat()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.repeat()' is not a statement — see its 'where'."),
     group: unsupported("'.repeat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.repeat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3344,7 +3624,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
-    stage: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.indexOf()' is not a statement — see its 'where'."),
     group: unsupported("'.indexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.indexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3357,7 +3638,8 @@ export const NAMES = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
-    stage: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.includes()' is not a statement — see its 'where'."),
     group: unsupported("'.includes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.includes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3372,7 +3654,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "index", exact: 1 }),
-    stage: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.at()' is not a statement — see its 'where'."),
     group: unsupported("'.at()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.at()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3385,7 +3668,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, end]", allowed: [0, 1, 2] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.slice()' is not a statement — see its 'where'."),
     group: unsupported("'.slice()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.slice()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3398,7 +3682,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...items", atLeast: 1, spread: true }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.concat()' is not a statement — see its 'where'."),
     group: unsupported("'.concat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.concat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3411,9 +3696,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "reverses in place. A stream has no in-place form — use '.sort(<key>)' to order it, or '$sort' directly.",
     ),
+    statement: unsupported("'.reverse()' is not a statement — see its 'where'."),
     group: unsupported("'.reverse()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reverse()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3426,9 +3712,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported(
+    stream: unsupported(
       "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
     ),
+    statement: unsupported("'.toReversed()' is not a statement — see its 'where'."),
     group: unsupported("'.toReversed()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toReversed()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3443,7 +3730,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.toSorted()' is not a statement — see its 'where'."),
     group: unsupported("'.toSorted()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toSorted()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3458,7 +3746,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sortBy()' is not a statement — see its 'where'."),
     group: unsupported("'.sortBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sortBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3471,7 +3760,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.orderBy()' is not a statement — see its 'where'."),
     group: unsupported("'.orderBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.orderBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3484,7 +3774,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, deleteCount, ...items]", atLeast: 1 }),
-    stage: unsupported("addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'."),
+    stream: unsupported("addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'."),
+    statement: unsupported("'.toSpliced()' is not a statement — see its 'where'."),
     group: unsupported("'.toSpliced()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toSpliced()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3499,7 +3790,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "index, value", exact: 2 }),
-    stage: unsupported("replaces the element at an index. Use '.map(d => …)' with a condition on the document."),
+    stream: unsupported("replaces the element at an index. Use '.map(d => …)' with a condition on the document."),
+    statement: unsupported("'.with()' is not a statement — see its 'where'."),
     group: unsupported("'.with()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.with()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3512,9 +3804,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "depth", allowed: [0, 1] }),
-    stage: unsupported(
+    stream: unsupported(
       "flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",
     ),
+    statement: unsupported("'.flat()' is not a statement — see its 'where'."),
     group: unsupported("'.flat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.flat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3527,7 +3820,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.flatMap()' is not a statement — see its 'where'."),
     group: unsupported("'.flatMap()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.flatMap()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3540,7 +3834,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.map()' is not a statement — see its 'where'."),
     group: unsupported("'.map()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.map()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3553,7 +3848,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.filter()' is not a statement — see its 'where'."),
     group: unsupported("'.filter()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.filter()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3566,7 +3862,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.find()' is not a statement — see its 'where'."),
     group: unsupported("'.find()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.find()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3579,7 +3876,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("returns an index, and a stream has no index."),
+    stream: unsupported("returns an index, and a stream has no index."),
+    statement: unsupported("'.findIndex()' is not a statement — see its 'where'."),
     group: unsupported("'.findIndex()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.findIndex()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3594,9 +3892,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
     ),
+    statement: unsupported("'.findLast()' is not a statement — see its 'where'."),
     group: unsupported("'.findLast()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.findLast()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3611,7 +3910,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("returns an index, and a stream has no index."),
+    stream: unsupported("returns an index, and a stream has no index."),
+    statement: unsupported("'.findLastIndex()' is not a statement — see its 'where'."),
     group: unsupported("'.findLastIndex()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.findLastIndex()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3626,7 +3926,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
-    stage: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.lastIndexOf()' is not a statement — see its 'where'."),
     group: unsupported("'.lastIndexOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.lastIndexOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3641,7 +3942,8 @@ export const NAMES = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stage: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.some()' is not a statement — see its 'where'."),
     group: unsupported("'.some()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.some()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3654,7 +3956,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stage: unsupported("'.every()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.every()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.every()' is not a statement — see its 'where'."),
     group: unsupported("'.every()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.every()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3667,7 +3970,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.reduce()' is not a statement — see its 'where'."),
     group: unsupported("'.reduce()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reduce()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3680,9 +3984,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "folds from the END, which needs the whole stream buffered, and collapses it to one value. Use the '.reduce' wrap forms — see the '.reduce' error for the three shapes.",
     ),
+    statement: unsupported("'.reduceRight()' is not a statement — see its 'where'."),
     group: unsupported("'.reduceRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.reduceRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3697,9 +4002,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "separator", allowed: [0, 1] }),
-    stage: unsupported(
+    stream: unsupported(
       "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
     ),
+    statement: unsupported("'.join()' is not a statement — see its 'where'."),
     group: unsupported("'.join()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.join()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3712,7 +4018,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toString()' is not a statement — see its 'where'."),
     group: unsupported("'.toString()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3727,7 +4034,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sort()' is not a statement — see its 'where'."),
     group: unsupported("'.sort()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sort()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3740,7 +4048,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("mutates in place. Narrow the stream with '.filter(<pred>)' / '.slice(start, end)' instead."),
+    stream: unsupported("mutates in place. Narrow the stream with '.filter(<pred>)' / '.slice(start, end)' instead."),
+    statement: unsupported("'.splice()' is not a statement — see its 'where'."),
     group: unsupported("'.splice()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.splice()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3753,7 +4062,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
+    stream: unsupported("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
+    statement: unsupported("'.push()' is not a statement — see its 'where'."),
     group: unsupported("'.push()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.push()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3766,7 +4076,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'."),
+    stream: unsupported("removes the last element by mutating. Take a prefix instead: '.slice(0, -1)'."),
+    statement: unsupported("'.pop()' is not a statement — see its 'where'."),
     group: unsupported("'.pop()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.pop()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3779,7 +4090,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("removes the first element by mutating. Use '.drop(1)'."),
+    stream: unsupported("removes the first element by mutating. Use '.drop(1)'."),
+    statement: unsupported("'.shift()' is not a statement — see its 'where'."),
     group: unsupported("'.shift()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.shift()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3792,9 +4104,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "prepends by mutating. Build the new head as its own stream and '.concat(...)' this one onto it.",
     ),
+    statement: unsupported("'.unshift()' is not a statement — see its 'where'."),
     group: unsupported("'.unshift()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unshift()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3807,7 +4120,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("overwrites every element in place. Use '.map(d => …)' to produce new documents."),
+    stream: unsupported("overwrites every element in place. Use '.map(d => …)' to produce new documents."),
+    statement: unsupported("'.fill()' is not a statement — see its 'where'."),
     group: unsupported("'.fill()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.fill()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3820,7 +4134,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("copies a range in place, addressing elements by position. A stream has no stable positions."),
+    stream: unsupported("copies a range in place, addressing elements by position. A stream has no stable positions."),
+    statement: unsupported("'.copyWithin()' is not a statement — see its 'where'."),
     group: unsupported("'.copyWithin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.copyWithin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3835,9 +4150,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "returns nothing in JavaScript, so there is no stream for the next link to receive. Use '.map(d => …)' if you meant to transform.",
     ),
+    statement: unsupported("'.forEach()' is not a statement — see its 'where'."),
     group: unsupported("'.forEach()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.forEach()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3850,7 +4166,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("yields [index, value] pairs, and a stream has no index."),
+    stream: unsupported("yields [index, value] pairs, and a stream has no index."),
+    statement: unsupported("'.entries()' is not a statement — see its 'where'."),
     group: unsupported("'.entries()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.entries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3863,7 +4180,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("yields the array's indices, and a stream has no index."),
+    stream: unsupported("yields the array's indices, and a stream has no index."),
+    statement: unsupported("'.keys()' is not a statement — see its 'where'."),
     group: unsupported("'.keys()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.keys()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3876,9 +4194,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported(
+    stream: unsupported(
       "yields the array's elements, which for a stream is the stream itself — the call has no effect.",
     ),
+    statement: unsupported("'.values()' is not a statement — see its 'where'."),
     group: unsupported("'.values()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.values()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3891,7 +4210,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toLocaleString()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toLocaleString()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toLocaleString()' is not a statement — see its 'where'."),
     group: unsupported("'.toLocaleString()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toLocaleString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3906,7 +4226,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getFullYear()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getFullYear()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getFullYear()' is not a statement — see its 'where'."),
     group: unsupported("'.getFullYear()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getFullYear()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3921,7 +4242,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getMonth()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getMonth()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getMonth()' is not a statement — see its 'where'."),
     group: unsupported("'.getMonth()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getMonth()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3936,7 +4258,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getDate()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getDate()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getDate()' is not a statement — see its 'where'."),
     group: unsupported("'.getDate()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.getDate()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3949,7 +4272,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getDay()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getDay()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getDay()' is not a statement — see its 'where'."),
     group: unsupported("'.getDay()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.getDay()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -3962,7 +4286,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getHours()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getHours()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getHours()' is not a statement — see its 'where'."),
     group: unsupported("'.getHours()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getHours()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3977,7 +4302,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getMinutes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getMinutes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getMinutes()' is not a statement — see its 'where'."),
     group: unsupported("'.getMinutes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getMinutes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -3992,7 +4318,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getSeconds()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getSeconds()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getSeconds()' is not a statement — see its 'where'."),
     group: unsupported("'.getSeconds()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getSeconds()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4007,7 +4334,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getMilliseconds()' is not a statement — see its 'where'."),
     group: unsupported("'.getMilliseconds()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getMilliseconds()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4022,7 +4350,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCFullYear()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCFullYear()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCFullYear()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCFullYear()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCFullYear()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4037,7 +4366,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCMonth()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCMonth()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCMonth()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCMonth()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCMonth()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4052,7 +4382,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCDate()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCDate()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCDate()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCDate()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCDate()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4067,7 +4398,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCDay()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCDay()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCDay()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCDay()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCDay()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4082,7 +4414,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCHours()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCHours()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCHours()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCHours()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCHours()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4097,7 +4430,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCMinutes()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCMinutes()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCMinutes()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCMinutes()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCMinutes()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4112,7 +4446,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCSeconds()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCSeconds()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCSeconds()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCSeconds()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCSeconds()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4127,7 +4462,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getUTCMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getUTCMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getUTCMilliseconds()' is not a statement — see its 'where'."),
     group: unsupported("'.getUTCMilliseconds()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.getUTCMilliseconds()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4142,7 +4478,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.getTime()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.getTime()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.getTime()' is not a statement — see its 'where'."),
     group: unsupported("'.getTime()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.getTime()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4155,7 +4492,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toISOString()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toISOString()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toISOString()' is not a statement — see its 'where'."),
     group: unsupported("'.toISOString()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.toISOString()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4170,7 +4508,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "amount, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.plus()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.plus()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.plus()' is not a statement — see its 'where'."),
     group: unsupported("'.plus()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.plus()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4183,7 +4522,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "amount, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.minus()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.minus()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.minus()' is not a statement — see its 'where'."),
     group: unsupported("'.minus()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.minus()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4196,7 +4536,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.diff()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.diff()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.diff()' is not a statement — see its 'where'."),
     group: unsupported("'.diff()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.diff()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4209,7 +4550,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "unit[, timezone]", allowed: [1, 2] }),
-    stage: unsupported("'.startOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.startOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.startOf()' is not a statement — see its 'where'."),
     group: unsupported("'.startOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.startOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4222,7 +4564,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "format[, timezone]", allowed: [1, 2] }),
-    stage: unsupported("'.format()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.format()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.format()' is not a statement — see its 'where'."),
     group: unsupported("'.format()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.format()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4235,7 +4578,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.week()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.week()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.week()' is not a statement — see its 'where'."),
     group: unsupported("'.week()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.week()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4248,7 +4592,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.isoWeek()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isoWeek()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isoWeek()' is not a statement — see its 'where'."),
     group: unsupported("'.isoWeek()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.isoWeek()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4261,7 +4606,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.isoWeekYear()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isoWeekYear()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isoWeekYear()' is not a statement — see its 'where'."),
     group: unsupported("'.isoWeekYear()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.isoWeekYear()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4276,7 +4622,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.isoWeekday()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isoWeekday()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isoWeekday()' is not a statement — see its 'where'."),
     group: unsupported("'.isoWeekday()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.isoWeekday()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4291,7 +4638,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.dayOfYear()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.dayOfYear()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.dayOfYear()' is not a statement — see its 'where'."),
     group: unsupported("'.dayOfYear()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.dayOfYear()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4306,7 +4654,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
-    stage: unsupported("'.quarter()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.quarter()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.quarter()' is not a statement — see its 'where'."),
     group: unsupported("'.quarter()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.quarter()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4319,7 +4668,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.isSame()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isSame()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isSame()' is not a statement — see its 'where'."),
     group: unsupported("'.isSame()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.isSame()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4332,7 +4682,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.isBefore()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isBefore()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isBefore()' is not a statement — see its 'where'."),
     group: unsupported("'.isBefore()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.isBefore()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4347,7 +4698,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
-    stage: unsupported("'.isAfter()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isAfter()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isAfter()' is not a statement — see its 'where'."),
     group: unsupported("'.isAfter()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.isAfter()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4360,7 +4712,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "{ parts }[, timezone]", allowed: [1, 2] }),
-    stage: unsupported("'.set()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.set()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.set()' is not a statement — see its 'where'."),
     group: unsupported("'.set()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.set()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4373,7 +4726,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "unit[, timezone]", allowed: [1, 2] }),
-    stage: unsupported("'.endOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.endOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.endOf()' is not a statement — see its 'where'."),
     group: unsupported("'.endOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.endOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4386,7 +4740,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.sum()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.sum()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.sum()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.sum()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4399,7 +4754,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.mean()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.mean()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.mean()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.mean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4412,7 +4768,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.max()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.max()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.max()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.max()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4425,7 +4782,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.min()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.min()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.min()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.min()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4438,7 +4796,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.sumBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.sumBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.sumBy()' is not a statement — see its 'where'."),
     group: unsupported("'.sumBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sumBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4451,7 +4810,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.meanBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.meanBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.meanBy()' is not a statement — see its 'where'."),
     group: unsupported("'.meanBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.meanBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4464,7 +4824,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.minBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.minBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.minBy()' is not a statement — see its 'where'."),
     group: unsupported("'.minBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.minBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4477,7 +4838,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.maxBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.maxBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.maxBy()' is not a statement — see its 'where'."),
     group: unsupported("'.maxBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.maxBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4490,7 +4852,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.uniq()' is not a statement — see its 'where'."),
     group: unsupported("'.uniq()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.uniq()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4503,7 +4866,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.uniqBy()' is not a statement — see its 'where'."),
     group: unsupported("'.uniqBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.uniqBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4516,7 +4880,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sortedUniq()' is not a statement — see its 'where'."),
     group: unsupported("'.sortedUniq()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.sortedUniq()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4531,7 +4896,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sortedUniqBy()' is not a statement — see its 'where'."),
     group: unsupported("'.sortedUniqBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.sortedUniqBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4546,7 +4912,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...values", atLeast: 1 }),
-    stage: unsupported("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
+    stream: unsupported("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
+    statement: unsupported("'.without()' is not a statement — see its 'where'."),
     group: unsupported("'.without()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.without()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4559,7 +4926,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stage: unsupported("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
+    stream: unsupported(
+      "compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'.",
+    ),
+    statement: unsupported("'.xor()' is not a statement — see its 'where'."),
     group: unsupported("'.xor()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.xor()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4572,7 +4942,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stage: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    statement: unsupported("'.differenceBy()' is not a statement — see its 'where'."),
     group: unsupported("'.differenceBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.differenceBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4587,7 +4958,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stage: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    statement: unsupported("'.intersectionBy()' is not a statement — see its 'where'."),
     group: unsupported("'.intersectionBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.intersectionBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4602,7 +4974,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stage: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    stream: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    statement: unsupported("'.unionBy()' is not a statement — see its 'where'."),
     group: unsupported("'.unionBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unionBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4615,7 +4988,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stage: unsupported("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
+    stream: unsupported(
+      "compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'.",
+    ),
+    statement: unsupported("'.xorBy()' is not a statement — see its 'where'."),
     group: unsupported("'.xorBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.xorBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4628,9 +5004,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported(
+    stream: unsupported(
       "drops falsy elements. Every stream element is a document, which is never falsy — use '.reject(<pred>)' for the condition you mean.",
     ),
+    statement: unsupported("'.compact()' is not a statement — see its 'where'."),
     group: unsupported("'.compact()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.compact()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4643,9 +5020,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported(
+    stream: unsupported(
       "flattens nested ARRAYS; a stream holds documents. Use '.flatMap(d => d.<field>)' to expand an array field into documents.",
     ),
+    statement: unsupported("'.flatten()' is not a statement — see its 'where'."),
     group: unsupported("'.flatten()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.flatten()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4658,9 +5036,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "size", exact: 1 }),
-    stage: unsupported(
+    stream: unsupported(
       "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
     ),
+    statement: unsupported("'.chunk()' is not a statement — see its 'where'."),
     group: unsupported("'.chunk()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.chunk()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4673,7 +5052,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.take()' is not a statement — see its 'where'."),
     group: unsupported("'.take()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.take()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4686,7 +5066,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.drop()' is not a statement — see its 'where'."),
     group: unsupported("'.drop()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.drop()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4699,9 +5080,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stage: unsupported(
+    stream: unsupported(
       "counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
     ),
+    statement: unsupported("'.takeRight()' is not a statement — see its 'where'."),
     group: unsupported("'.takeRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.takeRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4716,7 +5098,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stage: unsupported("counts from the END. Sort by the opposite key and use '.drop(n)'."),
+    stream: unsupported("counts from the END. Sort by the opposite key and use '.drop(n)'."),
+    statement: unsupported("'.dropRight()' is not a statement — see its 'where'."),
     group: unsupported("'.dropRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.dropRight()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4731,7 +5114,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.tail()' is not a statement — see its 'where'."),
     group: unsupported("'.tail()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.tail()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4744,9 +5128,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported(
+    stream: unsupported(
       "drops the LAST element, which needs the whole stream buffered. Sort by the opposite key and use '.drop(1)'.",
     ),
+    statement: unsupported("'.initial()' is not a statement — see its 'where'."),
     group: unsupported("'.initial()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.initial()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4759,7 +5144,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.head()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.head()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.head()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.head()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4772,7 +5158,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.first()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.first()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.first()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.first()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4785,7 +5172,8 @@ export const NAMES = {
     where: ["value", "group"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.last()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.last()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.last()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
     window: unsupported("'.last()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4798,7 +5186,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=0]", allowed: [0, 1] }),
-    stage: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.nth()' is not a statement — see its 'where'."),
     group: unsupported("'.nth()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.nth()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4811,7 +5200,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.size()' is not a statement — see its 'where'."),
     group: unsupported("'.size()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.size()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4824,7 +5214,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.takeWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.takeWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.takeWhile()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4839,7 +5230,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.dropWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.dropWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.dropWhile()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4854,7 +5246,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: unsupported("scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'."),
+    stream: unsupported("scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'."),
+    statement: unsupported("'.takeRightWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.takeRightWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.takeRightWhile()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4869,7 +5262,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: unsupported("scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'."),
+    stream: unsupported("scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'."),
+    statement: unsupported("'.dropRightWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.dropRightWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.dropRightWhile()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4884,7 +5278,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sample()' is not a statement — see its 'where'."),
     group: unsupported("'.sample()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sample()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4897,7 +5292,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.sampleSize()' is not a statement — see its 'where'."),
     group: unsupported("'.sampleSize()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.sampleSize()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4912,7 +5308,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "values", exact: 1 }),
-    stage: unsupported("builds ONE object from keys and values, so the result is a value rather than a stream."),
+    stream: unsupported("builds ONE object from keys and values, so the result is a value rather than a stream."),
+    statement: unsupported("'.zipObject()' is not a statement — see its 'where'."),
     group: unsupported("'.zipObject()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.zipObject()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4927,9 +5324,10 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...arrays", atLeast: 1 }),
-    stage: unsupported(
+    stream: unsupported(
       "pairs elements positionally across arrays. A stream has no positions to pair on — join on a key instead with '$$$.<coll>.find(<pred>)'.",
     ),
+    statement: unsupported("'.zip()' is not a statement — see its 'where'."),
     group: unsupported("'.zip()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.zip()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4942,7 +5340,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("transposes into ONE array of arrays, so the result is a value rather than a stream."),
+    stream: unsupported("transposes into ONE array of arrays, so the result is a value rather than a stream."),
+    statement: unsupported("'.unzip()' is not a statement — see its 'where'."),
     group: unsupported("'.unzip()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unzip()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4955,7 +5354,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("pairs elements positionally across arrays. Join on a key with '$$$.<coll>.find(<pred>)'."),
+    stream: unsupported("pairs elements positionally across arrays. Join on a key with '$$$.<coll>.find(<pred>)'."),
+    statement: unsupported("'.zipWith()' is not a statement — see its 'where'."),
     group: unsupported("'.zipWith()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.zipWith()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4968,7 +5368,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("transposes an array of tuples. A stream holds documents, not tuples."),
+    stream: unsupported("transposes an array of tuples. A stream holds documents, not tuples."),
+    statement: unsupported("'.unzipWith()' is not a statement — see its 'where'."),
     group: unsupported("'.unzipWith()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.unzipWith()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -4983,7 +5384,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.keyBy()' is not a statement — see its 'where'."),
     group: unsupported("'.keyBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.keyBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -4996,7 +5398,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.groupBy()' is not a statement — see its 'where'."),
     group: unsupported("'.groupBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.groupBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5009,7 +5412,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.countBy()' is not a statement — see its 'where'."),
     group: unsupported("'.countBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.countBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5022,7 +5426,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: unsupported("'.partition()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.partition()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.partition()' is not a statement — see its 'where'."),
     group: unsupported("'.partition()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.partition()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5037,7 +5442,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.reject()' is not a statement — see its 'where'."),
     group: unsupported("'.reject()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reject()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5050,7 +5456,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.mapValues()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.mapValues()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.mapValues()' is not a statement — see its 'where'."),
     group: unsupported("'.mapValues()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.mapValues()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5065,7 +5472,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stage: unsupported("'.mapKeys()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.mapKeys()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.mapKeys()' is not a statement — see its 'where'."),
     group: unsupported("'.mapKeys()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.mapKeys()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5078,7 +5486,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.pick()' is not a statement — see its 'where'."),
     group: unsupported("'.pick()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.pick()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5091,7 +5500,8 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
-    stage: pending("src/stream-methods.ts"),
+    stream: pending("src/stream-methods.ts"),
+    statement: unsupported("'.omit()' is not a statement — see its 'where'."),
     group: unsupported("'.omit()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.omit()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5104,7 +5514,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.pickBy()' is not a statement — see its 'where'."),
     group: unsupported("'.pickBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.pickBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5117,7 +5528,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stage: unsupported("'.omitBy()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.omitBy()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.omitBy()' is not a statement — see its 'where'."),
     group: unsupported("'.omitBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.omitBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5130,7 +5542,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.invert()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.invert()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.invert()' is not a statement — see its 'where'."),
     group: unsupported("'.invert()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.invert()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5143,7 +5556,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.toPairs()' is not a statement — see its 'where'."),
     group: unsupported("'.toPairs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.toPairs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5156,7 +5570,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("builds ONE object from pairs, so the result is a value rather than a stream."),
+    stream: unsupported("builds ONE object from pairs, so the result is a value rather than a stream."),
+    statement: unsupported("'.fromPairs()' is not a statement — see its 'where'."),
     group: unsupported("'.fromPairs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.fromPairs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5171,7 +5586,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.capitalize()' is not a statement — see its 'where'."),
     group: unsupported("'.capitalize()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.capitalize()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5186,7 +5602,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.upperFirst()' is not a statement — see its 'where'."),
     group: unsupported("'.upperFirst()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.upperFirst()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5201,7 +5618,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.lowerFirst()' is not a statement — see its 'where'."),
     group: unsupported("'.lowerFirst()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.lowerFirst()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5216,7 +5634,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.words()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.words()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.words()' is not a statement — see its 'where'."),
     group: unsupported("'.words()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.words()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5229,7 +5648,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.kebabCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.kebabCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.kebabCase()' is not a statement — see its 'where'."),
     group: unsupported("'.kebabCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.kebabCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5244,7 +5664,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.snakeCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.snakeCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.snakeCase()' is not a statement — see its 'where'."),
     group: unsupported("'.snakeCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.snakeCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5259,7 +5680,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.startCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.startCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.startCase()' is not a statement — see its 'where'."),
     group: unsupported("'.startCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.startCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5274,7 +5696,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.camelCase()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.camelCase()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.camelCase()' is not a statement — see its 'where'."),
     group: unsupported("'.camelCase()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.camelCase()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5289,7 +5712,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stage: unsupported("'.escape()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.escape()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.escape()' is not a statement — see its 'where'."),
     group: unsupported("'.escape()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.escape()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5302,7 +5726,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[{ length, omission }]", allowed: [0, 1] }),
-    stage: unsupported("'.truncate()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.truncate()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.truncate()' is not a statement — see its 'where'."),
     group: unsupported("'.truncate()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.truncate()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5317,7 +5742,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "lower, upper", exact: 2 }),
-    stage: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.clamp()' is not a statement — see its 'where'."),
     group: unsupported("'.clamp()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.clamp()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5330,7 +5756,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[start, ]end", allowed: [1, 2] }),
-    stage: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.inRange()' is not a statement — see its 'where'."),
     group: unsupported("'.inRange()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.inRange()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5343,7 +5770,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-    stage: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.round()' is not a statement — see its 'where'."),
     group: unsupported("'.round()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.round()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5356,7 +5784,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-    stage: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.ceil()' is not a statement — see its 'where'."),
     group: unsupported("'.ceil()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.ceil()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5369,7 +5798,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-    stage: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.floor()' is not a statement — see its 'where'."),
     group: unsupported("'.floor()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.floor()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5382,7 +5812,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stage: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    statement: unsupported("'.intersection()' is not a statement — see its 'where'."),
     group: unsupported("'.intersection()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.intersection()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5397,7 +5828,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stage: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    stream: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    statement: unsupported("'.union()' is not a statement — see its 'where'."),
     group: unsupported("'.union()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.union()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5410,7 +5842,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stage: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    statement: unsupported("'.difference()' is not a statement — see its 'where'."),
     group: unsupported("'.difference()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.difference()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5425,7 +5858,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isSubsetOf()' is not a statement — see its 'where'."),
     group: unsupported("'.isSubsetOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.isSubsetOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5440,7 +5874,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.isSupersetOf()' is not a statement — see its 'where'."),
     group: unsupported("'.isSupersetOf()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.isSupersetOf()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -5455,7 +5890,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("'.test()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.test()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.test()' is not a statement — see its 'where'."),
     group: unsupported("'.test()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.test()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5468,7 +5904,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", atLeast: 0 }),
-    stage: unsupported("'.exec()' has no stream form: it produces a value, not a stream of documents."),
+    stream: unsupported("'.exec()' has no stream form: it produces a value, not a stream of documents."),
+    statement: unsupported("'.exec()' is not a statement — see its 'where'."),
     group: unsupported("'.exec()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.exec()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -5482,15 +5919,33 @@ export const NAMES = {
     token: "Ident",
     provides: "namespace",
     family: "Math",
-    where: ["value"],
+    // MEASURED: bare `Math` is "Expected '.' but got end of input at position 4".
+    // It is a receiver and nothing else, so no position lists it.
+    where: [],
+    filter: unsupported("'Math' is a namespace, not a test. Compare a member: 'Math.abs($.n) > 2'."),
+    expr: unsupported("'Math' is a namespace, not a value. Write a member: 'Math.abs($.n)'."),
+    stream: unsupported("'Math' is a namespace, not a stage."),
+    statement: unsupported("'Math' is a namespace, not a statement."),
+    group: unsupported("'Math' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   $: root({
     doc: "The whole current document.",
     token: "Dollar",
     provides: "value",
-    where: ["value", "filter"],
+    // MEASURED both ways. As a value: `$` → "$$ROOT". As a filter: `$` →
+    // {"$expr":{"$and":[…truthiness…]}}, so there is NO native query form, and
+    // `$ === 1` → {"": 1}, which mongod accepts and which matches nothing.
+    // `where: ["value","filter"]` claimed an indexable form that does not exist,
+    // and contradicted `rootReference` in productions.ts, which had it right.
+    where: ["value"],
+    filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => "$$ROOT" },
+    stream: unsupported("'$' is the document, not a stream. To replace it write '$ = <expr>'."),
+    statement: unsupported("'$' on its own is a value. To replace the document write '$ = <expr>'."),
+    group: unsupported("'$' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   $$: root({
@@ -5498,21 +5953,54 @@ export const NAMES = {
     token: "DoubleDollar",
     provides: "collection",
     family: "stream",
+    // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
+    // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
+    // value slot is refused — "'$$' (current collection) is statement-only" —
+    // so `expr` is a refusal even though `$$.length` IS a value: that value is
+    // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
+    filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$ = $$.filter(d => …)'."),
+    expr: unsupported(
+      "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.",
+    ),
+    stream: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    group: unsupported("'$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   $$$: root({
     doc: "Database scope: `$$$.<coll>` names another collection.",
     token: "TripleDollar",
     provides: "database",
+    // MEASURED: `$$ = $$$.c.filter(…)` switches the source (stream), and
+    // `$.o = $$$.c.find(…);` → $lookup / `$$$.c = $$;` → $out (statement).
     where: ["stream", "statement"],
+    filter: unsupported("'$$$.<coll>' names a collection, not a test. Join it: '$.o = $$$.<coll>.find(d => …)'."),
+    expr: unsupported("'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'."),
+    stream: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    group: unsupported("'$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   $$$$: root({
     doc: "Cluster scope, for the diagnostic source stages: `$$$$.currentOp(...)`.",
     token: "QuadDollar",
     provides: "cluster",
-    where: ["stream", "statement"],
+    // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
+    // statement. There is no stream form — a cross-database READ is refused
+    // outright ("Cross-database reads aren't supported"), so listing "stream"
+    // claimed a source switch this scope does not have.
+    where: ["statement"],
+    filter: unsupported("'$$$$.<db>.<coll>' names a collection, not a test."),
+    expr: unsupported("'$$$$.<db>.<coll>' names a collection, not a value."),
+    stream: unsupported(
+      "cross-database reads aren't supported, so '$$$$' cannot be a stream source. Cross-database WRITES do work: '$$$$.<db>.<coll> = $$' lowers to '$out'.",
+    ),
+    statement: pending("src/pipeline.ts"),
+    group: unsupported("'$$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   Date: global_({
@@ -5533,6 +6021,10 @@ export const NAMES = {
         { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDate: gen(args[0]) }) },
       ],
     },
+    stream: unsupported("'Date' produces a value, not a stream of documents."),
+    statement: unsupported("'Date' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Date' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Date' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   ObjectId: global_({
@@ -5550,6 +6042,10 @@ export const NAMES = {
         { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toObjectId: gen(args[0]) }) },
       ],
     },
+    stream: unsupported("'ObjectId' produces a value, not a stream of documents."),
+    statement: unsupported("'ObjectId' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'ObjectId' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'ObjectId' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   Set: global_({
@@ -5566,6 +6062,10 @@ export const NAMES = {
         { when: "dynamic", args: { sig: "values", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
       ],
     },
+    stream: unsupported("'Set' produces a value, not a stream of documents."),
+    statement: unsupported("'Set' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Set' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Set' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   Number: global_({
@@ -5582,6 +6082,10 @@ export const NAMES = {
         { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDouble: gen(args[0]) }) },
       ],
     },
+    stream: unsupported("'Number' produces a value, not a stream of documents."),
+    statement: unsupported("'Number' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Number' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Number' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   Array: global_({
@@ -5594,6 +6098,10 @@ export const NAMES = {
     where: [],
     filter: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
     expr: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
+    stream: unsupported("'Array' produces a value, not a stream of documents."),
+    statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
+    group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Array' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
   length: name({
@@ -5618,7 +6126,8 @@ export const NAMES = {
       // A two-way $cond read "not an array" as "string" and aborted the whole command.
       uncertain: () => "$$REMOVE",
     },
-    stage: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    stream: unsupported("'length' is a value, not a stage. Read it: '$.n = $$.length'."),
+    statement: unsupported("'.length()' is not a statement — see its 'where'."),
     group: unsupported("'length' is not an accumulator. Use '$count' or '$sum' inside '$group'."),
     window: unsupported("'length' is not a window function."),
   }),
@@ -5631,7 +6140,8 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
-    stage: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
+    stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
+    statement: unsupported("'.now()' is not a statement — see its 'where'."),
     group: unsupported("'Date.now()' is not an accumulator."),
     window: unsupported("'Date.now()' is not a window function."),
   }),
@@ -5650,7 +6160,8 @@ export const NAMES = {
       allowed: [1, 2, 3, 4, 5, 6, 7],
       slotType: { 1: "int" },
     }),
-    stage: unsupported("'Date.UTC()' is a value. Use it inside a reshape or a '$set'."),
+    stream: unsupported("'Date.UTC()' is a value. Use it inside a reshape or a '$set'."),
+    statement: unsupported("'.UTC()' is not a statement — see its 'where'."),
     group: unsupported("'Date.UTC()' is not an accumulator."),
     window: unsupported("'Date.UTC()' is not a window function."),
   }),
@@ -5671,7 +6182,8 @@ export const NAMES = {
         },
       ],
     },
-    stage: unsupported("'Array.from()' is a value. Use it inside a reshape."),
+    stream: unsupported("'Array.from()' is a value. Use it inside a reshape."),
+    statement: unsupported("'.from()' is not a statement — see its 'where'."),
     group: unsupported("'Array.from()' is not an accumulator."),
     window: unsupported("'Array.from()' is not a window function."),
   }),

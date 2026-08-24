@@ -18,7 +18,7 @@
 
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, pending, unsupported, viaFallback } from "./vocabulary.ts";
-import type { Cell, Either, ExprIn, FilterIn, Lists, Of, QueryDoc, Stage, StageIn } from "./vocabulary.ts";
+import type { Cell, ExprIn, FilterIn, Lists, Of, QueryDoc, Stage, StageIn } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -30,6 +30,8 @@ export type ProductionSpec<
   W extends readonly Position[],
   O extends On,
   A extends readonly string[] = readonly never[],
+  /** The owners this rule's one `composedInto` cell names. See Cell's `C`. */
+  C extends readonly string[] = readonly never[],
 > = {
   doc: string;
   /** The symbols this rule consumes — keys of tokens.ts or keywords.ts. */
@@ -47,9 +49,31 @@ export type ProductionSpec<
   only?: readonly Only[];
   /** Rules this must be tried AFTER, when triggers overlap. Audited below. */
   after?: A;
-  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc>;
-  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown>;
-  stage: Cell<Either<Lists<W, "stream">, Lists<W, "statement">>, Of<O>, StageIn, Stage[]>;
+  /**
+   * Rules this one may NOT combine with unparenthesised, because JAVASCRIPT
+   * forbids the mix. A precedence number always permits a mix, so the cascade
+   * cannot state this and every such pair went unnoticed. Measured with
+   * `node --check`:
+   *   a ?? b || c    → SyntaxError: Unexpected token '||'
+   *   typeof a ** b  → SyntaxError: Unparenthesized unary expression can't
+   *                    appear on the left-hand side of '**'
+   * JSMQL accepts every expression of valid JavaScript syntax and no others, so
+   * a pair listed here must be a parse error.
+   */
+  noMixWith?: readonly string[];
+  /**
+   * true when this construct may not appear on the left of `=`, `++` or `--`.
+   * JavaScript refuses `a?.b = 1` outright, so an optional chain is never a
+   * write target. Stated because the write rules live on the ASSIGNMENT rows and
+   * cannot see which operand shapes reached them.
+   */
+  neverAWriteTarget?: true;
+  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc, C>;
+  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown, C>;
+  /** A link in a `$$ = $$…` chain. */
+  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, Stage[], C>;
+  /** A `;`-separated statement. SEPARATE from `stream` — see Position. */
+  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, Stage[], C>;
 };
 
 export type ProductionEntry<
@@ -57,7 +81,8 @@ export type ProductionEntry<
   W extends readonly Position[],
   O extends On,
   A extends readonly string[] = readonly never[],
-> = ProductionSpec<T, W, O, A> & { kind: "production" };
+  C extends readonly string[] = readonly never[],
+> = ProductionSpec<T, W, O, A, C> & { kind: "production" };
 
 // Every generic defaults to the EMPTY type, never to its constraint — a rule with no
 // `after` would otherwise widen `A` to `readonly string[]` and the audit below would
@@ -67,9 +92,10 @@ const production = <
   const W extends readonly Position[],
   const O extends On,
   const A extends readonly string[] = readonly never[],
+  const C extends readonly string[] = readonly never[],
 >(
-  e: ProductionSpec<T, W, O, A>,
-): ProductionEntry<T, W, O, A> => ({ ...e, kind: "production" });
+  e: ProductionSpec<T, W, O, A, C>,
+): ProductionEntry<T, W, O, A, C> => ({ ...e, kind: "production" });
 
 export const PRODUCTIONS = {
   conditional: production({
@@ -84,7 +110,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'conditional' produces a value, not a stage."),
+    stream: unsupported("'conditional' produces a value, not a stage."),
+    statement: unsupported("'.conditional()' is not a statement — see its 'where'."),
   }),
 
   nullishCoalescing: production({
@@ -99,7 +126,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'nullishCoalescing' produces a value, not a stage."),
+    stream: unsupported("'nullishCoalescing' produces a value, not a stage."),
+    statement: unsupported("'.nullishCoalescing()' is not a statement — see its 'where'."),
   }),
 
   logicalOr: production({
@@ -114,7 +142,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'logicalOr' produces a value, not a stage."),
+    stream: unsupported("'logicalOr' produces a value, not a stage."),
+    statement: unsupported("'.logicalOr()' is not a statement — see its 'where'."),
   }),
 
   logicalAnd: production({
@@ -129,7 +158,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'logicalAnd' produces a value, not a stage."),
+    stream: unsupported("'logicalAnd' produces a value, not a stage."),
+    statement: unsupported("'.logicalAnd()' is not a statement — see its 'where'."),
   }),
 
   bitwiseOr: production({
@@ -144,7 +174,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'bitwiseOr' produces a value, not a stage."),
+    stream: unsupported("'bitwiseOr' produces a value, not a stage."),
+    statement: unsupported("'.bitwiseOr()' is not a statement — see its 'where'."),
   }),
 
   bitwiseXor: production({
@@ -159,7 +190,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'bitwiseXor' produces a value, not a stage."),
+    stream: unsupported("'bitwiseXor' produces a value, not a stage."),
+    statement: unsupported("'.bitwiseXor()' is not a statement — see its 'where'."),
   }),
 
   bitwiseAnd: production({
@@ -174,7 +206,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'bitwiseAnd' produces a value, not a stage."),
+    stream: unsupported("'bitwiseAnd' produces a value, not a stage."),
+    statement: unsupported("'.bitwiseAnd()' is not a statement — see its 'where'."),
   }),
 
   strictEquality: production({
@@ -189,7 +222,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'strictEquality' produces a value, not a stage."),
+    stream: unsupported("'strictEquality' produces a value, not a stage."),
+    statement: unsupported("'.strictEquality()' is not a statement — see its 'where'."),
   }),
 
   strictInequality: production({
@@ -204,7 +238,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'strictInequality' produces a value, not a stage."),
+    stream: unsupported("'strictInequality' produces a value, not a stage."),
+    statement: unsupported("'.strictInequality()' is not a statement — see its 'where'."),
   }),
 
   looseEquality: production({
@@ -219,7 +254,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'looseEquality' produces a value, not a stage."),
+    stream: unsupported("'looseEquality' produces a value, not a stage."),
+    statement: unsupported("'.looseEquality()' is not a statement — see its 'where'."),
   }),
 
   looseInequality: production({
@@ -234,7 +270,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'looseInequality' produces a value, not a stage."),
+    stream: unsupported("'looseInequality' produces a value, not a stage."),
+    statement: unsupported("'.looseInequality()' is not a statement — see its 'where'."),
   }),
 
   greaterThan: production({
@@ -249,7 +286,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'greaterThan' produces a value, not a stage."),
+    stream: unsupported("'greaterThan' produces a value, not a stage."),
+    statement: unsupported("'.greaterThan()' is not a statement — see its 'where'."),
   }),
 
   greaterOrEqual: production({
@@ -264,7 +302,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'greaterOrEqual' produces a value, not a stage."),
+    stream: unsupported("'greaterOrEqual' produces a value, not a stage."),
+    statement: unsupported("'.greaterOrEqual()' is not a statement — see its 'where'."),
   }),
 
   lessThan: production({
@@ -279,7 +318,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'lessThan' produces a value, not a stage."),
+    stream: unsupported("'lessThan' produces a value, not a stage."),
+    statement: unsupported("'.lessThan()' is not a statement — see its 'where'."),
   }),
 
   lessOrEqual: production({
@@ -294,7 +334,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'lessOrEqual' produces a value, not a stage."),
+    stream: unsupported("'lessOrEqual' produces a value, not a stage."),
+    statement: unsupported("'.lessOrEqual()' is not a statement — see its 'where'."),
   }),
 
   membership: production({
@@ -309,7 +350,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'membership' produces a value, not a stage."),
+    stream: unsupported("'membership' produces a value, not a stage."),
+    statement: unsupported("'.membership()' is not a statement — see its 'where'."),
   }),
 
   addition: production({
@@ -324,7 +366,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'addition' produces a value, not a stage."),
+    stream: unsupported("'addition' produces a value, not a stage."),
+    statement: unsupported("'.addition()' is not a statement — see its 'where'."),
   }),
 
   subtraction: production({
@@ -339,7 +382,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'subtraction' produces a value, not a stage."),
+    stream: unsupported("'subtraction' produces a value, not a stage."),
+    statement: unsupported("'.subtraction()' is not a statement — see its 'where'."),
   }),
 
   multiplication: production({
@@ -354,7 +398,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'multiplication' produces a value, not a stage."),
+    stream: unsupported("'multiplication' produces a value, not a stage."),
+    statement: unsupported("'.multiplication()' is not a statement — see its 'where'."),
   }),
 
   division: production({
@@ -369,7 +414,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'division' produces a value, not a stage."),
+    stream: unsupported("'division' produces a value, not a stage."),
+    statement: unsupported("'.division()' is not a statement — see its 'where'."),
   }),
 
   remainder: production({
@@ -384,7 +430,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'remainder' produces a value, not a stage."),
+    stream: unsupported("'remainder' produces a value, not a stage."),
+    statement: unsupported("'.remainder()' is not a statement — see its 'where'."),
   }),
 
   exponentiation: production({
@@ -399,7 +446,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'exponentiation' produces a value, not a stage."),
+    stream: unsupported("'exponentiation' produces a value, not a stage."),
+    statement: unsupported("'.exponentiation()' is not a statement — see its 'where'."),
   }),
 
   logicalNot: production({
@@ -414,7 +462,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'logicalNot' produces a value, not a stage."),
+    stream: unsupported("'logicalNot' produces a value, not a stage."),
+    statement: unsupported("'.logicalNot()' is not a statement — see its 'where'."),
   }),
 
   negation: production({
@@ -429,7 +478,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'negation' produces a value, not a stage."),
+    stream: unsupported("'negation' produces a value, not a stage."),
+    statement: unsupported("'.negation()' is not a statement — see its 'where'."),
   }),
 
   bitwiseNot: production({
@@ -444,7 +494,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'bitwiseNot' produces a value, not a stage."),
+    stream: unsupported("'bitwiseNot' produces a value, not a stage."),
+    statement: unsupported("'.bitwiseNot()' is not a statement — see its 'where'."),
   }),
 
   typeCheck: production({
@@ -459,7 +510,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'typeCheck' produces a value, not a stage."),
+    stream: unsupported("'typeCheck' produces a value, not a stage."),
+    statement: unsupported("'.typeCheck()' is not a statement — see its 'where'."),
   }),
 
   memberAccess: production({
@@ -474,7 +526,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'memberAccess' produces a value, not a stage."),
+    stream: unsupported("'memberAccess' produces a value, not a stage."),
+    statement: unsupported("'.memberAccess()' is not a statement — see its 'where'."),
   }),
 
   optionalMemberAccess: production({
@@ -489,7 +542,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'optionalMemberAccess' produces a value, not a stage."),
+    stream: unsupported("'optionalMemberAccess' produces a value, not a stage."),
+    statement: unsupported("'.optionalMemberAccess()' is not a statement — see its 'where'."),
   }),
 
   indexAccess: production({
@@ -504,7 +558,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'indexAccess' produces a value, not a stage."),
+    stream: unsupported("'indexAccess' produces a value, not a stage."),
+    statement: unsupported("'.indexAccess()' is not a statement — see its 'where'."),
   }),
 
   call: production({
@@ -519,7 +574,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'call' produces a value, not a stage."),
+    stream: unsupported("'call' produces a value, not a stage."),
+    statement: unsupported("'.call()' is not a statement — see its 'where'."),
   }),
 
   methodCall: production({
@@ -534,7 +590,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'methodCall' produces a value, not a stage."),
+    stream: unsupported("'methodCall' produces a value, not a stage."),
+    statement: unsupported("'.methodCall()' is not a statement — see its 'where'."),
   }),
 
   operatorCall: production({
@@ -549,7 +606,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'operatorCall' produces a value, not a stage."),
+    stream: unsupported("'operatorCall' produces a value, not a stage."),
+    statement: unsupported("'.operatorCall()' is not a statement — see its 'where'."),
   }),
 
   namespacedCall: production({
@@ -564,7 +622,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'namespacedCall' produces a value, not a stage."),
+    stream: unsupported("'namespacedCall' produces a value, not a stage."),
+    statement: unsupported("'.namespacedCall()' is not a statement — see its 'where'."),
   }),
 
   constructorCall: production({
@@ -576,7 +635,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'constructorCall' produces a value, not a stage."),
+    stream: unsupported("'constructorCall' produces a value, not a stage."),
+    statement: unsupported("'.constructorCall()' is not a statement — see its 'where'."),
   }),
 
   typeCast: production({
@@ -591,7 +651,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'typeCast' produces a value, not a stage."),
+    stream: unsupported("'typeCast' produces a value, not a stage."),
+    statement: unsupported("'.typeCast()' is not a statement — see its 'where'."),
   }),
 
   unappliedReference: production({
@@ -603,7 +664,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'unappliedReference' produces a value, not a stage."),
+    stream: unsupported("'unappliedReference' produces a value, not a stage."),
+    statement: unsupported("'.unappliedReference()' is not a statement — see its 'where'."),
   }),
 
   fieldReference: production({
@@ -615,7 +677,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'fieldReference' produces a value, not a stage."),
+    stream: unsupported("'fieldReference' produces a value, not a stage."),
+    statement: unsupported("'.fieldReference()' is not a statement — see its 'where'."),
   }),
 
   rootReference: production({
@@ -627,7 +690,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'rootReference' produces a value, not a stage."),
+    stream: unsupported("'rootReference' produces a value, not a stage."),
+    statement: unsupported("'.rootReference()' is not a statement — see its 'where'."),
   }),
 
   streamReference: production({
@@ -639,7 +703,8 @@ export const PRODUCTIONS = {
     where: ["stream"],
     filter: unsupported("'$$' is a stream, not a filter predicate."),
     expr: unsupported("'streamReference' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    stream: pending("src/pipeline.ts"),
+    statement: unsupported("'.streamReference()' is not a statement — see its 'where'."),
   }),
 
   collectionReference: production({
@@ -651,7 +716,8 @@ export const PRODUCTIONS = {
     where: ["stream"],
     filter: unsupported("'$$$.<coll>' names a collection, not a filter predicate."),
     expr: unsupported("'collectionReference' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    stream: pending("src/pipeline.ts"),
+    statement: unsupported("'.collectionReference()' is not a statement — see its 'where'."),
   }),
 
   clusterReference: production({
@@ -663,7 +729,8 @@ export const PRODUCTIONS = {
     where: ["stream"],
     filter: unsupported("'$$$$' names a cluster, not a filter predicate."),
     expr: unsupported("'clusterReference' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    stream: pending("src/pipeline.ts"),
+    statement: unsupported("'.clusterReference()' is not a statement — see its 'where'."),
   }),
 
   parameterReference: production({
@@ -675,7 +742,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'parameterReference' produces a value, not a stage."),
+    stream: unsupported("'parameterReference' produces a value, not a stage."),
+    statement: unsupported("'.parameterReference()' is not a statement — see its 'where'."),
   }),
 
   numberLiteral: production({
@@ -687,7 +755,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'numberLiteral' produces a value, not a stage."),
+    stream: unsupported("'numberLiteral' produces a value, not a stage."),
+    statement: unsupported("'.numberLiteral()' is not a statement — see its 'where'."),
   }),
 
   stringLiteral: production({
@@ -699,7 +768,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'stringLiteral' produces a value, not a stage."),
+    stream: unsupported("'stringLiteral' produces a value, not a stage."),
+    statement: unsupported("'.stringLiteral()' is not a statement — see its 'where'."),
   }),
 
   bigIntLiteral: production({
@@ -711,7 +781,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'bigIntLiteral' produces a value, not a stage."),
+    stream: unsupported("'bigIntLiteral' produces a value, not a stage."),
+    statement: unsupported("'.bigIntLiteral()' is not a statement — see its 'where'."),
   }),
 
   regexLiteral: production({
@@ -723,7 +794,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'regexLiteral' produces a value, not a stage."),
+    stream: unsupported("'regexLiteral' produces a value, not a stage."),
+    statement: unsupported("'.regexLiteral()' is not a statement — see its 'where'."),
   }),
 
   booleanLiteral: production({
@@ -735,7 +807,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'booleanLiteral' produces a value, not a stage."),
+    stream: unsupported("'booleanLiteral' produces a value, not a stage."),
+    statement: unsupported("'.booleanLiteral()' is not a statement — see its 'where'."),
   }),
 
   nullLiteral: production({
@@ -747,7 +820,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'nullLiteral' produces a value, not a stage."),
+    stream: unsupported("'nullLiteral' produces a value, not a stage."),
+    statement: unsupported("'.nullLiteral()' is not a statement — see its 'where'."),
   }),
 
   undefinedLiteral: production({
@@ -759,7 +833,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: unsupported("'undefined' is only meaningful in a comparison — write 'x === undefined'."),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'undefinedLiteral' produces a value, not a stage."),
+    stream: unsupported("'undefinedLiteral' produces a value, not a stage."),
+    statement: unsupported("'.undefinedLiteral()' is not a statement — see its 'where'."),
   }),
 
   objectIdLiteral: production({
@@ -771,7 +846,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'objectIdLiteral' produces a value, not a stage."),
+    stream: unsupported("'objectIdLiteral' produces a value, not a stage."),
+    statement: unsupported("'.objectIdLiteral()' is not a statement — see its 'where'."),
   }),
 
   templateLiteral: production({
@@ -783,7 +859,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'templateLiteral' produces a value, not a stage."),
+    stream: unsupported("'templateLiteral' produces a value, not a stage."),
+    statement: unsupported("'.templateLiteral()' is not a statement — see its 'where'."),
   }),
 
   objectLiteral: production({
@@ -795,7 +872,8 @@ export const PRODUCTIONS = {
     where: ["value", "filter", "stream"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
-    stage: pending("src/pipeline.ts"),
+    stream: pending("src/pipeline.ts"),
+    statement: unsupported("'.objectLiteral()' is not a statement — see its 'where'."),
   }),
 
   arrayLiteral: production({
@@ -807,7 +885,8 @@ export const PRODUCTIONS = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: pending("src/pipeline.ts"),
+    stream: pending("src/pipeline.ts"),
+    statement: unsupported("'.arrayLiteral()' is not a statement — see its 'where'."),
   }),
 
   spread: production({
@@ -819,7 +898,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'spread' produces a value, not a stage."),
+    stream: unsupported("'spread' produces a value, not a stage."),
+    statement: unsupported("'.spread()' is not a statement — see its 'where'."),
   }),
 
   objectEntry: production({
@@ -831,7 +911,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'objectEntry' produces a value, not a stage."),
+    stream: unsupported("'objectEntry' produces a value, not a stage."),
+    statement: unsupported("'.objectEntry()' is not a statement — see its 'where'."),
   }),
 
   arrowFunction: production({
@@ -843,7 +924,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'arrowFunction' produces a value, not a stage."),
+    stream: unsupported("'arrowFunction' produces a value, not a stage."),
+    statement: unsupported("'.arrowFunction()' is not a statement — see its 'where'."),
   }),
 
   destructuringParam: production({
@@ -855,7 +937,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'destructuringParam' produces a value, not a stage."),
+    stream: unsupported("'destructuringParam' produces a value, not a stage."),
+    statement: unsupported("'.destructuringParam()' is not a statement — see its 'where'."),
   }),
 
   blockReturn: production({
@@ -867,7 +950,8 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
-    stage: unsupported("'blockReturn' produces a value, not a stage."),
+    stream: unsupported("'blockReturn' produces a value, not a stage."),
+    statement: unsupported("'.blockReturn()' is not a statement — see its 'where'."),
   }),
 
   constantBinding: production({
@@ -879,7 +963,8 @@ export const PRODUCTIONS = {
     where: ["statement", "value"],
     filter: unsupported("a declaration is not a filter predicate."),
     expr: pending("src/codegen.ts"),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.constantBinding()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   mutableBinding: production({
@@ -891,7 +976,8 @@ export const PRODUCTIONS = {
     where: ["statement", "value"],
     filter: unsupported("a declaration is not a filter predicate."),
     expr: pending("src/codegen.ts"),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.mutableBinding()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   functionBinding: production({
@@ -903,7 +989,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("a declaration is not a filter predicate."),
     expr: unsupported("'functionBinding' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.functionBinding()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   fieldDeletion: production({
@@ -915,7 +1002,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("'delete' removes a field. To require absence write '$.a === undefined'."),
     expr: unsupported("'fieldDeletion' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.fieldDeletion()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   fieldAssignment: production({
@@ -927,7 +1015,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("an assignment is not a filter predicate."),
     expr: unsupported("'fieldAssignment' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.fieldAssignment()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   increment: production({
@@ -940,7 +1029,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("'++' writes a field; it is not a filter predicate."),
     expr: unsupported("'increment' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.increment()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   decrement: production({
@@ -953,7 +1043,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("'--' writes a field; it is not a filter predicate."),
     expr: unsupported("'decrement' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.decrement()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   pipelineStatement: production({
@@ -965,7 +1056,8 @@ export const PRODUCTIONS = {
     where: ["statement"],
     filter: unsupported("a pipeline is not a filter predicate."),
     expr: unsupported("'pipelineStatement' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.pipelineStatement()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   // ── sugar: overlapping triggers, so precedence is declared ─────────────────
@@ -979,7 +1071,8 @@ export const PRODUCTIONS = {
     after: [],
     filter: unsupported("'letReassignment' is a statement, not a filter predicate."),
     expr: unsupported("'letReassignment' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.letReassignment()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   streamReplacement: production({
@@ -992,7 +1085,8 @@ export const PRODUCTIONS = {
     after: ["letReassignment"],
     filter: unsupported("'streamReplacement' is a statement, not a filter predicate."),
     expr: unsupported("'streamReplacement' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.streamReplacement()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   rootReplacement: production({
@@ -1005,7 +1099,8 @@ export const PRODUCTIONS = {
     after: ["letReassignment", "streamReplacement"],
     filter: unsupported("'rootReplacement' is a statement, not a filter predicate."),
     expr: unsupported("'rootReplacement' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.rootReplacement()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   collectionWrite: production({
@@ -1019,7 +1114,8 @@ export const PRODUCTIONS = {
     after: ["letReassignment", "streamReplacement", "rootReplacement"],
     filter: unsupported("'collectionWrite' is a statement, not a filter predicate."),
     expr: unsupported("'collectionWrite' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.collectionWrite()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 
   foreignJoin: production({
@@ -1032,7 +1128,8 @@ export const PRODUCTIONS = {
     after: ["letReassignment", "streamReplacement", "rootReplacement", "collectionWrite"],
     filter: unsupported("'foreignJoin' is a statement, not a filter predicate."),
     expr: unsupported("'foreignJoin' is a statement, not an aggregation expression."),
-    stage: pending("src/pipeline.ts"),
+    statement: pending("src/pipeline.ts"),
+    stream: unsupported("'.foreignJoin()' is not a link in a '$$ = $$…' chain — see its 'where'."),
   }),
 };
 
@@ -1060,5 +1157,40 @@ const _tokensResolve: [DanglingTokens] extends [never] ? true : DanglingTokens =
 type DanglingAfter = Exclude<Mentioned<"after">, ProductionKey>;
 const _afterResolves: [DanglingAfter] extends [never] ? true : DanglingAfter = true;
 
+/**
+ * Every `composedInto` owner must be a rule in this same file.
+ *
+ * The audit that was missing. Without it a cell could name an owner that never
+ * touches it, and two did: `methodCall` and `operatorCall` both pointed at
+ * `strictEquality`, which does not consume either — while both render natively
+ * on their own. A dangling pointer read as "this is handled elsewhere" and
+ * hid two whole native query forms.
+ */
+type CellName = "filter" | "expr" | "stream" | "statement";
+
+type OwnersNamedBy<K extends ProductionKey> = {
+  // Extract FIRST. A cell's type is a union, and a union never satisfies the
+  // object pattern on its own, so matching the union directly yields `never` for
+  // every row — an audit that always passes.
+  // Extract FIRST: a cell's type is a union, and a union never satisfies the
+  // object pattern on its own, so matching the union directly yields `never` for
+  // every row — an audit that always passes.
+  //
+  // Then guard the `never` case BEFORE inferring. `never extends readonly
+  // (infer V)[]` succeeds with `V = unknown`, and one `unknown` in the union
+  // swallows the whole audit. That is the bug this line exists to avoid.
+  [C in CellName]: [Extract<(typeof PRODUCTIONS)[K][C], { composedInto: readonly string[] }>] extends [never]
+    ? never
+    : Extract<(typeof PRODUCTIONS)[K][C], { composedInto: readonly string[] }> extends {
+          composedInto: readonly (infer V)[];
+        }
+      ? V
+      : never;
+}[CellName];
+
+type DanglingComposedInto = Exclude<{ [K in ProductionKey]: OwnersNamedBy<K> }[ProductionKey], ProductionKey>;
+const _composedIntoResolves: [DanglingComposedInto] extends [never] ? true : DanglingComposedInto = true;
+
 void _tokensResolve;
 void _afterResolves;
+void _composedIntoResolves;

@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — refactor: one registry cell per position, and the nine facts that had nowhere to go
+
+Eight audits read the JSMQL that [test/](test/) writes and [docs/LANGUAGE.md](docs/LANGUAGE.md)
+documents, then compared it with `src/registry/`. Nine facts turned out to be *unwritable* —
+no field could hold them — so every row touching one had to state something false. The
+vocabulary is fixed first, because repairing a row against a vocabulary that cannot state
+the truth only writes a second wrong answer.
+
+**One position, one cell.** `Position` lists six positions but the cells collapsed `stream`
+and `statement` into one `stage`, and every pair that shared a cell held opposite answers.
+`$$.push(...$$$.archive);` lowers to `[{ $unionWith: "archive" }]` while
+`$$ = $$.take(1).push(...)` is refused — one cell had to pick, picked the refusal, and so the
+registry denied the form the name is most used for. Splitting it gives `filter` / `expr` /
+`stream` / `statement` / `group` / `window`, one per position, and forced the three context
+refs and `Math` to become honest: `Math`'s `where` claimed `"value"` while bare `Math` is
+`Expected '.' but got end of input`, and `$$$$` claimed a stream source that cross-database
+reads do not have. A not-listed cell may now also answer PER FAMILY, because `.length` falls
+back in a filter on an array or a string but does not compile at all on `$$`.
+
+**`composedInto` holds a list, and is finally audited.** `remainder` folds into both
+`strictEquality` (`{ a: { $mod: [2, 0] } }`) and `strictInequality`
+(`{ a: { $not: { $mod: [2, 0] } } }`), so one owner stated a true-but-partial fact. The
+missing audit that checks an owner exists took three attempts to make real: matching a cell's
+union directly yields `never` for every row, and `never extends readonly (infer V)[]` then
+succeeds with `V = unknown`, which swallows the whole check. `Extract` first, guard `never`
+before inferring — and confirm the audit fails on a bogus owner before trusting it. `Either`
+is deleted; it existed only so one cell could serve two positions.
+
+**The remaining seven.** `BodyRule.exactlyOneOf` (`{$expMovingAvg:{input:"$a"}}` → *"either an
+'N' field or an 'alpha' field"*); `BodyRule.positional`, which pins JSMQL's own key order
+against the vendored YAML's — `$top($.score, {score:-1})` must stay
+`{ output, sortBy }`, and the YAML order emits valid MQL that answers a different question;
+`minVersion`, because `$sigmoid` is in the binary and refused at FCV 8.0; dotted
+`subPipelineFields` so `$rankFusion`'s user-named `input.pipelines.*` can be reached;
+`Arity.slotEnums` and `Arity.slotForms` for the closed unit sets and the five iteratee
+spellings; and on a production, `noMixWith` and `neverAWriteTarget` — `$.a ?? $.b || $.c`,
+`typeof $.a ** $.b` and `$.a?.b = 1` are all accepted today and all `SyntaxError` under
+`node --check`, which a precedence number can never express. `Only` loses `"streamEnd"`: the
+cell split says it better.
+
+---
+
 ## 2026-08-23 — feat: four registries describe the whole language, one phase each
 
 `src/registry/` holds what the language HAS, split by compiler phase so each file has one

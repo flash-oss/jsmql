@@ -241,20 +241,46 @@ export type Kind = "string" | "array" | "number" | "object" | "date" | "bool" | 
  *                           query rendering. Omitting it does not forbid filter
  *                           position — see `ViaFallback`; it says there is no
  *                           indexable form, so the value form is wrapped.
- *   "stream"    → `stage`   a link in a `$$ = $$…` chain
- *   "statement" → `stage`   a statement that is never a value
- *   "group"     → `group`   inside a $group output slot
- *   "window"    → `window`  inside $setWindowFields.output
+ *   "stream"    → `stream`    a link in a `$$ = $$…` chain
+ *   "statement" → `statement` a statement that is never a value
+ *   "group"     → `group`     inside a $group output slot
+ *   "window"    → `window`    inside $setWindowFields.output
  *
- * `group` and `window` are SEPARATE, proven both ways on mongod:
- *   $rank         in $group  → "unknown group operator"      ; in a window → accepted
- *   $mergeObjects in $group  → accepted                      ; in a window → "Unrecognized window function"
- * One position covering both would state a legality that half of these names lack.
+ * ONE POSITION, ONE CELL. No two positions share a cell, because every pair that
+ * ever shared one turned out to hold opposite answers.
+ *
+ *   `stream` vs `statement`
+ *     `$$.push(...$$$.archive);`     → [{ $unionWith: "archive" }]   a legal statement
+ *     `$$ = $$.take(1).push(...);`   → refused, "use '.concat(...)' mid-chain"
+ *     One cell had to pick, and picked the refusal — so the registry denied the
+ *     form the language is most used for.
+ *
+ *   `group` vs `window`, proven both ways on mongod:
+ *     $rank         in $group → "unknown group operator"  ; in a window → accepted
+ *     $mergeObjects in $group → accepted                  ; in a window → "Unrecognized window function"
+ *
+ *   `group` vs `value` on ONE name — an accumulator is unary in a $group slot and
+ *   variadic in a window slot:
+ *     {$group:{v:{$avg:"$a"}}}                            → accepted
+ *     {$group:{v:{$avg:["$a","$b"]}}}                     → "The $avg accumulator is a unary operator"
+ *     {$setWindowFields:{output:{v:{$max:["$a","$b"]}}}}   → accepted
+ *   which is why `args` lives on the CELL and never on the entry.
  */
 export type Position = "value" | "filter" | "stream" | "statement" | "group" | "window";
 
-/** An extra rule no renderer implies, so it must be said. */
-export type Only = "streamEnd" | "stageFirst" | "stageLast" | "update";
+/**
+ * An extra rule no renderer implies, so it must be said.
+ *
+ *   "stageFirst"  must be the pipeline's first stage
+ *   "stageLast"   must be its last
+ *   "update"      one of the stages an update pipeline accepts — the whitelist
+ *                 `jsmql.update` enforces. Without it $set and $sort look alike,
+ *                 and only one of them is legal there.
+ *
+ * There is no "streamEnd". A link that may not continue a chain says so in its
+ * own `stream` cell, which is the same fact where a reader already looks.
+ */
+export type Only = "stageFirst" | "stageLast" | "update";
 
 /** The result type. `.filter` on an array is an array; on a stream, a stream. */
 export type Returns =
@@ -282,7 +308,46 @@ export type Arity = {
   constant?: readonly number[];
   /** Per-slot literal type, checked only when the slot is a literal. */
   slotType?: Readonly<Record<number, ArgType>>;
+  /**
+   * Per-slot closed value set, checked only when the slot is a literal.
+   *   $.d.plus(1, "day")   → accepted
+   *   $.d.plus(30, "days") → refused, the plural is not a unit
+   * Keyed by SLOT INDEX. `BodyRule.enums` is the same rule keyed by KEY NAME,
+   * for an object-shaped body.
+   */
+  slotEnums?: Readonly<Record<number, readonly string[]>>;
+  /**
+   * Per-slot accepted SPELLINGS. Absent means a plain value expression only.
+   *
+   * Every higher-order name takes its iteratee in more than one form, and `sig`
+   * alone ("iteratee") cannot say which:
+   *   $.rows.uniqBy(r => r.id)         a lambda
+   *   $.rows.uniqBy("id")              a property path
+   *   $.rows.filter({ active: true })  a matcher object
+   *   $.rows.filter(["a.b", 1])        a path/value pair
+   *   $.items.map(String)              a bare callable, handed over unapplied
+   *   $.rows.sumBy()                   omitted — identity
+   */
+  slotForms?: Readonly<Record<number, readonly SlotForm[]>>;
 };
+
+/**
+ * One accepted spelling of an argument slot. See `Arity.slotForms`.
+ *
+ * `bareCallable` is narrower than it looks — only the unary Math methods may be
+ * handed over unapplied:
+ *   $.items.map(Math.floor)  → accepted
+ *   $.items.map(Math.asinh)  → refused, though it is equally unary
+ * so a row that lists this form still states its own set beside it.
+ */
+export type SlotForm =
+  | "expression"
+  | "lambda"
+  | "propertyPath"
+  | "matchesObject"
+  | "matchesPropertyPair"
+  | "bareCallable"
+  | "omitted";
 
 /** An object-shaped body: operators in object style, and every stage. */
 export type BodyRule = {
@@ -294,6 +359,27 @@ export type BodyRule = {
   keyTypes?: Readonly<Record<string, ArgType>>;
   /** Keys whose value must be a compile-time constant. */
   constantKeys?: readonly string[];
+  /**
+   * Each inner list is a set of keys of which EXACTLY ONE must be present.
+   * `required` / `optional` cannot say it, and both cases are real:
+   *   {$expMovingAvg:{input:"$a"}} → "either an 'N' field or an 'alpha' field"
+   *   {$dateFromParts:{}}          → "requires either 'year' or 'isoWeekYear'"
+   */
+  exactlyOneOf?: readonly (readonly string[])[];
+  /**
+   * The key order a POSITIONAL call maps onto, for an object-shaped operator:
+   *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
+   *   $hash($.s, "sha256")    → { input: "$s", algorithm: "sha256" }
+   *
+   * This is JSMQL's own order and a public commitment — NOT the vendored YAML's
+   * key order. The two differ for $top, $topN, $firstN, $lastN and $map, and
+   * taking the YAML's would emit valid MQL that answers a different question:
+   *   $top($.score, { score: -1 })
+   *     jsmql  → { $top: { output: "$score", sortBy: { score: -1 } } }
+   *     YAML   → { $top: { sortBy: "$score", output: { score: -1 } } }
+   * Both run. One is the query the user wrote.
+   */
+  positional?: readonly string[];
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -401,9 +487,18 @@ export type ViaFallback = { fallback: "expr" };
  * composition" — `$.a[0] === 1` really does become `$expr`. Conflating the two hid
  * four native renderings behind a field that said there were none.
  */
-export type ComposedInto = { composedInto: string };
+export type ComposedInto = { composedInto: readonly string[] };
 
-export const composedInto = (owner: string): ComposedInto => ({ composedInto: owner });
+/**
+ * Name every row that folds this one in. A LIST, because the consumer sets are
+ * plural and one owner states a true-but-partial fact:
+ *   `$.a % 2 === 0` → { a: { $mod: [2, 0] } }            strictEquality
+ *   `$.a % 2 !== 0` → { a: { $not: { $mod: [2, 0] } } }  strictInequality
+ * so `remainder` is composed into both, and `memberAccess` into six.
+ */
+export const composedInto = <const O extends readonly string[]>(...owners: O): { composedInto: O } => ({
+  composedInto: owners,
+});
 
 export const viaFallback: ViaFallback = { fallback: "expr" };
 
@@ -451,7 +546,6 @@ export type Emitter<F extends Family, In, Out> =
 // ═════════════════════════════════════════════════════════════════════════════
 
 export type Lists<W extends readonly string[], K extends string> = K extends W[number] ? true : false;
-export type Either<A extends boolean, B extends boolean> = A extends true ? true : B;
 
 /**
  * Named in `where` ⇒ a real renderer, or `pending(<where it still lives>)`.
@@ -463,9 +557,38 @@ export type Either<A extends boolean, B extends boolean> = A extends true ? true
  * migration can move lowerings without ever softening an applicability claim.
  * A ratchet test counts the `Pending` cells and may only let the count fall.
  */
-export type Cell<Listed extends boolean, F extends Family, In, Out> = Listed extends true
-  ? Emitter<F, In, Out> | Pending
-  : Refusal | ViaFallback | ComposedInto;
+export type Cell<
+  Listed extends boolean,
+  F extends Family,
+  In,
+  Out,
+  /**
+   * The owners a `composedInto` cell may name. Threaded through so the literal
+   * survives into the stored entry — without it the cell erases to
+   * `{ composedInto: readonly string[] }` and an audit over the owners passes
+   * while checking nothing, which is how two dangling owners went unnoticed.
+   */
+  C extends readonly string[] = readonly never[],
+> = Listed extends true ? Emitter<F, In, Out> | Pending : NonEmitter<F, C>;
+
+/**
+ * The answer for a position `where` omits. One answer for every family, or one
+ * PER family — because the reason a position is unavailable can differ by
+ * receiver, and flattening it states a legality one family does not have:
+ *
+ *   `.length` in filter position
+ *     $.tags.length < 5    → {$expr:{$cond:…}}     works, cannot use an index
+ *     $.s.length < 5       → {$expr:{$cond:…}}     the same
+ *     $$.length > 1        → REFUSED, "'$$.length' … needs Pipeline mode —
+ *                            it materialises a '$setWindowFields' stage."
+ *   One `viaFallback` for all three promised the stream form would merely scan,
+ *   when it does not compile at all.
+ */
+export type NonEmitter<F extends Family, C extends readonly string[] = readonly never[]> =
+  | Refusal
+  | ViaFallback
+  | { composedInto: C }
+  | { perFamily: Record<F, Refusal | ViaFallback | ComposedInto> };
 
 export type On = Family | readonly Family[] | "any";
 
@@ -481,7 +604,7 @@ export type On = Family | readonly Family[] | "any";
  * fact a reader needs and the one a generator must never guess.
  */
 /**
- * What `op` returns: the four cells plus the facts it was given. names.ts feeds
+ * What `op` returns: the six cells plus the facts it was given. names.ts feeds
  * this straight into `mongo({...})`. Kept structural rather than importing
  * `MongoEntry`, so vocabulary.ts stays a leaf that imports nothing.
  */
@@ -492,10 +615,20 @@ export type MongoOpParts<W extends readonly Position[]> = {
   doc: string;
   where: W;
   only?: readonly Only[];
-  filter: Emitter<Family, FilterIn, QueryDoc> | Refusal | ViaFallback | Pending;
-  expr: Emitter<Family, ExprIn, unknown> | Refusal | ViaFallback | Pending;
-  group: Emitter<Family, GroupIn, unknown> | Refusal | ViaFallback | Pending;
-  stage: Emitter<Family, StageIn, Stage[]> | Refusal | ViaFallback | Pending;
+  /**
+   * The lowest server version that accepts this name. Stated only where it was
+   * MEASURED to matter — the binary may hold a name the running FCV refuses:
+   *   {$addFields:{v:{$sigmoid:"$a"}}}
+   *     → "not allowed in the current feature compatibility version"
+   * Absent means every version jsmql targets accepts it.
+   */
+  minVersion?: string;
+  filter: Emitter<Family, FilterIn, QueryDoc> | NonEmitter<Family> | Pending;
+  expr: Emitter<Family, ExprIn, unknown> | NonEmitter<Family> | Pending;
+  group: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
+  window: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
+  stream: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
+  statement: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
 };
 
 export const op = <const W extends readonly Position[]>(e: {
@@ -506,14 +639,41 @@ export const op = <const W extends readonly Position[]>(e: {
   only?: readonly Only[];
   /** Stated only where the vendored spec constrains the operands. */
   args?: Arity;
+  /** See `MongoOpParts.minVersion`. */
+  minVersion?: string;
 }): MongoOpParts<W> => {
   const arity: Arity = e.args ?? { sig: "operands", atLeast: 0 };
+  const body = typeof e.shape === "object" ? e.shape.object : null;
   const shaped = (input: { name: string; args: readonly Expr[]; gen: (x: Expr) => unknown }): unknown => {
     const vals = input.args.map(input.gen);
     if (e.shape === "none") return { [input.name]: {} };
     if (e.shape === "single") return { [input.name]: vals[0] };
+    // An object-shaped operator called POSITIONALLY: zip the operands onto the
+    // key order the row states. One argument is the object-literal call and
+    // passes straight through. See `BodyRule.positional`.
+    if (body !== null) {
+      if (vals.length <= 1 || body.positional === undefined) return { [input.name]: vals[0] };
+      const keys = body.positional;
+      return { [input.name]: Object.fromEntries(vals.map((v, i) => [keys[i], v])) };
+    }
     return { [input.name]: vals.length === 1 && e.shape === "flex" ? vals[0] : vals };
   };
+  /**
+   * A $group output slot takes exactly ONE argument, whatever the operator's
+   * expression form allows. Measured on mongod:
+   *   {$group:{v:{$avg:"$a"}}}        → accepted
+   *   {$group:{v:{$avg:["$a","$b"]}}} → "The $avg accumulator is a unary operator"
+   * A window slot is variadic-tolerant, so it keeps `arity` unchanged.
+   */
+  const groupArity: Arity = { sig: "operand", exact: 1 };
+  /**
+   * A stage takes one body. The SAME rendering serves both stage positions —
+   * `$$ = $$.$match(...)` as a chain link and `$match(...);` as a statement —
+   * so the two cells share one emitter and differ only in whether `where`
+   * lists them.
+   */
+  const stageArity: Arity = { sig: "body", exact: 1 };
+  const asStage = (i: StageIn): Stage[] => [{ [i.name]: i.gen(i.args[0]) }];
   const listed = (pos: Position) => (e.where as readonly Position[]).includes(pos);
   const why = `'${"$"}<op>' is not valid here — see its 'where'.`;
   return {
@@ -523,12 +683,13 @@ export const op = <const W extends readonly Position[]>(e: {
     doc: e.doc,
     where: e.where,
     ...(e.only === undefined ? {} : { only: e.only }),
+    ...(e.minVersion === undefined ? {} : { minVersion: e.minVersion }),
     filter: listed("filter") ? { args: arity, emit: shaped } : unsupported(why),
     expr: listed("value") ? { args: arity, emit: shaped } : unsupported(why),
-    group: listed("group") ? { args: arity, emit: shaped } : unsupported(why),
-    stage: listed("stream")
-      ? { args: { sig: "body", exact: 1 }, emit: (i: StageIn) => [{ [i.name]: i.gen(i.args[0]) }] }
-      : unsupported(why),
+    group: listed("group") ? { args: groupArity, emit: shaped } : unsupported(why),
+    window: listed("window") ? { args: arity, emit: shaped } : unsupported(why),
+    stream: listed("stream") ? { args: stageArity, emit: asStage } : unsupported(why),
+    statement: listed("statement") ? { args: stageArity, emit: asStage } : unsupported(why),
   } as MongoOpParts<W>;
 };
 

@@ -45,6 +45,27 @@ export type TokenSpec<C extends string = never> = {
   closes?: C;
   /** true when the token has no fixed spelling, so the key is a class name. */
   variable?: true;
+  /**
+   * A cap on how many times this spelling may repeat. A longest-match table
+   * cannot state it: `$$$$$` would match `$$$$` then `$`, giving two valid
+   * tokens and no error, where the lexer says
+   *   "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')"
+   */
+  maxRun?: { limit: number; tooLong: string };
+  /**
+   * When one spelling maps to more than one token type, which type is chosen and
+   * on what. `/` is division after a value and a regex otherwise, so the choice
+   * is made on the PRECEDING token, not on this one.
+   */
+  chooseBy?: { afterValue: TokenName; otherwise: TokenName };
+  /** This opener increments the depth counter a template interpolation reads. */
+  tracksDepth?: true;
+  /**
+   * When this closer's depth matches an open template interpolation, it ends the
+   * interpolation instead of emitting a token at all — the one closer that
+   * produces nothing.
+   */
+  resumesTemplateAtDepth?: true;
 };
 
 export type TokenEntry<C extends string = never> = TokenSpec<C> & { kind: "token" };
