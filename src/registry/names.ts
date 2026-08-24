@@ -6338,6 +6338,257 @@ export const NAMES = {
   // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
   // ─────────────────────────────────────────────────────────────────────────────
 
+  // ── the query language: operators with a filter form and no expression form.
+  // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
+  // $geometry, $maxDistance, $minDistance) have no row, on the same footing as
+  // $case: they are only ever valid INSIDE another operator's body.
+  $all: mongo({
+    doc: "Matches arrays that contain all elements specified in the query.",
+    where: ["filter"],
+    filter: pending("src/predicate-ir.ts"),
+    expr: unsupported(
+      "'$all' is a query operator with no aggregation-expression form. '$all' is a field-level query operator: write it under a field, e.g. '{ <field>: $all(…) }'.",
+    ),
+    group: unsupported("'$all' is a query operator, not an accumulator."),
+    window: unsupported("'$all' is a query operator, not a window function."),
+    stream: unsupported("'$all' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$all' is a query operator, not a statement."),
+  }),
+
+  $bitsAllClear: mongo({
+    doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$bitsAllClear' is a query operator with no aggregation-expression form. '$bitsAllClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllClear(…) }'.",
+    ),
+    group: unsupported("'$bitsAllClear' is a query operator, not an accumulator."),
+    window: unsupported("'$bitsAllClear' is a query operator, not a window function."),
+    stream: unsupported("'$bitsAllClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$bitsAllClear' is a query operator, not a statement."),
+  }),
+
+  $bitsAllSet: mongo({
+    doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$bitsAllSet' is a query operator with no aggregation-expression form. '$bitsAllSet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllSet(…) }'.",
+    ),
+    group: unsupported("'$bitsAllSet' is a query operator, not an accumulator."),
+    window: unsupported("'$bitsAllSet' is a query operator, not a window function."),
+    stream: unsupported("'$bitsAllSet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$bitsAllSet' is a query operator, not a statement."),
+  }),
+
+  $bitsAnyClear: mongo({
+    doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$bitsAnyClear' is a query operator with no aggregation-expression form. '$bitsAnyClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnyClear(…) }'.",
+    ),
+    group: unsupported("'$bitsAnyClear' is a query operator, not an accumulator."),
+    window: unsupported("'$bitsAnyClear' is a query operator, not a window function."),
+    stream: unsupported("'$bitsAnyClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$bitsAnyClear' is a query operator, not a statement."),
+  }),
+
+  $bitsAnySet: mongo({
+    doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$bitsAnySet' is a query operator with no aggregation-expression form. '$bitsAnySet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnySet(…) }'.",
+    ),
+    group: unsupported("'$bitsAnySet' is a query operator, not an accumulator."),
+    window: unsupported("'$bitsAnySet' is a query operator, not a window function."),
+    stream: unsupported("'$bitsAnySet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$bitsAnySet' is a query operator, not a statement."),
+  }),
+
+  $comment: mongo({
+    doc: "Adds a comment to a query predicate.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$comment' is a query operator with no aggregation-expression form. '$comment' is a top-level query operator: write it as the whole filter, e.g. '{ $comment: … }'.",
+    ),
+    group: unsupported("'$comment' is a query operator, not an accumulator."),
+    window: unsupported("'$comment' is a query operator, not a window function."),
+    stream: unsupported("'$comment' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$comment' is a query operator, not a statement."),
+  }),
+
+  $elemMatch: mongo({
+    doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
+    where: ["filter"],
+    filter: pending("src/predicate-ir.ts"),
+    expr: unsupported(
+      "'$elemMatch' is a query operator with no aggregation-expression form. '$elemMatch' is a field-level query operator: write it under a field, e.g. '{ <field>: $elemMatch(…) }'.",
+    ),
+    group: unsupported("'$elemMatch' is a query operator, not an accumulator."),
+    window: unsupported("'$elemMatch' is a query operator, not a window function."),
+    stream: unsupported("'$elemMatch' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$elemMatch' is a query operator, not a statement."),
+  }),
+
+  $exists: mongo({
+    doc: "Matches documents that have the specified field.",
+    where: ["filter"],
+    filter: pending("src/predicate-ir.ts"),
+    expr: unsupported(
+      "'$exists' is a query operator with no aggregation-expression form. '$exists' is a field-level query operator: write it under a field, e.g. '{ <field>: $exists(…) }'.",
+    ),
+    group: unsupported("'$exists' is a query operator, not an accumulator."),
+    window: unsupported("'$exists' is a query operator, not a window function."),
+    stream: unsupported("'$exists' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$exists' is a query operator, not a statement."),
+  }),
+
+  $expr: mongo({
+    doc: "Allows use of aggregation expressions within the query language.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$expr' is a query operator with no aggregation-expression form. '$expr' is a top-level query operator: write it as the whole filter, e.g. '{ $expr: … }'.",
+    ),
+    group: unsupported("'$expr' is a query operator, not an accumulator."),
+    window: unsupported("'$expr' is a query operator, not a window function."),
+    stream: unsupported("'$expr' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$expr' is a query operator, not a statement."),
+  }),
+
+  $geoIntersects: mongo({
+    doc: "Selects geometries that intersect with a GeoJSON geometry. The 2dsphere index supports $geoIntersects.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$geoIntersects' is a query operator with no aggregation-expression form. '$geoIntersects' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoIntersects(…) }'.",
+    ),
+    group: unsupported("'$geoIntersects' is a query operator, not an accumulator."),
+    window: unsupported("'$geoIntersects' is a query operator, not a window function."),
+    stream: unsupported("'$geoIntersects' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$geoIntersects' is a query operator, not a statement."),
+  }),
+
+  $geoWithin: mongo({
+    doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$geoWithin' is a query operator with no aggregation-expression form. '$geoWithin' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoWithin(…) }'.",
+    ),
+    group: unsupported("'$geoWithin' is a query operator, not an accumulator."),
+    window: unsupported("'$geoWithin' is a query operator, not a window function."),
+    stream: unsupported("'$geoWithin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$geoWithin' is a query operator, not a statement."),
+  }),
+
+  $jsonSchema: mongo({
+    doc: "Validate documents against the given JSON Schema.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$jsonSchema' is a query operator with no aggregation-expression form. '$jsonSchema' is a top-level query operator: write it as the whole filter, e.g. '{ $jsonSchema: … }'.",
+    ),
+    group: unsupported("'$jsonSchema' is a query operator, not an accumulator."),
+    window: unsupported("'$jsonSchema' is a query operator, not a window function."),
+    stream: unsupported("'$jsonSchema' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$jsonSchema' is a query operator, not a statement."),
+  }),
+
+  $near: mongo({
+    doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$near' is a query operator with no aggregation-expression form. '$near' is a field-level query operator: write it under a field, e.g. '{ <field>: $near(…) }'.",
+    ),
+    group: unsupported("'$near' is a query operator, not an accumulator."),
+    window: unsupported("'$near' is a query operator, not a window function."),
+    stream: unsupported("'$near' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$near' is a query operator, not a statement."),
+  }),
+
+  $nearSphere: mongo({
+    doc: "Returns geospatial objects in proximity to a point on a sphere. Requires a geospatial index. The 2dsphere and 2d indexes support $nearSphere.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$nearSphere' is a query operator with no aggregation-expression form. '$nearSphere' is a field-level query operator: write it under a field, e.g. '{ <field>: $nearSphere(…) }'.",
+    ),
+    group: unsupported("'$nearSphere' is a query operator, not an accumulator."),
+    window: unsupported("'$nearSphere' is a query operator, not a window function."),
+    stream: unsupported("'$nearSphere' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$nearSphere' is a query operator, not a statement."),
+  }),
+
+  $nin: mongo({
+    doc: "Matches none of the values specified in an array.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$nin' is a query operator with no aggregation-expression form. '$nin' is a field-level query operator: write it under a field, e.g. '{ <field>: $nin(…) }'.",
+    ),
+    group: unsupported("'$nin' is a query operator, not an accumulator."),
+    window: unsupported("'$nin' is a query operator, not a window function."),
+    stream: unsupported("'$nin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$nin' is a query operator, not a statement."),
+  }),
+
+  $nor: mongo({
+    doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$nor' is a query operator with no aggregation-expression form. '$nor' is a top-level query operator: write it as the whole filter, e.g. '{ $nor: … }'.",
+    ),
+    group: unsupported("'$nor' is a query operator, not an accumulator."),
+    window: unsupported("'$nor' is a query operator, not a window function."),
+    stream: unsupported("'$nor' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$nor' is a query operator, not a statement."),
+  }),
+
+  $regex: mongo({
+    doc: "Selects documents where values match a specified regular expression.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$regex' is a query operator with no aggregation-expression form. '$regex' is a field-level query operator: write it under a field, e.g. '{ <field>: $regex(…) }'.",
+    ),
+    group: unsupported("'$regex' is a query operator, not an accumulator."),
+    window: unsupported("'$regex' is a query operator, not a window function."),
+    stream: unsupported("'$regex' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$regex' is a query operator, not a statement."),
+  }),
+
+  $text: mongo({
+    doc: "Performs text search.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$text' is a query operator with no aggregation-expression form. '$text' is a top-level query operator: write it as the whole filter, e.g. '{ $text: … }'.",
+    ),
+    group: unsupported("'$text' is a query operator, not an accumulator."),
+    window: unsupported("'$text' is a query operator, not a window function."),
+    stream: unsupported("'$text' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$text' is a query operator, not a statement."),
+  }),
+
+  $where: mongo({
+    doc: "Matches documents that satisfy a JavaScript expression.",
+    where: ["filter"],
+    filter: pending("src/index.ts"),
+    expr: unsupported(
+      "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: … }'.",
+    ),
+    group: unsupported("'$where' is a query operator, not an accumulator."),
+    window: unsupported("'$where' is a query operator, not a window function."),
+    stream: unsupported("'$where' is a query operator, not a pipeline stage. Put it in a '$match' body."),
+    statement: unsupported("'$where' is a query operator, not a statement."),
+  }),
+
   // ── source stages, chain links and the guard, reached by name ──
   collStats: name({
     doc: "'$.collStats()' — the '$collStats' source stage. First stage only, and $-scoped: '$$.collStats()' is refused.",

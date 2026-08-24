@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — feat: the query language enters the registry
+
+The registry held the aggregation operator set from the vendored spec and nothing from
+`definitions/query/`, so it could not describe the half of the language that produces a
+`find()` filter. Nineteen rows close that: `$exists`, `$elemMatch`, `$all`, `$nin`, `$nor`,
+`$regex`, `$text`, `$where`, `$expr`, `$jsonSchema`, `$comment`, the four `$bits*`, and the
+four geospatial predicates. Each was verified through the compiler first —
+`{ items: $elemMatch({ q: 1 }) }` → `{"items":{"$elemMatch":{"q":1}}}`,
+`{ $text: { $search: "coffee" } }` → verbatim — so a row exists only for a form that really
+compiles.
+
+They divide by where the lowering lives, which the `pending` target now records. `$exists`,
+`$elemMatch` and `$all` are rendered by the Predicate IR itself, so a JSMQL predicate reaches
+them without the user naming them at all. The rest arrive through the HR2 object-literal
+passthrough in [src/index.ts](src/index.ts), which is the mechanism that lets raw MQL
+round-trip. All nineteen list `"filter"` and refuse every other position, because a query
+operator has no aggregation-expression form: `$expr` in a value slot is a category error, and
+the message says which spelling to write instead — top-level for the six that are whole
+filters, field-level for the thirteen that sit under a field name.
+
+The seven geometry sub-constructs — `$box`, `$center`, `$centerSphere`, `$polygon`,
+`$geometry`, `$maxDistance`, `$minDistance` — deliberately have no rows. They are only ever
+valid inside another operator's body, which is the same footing `$case` already stands on in
+[test/operator-spec-coverage.test.ts](test/operator-spec-coverage.test.ts), and a row for one
+would claim a standalone form it does not have.
+
+---
+
 ## 2026-08-24 — feat: the source stages, the guard, and the two chain links that had no row
 
 Twelve names the language accepts had no row of any kind. Nine are the diagnostic source
