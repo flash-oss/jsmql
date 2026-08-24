@@ -107,7 +107,11 @@ type NameSpec<W extends readonly Position[], O extends On> = {
   window: Cell<Lists<W, "window">, Of<O>, GroupIn, unknown>;
 };
 
-type MongoSpec<W extends readonly Position[], F extends readonly string[] = readonly string[]> = {
+type MongoSpec<
+  W extends readonly Position[],
+  F extends readonly string[] = readonly string[],
+  I extends Readonly<Partial<Record<Position, readonly string[]>>> = Readonly<Record<never, never>>,
+> = {
   /**
    * Lifted from vendor/mql-specifications; the drift test compares it. A name that is
    * BOTH an operator and a stage ($count) has two descriptions, and one string cannot
@@ -141,6 +145,20 @@ type MongoSpec<W extends readonly Position[], F extends readonly string[] = read
   minVersion?: string;
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
+  /**
+   * The operators whose BODY accepts this name, PER POSITION. A name listed here
+   * is never valid on its own in that position — measured both ways:
+   *   { loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }   accepted
+   *   { $addFields: { v: { $box: [[0,0],[1,1]] } } }       "Unrecognized expression '$box'"
+   *
+   * Per position because the two are independent. `$slice` stands alone as an
+   * aggregation operator AND appears inside `$push` in an update document, so a
+   * flat list would constrain the standalone use as well:
+   *   $slice: onlyInside: { updateDoc: ["$push"] }
+   * The nesting does not change `where` — `$box` is still reached in a filter,
+   * `$each` in an update document, `$case` in a value.
+   */
+  onlyInside?: I;
   filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
   expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
   group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
@@ -189,10 +207,11 @@ type GlobalSpec<W extends readonly Position[]> = {
 
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
 export type NameEntry<W extends readonly Position[], O extends On> = NameSpec<W, O> & { kind: "name" };
-export type MongoEntry<W extends readonly Position[], F extends readonly string[] = readonly never[]> = MongoSpec<
-  W,
-  F
-> & { kind: "mongo" };
+export type MongoEntry<
+  W extends readonly Position[],
+  F extends readonly string[] = readonly never[],
+  I extends Readonly<Partial<Record<Position, readonly string[]>>> = Readonly<Record<never, never>>,
+> = MongoSpec<W, F, I> & { kind: "mongo" };
 export type GlobalEntry<W extends readonly Position[]> = GlobalSpec<W> & { kind: "global" };
 
 // Every generic defaults to the EMPTY type, never to its constraint — a row with
@@ -203,9 +222,13 @@ const name = <const W extends readonly Position[], const O extends On>(e: NameSp
   ...e,
   kind: "name",
 });
-const mongo = <const W extends readonly Position[], const F extends readonly string[] = readonly never[]>(
-  e: MongoSpec<W, F>,
-): MongoEntry<W, F> => ({ ...e, kind: "mongo" });
+const mongo = <
+  const W extends readonly Position[],
+  const F extends readonly string[] = readonly never[],
+  const I extends Readonly<Partial<Record<Position, readonly string[]>>> = Readonly<Record<never, never>>,
+>(
+  e: MongoSpec<W, F, I>,
+): MongoEntry<W, F, I> => ({ ...e, kind: "mongo" });
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
 
 export const NAMES = {
@@ -1628,7 +1651,8 @@ export const NAMES = {
   $slice: mongo({
     doc: "Returns a subset of an array.",
     category: "array",
-    where: ["value"],
+    where: ["value", "updateDoc"],
+    onlyInside: { updateDoc: ["$push"] },
     shape: "array",
     filter: unsupported("'$slice' is not valid in filter position — see its 'where'."),
     expr: {
@@ -1639,7 +1663,7 @@ export const NAMES = {
     window: unsupported("'$slice' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$slice' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$slice' is not a statement — see its 'where'."),
-    updateDoc: unsupported("'$slice' is not valid in an update document — see its 'where'."),
+    updateDoc: pending("src/operator-validation.ts"),
   }),
 
   $sortArray: mongo({
@@ -3751,7 +3775,8 @@ export const NAMES = {
 
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
-    where: ["stream"],
+    where: ["stream", "updateDoc"],
+    onlyInside: { updateDoc: ["$push"] },
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
     forbiddenIn: [],
@@ -3761,7 +3786,7 @@ export const NAMES = {
     window: unsupported("'$sort' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$sort' is not a statement — see its 'where'."),
-    updateDoc: unsupported("'$sort' is not valid in an update document — see its 'where'."),
+    updateDoc: pending("src/operator-validation.ts"),
   }),
 
   $sortByCount: mongo({
@@ -6594,6 +6619,240 @@ export const NAMES = {
     updateDoc: pending("src/index.ts"),
   }),
 
+  // ── names that are valid ONLY inside another operator's body. Each was proven
+  // both ways: accepted in its container, "Unrecognized expression" on its own.
+  $box: mongo({
+    doc: "A rectangle, by its bottom-left and top-right corners.",
+    where: ["filter"],
+    onlyInside: { filter: ["$geoWithin"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$box' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported("'$box' is only valid inside $geoWithin, and only in a filter — never in a $group slot."),
+    window: unsupported(
+      "'$box' is only valid inside $geoWithin, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported("'$box' is only valid inside $geoWithin, and only in a filter — never as a pipeline stage."),
+    statement: unsupported("'$box' is only valid inside $geoWithin, and only in a filter — never as a statement."),
+    updateDoc: unsupported(
+      "'$box' is only valid inside $geoWithin, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $center: mongo({
+    doc: "A circle on a flat plane, by centre and radius.",
+    where: ["filter"],
+    onlyInside: { filter: ["$geoWithin"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$center' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported("'$center' is only valid inside $geoWithin, and only in a filter — never in a $group slot."),
+    window: unsupported(
+      "'$center' is only valid inside $geoWithin, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported("'$center' is only valid inside $geoWithin, and only in a filter — never as a pipeline stage."),
+    statement: unsupported("'$center' is only valid inside $geoWithin, and only in a filter — never as a statement."),
+    updateDoc: unsupported(
+      "'$center' is only valid inside $geoWithin, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $centerSphere: mongo({
+    doc: "A circle on a sphere, by centre and radius in radians.",
+    where: ["filter"],
+    onlyInside: { filter: ["$geoWithin"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never as a statement.",
+    ),
+    updateDoc: unsupported(
+      "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $polygon: mongo({
+    doc: "A polygon, by its list of points.",
+    where: ["filter"],
+    onlyInside: { filter: ["$geoWithin"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$polygon' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported("'$polygon' is only valid inside $geoWithin, and only in a filter — never in a $group slot."),
+    window: unsupported(
+      "'$polygon' is only valid inside $geoWithin, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$polygon' is only valid inside $geoWithin, and only in a filter — never as a pipeline stage.",
+    ),
+    statement: unsupported("'$polygon' is only valid inside $geoWithin, and only in a filter — never as a statement."),
+    updateDoc: unsupported(
+      "'$polygon' is only valid inside $geoWithin, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $geometry: mongo({
+    doc: "A GeoJSON shape.",
+    where: ["filter"],
+    onlyInside: { filter: ["$geoWithin", "$geoIntersects", "$near", "$nearSphere"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never as a statement.",
+    ),
+    updateDoc: unsupported(
+      "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $maxDistance: mongo({
+    doc: "The furthest a match may be, in metres or radians.",
+    where: ["filter"],
+    onlyInside: { filter: ["$near", "$nearSphere", "$geoWithin"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never as a statement.",
+    ),
+    updateDoc: unsupported(
+      "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $minDistance: mongo({
+    doc: "The nearest a match may be, in metres or radians.",
+    where: ["filter"],
+    onlyInside: { filter: ["$near", "$nearSphere"] },
+    filter: pending("src/operator-validation.ts"),
+    expr: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never as a statement.",
+    ),
+    updateDoc: unsupported(
+      "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never in an update document.",
+    ),
+  }),
+
+  $each: mongo({
+    doc: "Adds several values at once instead of one.",
+    where: ["updateDoc"],
+    onlyInside: { updateDoc: ["$push", "$addToSet"] },
+    filter: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never in a filter.",
+    ),
+    expr: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$each' is only valid inside $push / $addToSet, and only in an update document — never as a statement.",
+    ),
+    updateDoc: pending("src/operator-validation.ts"),
+  }),
+
+  $position: mongo({
+    doc: "The index to insert at, rather than appending.",
+    where: ["updateDoc"],
+    onlyInside: { updateDoc: ["$push"] },
+    filter: unsupported("'$position' is only valid inside $push, and only in an update document — never in a filter."),
+    expr: unsupported(
+      "'$position' is only valid inside $push, and only in an update document — never as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$position' is only valid inside $push, and only in an update document — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$position' is only valid inside $push, and only in an update document — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$position' is only valid inside $push, and only in an update document — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$position' is only valid inside $push, and only in an update document — never as a statement.",
+    ),
+    updateDoc: pending("src/operator-validation.ts"),
+  }),
+
+  $case: mongo({
+    doc: "One branch of a '$switch': its test and its result.",
+    where: ["value"],
+    onlyInside: { value: ["$switch"] },
+    filter: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never in a filter.",
+    ),
+    expr: pending("src/operator-validation.ts"),
+    group: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never in a $group slot.",
+    ),
+    window: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never as a statement.",
+    ),
+    updateDoc: unsupported(
+      "'$case' is only valid inside $switch, and only in an aggregation expression — never in an update document.",
+    ),
+  }),
+
   // ── the update DOCUMENT operators — valid only in updateOne's second argument.
   $currentDate: mongo({
     doc: "Sets a field to the current date.",
@@ -8230,5 +8489,32 @@ type Mentioned<F extends string> = {
 type DanglingForbiddenIn = Exclude<Mentioned<"forbiddenIn">, NameKey>;
 const _forbiddenInResolves: [DanglingForbiddenIn] extends [never] ? true : DanglingForbiddenIn = true;
 
+/**
+ * Every `onlyInside` container must be a key of this same table.
+ *
+ * The value is a per-position OBJECT, so the flat `Mentioned` helper cannot read
+ * it. Extract first — a cell's declared type is a union and a union never matches
+ * an object pattern on its own — and guard `never` BEFORE inferring, because
+ * `never extends readonly (infer V)[]` succeeds with `V = unknown` and one
+ * `unknown` swallows the whole check.
+ */
+type Inner<K extends NameKey> = FieldOf<K, "onlyInside">[keyof FieldOf<K, "onlyInside">];
+
+// BOTH `never` guards are load-bearing. A row with no `onlyInside` reaches an
+// empty object whose value type is `never`, and `never extends readonly (infer
+// V)[]` succeeds with `V = unknown` — one `unknown` in the union makes the audit
+// accept anything. Confirmed by making it fail on a bogus container name.
+type ContainersOf<K extends NameKey> = [FieldOf<K, "onlyInside">] extends [never]
+  ? never
+  : [Inner<K>] extends [never]
+    ? never
+    : Inner<K> extends readonly (infer V)[]
+      ? V
+      : never;
+
+type DanglingOnlyInside = Exclude<{ [K in NameKey]: ContainersOf<K> }[NameKey], NameKey>;
+const _onlyInsideResolves: [DanglingOnlyInside] extends [never] ? true : DanglingOnlyInside = true;
+
 void _everyKeyMatchesItsKind;
 void _forbiddenInResolves;
+void _onlyInsideResolves;

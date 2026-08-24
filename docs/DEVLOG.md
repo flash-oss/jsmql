@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: every name gets a row, including the ten that live inside another operator
+
+Ten names had been left out on the grounds that they never stand alone —
+`$box`, `$center`, `$centerSphere`, `$polygon`, `$geometry`, `$maxDistance`, `$minDistance`,
+`$each`, `$position` and `$case`. Leaving them out means the registry cannot answer "what is
+`$each`?", which is the one question it exists to answer. They now have rows, and the fact
+that made them awkward has a field instead of an exclusion.
+
+`onlyInside` names the operators whose body accepts a name, PER POSITION. Per position because
+the two are independent: `$slice` stands alone as an aggregation operator AND appears inside
+`$push` in an update document, so a flat list would have constrained the standalone use too. It
+reads `onlyInside: { updateDoc: ["$push"] }`. Nesting does not change `where` — `$box` is still
+reached in a filter, `$each` in an update document, `$case` in a value — so the two fields
+answer different questions and neither can be derived from the other.
+
+Every containment was proven both ways on a live server:
+`{ loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }` is accepted while
+`{ $addFields: { v: { $box: [[0,0],[1,1]] } } }` is *"Unrecognized expression '$box'"*, and the
+same pair holds for `$each`. A third audit checks that every container named is a key of the
+same table; making it real took the same two `never` guards the `composedInto` audit needed,
+because `never extends readonly (infer V)[]` succeeds with `V = unknown` and a single
+`unknown` in the union makes the check accept anything. It was confirmed by making it fail on
+a bogus container before being trusted.
+
+---
+
 ## 2026-08-24 — fix: the update DOCUMENT is a seventh position, not a missing feature
 
 `Position` had six members and MongoDB has seven places a name can be written. The one it
