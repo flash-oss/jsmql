@@ -269,6 +269,16 @@ export type Kind = "string" | "array" | "number" | "object" | "date" | "bool" | 
  *   "statement" → `statement` a statement that is never a value
  *   "group"     → `group`     inside a $group output slot
  *   "window"    → `window`    inside $setWindowFields.output
+ *   "updateDoc" → `updateDoc` inside the update DOCUMENT — the second argument to
+ *                             updateOne/updateMany when it is an object, not an
+ *                             array. A whole operator family lives only here:
+ *                               db.products.updateOne(
+ *                                 { sku: "abc123" },
+ *                                 { $inc: { quantity: -2, "metrics.orders": 1 } })
+ *                             is accepted, and the SAME document in a pipeline is
+ *                             "Unrecognized pipeline stage name: '$inc'". Six
+ *                             positions could not tell those apart, so $inc had to
+ *                             claim it was valid nowhere.
  *
  * ONE POSITION, ONE CELL. No two positions share a cell, because every pair that
  * ever shared one turned out to hold opposite answers.
@@ -290,16 +300,18 @@ export type Kind = "string" | "array" | "number" | "object" | "date" | "bool" | 
  *     {$setWindowFields:{output:{v:{$max:["$a","$b"]}}}}   → accepted
  *   which is why `args` lives on the CELL and never on the entry.
  */
-export type Position = "value" | "filter" | "stream" | "statement" | "group" | "window";
+export type Position = "value" | "filter" | "stream" | "statement" | "group" | "window" | "updateDoc";
 
 /**
  * An extra rule no renderer implies, so it must be said.
  *
  *   "stageFirst"  must be the pipeline's first stage
  *   "stageLast"   must be its last
- *   "update"      one of the stages an update pipeline accepts — the whitelist
+ *   "update"      one of the STAGES an update pipeline accepts — the whitelist
  *                 `jsmql.update` enforces. Without it $set and $sort look alike,
- *                 and only one of them is legal there.
+ *                 and only one of them is legal there. Not the same as the
+ *                 `"updateDoc"` position: that is the object form of the update
+ *                 argument, this is the array form.
  *   "afterSort"   a chain link that needs an ORDER already established:
  *                   $$ = $$.takeWhile(d => d.x > 1);
  *                     → ".takeWhile(<predicate>) needs a preceding sort"
@@ -682,6 +694,7 @@ export type MongoOpParts<W extends readonly Position[]> = {
   window: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
   stream: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
   statement: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
+  updateDoc: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
 };
 
 export const op = <const W extends readonly Position[]>(e: {
@@ -743,6 +756,7 @@ export const op = <const W extends readonly Position[]>(e: {
     window: listed("window") ? { args: arity, emit: shaped } : unsupported(why),
     stream: listed("stream") ? { args: stageArity, emit: asStage } : unsupported(why),
     statement: listed("statement") ? { args: stageArity, emit: asStage } : unsupported(why),
+    updateDoc: listed("updateDoc") ? { args: arity, emit: shaped } : unsupported(why),
   } as MongoOpParts<W>;
 };
 

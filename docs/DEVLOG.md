@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: the update DOCUMENT is a seventh position, not a missing feature
+
+`Position` had six members and MongoDB has seven places a name can be written. The one it
+lacked is the update document — the second argument to `updateOne` when it is an object rather
+than an array:
+
+```js
+db.products.updateOne({ sku: "abc123" }, { $inc: { quantity: -2, "metrics.orders": 1 } })
+```
+
+That is accepted, and the SAME document as a pipeline stage is *"Unrecognized pipeline stage
+name: '$inc'"*. With six positions there was no way to say "valid here, invalid everywhere
+else", so `$inc` had to be written as valid nowhere — which is simply false. `Position` gains
+`"updateDoc"`, `MongoSpec` gains the matching cell, and fifteen operators now name it:
+`$currentDate $inc $min $max $mul $rename $set $setOnInsert $unset $addToSet $pop $pull $push
+$pullAll $bit`, each verified by running `updateOne` against a live server. Seven already had
+rows as aggregation names and gain the position; eight had no row at all.
+
+`Only: "update"` is a different fact and the two were easy to confuse, so both now say which
+they are: `"update"` marks a STAGE the update PIPELINE accepts — the array form, which
+`jsmql.update` enforces — while `"updateDoc"` is the object form. `$set` is the one name that
+holds both, which is why the distinction has to be stated rather than inferred.
+
+Where JSMQL already offers a JavaScript spelling for the same effect, the row names it, so the
+row is a signpost rather than a dead end: `$.views++` and `$.views += 2` for `$inc`,
+`$.price *= 1.1` for `$mul`, `$.a = 1` for `$set`, `delete $.a` for `$unset`,
+`$.tags.push(x)` for `$push`, `$.tags.pop()` for `$pop`, and `$.b = $.a; delete $.a;` for
+`$rename`.
+
+---
+
 ## 2026-08-24 — feat: the query language enters the registry
 
 The registry held the aggregation operator set from the vendored spec and nothing from

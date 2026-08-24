@@ -157,6 +157,12 @@ type MongoSpec<W extends readonly Position[], F extends readonly string[] = read
    * so, while `$$.push(...)` is a statement whose chain-link form is refused.
    */
   statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
+  /**
+   * The update DOCUMENT — `updateOne(filter, { $inc: … })`. A whole operator
+   * family is valid only here and nowhere else in MQL: the same document in a
+   * pipeline is "Unrecognized pipeline stage name: '$inc'".
+   */
+  updateDoc: Cell<Lists<W, "updateDoc">, Family, GroupIn, unknown>;
 };
 
 type GlobalSpec<W extends readonly Position[]> = {
@@ -214,6 +220,7 @@ export const NAMES = {
     window: unsupported("'$abs' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$abs' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$abs' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$abs' is not valid in an update document — see its 'where'."),
   }),
 
   $add: mongo({
@@ -227,6 +234,7 @@ export const NAMES = {
     window: unsupported("'$add' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$add' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$add' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$add' is not valid in an update document — see its 'where'."),
   }),
 
   $ceil: mongo({
@@ -240,6 +248,7 @@ export const NAMES = {
     window: unsupported("'$ceil' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ceil' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$ceil' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$ceil' is not valid in an update document — see its 'where'."),
   }),
 
   $divide: mongo({
@@ -256,6 +265,7 @@ export const NAMES = {
     window: unsupported("'$divide' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$divide' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$divide' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$divide' is not valid in an update document — see its 'where'."),
   }),
 
   $exp: mongo({
@@ -269,6 +279,7 @@ export const NAMES = {
     window: unsupported("'$exp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$exp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$exp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$exp' is not valid in an update document — see its 'where'."),
   }),
 
   $floor: mongo({
@@ -282,6 +293,7 @@ export const NAMES = {
     window: unsupported("'$floor' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$floor' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$floor' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$floor' is not valid in an update document — see its 'where'."),
   }),
 
   $ln: mongo({
@@ -295,6 +307,7 @@ export const NAMES = {
     window: unsupported("'$ln' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ln' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$ln' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$ln' is not valid in an update document — see its 'where'."),
   }),
 
   $log: mongo({
@@ -311,6 +324,7 @@ export const NAMES = {
     window: unsupported("'$log' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$log' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$log' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$log' is not valid in an update document — see its 'where'."),
   }),
 
   $log10: mongo({
@@ -324,6 +338,7 @@ export const NAMES = {
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$log10' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$log10' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$log10' is not valid in an update document — see its 'where'."),
   }),
 
   $mod: mongo({
@@ -340,6 +355,7 @@ export const NAMES = {
     window: unsupported("'$mod' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$mod' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$mod' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$mod' is not valid in an update document — see its 'where'."),
   }),
 
   $multiply: mongo({
@@ -353,6 +369,7 @@ export const NAMES = {
     window: unsupported("'$multiply' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$multiply' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$multiply' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$multiply' is not valid in an update document — see its 'where'."),
   }),
 
   $pow: mongo({
@@ -369,6 +386,7 @@ export const NAMES = {
     window: unsupported("'$pow' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$pow' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$pow' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$pow' is not valid in an update document — see its 'where'."),
   }),
 
   $round: mongo({
@@ -385,6 +403,7 @@ export const NAMES = {
     window: unsupported("'$round' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$round' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$round' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$round' is not valid in an update document — see its 'where'."),
   }),
 
   $sigmoid: mongo({
@@ -399,6 +418,7 @@ export const NAMES = {
     window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sigmoid' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sigmoid' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sigmoid' is not valid in an update document — see its 'where'."),
   }),
 
   $sqrt: mongo({
@@ -412,6 +432,7 @@ export const NAMES = {
     window: unsupported("'$sqrt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sqrt' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sqrt' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sqrt' is not valid in an update document — see its 'where'."),
   }),
 
   $subtract: mongo({
@@ -428,6 +449,7 @@ export const NAMES = {
     window: unsupported("'$subtract' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$subtract' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$subtract' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$subtract' is not valid in an update document — see its 'where'."),
   }),
 
   $trunc: mongo({
@@ -444,6 +466,7 @@ export const NAMES = {
     window: unsupported("'$trunc' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$trunc' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$trunc' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$trunc' is not valid in an update document — see its 'where'."),
   }),
 
   $bitAnd: mongo({
@@ -457,6 +480,7 @@ export const NAMES = {
     window: unsupported("'$bitAnd' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitAnd' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bitAnd' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bitAnd' is not valid in an update document — see its 'where'."),
   }),
 
   $bitNot: mongo({
@@ -470,6 +494,7 @@ export const NAMES = {
     window: unsupported("'$bitNot' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitNot' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bitNot' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bitNot' is not valid in an update document — see its 'where'."),
   }),
 
   $bitOr: mongo({
@@ -483,6 +508,7 @@ export const NAMES = {
     window: unsupported("'$bitOr' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitOr' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bitOr' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bitOr' is not valid in an update document — see its 'where'."),
   }),
 
   $bitXor: mongo({
@@ -496,6 +522,7 @@ export const NAMES = {
     window: unsupported("'$bitXor' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitXor' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bitXor' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bitXor' is not valid in an update document — see its 'where'."),
   }),
 
   $sin: mongo({
@@ -509,6 +536,7 @@ export const NAMES = {
     window: unsupported("'$sin' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sin' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sin' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sin' is not valid in an update document — see its 'where'."),
   }),
 
   $cos: mongo({
@@ -522,6 +550,7 @@ export const NAMES = {
     window: unsupported("'$cos' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cos' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$cos' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$cos' is not valid in an update document — see its 'where'."),
   }),
 
   $tan: mongo({
@@ -535,6 +564,7 @@ export const NAMES = {
     window: unsupported("'$tan' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tan' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$tan' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$tan' is not valid in an update document — see its 'where'."),
   }),
 
   $asin: mongo({
@@ -548,6 +578,7 @@ export const NAMES = {
     window: unsupported("'$asin' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$asin' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$asin' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$asin' is not valid in an update document — see its 'where'."),
   }),
 
   $acos: mongo({
@@ -561,6 +592,7 @@ export const NAMES = {
     window: unsupported("'$acos' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$acos' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$acos' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$acos' is not valid in an update document — see its 'where'."),
   }),
 
   $atan: mongo({
@@ -574,6 +606,7 @@ export const NAMES = {
     window: unsupported("'$atan' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$atan' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$atan' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$atan' is not valid in an update document — see its 'where'."),
   }),
 
   $atan2: mongo({
@@ -590,6 +623,7 @@ export const NAMES = {
     window: unsupported("'$atan2' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$atan2' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$atan2' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$atan2' is not valid in an update document — see its 'where'."),
   }),
 
   $sinh: mongo({
@@ -603,6 +637,7 @@ export const NAMES = {
     window: unsupported("'$sinh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sinh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sinh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sinh' is not valid in an update document — see its 'where'."),
   }),
 
   $cosh: mongo({
@@ -616,6 +651,7 @@ export const NAMES = {
     window: unsupported("'$cosh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cosh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$cosh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$cosh' is not valid in an update document — see its 'where'."),
   }),
 
   $tanh: mongo({
@@ -629,6 +665,7 @@ export const NAMES = {
     window: unsupported("'$tanh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tanh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$tanh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$tanh' is not valid in an update document — see its 'where'."),
   }),
 
   $asinh: mongo({
@@ -642,6 +679,7 @@ export const NAMES = {
     window: unsupported("'$asinh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$asinh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$asinh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$asinh' is not valid in an update document — see its 'where'."),
   }),
 
   $acosh: mongo({
@@ -655,6 +693,7 @@ export const NAMES = {
     window: unsupported("'$acosh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$acosh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$acosh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$acosh' is not valid in an update document — see its 'where'."),
   }),
 
   $atanh: mongo({
@@ -668,6 +707,7 @@ export const NAMES = {
     window: unsupported("'$atanh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$atanh' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$atanh' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$atanh' is not valid in an update document — see its 'where'."),
   }),
 
   $degreesToRadians: mongo({
@@ -681,6 +721,7 @@ export const NAMES = {
     window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$degreesToRadians' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$degreesToRadians' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$degreesToRadians' is not valid in an update document — see its 'where'."),
   }),
 
   $radiansToDegrees: mongo({
@@ -694,6 +735,7 @@ export const NAMES = {
     window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$radiansToDegrees' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$radiansToDegrees' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$radiansToDegrees' is not valid in an update document — see its 'where'."),
   }),
 
   $cmp: mongo({
@@ -707,6 +749,7 @@ export const NAMES = {
     window: unsupported("'$cmp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cmp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$cmp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$cmp' is not valid in an update document — see its 'where'."),
   }),
 
   $eq: mongo({
@@ -723,6 +766,7 @@ export const NAMES = {
     window: unsupported("'$eq' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$eq' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$eq' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$eq' is not valid in an update document — see its 'where'."),
   }),
 
   $ne: mongo({
@@ -739,6 +783,7 @@ export const NAMES = {
     window: unsupported("'$ne' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ne' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$ne' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$ne' is not valid in an update document — see its 'where'."),
   }),
 
   $gt: mongo({
@@ -755,6 +800,7 @@ export const NAMES = {
     window: unsupported("'$gt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$gt' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$gt' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$gt' is not valid in an update document — see its 'where'."),
   }),
 
   $gte: mongo({
@@ -771,6 +817,7 @@ export const NAMES = {
     window: unsupported("'$gte' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$gte' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$gte' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$gte' is not valid in an update document — see its 'where'."),
   }),
 
   $lt: mongo({
@@ -787,6 +834,7 @@ export const NAMES = {
     window: unsupported("'$lt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$lt' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$lt' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$lt' is not valid in an update document — see its 'where'."),
   }),
 
   $lte: mongo({
@@ -803,6 +851,7 @@ export const NAMES = {
     window: unsupported("'$lte' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$lte' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$lte' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$lte' is not valid in an update document — see its 'where'."),
   }),
 
   $and: mongo({
@@ -816,6 +865,7 @@ export const NAMES = {
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$and' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$and' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$and' is not valid in an update document — see its 'where'."),
   }),
 
   $or: mongo({
@@ -829,6 +879,7 @@ export const NAMES = {
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$or' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$or' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$or' is not valid in an update document — see its 'where'."),
   }),
 
   $not: mongo({
@@ -842,6 +893,7 @@ export const NAMES = {
     window: unsupported("'$not' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$not' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$not' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$not' is not valid in an update document — see its 'where'."),
   }),
 
   $cond: mongo({
@@ -857,6 +909,7 @@ export const NAMES = {
     window: unsupported("'$cond' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cond' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$cond' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$cond' is not valid in an update document — see its 'where'."),
   }),
 
   $ifNull: mongo({
@@ -873,6 +926,7 @@ export const NAMES = {
     window: unsupported("'$ifNull' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ifNull' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$ifNull' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$ifNull' is not valid in an update document — see its 'where'."),
   }),
 
   $switch: mongo({
@@ -888,6 +942,7 @@ export const NAMES = {
     window: unsupported("'$switch' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$switch' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$switch' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$switch' is not valid in an update document — see its 'where'."),
   }),
 
   $concat: mongo({
@@ -901,6 +956,7 @@ export const NAMES = {
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$concat' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$concat' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$concat' is not valid in an update document — see its 'where'."),
   }),
 
   $indexOfBytes: mongo({
@@ -917,6 +973,7 @@ export const NAMES = {
     window: unsupported("'$indexOfBytes' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$indexOfBytes' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$indexOfBytes' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$indexOfBytes' is not valid in an update document — see its 'where'."),
   }),
 
   $indexOfCP: mongo({
@@ -933,6 +990,7 @@ export const NAMES = {
     window: unsupported("'$indexOfCP' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$indexOfCP' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$indexOfCP' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$indexOfCP' is not valid in an update document — see its 'where'."),
   }),
 
   $ltrim: mongo({
@@ -946,6 +1004,7 @@ export const NAMES = {
     window: unsupported("'$ltrim' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ltrim' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$ltrim' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$ltrim' is not valid in an update document — see its 'where'."),
   }),
 
   $rtrim: mongo({
@@ -959,6 +1018,7 @@ export const NAMES = {
     window: unsupported("'$rtrim' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$rtrim' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$rtrim' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$rtrim' is not valid in an update document — see its 'where'."),
   }),
 
   $trim: mongo({
@@ -972,6 +1032,7 @@ export const NAMES = {
     window: unsupported("'$trim' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$trim' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$trim' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$trim' is not valid in an update document — see its 'where'."),
   }),
 
   $regexFind: mongo({
@@ -993,6 +1054,7 @@ export const NAMES = {
     window: unsupported("'$regexFind' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$regexFind' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$regexFind' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$regexFind' is not valid in an update document — see its 'where'."),
   }),
 
   $regexFindAll: mongo({
@@ -1014,6 +1076,7 @@ export const NAMES = {
     window: unsupported("'$regexFindAll' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$regexFindAll' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$regexFindAll' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$regexFindAll' is not valid in an update document — see its 'where'."),
   }),
 
   $regexMatch: mongo({
@@ -1035,6 +1098,7 @@ export const NAMES = {
     window: unsupported("'$regexMatch' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$regexMatch' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$regexMatch' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$regexMatch' is not valid in an update document — see its 'where'."),
   }),
 
   $replaceAll: mongo({
@@ -1055,6 +1119,7 @@ export const NAMES = {
     window: unsupported("'$replaceAll' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$replaceAll' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$replaceAll' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$replaceAll' is not valid in an update document — see its 'where'."),
   }),
 
   $replaceOne: mongo({
@@ -1075,6 +1140,7 @@ export const NAMES = {
     window: unsupported("'$replaceOne' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$replaceOne' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$replaceOne' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$replaceOne' is not valid in an update document — see its 'where'."),
   }),
 
   $split: mongo({
@@ -1088,6 +1154,7 @@ export const NAMES = {
     window: unsupported("'$split' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$split' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$split' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$split' is not valid in an update document — see its 'where'."),
   }),
 
   $strLenBytes: mongo({
@@ -1101,6 +1168,7 @@ export const NAMES = {
     window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strLenBytes' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$strLenBytes' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$strLenBytes' is not valid in an update document — see its 'where'."),
   }),
 
   $strLenCP: mongo({
@@ -1114,6 +1182,7 @@ export const NAMES = {
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$strLenCP' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$strLenCP' is not valid in an update document — see its 'where'."),
   }),
 
   $strcasecmp: mongo({
@@ -1127,6 +1196,7 @@ export const NAMES = {
     window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strcasecmp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$strcasecmp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$strcasecmp' is not valid in an update document — see its 'where'."),
   }),
 
   $substr: mongo({
@@ -1143,6 +1213,7 @@ export const NAMES = {
     window: unsupported("'$substr' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$substr' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$substr' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$substr' is not valid in an update document — see its 'where'."),
   }),
 
   $substrBytes: mongo({
@@ -1159,6 +1230,7 @@ export const NAMES = {
     window: unsupported("'$substrBytes' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$substrBytes' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$substrBytes' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$substrBytes' is not valid in an update document — see its 'where'."),
   }),
 
   $substrCP: mongo({
@@ -1175,6 +1247,7 @@ export const NAMES = {
     window: unsupported("'$substrCP' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$substrCP' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$substrCP' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$substrCP' is not valid in an update document — see its 'where'."),
   }),
 
   $toLower: mongo({
@@ -1188,6 +1261,7 @@ export const NAMES = {
     window: unsupported("'$toLower' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toLower' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toLower' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toLower' is not valid in an update document — see its 'where'."),
   }),
 
   $toUpper: mongo({
@@ -1201,6 +1275,7 @@ export const NAMES = {
     window: unsupported("'$toUpper' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toUpper' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toUpper' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toUpper' is not valid in an update document — see its 'where'."),
   }),
 
   $encStrContains: mongo({
@@ -1216,6 +1291,7 @@ export const NAMES = {
     window: unsupported("'$encStrContains' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$encStrContains' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$encStrContains' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$encStrContains' is not valid in an update document — see its 'where'."),
   }),
 
   $encStrEndsWith: mongo({
@@ -1229,6 +1305,7 @@ export const NAMES = {
     window: unsupported("'$encStrEndsWith' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$encStrEndsWith' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$encStrEndsWith' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$encStrEndsWith' is not valid in an update document — see its 'where'."),
   }),
 
   $encStrNormalizedEq: mongo({
@@ -1242,6 +1319,7 @@ export const NAMES = {
     window: unsupported("'$encStrNormalizedEq' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$encStrNormalizedEq' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$encStrNormalizedEq' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$encStrNormalizedEq' is not valid in an update document — see its 'where'."),
   }),
 
   $encStrStartsWith: mongo({
@@ -1255,6 +1333,7 @@ export const NAMES = {
     window: unsupported("'$encStrStartsWith' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$encStrStartsWith' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$encStrStartsWith' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$encStrStartsWith' is not valid in an update document — see its 'where'."),
   }),
 
   $arrayElemAt: mongo({
@@ -1268,6 +1347,7 @@ export const NAMES = {
     window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$arrayElemAt' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$arrayElemAt' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$arrayElemAt' is not valid in an update document — see its 'where'."),
   }),
 
   $arrayToObject: mongo({
@@ -1281,6 +1361,7 @@ export const NAMES = {
     window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$arrayToObject' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$arrayToObject' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$arrayToObject' is not valid in an update document — see its 'where'."),
   }),
 
   $concatArrays: mongo({
@@ -1294,6 +1375,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     stream: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$concatArrays' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$concatArrays' is not valid in an update document — see its 'where'."),
   }),
 
   $filter: mongo({
@@ -1314,6 +1396,7 @@ export const NAMES = {
     window: unsupported("'$filter' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$filter' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$filter' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$filter' is not valid in an update document — see its 'where'."),
   }),
 
   $first: mongo({
@@ -1327,6 +1410,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$first' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$first' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$first' is not valid in an update document — see its 'where'."),
   }),
 
   $firstN: mongo({
@@ -1340,6 +1424,7 @@ export const NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$firstN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$firstN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$firstN' is not valid in an update document — see its 'where'."),
   }),
 
   $in: mongo({
@@ -1356,6 +1441,7 @@ export const NAMES = {
     window: unsupported("'$in' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$in' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$in' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$in' is not valid in an update document — see its 'where'."),
   }),
 
   $indexOfArray: mongo({
@@ -1372,6 +1458,7 @@ export const NAMES = {
     window: unsupported("'$indexOfArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$indexOfArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$indexOfArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$indexOfArray' is not valid in an update document — see its 'where'."),
   }),
 
   $isArray: mongo({
@@ -1385,6 +1472,7 @@ export const NAMES = {
     window: unsupported("'$isArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$isArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$isArray' is not valid in an update document — see its 'where'."),
   }),
 
   $last: mongo({
@@ -1398,6 +1486,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$last' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$last' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$last' is not valid in an update document — see its 'where'."),
   }),
 
   $lastN: mongo({
@@ -1411,6 +1500,7 @@ export const NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$lastN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$lastN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$lastN' is not valid in an update document — see its 'where'."),
   }),
 
   $map: mongo({
@@ -1424,6 +1514,7 @@ export const NAMES = {
     window: unsupported("'$map' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$map' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$map' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$map' is not valid in an update document — see its 'where'."),
   }),
 
   $maxN: mongo({
@@ -1437,6 +1528,7 @@ export const NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$maxN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$maxN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$maxN' is not valid in an update document — see its 'where'."),
   }),
 
   $minN: mongo({
@@ -1450,6 +1542,7 @@ export const NAMES = {
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$minN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$minN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$minN' is not valid in an update document — see its 'where'."),
   }),
 
   $objectToArray: mongo({
@@ -1463,6 +1556,7 @@ export const NAMES = {
     window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$objectToArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$objectToArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$objectToArray' is not valid in an update document — see its 'where'."),
   }),
 
   $range: mongo({
@@ -1479,6 +1573,7 @@ export const NAMES = {
     window: unsupported("'$range' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$range' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$range' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$range' is not valid in an update document — see its 'where'."),
   }),
 
   $reduce: mongo({
@@ -1499,6 +1594,7 @@ export const NAMES = {
     window: unsupported("'$reduce' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$reduce' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$reduce' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$reduce' is not valid in an update document — see its 'where'."),
   }),
 
   $reverseArray: mongo({
@@ -1512,6 +1608,7 @@ export const NAMES = {
     window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$reverseArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$reverseArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$reverseArray' is not valid in an update document — see its 'where'."),
   }),
 
   $size: mongo({
@@ -1525,6 +1622,7 @@ export const NAMES = {
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$size' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$size' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$size' is not valid in an update document — see its 'where'."),
   }),
 
   $slice: mongo({
@@ -1541,6 +1639,7 @@ export const NAMES = {
     window: unsupported("'$slice' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$slice' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$slice' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$slice' is not valid in an update document — see its 'where'."),
   }),
 
   $sortArray: mongo({
@@ -1554,6 +1653,7 @@ export const NAMES = {
     window: unsupported("'$sortArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sortArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sortArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sortArray' is not valid in an update document — see its 'where'."),
   }),
 
   $zip: mongo({
@@ -1574,6 +1674,7 @@ export const NAMES = {
     window: unsupported("'$zip' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$zip' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$zip' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$zip' is not valid in an update document — see its 'where'."),
   }),
 
   $allElementsTrue: mongo({
@@ -1587,6 +1688,7 @@ export const NAMES = {
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$allElementsTrue' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$allElementsTrue' is not valid in an update document — see its 'where'."),
   }),
 
   $anyElementTrue: mongo({
@@ -1600,6 +1702,7 @@ export const NAMES = {
     window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$anyElementTrue' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$anyElementTrue' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$anyElementTrue' is not valid in an update document — see its 'where'."),
   }),
 
   $setDifference: mongo({
@@ -1613,6 +1716,7 @@ export const NAMES = {
     window: unsupported("'$setDifference' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setDifference' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setDifference' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setDifference' is not valid in an update document — see its 'where'."),
   }),
 
   $setEquals: mongo({
@@ -1626,6 +1730,7 @@ export const NAMES = {
     window: unsupported("'$setEquals' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setEquals' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setEquals' is not valid in an update document — see its 'where'."),
   }),
 
   $setIntersection: mongo({
@@ -1639,6 +1744,7 @@ export const NAMES = {
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setIntersection' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setIntersection' is not valid in an update document — see its 'where'."),
   }),
 
   $setIsSubset: mongo({
@@ -1652,6 +1758,7 @@ export const NAMES = {
     window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setIsSubset' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setIsSubset' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setIsSubset' is not valid in an update document — see its 'where'."),
   }),
 
   $setUnion: mongo({
@@ -1665,6 +1772,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     stream: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setUnion' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setUnion' is not valid in an update document — see its 'where'."),
   }),
 
   $getField: mongo({
@@ -1678,6 +1786,7 @@ export const NAMES = {
     window: unsupported("'$getField' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$getField' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$getField' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$getField' is not valid in an update document — see its 'where'."),
   }),
 
   $mergeObjects: mongo({
@@ -1697,6 +1806,7 @@ export const NAMES = {
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$mergeObjects' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$mergeObjects' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$mergeObjects' is not valid in an update document — see its 'where'."),
   }),
 
   $setField: mongo({
@@ -1717,6 +1827,7 @@ export const NAMES = {
     window: unsupported("'$setField' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setField' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$setField' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setField' is not valid in an update document — see its 'where'."),
   }),
 
   $unsetField: mongo({
@@ -1730,6 +1841,7 @@ export const NAMES = {
     window: unsupported("'$unsetField' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$unsetField' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$unsetField' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$unsetField' is not valid in an update document — see its 'where'."),
   }),
 
   $dateAdd: mongo({
@@ -1752,6 +1864,7 @@ export const NAMES = {
     window: unsupported("'$dateAdd' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateAdd' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateAdd' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateAdd' is not valid in an update document — see its 'where'."),
   }),
 
   $dateDiff: mongo({
@@ -1770,6 +1883,7 @@ export const NAMES = {
     window: unsupported("'$dateDiff' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateDiff' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateDiff' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateDiff' is not valid in an update document — see its 'where'."),
   }),
 
   $dateFromParts: mongo({
@@ -1792,6 +1906,7 @@ export const NAMES = {
     window: unsupported("'$dateFromParts' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateFromParts' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateFromParts' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateFromParts' is not valid in an update document — see its 'where'."),
   }),
 
   $dateFromString: mongo({
@@ -1810,6 +1925,7 @@ export const NAMES = {
     window: unsupported("'$dateFromString' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateFromString' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateFromString' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateFromString' is not valid in an update document — see its 'where'."),
   }),
 
   $dateSubtract: mongo({
@@ -1832,6 +1948,7 @@ export const NAMES = {
     window: unsupported("'$dateSubtract' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateSubtract' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateSubtract' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateSubtract' is not valid in an update document — see its 'where'."),
   }),
 
   $dateToParts: mongo({
@@ -1853,6 +1970,7 @@ export const NAMES = {
     window: unsupported("'$dateToParts' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateToParts' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateToParts' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateToParts' is not valid in an update document — see its 'where'."),
   }),
 
   $dateToString: mongo({
@@ -1874,6 +1992,7 @@ export const NAMES = {
     window: unsupported("'$dateToString' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateToString' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateToString' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateToString' is not valid in an update document — see its 'where'."),
   }),
 
   $dateTrunc: mongo({
@@ -1899,6 +2018,7 @@ export const NAMES = {
     window: unsupported("'$dateTrunc' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dateTrunc' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dateTrunc' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dateTrunc' is not valid in an update document — see its 'where'."),
   }),
 
   $dayOfMonth: mongo({
@@ -1912,6 +2032,7 @@ export const NAMES = {
     window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfMonth' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dayOfMonth' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dayOfMonth' is not valid in an update document — see its 'where'."),
   }),
 
   $dayOfWeek: mongo({
@@ -1925,6 +2046,7 @@ export const NAMES = {
     window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfWeek' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dayOfWeek' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dayOfWeek' is not valid in an update document — see its 'where'."),
   }),
 
   $dayOfYear: mongo({
@@ -1938,6 +2060,7 @@ export const NAMES = {
     window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfYear' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$dayOfYear' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$dayOfYear' is not valid in an update document — see its 'where'."),
   }),
 
   $hour: mongo({
@@ -1951,6 +2074,7 @@ export const NAMES = {
     window: unsupported("'$hour' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$hour' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$hour' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$hour' is not valid in an update document — see its 'where'."),
   }),
 
   $isoDayOfWeek: mongo({
@@ -1964,6 +2088,7 @@ export const NAMES = {
     window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoDayOfWeek' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$isoDayOfWeek' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$isoDayOfWeek' is not valid in an update document — see its 'where'."),
   }),
 
   $isoWeek: mongo({
@@ -1977,6 +2102,7 @@ export const NAMES = {
     window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoWeek' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$isoWeek' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$isoWeek' is not valid in an update document — see its 'where'."),
   }),
 
   $isoWeekYear: mongo({
@@ -1990,6 +2116,7 @@ export const NAMES = {
     window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoWeekYear' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$isoWeekYear' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$isoWeekYear' is not valid in an update document — see its 'where'."),
   }),
 
   $millisecond: mongo({
@@ -2003,6 +2130,7 @@ export const NAMES = {
     window: unsupported("'$millisecond' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$millisecond' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$millisecond' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$millisecond' is not valid in an update document — see its 'where'."),
   }),
 
   $minute: mongo({
@@ -2016,6 +2144,7 @@ export const NAMES = {
     window: unsupported("'$minute' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$minute' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$minute' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$minute' is not valid in an update document — see its 'where'."),
   }),
 
   $month: mongo({
@@ -2029,6 +2158,7 @@ export const NAMES = {
     window: unsupported("'$month' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$month' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$month' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$month' is not valid in an update document — see its 'where'."),
   }),
 
   $second: mongo({
@@ -2042,6 +2172,7 @@ export const NAMES = {
     window: unsupported("'$second' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$second' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$second' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$second' is not valid in an update document — see its 'where'."),
   }),
 
   $toDate: mongo({
@@ -2055,6 +2186,7 @@ export const NAMES = {
     window: unsupported("'$toDate' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDate' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toDate' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toDate' is not valid in an update document — see its 'where'."),
   }),
 
   $week: mongo({
@@ -2068,6 +2200,7 @@ export const NAMES = {
     window: unsupported("'$week' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$week' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$week' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$week' is not valid in an update document — see its 'where'."),
   }),
 
   $year: mongo({
@@ -2081,6 +2214,7 @@ export const NAMES = {
     window: unsupported("'$year' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$year' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$year' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$year' is not valid in an update document — see its 'where'."),
   }),
 
   $tsIncrement: mongo({
@@ -2094,6 +2228,7 @@ export const NAMES = {
     window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tsIncrement' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$tsIncrement' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$tsIncrement' is not valid in an update document — see its 'where'."),
   }),
 
   $tsSecond: mongo({
@@ -2107,6 +2242,7 @@ export const NAMES = {
     window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tsSecond' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$tsSecond' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$tsSecond' is not valid in an update document — see its 'where'."),
   }),
 
   $convert: mongo({
@@ -2151,6 +2287,7 @@ export const NAMES = {
     window: unsupported("'$convert' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$convert' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$convert' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$convert' is not valid in an update document — see its 'where'."),
   }),
 
   $isNumber: mongo({
@@ -2164,6 +2301,7 @@ export const NAMES = {
     window: unsupported("'$isNumber' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isNumber' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$isNumber' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$isNumber' is not valid in an update document — see its 'where'."),
   }),
 
   $toArray: mongo({
@@ -2177,6 +2315,7 @@ export const NAMES = {
     window: unsupported("'$toArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toArray' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toArray' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toArray' is not valid in an update document — see its 'where'."),
   }),
 
   $toBool: mongo({
@@ -2190,6 +2329,7 @@ export const NAMES = {
     window: unsupported("'$toBool' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toBool' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toBool' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toBool' is not valid in an update document — see its 'where'."),
   }),
 
   $toDecimal: mongo({
@@ -2203,6 +2343,7 @@ export const NAMES = {
     window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDecimal' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toDecimal' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toDecimal' is not valid in an update document — see its 'where'."),
   }),
 
   $toDouble: mongo({
@@ -2216,6 +2357,7 @@ export const NAMES = {
     window: unsupported("'$toDouble' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDouble' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toDouble' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toDouble' is not valid in an update document — see its 'where'."),
   }),
 
   $toInt: mongo({
@@ -2229,6 +2371,7 @@ export const NAMES = {
     window: unsupported("'$toInt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toInt' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toInt' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toInt' is not valid in an update document — see its 'where'."),
   }),
 
   $toLong: mongo({
@@ -2242,6 +2385,7 @@ export const NAMES = {
     window: unsupported("'$toLong' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toLong' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toLong' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toLong' is not valid in an update document — see its 'where'."),
   }),
 
   $toObject: mongo({
@@ -2255,6 +2399,7 @@ export const NAMES = {
     window: unsupported("'$toObject' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toObject' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toObject' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toObject' is not valid in an update document — see its 'where'."),
   }),
 
   $toObjectId: mongo({
@@ -2268,6 +2413,7 @@ export const NAMES = {
     window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toObjectId' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toObjectId' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toObjectId' is not valid in an update document — see its 'where'."),
   }),
 
   $toString: mongo({
@@ -2281,6 +2427,7 @@ export const NAMES = {
     window: unsupported("'$toString' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toString' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toString' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toString' is not valid in an update document — see its 'where'."),
   }),
 
   $toUUID: mongo({
@@ -2294,6 +2441,7 @@ export const NAMES = {
     window: unsupported("'$toUUID' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toUUID' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toUUID' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toUUID' is not valid in an update document — see its 'where'."),
   }),
 
   $type: mongo({
@@ -2307,6 +2455,7 @@ export const NAMES = {
     window: unsupported("'$type' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$type' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$type' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$type' is not valid in an update document — see its 'where'."),
   }),
 
   $literal: mongo({
@@ -2320,6 +2469,7 @@ export const NAMES = {
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$literal' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$literal' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$literal' is not valid in an update document — see its 'where'."),
   }),
 
   $let: mongo({
@@ -2333,6 +2483,7 @@ export const NAMES = {
     window: unsupported("'$let' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$let' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$let' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$let' is not valid in an update document — see its 'where'."),
   }),
 
   $accumulator: mongo({
@@ -2358,6 +2509,7 @@ export const NAMES = {
     window: unsupported("'$accumulator' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$accumulator' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$accumulator' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$accumulator' is not valid in an update document — see its 'where'."),
   }),
 
   $function: mongo({
@@ -2379,6 +2531,7 @@ export const NAMES = {
     window: unsupported("'$function' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$function' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$function' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$function' is not valid in an update document — see its 'where'."),
   }),
 
   $binarySize: mongo({
@@ -2392,6 +2545,7 @@ export const NAMES = {
     window: unsupported("'$binarySize' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$binarySize' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$binarySize' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$binarySize' is not valid in an update document — see its 'where'."),
   }),
 
   $bsonSize: mongo({
@@ -2405,6 +2559,7 @@ export const NAMES = {
     window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bsonSize' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bsonSize' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bsonSize' is not valid in an update document — see its 'where'."),
   }),
 
   $meta: mongo({
@@ -2418,6 +2573,7 @@ export const NAMES = {
     window: unsupported("'$meta' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$meta' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$meta' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$meta' is not valid in an update document — see its 'where'."),
   }),
 
   $createObjectId: mongo({
@@ -2431,6 +2587,7 @@ export const NAMES = {
     window: unsupported("'$createObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$createObjectId' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$createObjectId' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$createObjectId' is not valid in an update document — see its 'where'."),
   }),
 
   $hash: mongo({
@@ -2447,6 +2604,7 @@ export const NAMES = {
     window: unsupported("'$hash' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$hash' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$hash' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$hash' is not valid in an update document — see its 'where'."),
   }),
 
   $hexHash: mongo({
@@ -2463,6 +2621,7 @@ export const NAMES = {
     window: unsupported("'$hexHash' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$hexHash' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$hexHash' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$hexHash' is not valid in an update document — see its 'where'."),
   }),
 
   $rand: mongo({
@@ -2476,6 +2635,7 @@ export const NAMES = {
     window: unsupported("'$rand' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$rand' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$rand' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$rand' is not valid in an update document — see its 'where'."),
   }),
 
   $sampleRate: mongo({
@@ -2489,6 +2649,7 @@ export const NAMES = {
     window: unsupported("'$sampleRate' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sampleRate' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sampleRate' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sampleRate' is not valid in an update document — see its 'where'."),
   }),
 
   $toHashedIndexKey: mongo({
@@ -2502,12 +2663,13 @@ export const NAMES = {
     window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toHashedIndexKey' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$toHashedIndexKey' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$toHashedIndexKey' is not valid in an update document — see its 'where'."),
   }),
 
   $addToSet: mongo({
     doc: "Returns an array of unique expression values for each group.",
     category: "array",
-    where: ["group", "window"],
+    where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported("'$addToSet' is not valid in filter position — see its 'where'."),
     expr: unsupported("'$addToSet' is not valid in expression position — see its 'where'."),
@@ -2515,6 +2677,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$addToSet' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$addToSet' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $avg: mongo({
@@ -2537,6 +2700,7 @@ export const NAMES = {
     },
     stream: unsupported("'$avg' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$avg' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$avg' is not valid in an update document — see its 'where'."),
   }),
 
   $count: mongo({
@@ -2556,12 +2720,13 @@ export const NAMES = {
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$count' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$count' is not valid in an update document — see its 'where'."),
   }),
 
   $max: mongo({
     doc: "Returns the maximum value that results from applying an expression.",
     category: "comparison",
-    where: ["value", "group", "window"],
+    where: ["value", "group", "window", "updateDoc"],
     shape: "flex",
     filter: unsupported("'$max' is not valid in filter position — see its 'where'."),
     expr: {
@@ -2578,6 +2743,7 @@ export const NAMES = {
     },
     stream: unsupported("'$max' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$max' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $median: mongo({
@@ -2599,12 +2765,13 @@ export const NAMES = {
     window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$median' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$median' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$median' is not valid in an update document — see its 'where'."),
   }),
 
   $min: mongo({
     doc: "Returns the minimum value that results from applying an expression.",
     category: "comparison",
-    where: ["value", "group", "window"],
+    where: ["value", "group", "window", "updateDoc"],
     shape: "flex",
     filter: unsupported("'$min' is not valid in filter position — see its 'where'."),
     expr: {
@@ -2621,6 +2788,7 @@ export const NAMES = {
     },
     stream: unsupported("'$min' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$min' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $percentile: mongo({
@@ -2642,12 +2810,13 @@ export const NAMES = {
     window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     stream: unsupported("'$percentile' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$percentile' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$percentile' is not valid in an update document — see its 'where'."),
   }),
 
   $push: mongo({
     doc: "Returns an array of values that result from applying an expression.",
     category: "array",
-    where: ["group", "window"],
+    where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported("'$push' is not valid in filter position — see its 'where'."),
     expr: unsupported("'$push' is not valid in expression position — see its 'where'."),
@@ -2655,6 +2824,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$push' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$push' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $stdDevPop: mongo({
@@ -2677,6 +2847,7 @@ export const NAMES = {
     },
     stream: unsupported("'$stdDevPop' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$stdDevPop' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$stdDevPop' is not valid in an update document — see its 'where'."),
   }),
 
   $stdDevSamp: mongo({
@@ -2699,6 +2870,7 @@ export const NAMES = {
     },
     stream: unsupported("'$stdDevSamp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$stdDevSamp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$stdDevSamp' is not valid in an update document — see its 'where'."),
   }),
 
   $sum: mongo({
@@ -2721,6 +2893,7 @@ export const NAMES = {
     },
     stream: unsupported("'$sum' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$sum' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sum' is not valid in an update document — see its 'where'."),
   }),
 
   $bottom: mongo({
@@ -2734,6 +2907,7 @@ export const NAMES = {
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$bottom' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bottom' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bottom' is not valid in an update document — see its 'where'."),
   }),
 
   $bottomN: mongo({
@@ -2754,6 +2928,7 @@ export const NAMES = {
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     stream: unsupported("'$bottomN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$bottomN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bottomN' is not valid in an update document — see its 'where'."),
   }),
 
   $top: mongo({
@@ -2767,6 +2942,7 @@ export const NAMES = {
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$top' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$top' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$top' is not valid in an update document — see its 'where'."),
   }),
 
   $topN: mongo({
@@ -2787,6 +2963,7 @@ export const NAMES = {
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     stream: unsupported("'$topN' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$topN' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$topN' is not valid in an update document — see its 'where'."),
   }),
 
   $covariancePop: mongo({
@@ -2800,6 +2977,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     stream: unsupported("'$covariancePop' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$covariancePop' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$covariancePop' is not valid in an update document — see its 'where'."),
   }),
 
   $covarianceSamp: mongo({
@@ -2813,6 +2991,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
     stream: unsupported("'$covarianceSamp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$covarianceSamp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$covarianceSamp' is not valid in an update document — see its 'where'."),
   }),
 
   $denseRank: mongo({
@@ -2826,6 +3005,7 @@ export const NAMES = {
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     stream: unsupported("'$denseRank' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$denseRank' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$denseRank' is not valid in an update document — see its 'where'."),
   }),
 
   $derivative: mongo({
@@ -2847,6 +3027,7 @@ export const NAMES = {
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$derivative' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$derivative' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$derivative' is not valid in an update document — see its 'where'."),
   }),
 
   $documentNumber: mongo({
@@ -2860,6 +3041,7 @@ export const NAMES = {
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     stream: unsupported("'$documentNumber' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$documentNumber' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$documentNumber' is not valid in an update document — see its 'where'."),
   }),
 
   $expMovingAvg: mongo({
@@ -2881,6 +3063,7 @@ export const NAMES = {
     window: { args: { sig: "input, N, alpha", allowed: [1, 2, 3] }, emit: objectBody },
     stream: unsupported("'$expMovingAvg' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$expMovingAvg' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$expMovingAvg' is not valid in an update document — see its 'where'."),
   }),
 
   $integral: mongo({
@@ -2902,6 +3085,7 @@ export const NAMES = {
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
     stream: unsupported("'$integral' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$integral' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$integral' is not valid in an update document — see its 'where'."),
   }),
 
   $linearFill: mongo({
@@ -2915,6 +3099,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$linearFill' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$linearFill' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$linearFill' is not valid in an update document — see its 'where'."),
   }),
 
   $locf: mongo({
@@ -2928,6 +3113,7 @@ export const NAMES = {
     window: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     stream: unsupported("'$locf' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$locf' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$locf' is not valid in an update document — see its 'where'."),
   }),
 
   $rank: mongo({
@@ -2941,6 +3127,7 @@ export const NAMES = {
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     stream: unsupported("'$rank' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$rank' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$rank' is not valid in an update document — see its 'where'."),
   }),
 
   $shift: mongo({
@@ -2961,6 +3148,7 @@ export const NAMES = {
     window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody },
     stream: unsupported("'$shift' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$shift' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$shift' is not valid in an update document — see its 'where'."),
   }),
 
   $addFields: mongo({
@@ -2976,6 +3164,7 @@ export const NAMES = {
     window: unsupported("'$addFields' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$addFields' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$addFields' is not valid in an update document — see its 'where'."),
   }),
 
   $bucket: mongo({
@@ -2990,6 +3179,7 @@ export const NAMES = {
     window: unsupported("'$bucket' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$bucket' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bucket' is not valid in an update document — see its 'where'."),
   }),
 
   $bucketAuto: mongo({
@@ -3004,6 +3194,7 @@ export const NAMES = {
     window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$bucketAuto' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$bucketAuto' is not valid in an update document — see its 'where'."),
   }),
 
   $changeStream: mongo({
@@ -3019,6 +3210,7 @@ export const NAMES = {
     window: unsupported("'$changeStream' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$changeStream' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$changeStream' is not valid in an update document — see its 'where'."),
   }),
 
   $changeStreamSplitLargeEvent: mongo({
@@ -3036,6 +3228,7 @@ export const NAMES = {
     ),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$changeStreamSplitLargeEvent' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$changeStreamSplitLargeEvent' is not valid in an update document — see its 'where'."),
   }),
 
   $collStats: mongo({
@@ -3051,6 +3244,7 @@ export const NAMES = {
     window: unsupported("'$collStats' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$collStats' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$collStats' is not valid in an update document — see its 'where'."),
   }),
 
   $currentOp: mongo({
@@ -3066,6 +3260,7 @@ export const NAMES = {
     window: unsupported("'$currentOp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$currentOp' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$currentOp' is not valid in an update document — see its 'where'."),
   }),
 
   $densify: mongo({
@@ -3080,6 +3275,7 @@ export const NAMES = {
     window: unsupported("'$densify' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$densify' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$densify' is not valid in an update document — see its 'where'."),
   }),
 
   $documents: mongo({
@@ -3095,6 +3291,7 @@ export const NAMES = {
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$documents' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$documents' is not valid in an update document — see its 'where'."),
   }),
 
   $facet: mongo({
@@ -3109,6 +3306,7 @@ export const NAMES = {
     window: unsupported("'$facet' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$facet' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$facet' is not valid in an update document — see its 'where'."),
   }),
 
   $fill: mongo({
@@ -3123,6 +3321,7 @@ export const NAMES = {
     window: unsupported("'$fill' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$fill' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$fill' is not valid in an update document — see its 'where'."),
   }),
 
   $geoNear: mongo({
@@ -3138,6 +3337,7 @@ export const NAMES = {
     window: unsupported("'$geoNear' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$geoNear' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$geoNear' is not valid in an update document — see its 'where'."),
   }),
 
   $graphLookup: mongo({
@@ -3152,6 +3352,7 @@ export const NAMES = {
     window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$graphLookup' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$graphLookup' is not valid in an update document — see its 'where'."),
   }),
 
   $group: mongo({
@@ -3166,6 +3367,7 @@ export const NAMES = {
     window: unsupported("'$group' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$group' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$group' is not valid in an update document — see its 'where'."),
   }),
 
   $indexStats: mongo({
@@ -3181,6 +3383,7 @@ export const NAMES = {
     window: unsupported("'$indexStats' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$indexStats' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$indexStats' is not valid in an update document — see its 'where'."),
   }),
 
   $limit: mongo({
@@ -3195,6 +3398,7 @@ export const NAMES = {
     window: unsupported("'$limit' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$limit' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$limit' is not valid in an update document — see its 'where'."),
   }),
 
   $listLocalSessions: mongo({
@@ -3210,6 +3414,7 @@ export const NAMES = {
     window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$listLocalSessions' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$listLocalSessions' is not valid in an update document — see its 'where'."),
   }),
 
   $listSampledQueries: mongo({
@@ -3225,6 +3430,7 @@ export const NAMES = {
     window: unsupported("'$listSampledQueries' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$listSampledQueries' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$listSampledQueries' is not valid in an update document — see its 'where'."),
   }),
 
   $listSearchIndexes: mongo({
@@ -3240,6 +3446,7 @@ export const NAMES = {
     window: unsupported("'$listSearchIndexes' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$listSearchIndexes' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$listSearchIndexes' is not valid in an update document — see its 'where'."),
   }),
 
   $listSessions: mongo({
@@ -3255,6 +3462,7 @@ export const NAMES = {
     window: unsupported("'$listSessions' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$listSessions' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$listSessions' is not valid in an update document — see its 'where'."),
   }),
 
   $lookup: mongo({
@@ -3269,6 +3477,7 @@ export const NAMES = {
     window: unsupported("'$lookup' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$lookup' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$lookup' is not valid in an update document — see its 'where'."),
   }),
 
   $match: mongo({
@@ -3283,6 +3492,7 @@ export const NAMES = {
     window: unsupported("'$match' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$match' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$match' is not valid in an update document — see its 'where'."),
   }),
 
   $merge: mongo({
@@ -3298,6 +3508,7 @@ export const NAMES = {
     window: unsupported("'$merge' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$merge' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$merge' is not valid in an update document — see its 'where'."),
   }),
 
   $out: mongo({
@@ -3313,6 +3524,7 @@ export const NAMES = {
     window: unsupported("'$out' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$out' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$out' is not valid in an update document — see its 'where'."),
   }),
 
   $planCacheStats: mongo({
@@ -3328,6 +3540,7 @@ export const NAMES = {
     window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$planCacheStats' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$planCacheStats' is not valid in an update document — see its 'where'."),
   }),
 
   $project: mongo({
@@ -3343,6 +3556,7 @@ export const NAMES = {
     window: unsupported("'$project' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$project' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$project' is not valid in an update document — see its 'where'."),
   }),
 
   $rankFusion: mongo({
@@ -3358,6 +3572,7 @@ export const NAMES = {
     window: unsupported("'$rankFusion' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$rankFusion' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$rankFusion' is not valid in an update document — see its 'where'."),
   }),
 
   $redact: mongo({
@@ -3372,6 +3587,7 @@ export const NAMES = {
     window: unsupported("'$redact' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$redact' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$redact' is not valid in an update document — see its 'where'."),
   }),
 
   $replaceRoot: mongo({
@@ -3387,6 +3603,7 @@ export const NAMES = {
     window: unsupported("'$replaceRoot' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$replaceRoot' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$replaceRoot' is not valid in an update document — see its 'where'."),
   }),
 
   $replaceWith: mongo({
@@ -3402,6 +3619,7 @@ export const NAMES = {
     window: unsupported("'$replaceWith' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$replaceWith' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$replaceWith' is not valid in an update document — see its 'where'."),
   }),
 
   $sample: mongo({
@@ -3416,6 +3634,7 @@ export const NAMES = {
     window: unsupported("'$sample' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$sample' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sample' is not valid in an update document — see its 'where'."),
   }),
 
   $scoreFusion: mongo({
@@ -3431,6 +3650,7 @@ export const NAMES = {
     window: unsupported("'$scoreFusion' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$scoreFusion' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$scoreFusion' is not valid in an update document — see its 'where'."),
   }),
 
   $search: mongo({
@@ -3446,6 +3666,7 @@ export const NAMES = {
     window: unsupported("'$search' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$search' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$search' is not valid in an update document — see its 'where'."),
   }),
 
   $searchMeta: mongo({
@@ -3461,11 +3682,12 @@ export const NAMES = {
     window: unsupported("'$searchMeta' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$searchMeta' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$searchMeta' is not valid in an update document — see its 'where'."),
   }),
 
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
-    where: ["stream"],
+    where: ["stream", "updateDoc"],
     only: ["update"],
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
@@ -3476,6 +3698,7 @@ export const NAMES = {
     window: unsupported("'$set' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$set' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $setWindowFields: mongo({
@@ -3490,6 +3713,7 @@ export const NAMES = {
     window: unsupported("'$setWindowFields' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$setWindowFields' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$setWindowFields' is not valid in an update document — see its 'where'."),
   }),
 
   $shardedDataDistribution: mongo({
@@ -3507,6 +3731,7 @@ export const NAMES = {
     ),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$shardedDataDistribution' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$shardedDataDistribution' is not valid in an update document — see its 'where'."),
   }),
 
   $skip: mongo({
@@ -3521,6 +3746,7 @@ export const NAMES = {
     window: unsupported("'$skip' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$skip' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$skip' is not valid in an update document — see its 'where'."),
   }),
 
   $sort: mongo({
@@ -3535,6 +3761,7 @@ export const NAMES = {
     window: unsupported("'$sort' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$sort' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sort' is not valid in an update document — see its 'where'."),
   }),
 
   $sortByCount: mongo({
@@ -3549,6 +3776,7 @@ export const NAMES = {
     window: unsupported("'$sortByCount' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$sortByCount' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$sortByCount' is not valid in an update document — see its 'where'."),
   }),
 
   $unionWith: mongo({
@@ -3563,11 +3791,12 @@ export const NAMES = {
     window: unsupported("'$unionWith' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$unionWith' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$unionWith' is not valid in an update document — see its 'where'."),
   }),
 
   $unset: mongo({
     doc: "Removes or excludes fields from documents.",
-    where: ["stream"],
+    where: ["stream", "updateDoc"],
     only: ["update"],
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
@@ -3578,6 +3807,7 @@ export const NAMES = {
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$unset' is not a statement — see its 'where'."),
+    updateDoc: pending("src/index.ts"),
   }),
 
   $unwind: mongo({
@@ -3592,6 +3822,7 @@ export const NAMES = {
     window: unsupported("'$unwind' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$unwind' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$unwind' is not valid in an update document — see its 'where'."),
   }),
 
   $vectorSearch: mongo({
@@ -3607,6 +3838,7 @@ export const NAMES = {
     window: unsupported("'$vectorSearch' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
     statement: unsupported("'$vectorSearch' is not a statement — see its 'where'."),
+    updateDoc: unsupported("'$vectorSearch' is not valid in an update document — see its 'where'."),
   }),
 
   trim: name({
@@ -6338,6 +6570,223 @@ export const NAMES = {
   // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
   // ─────────────────────────────────────────────────────────────────────────────
 
+  $inc: mongo({
+    doc: "Increments a field by a number. JSMQL also writes it as JavaScript: '$.views++', '++$.views', '$.views += 2'.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  // ── the update DOCUMENT operators — valid only in updateOne's second argument.
+  $currentDate: mongo({
+    doc: "Sets a field to the current date.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $mul: mongo({
+    doc: "Multiplies a field by a number. JSMQL also writes it as JavaScript: '$.price *= 1.1', '$.price /= 2'.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $rename: mongo({
+    doc: "Renames a field. JSMQL also writes it as JavaScript: '$.b = $.a; delete $.a;'.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $setOnInsert: mongo({
+    doc: "Sets a field only when an upsert inserts a new document.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $pop: mongo({
+    doc: "Removes the first or last element of an array. JSMQL also writes it as JavaScript: '$.tags.pop()'.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $pull: mongo({
+    doc: "Removes every array element matching a condition.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $pullAll: mongo({
+    doc: "Removes every listed value from an array.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
+  $bit: mongo({
+    doc: "Applies a bitwise and / or / xor to an integer field.",
+    where: ["updateDoc"],
+    filter: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a filter.",
+    ),
+    expr: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as an aggregation expression.",
+    ),
+    group: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $group slot.",
+    ),
+    window: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not in a $setWindowFields slot.",
+    ),
+    stream: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a pipeline stage.",
+    ),
+    statement: unsupported(
+      "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
+    ),
+    updateDoc: pending("src/index.ts"),
+  }),
+
   // ── the query language: operators with a filter form and no expression form.
   // The seven geometry sub-constructs ($box, $center, $centerSphere, $polygon,
   // $geometry, $maxDistance, $minDistance) have no row, on the same footing as
@@ -6353,6 +6802,7 @@ export const NAMES = {
     window: unsupported("'$all' is a query operator, not a window function."),
     stream: unsupported("'$all' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$all' is a query operator, not a statement."),
+    updateDoc: unsupported("'$all' is not valid in an update document — see its 'where'."),
   }),
 
   $bitsAllClear: mongo({
@@ -6366,6 +6816,7 @@ export const NAMES = {
     window: unsupported("'$bitsAllClear' is a query operator, not a window function."),
     stream: unsupported("'$bitsAllClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$bitsAllClear' is a query operator, not a statement."),
+    updateDoc: unsupported("'$bitsAllClear' is not valid in an update document — see its 'where'."),
   }),
 
   $bitsAllSet: mongo({
@@ -6379,6 +6830,7 @@ export const NAMES = {
     window: unsupported("'$bitsAllSet' is a query operator, not a window function."),
     stream: unsupported("'$bitsAllSet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$bitsAllSet' is a query operator, not a statement."),
+    updateDoc: unsupported("'$bitsAllSet' is not valid in an update document — see its 'where'."),
   }),
 
   $bitsAnyClear: mongo({
@@ -6392,6 +6844,7 @@ export const NAMES = {
     window: unsupported("'$bitsAnyClear' is a query operator, not a window function."),
     stream: unsupported("'$bitsAnyClear' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$bitsAnyClear' is a query operator, not a statement."),
+    updateDoc: unsupported("'$bitsAnyClear' is not valid in an update document — see its 'where'."),
   }),
 
   $bitsAnySet: mongo({
@@ -6405,6 +6858,7 @@ export const NAMES = {
     window: unsupported("'$bitsAnySet' is a query operator, not a window function."),
     stream: unsupported("'$bitsAnySet' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$bitsAnySet' is a query operator, not a statement."),
+    updateDoc: unsupported("'$bitsAnySet' is not valid in an update document — see its 'where'."),
   }),
 
   $comment: mongo({
@@ -6418,6 +6872,7 @@ export const NAMES = {
     window: unsupported("'$comment' is a query operator, not a window function."),
     stream: unsupported("'$comment' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$comment' is a query operator, not a statement."),
+    updateDoc: unsupported("'$comment' is not valid in an update document — see its 'where'."),
   }),
 
   $elemMatch: mongo({
@@ -6431,6 +6886,7 @@ export const NAMES = {
     window: unsupported("'$elemMatch' is a query operator, not a window function."),
     stream: unsupported("'$elemMatch' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$elemMatch' is a query operator, not a statement."),
+    updateDoc: unsupported("'$elemMatch' is not valid in an update document — see its 'where'."),
   }),
 
   $exists: mongo({
@@ -6444,6 +6900,7 @@ export const NAMES = {
     window: unsupported("'$exists' is a query operator, not a window function."),
     stream: unsupported("'$exists' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$exists' is a query operator, not a statement."),
+    updateDoc: unsupported("'$exists' is not valid in an update document — see its 'where'."),
   }),
 
   $expr: mongo({
@@ -6457,6 +6914,7 @@ export const NAMES = {
     window: unsupported("'$expr' is a query operator, not a window function."),
     stream: unsupported("'$expr' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$expr' is a query operator, not a statement."),
+    updateDoc: unsupported("'$expr' is not valid in an update document — see its 'where'."),
   }),
 
   $geoIntersects: mongo({
@@ -6470,6 +6928,7 @@ export const NAMES = {
     window: unsupported("'$geoIntersects' is a query operator, not a window function."),
     stream: unsupported("'$geoIntersects' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$geoIntersects' is a query operator, not a statement."),
+    updateDoc: unsupported("'$geoIntersects' is not valid in an update document — see its 'where'."),
   }),
 
   $geoWithin: mongo({
@@ -6483,6 +6942,7 @@ export const NAMES = {
     window: unsupported("'$geoWithin' is a query operator, not a window function."),
     stream: unsupported("'$geoWithin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$geoWithin' is a query operator, not a statement."),
+    updateDoc: unsupported("'$geoWithin' is not valid in an update document — see its 'where'."),
   }),
 
   $jsonSchema: mongo({
@@ -6496,6 +6956,7 @@ export const NAMES = {
     window: unsupported("'$jsonSchema' is a query operator, not a window function."),
     stream: unsupported("'$jsonSchema' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$jsonSchema' is a query operator, not a statement."),
+    updateDoc: unsupported("'$jsonSchema' is not valid in an update document — see its 'where'."),
   }),
 
   $near: mongo({
@@ -6509,6 +6970,7 @@ export const NAMES = {
     window: unsupported("'$near' is a query operator, not a window function."),
     stream: unsupported("'$near' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$near' is a query operator, not a statement."),
+    updateDoc: unsupported("'$near' is not valid in an update document — see its 'where'."),
   }),
 
   $nearSphere: mongo({
@@ -6522,6 +6984,7 @@ export const NAMES = {
     window: unsupported("'$nearSphere' is a query operator, not a window function."),
     stream: unsupported("'$nearSphere' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$nearSphere' is a query operator, not a statement."),
+    updateDoc: unsupported("'$nearSphere' is not valid in an update document — see its 'where'."),
   }),
 
   $nin: mongo({
@@ -6535,6 +6998,7 @@ export const NAMES = {
     window: unsupported("'$nin' is a query operator, not a window function."),
     stream: unsupported("'$nin' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$nin' is a query operator, not a statement."),
+    updateDoc: unsupported("'$nin' is not valid in an update document — see its 'where'."),
   }),
 
   $nor: mongo({
@@ -6548,6 +7012,7 @@ export const NAMES = {
     window: unsupported("'$nor' is a query operator, not a window function."),
     stream: unsupported("'$nor' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$nor' is a query operator, not a statement."),
+    updateDoc: unsupported("'$nor' is not valid in an update document — see its 'where'."),
   }),
 
   $regex: mongo({
@@ -6561,6 +7026,7 @@ export const NAMES = {
     window: unsupported("'$regex' is a query operator, not a window function."),
     stream: unsupported("'$regex' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$regex' is a query operator, not a statement."),
+    updateDoc: unsupported("'$regex' is not valid in an update document — see its 'where'."),
   }),
 
   $text: mongo({
@@ -6574,6 +7040,7 @@ export const NAMES = {
     window: unsupported("'$text' is a query operator, not a window function."),
     stream: unsupported("'$text' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$text' is a query operator, not a statement."),
+    updateDoc: unsupported("'$text' is not valid in an update document — see its 'where'."),
   }),
 
   $where: mongo({
@@ -6587,6 +7054,7 @@ export const NAMES = {
     window: unsupported("'$where' is a query operator, not a window function."),
     stream: unsupported("'$where' is a query operator, not a pipeline stage. Put it in a '$match' body."),
     statement: unsupported("'$where' is a query operator, not a statement."),
+    updateDoc: unsupported("'$where' is not valid in an update document — see its 'where'."),
   }),
 
   // ── source stages, chain links and the guard, reached by name ──
