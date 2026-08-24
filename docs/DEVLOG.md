@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — feat: the namespace members the registry never described
+
+`Family` declared `Math`, `Object`, `Number` and `Array`, and not one row belonged to any of
+them — `Math.abs($.n)` compiles to `{"$abs":"$n"}` and had no row at all, while
+[src/ast.ts](src/ast.ts) listed 30 Math methods the parser branches on. Forty rows now cover
+that surface, every field measured by driving the compiler rather than read from a list: the
+27 Math members (25 methods plus `PI` and `E`, which are read and never called —
+`Math.PI()` is refused), `Object.assign` and `Object.fromEntries`, the three `Number` statics,
+`Array.isArray`, the `Object` namespace itself, and the four bare conversion callables
+`String`, `Boolean`, `parseInt`, `parseFloat`.
+
+Two facts had no field. `NameSpec.asReference` records whether a name may be handed to a
+higher-order method unapplied, because nothing about the arity predicts it —
+`$.items.map(Math.floor)` is accepted and `$.items.map(Math.asinh)` is *"Only the unary Math
+methods … can be passed as bare callbacks"*, and both are unary. And `Number.isFinite` parses
+and is then refused, so it needs a row carrying its `[DEF-022]` message rather than no row at
+all; the same is true of `Set.symmetricDifference` and `Set.isDisjointFrom`, which the
+language recognises and answers with a tailored refusal.
+
+Six keys serve a namespace AND a value receiver with different rules, which is what
+`perFamily` exists for. `Math.round($.n)` takes exactly one argument while `$.n.round(2)`
+takes the precision, so the two cannot share an arity; `Math.max(...values)` takes arguments
+where `$.rows.max()` takes none; `Object.groupBy(items, x => key)` requires its discriminator
+where the array receiver's iteratee is optional. Each is one row with one rule per family,
+never two rows — `max` and `$max` are different names, but `Math.max` and `$.rows.max()` are
+the same name on two receivers.
+
+---
+
 ## 2026-08-24 — fix: the lexical rules a longest-match table cannot imply, and the lexemes rules really consume
 
 Four lexer decisions now sit in [src/registry/tokens.ts](src/registry/tokens.ts) instead of

@@ -77,6 +77,15 @@ type NameSpec<W extends readonly Position[], O extends On> = {
   call: boolean;
   /** Probed in declaration order, so precedence is visible. */
   on: O;
+  /**
+   * Can it be handed to a higher-order name WITHOUT being applied?
+   *   $.items.map(Math.floor)  → accepted
+   *   $.items.map(Math.asinh)  → "Only the unary Math methods … can be passed as
+   *                              bare callbacks"
+   * Both are unary, so nothing about the arity predicts it — hence a field.
+   * Absent means the name must always be called.
+   */
+  asReference?: boolean;
   returns: Returns;
   where: W;
   only?: readonly Only[];
@@ -5124,11 +5133,17 @@ export const NAMES = {
   max: name({
     doc: "'.max()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
-    returns: "unknown",
+    on: ["array", "Math"],
+    returns: { array: "element", Math: "number" },
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      // MEASURED: Math.max($.a, $.b) → {"$max":["$a","$b"]}; $.rows.max() takes none.
+      perFamily: {
+        array: pending("src/methods/", { sig: "", none: true }),
+        Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+      },
+    },
     stream: unsupported("'.max()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.max()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
@@ -5138,11 +5153,17 @@ export const NAMES = {
   min: name({
     doc: "'.min()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
-    returns: "unknown",
+    on: ["array", "Math"],
+    returns: { array: "element", Math: "number" },
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      // MEASURED: Math.min($.a, $.b) → {"$min":["$a","$b"]}; $.rows.min() takes none.
+      perFamily: {
+        array: pending("src/methods/", { sig: "", none: true }),
+        Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+      },
+    },
     stream: unsupported("'.min()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.min()' is not a statement — see its 'where'."),
     group: pending("src/methods/"),
@@ -5764,11 +5785,18 @@ export const NAMES = {
   groupBy: name({
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "stream"],
-    returns: { array: "unknown", stream: "stream" },
+    on: ["array", "stream", "Object"],
+    returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
+    expr: {
+      // MEASURED: Object.groupBy($.items) is refused — the discriminator is required.
+      perFamily: {
+        array: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
+        stream: unsupported("'.groupBy()' on a stream is a stage, not a value — see its 'stream' cell."),
+        Object: pending("src/codegen.ts", { sig: "items, x => key", exact: 2 }),
+      },
+    },
     stream: pending("src/stream-methods.ts"),
     statement: unsupported("'.groupBy()' is not a statement — see its 'where'."),
     group: unsupported("'.groupBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -6136,11 +6164,17 @@ export const NAMES = {
   round: name({
     doc: "'.round()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    on: ["number", "Math"],
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+    expr: {
+      // MEASURED: $.n.round(2) takes the precision; Math.round($.n, 2) is refused.
+      perFamily: {
+        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+      },
+    },
     stream: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.round()' is not a statement — see its 'where'."),
     group: unsupported("'.round()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -6150,11 +6184,17 @@ export const NAMES = {
   ceil: name({
     doc: "'.ceil()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    on: ["number", "Math"],
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+    expr: {
+      // MEASURED: $.n.ceil(2) takes the precision; Math.ceil($.n, 2) is refused.
+      perFamily: {
+        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+      },
+    },
     stream: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.ceil()' is not a statement — see its 'where'."),
     group: unsupported("'.ceil()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -6164,11 +6204,17 @@ export const NAMES = {
   floor: name({
     doc: "'.floor()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    on: ["number", "Math"],
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+    expr: {
+      // MEASURED: $.n.floor(2) takes the precision; Math.floor($.n, 2) is refused.
+      perFamily: {
+        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
+        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+      },
+    },
     stream: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.floor()' is not a statement — see its 'where'."),
     group: unsupported("'.floor()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -6284,6 +6330,674 @@ export const NAMES = {
   // ── the roots and globals: the only rows not generated, because they are not keys of
   // METHODS / OPERATORS / STAGES. Every fact below was confirmed by a probe.
   // ─────────────────────────────────────────────────────────────────────────────
+
+  // ── the other namespaces, their members, and the bare callables ──
+  assign: name({
+    doc: "'Object.assign(target, ...sources)' — emits $mergeObjects. At statement position it writes the target.",
+    call: true,
+    on: "Object",
+    returns: "object",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "...sources", atLeast: 1, spread: true }),
+    stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
+    statement: unsupported("'Object.assign()' produces a value, not a statement."),
+    group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  fromEntries: name({
+    doc: "'Object.fromEntries(entries)' — emits $arrayToObject.",
+    call: true,
+    on: "Object",
+    returns: "object",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "entries", exact: 1 }),
+    stream: unsupported("'Object.fromEntries()' produces a value, not a stream of documents."),
+    statement: unsupported("'Object.fromEntries()' produces a value, not a statement."),
+    group: unsupported("'Object.fromEntries()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Object.fromEntries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  isInteger: name({
+    doc: "'Number.isInteger(value)' — a $type test against the integral BSON types.",
+    call: true,
+    on: "Number",
+    returns: "bool",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Number.isInteger()' produces a value, not a stream of documents."),
+    statement: unsupported("'Number.isInteger()' produces a value, not a statement."),
+    group: unsupported("'Number.isInteger()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Number.isInteger()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  isNaN: name({
+    doc: "'Number.isNaN(value)' — emits { $ne: [x, x] }.",
+    call: true,
+    on: "Number",
+    returns: "bool",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Number.isNaN()' produces a value, not a stream of documents."),
+    statement: unsupported("'Number.isNaN()' produces a value, not a statement."),
+    group: unsupported("'Number.isNaN()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Number.isNaN()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  isFinite: name({
+    doc: "'Number.isFinite(value)' — parses, then refused: there is no Infinity/NaN literal to compare against.",
+    call: true,
+    on: "Number",
+    returns: "bool",
+    where: [],
+    filter: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+    expr: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+    stream: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+    statement: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+    group: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+    window: unsupported(
+      "Number.isFinite($.x) is not yet supported in jsmql [DEF-022] — there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x), (2) compare against a parameter, (3) constrain to a known range with .inRange(lo, hi). See docs/DEFERRED.md.",
+    ),
+  }),
+
+  isArray: name({
+    doc: "'Array.isArray(value)' — emits $isArray.",
+    call: true,
+    on: "Array",
+    returns: "bool",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
+    statement: unsupported("'Array.isArray()' produces a value, not a statement."),
+    group: unsupported("'Array.isArray()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Array.isArray()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  symmetricDifference: name({
+    doc: "'Set.symmetricDifference()' — recognised, and refused: MongoDB has no equivalent.",
+    call: true,
+    on: "set",
+    returns: "array",
+    where: [],
+    filter: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    expr: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    stream: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    statement: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    group: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    window: unsupported(
+      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+  }),
+
+  isDisjointFrom: name({
+    doc: "'Set.isDisjointFrom()' — recognised, and refused: MongoDB has no equivalent.",
+    call: true,
+    on: "set",
+    returns: "array",
+    where: [],
+    filter: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    expr: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    stream: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    statement: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    group: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+    window: unsupported(
+      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+    ),
+  }),
+
+  Object: root({
+    doc: 'The JavaScript Object namespace. A receiver only — jsmql.expr("Object") is "Expected \'.\' but got end of input".',
+    token: "Ident",
+    provides: "namespace",
+    family: "Object",
+    where: [],
+    filter: unsupported("'Object' is a namespace, not a test. Compare a member: 'Object.keys($.d).length > 0'."),
+    expr: unsupported("'Object' is a namespace, not a value. Write a member: 'Object.keys($.doc)'."),
+    stream: unsupported("'Object' is a namespace, not a stage."),
+    statement: unsupported("'Object' is a namespace, not a statement."),
+    group: unsupported("'Object' is a namespace, not an accumulator."),
+    window: unsupported("'Object' is a namespace, not a window function."),
+  }),
+
+  String: global_({
+    doc: "Converts a value to a string. Emits $toString.",
+    token: "Ident",
+    newKeyword: "forbidden",
+    asReference: true,
+    returns: "string",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'String()' produces a value, not a stream of documents."),
+    statement: unsupported("'String()' produces a value, not a statement."),
+    group: unsupported("'String()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'String()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  Boolean: global_({
+    doc: "Converts a value to a boolean, using JavaScript truthiness. Emits the four-clause JavaScript truthiness $and.",
+    token: "Ident",
+    newKeyword: "forbidden",
+    asReference: true,
+    returns: "bool",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
+    statement: unsupported("'Boolean()' produces a value, not a statement."),
+    group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  parseInt: global_({
+    doc: "Converts a value to an integer. The radix argument is refused. Emits $toInt.",
+    token: "Ident",
+    newKeyword: "forbidden",
+    asReference: false,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'parseInt()' produces a value, not a stream of documents."),
+    statement: unsupported("'parseInt()' produces a value, not a statement."),
+    group: unsupported("'parseInt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'parseInt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  parseFloat: global_({
+    doc: "Converts a value to a double. Emits $toDouble.",
+    token: "Ident",
+    newKeyword: "forbidden",
+    asReference: false,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'parseFloat()' produces a value, not a stream of documents."),
+    statement: unsupported("'parseFloat()' produces a value, not a statement."),
+    group: unsupported("'parseFloat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'parseFloat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  // ── the Math namespace's members ──
+  abs: name({
+    doc: "'Math.abs(value)' — emits $abs.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.abs()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.abs()' produces a value, not a statement."),
+    group: unsupported("'Math.abs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.abs()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  sqrt: name({
+    doc: "'Math.sqrt(value)' — emits $sqrt.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.sqrt()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.sqrt()' produces a value, not a statement."),
+    group: unsupported("'Math.sqrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.sqrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  exp: name({
+    doc: "'Math.exp(value)' — emits $exp.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.exp()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.exp()' produces a value, not a statement."),
+    group: unsupported("'Math.exp()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.exp()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  log: name({
+    doc: "'Math.log(value)' — emits $ln.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.log()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.log()' produces a value, not a statement."),
+    group: unsupported("'Math.log()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.log()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  log2: name({
+    doc: "'Math.log2(value)' — emits {$log:[x,2]}.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.log2()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.log2()' produces a value, not a statement."),
+    group: unsupported("'Math.log2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.log2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  log10: name({
+    doc: "'Math.log10(value)' — emits $log10.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.log10()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.log10()' produces a value, not a statement."),
+    group: unsupported("'Math.log10()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.log10()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  trunc: name({
+    doc: "'Math.trunc(value)' — emits $trunc.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.trunc()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.trunc()' produces a value, not a statement."),
+    group: unsupported("'Math.trunc()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.trunc()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  sign: name({
+    doc: "'Math.sign(value)' — emits {$cmp:[x,0]}.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.sign()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.sign()' produces a value, not a statement."),
+    group: unsupported("'Math.sign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.sign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  cbrt: name({
+    doc: "'Math.cbrt(value)' — emits {$pow:[x,1/3]}.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.cbrt()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.cbrt()' produces a value, not a statement."),
+    group: unsupported("'Math.cbrt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.cbrt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  sin: name({
+    doc: "'Math.sin(value)' — emits $sin.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.sin()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.sin()' produces a value, not a statement."),
+    group: unsupported("'Math.sin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.sin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  cos: name({
+    doc: "'Math.cos(value)' — emits $cos.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.cos()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.cos()' produces a value, not a statement."),
+    group: unsupported("'Math.cos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.cos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  tan: name({
+    doc: "'Math.tan(value)' — emits $tan.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.tan()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.tan()' produces a value, not a statement."),
+    group: unsupported("'Math.tan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.tan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  asin: name({
+    doc: "'Math.asin(value)' — emits $asin.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.asin()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.asin()' produces a value, not a statement."),
+    group: unsupported("'Math.asin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.asin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  acos: name({
+    doc: "'Math.acos(value)' — emits $acos.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.acos()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.acos()' produces a value, not a statement."),
+    group: unsupported("'Math.acos()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.acos()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  atan: name({
+    doc: "'Math.atan(value)' — emits $atan.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.atan()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.atan()' produces a value, not a statement."),
+    group: unsupported("'Math.atan()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.atan()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  sinh: name({
+    doc: "'Math.sinh(value)' — emits $sinh.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.sinh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.sinh()' produces a value, not a statement."),
+    group: unsupported("'Math.sinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.sinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  cosh: name({
+    doc: "'Math.cosh(value)' — emits $cosh.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.cosh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.cosh()' produces a value, not a statement."),
+    group: unsupported("'Math.cosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.cosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  tanh: name({
+    doc: "'Math.tanh(value)' — emits $tanh.",
+    call: true,
+    on: "Math",
+    asReference: true,
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.tanh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.tanh()' produces a value, not a statement."),
+    group: unsupported("'Math.tanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.tanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  asinh: name({
+    doc: "'Math.asinh(value)' — emits $asinh.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.asinh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.asinh()' produces a value, not a statement."),
+    group: unsupported("'Math.asinh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.asinh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  acosh: name({
+    doc: "'Math.acosh(value)' — emits $acosh.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.acosh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.acosh()' produces a value, not a statement."),
+    group: unsupported("'Math.acosh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.acosh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  atanh: name({
+    doc: "'Math.atanh(value)' — emits $atanh.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    stream: unsupported("'Math.atanh()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.atanh()' produces a value, not a statement."),
+    group: unsupported("'Math.atanh()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.atanh()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  pow: name({
+    doc: "'Math.pow(base, exponent)' — emits $pow.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "base, exponent", exact: 2 }),
+    stream: unsupported("'Math.pow()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.pow()' produces a value, not a statement."),
+    group: unsupported("'Math.pow()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported("'Math.pow()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  atan2: name({
+    doc: "'Math.atan2(y, x)' — emits $atan2.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "y, x", exact: 2 }),
+    stream: unsupported("'Math.atan2()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.atan2()' produces a value, not a statement."),
+    group: unsupported("'Math.atan2()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.atan2()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  hypot: name({
+    doc: "'Math.hypot(...values)' — the square root of the sum of squares.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+    stream: unsupported("'Math.hypot()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.hypot()' produces a value, not a statement."),
+    group: unsupported("'Math.hypot()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.hypot()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  random: name({
+    doc: "'Math.random()' — emits $rand.",
+    call: true,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: pending("src/codegen.ts", { sig: "", none: true }),
+    stream: unsupported("'Math.random()' produces a value, not a stream of documents."),
+    statement: unsupported("'Math.random()' produces a value, not a statement."),
+    group: unsupported("'Math.random()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    window: unsupported(
+      "'Math.random()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+    ),
+  }),
+
+  PI: name({
+    doc: "'Math.PI' — the literal 3.141592653589793. Read, never called.",
+    call: false,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: { sig: "", none: true }, emit: () => 3.141592653589793 },
+    stream: unsupported("'Math.PI' is a number, not a stream of documents."),
+    statement: unsupported("'Math.PI' is a number, not a statement."),
+    group: unsupported("'Math.PI' is a constant, not an accumulator."),
+    window: unsupported("'Math.PI' is a constant, not a window function."),
+  }),
+
+  E: name({
+    doc: "'Math.E' — the literal 2.718281828459045. Read, never called.",
+    call: false,
+    on: "Math",
+    returns: "number",
+    where: ["value"],
+    filter: viaFallback,
+    expr: { args: { sig: "", none: true }, emit: () => 2.718281828459045 },
+    stream: unsupported("'Math.E' is a number, not a stream of documents."),
+    statement: unsupported("'Math.E' is a number, not a statement."),
+    group: unsupported("'Math.E' is a constant, not an accumulator."),
+    window: unsupported("'Math.E' is a constant, not a window function."),
+  }),
 
   Math: root({
     doc: 'The JavaScript Math namespace. A receiver only — `jsmql.expr("Math")` errors.',
