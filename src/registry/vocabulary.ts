@@ -565,7 +565,12 @@ export type Rule<In, Out> = {
  */
 export type Emitter<F extends Family, In, Out> =
   | Rule<In, Out>
-  | { perFamily: Record<F, Rule<In, Out> | Refusal>; uncertain?: Emit<In, Out> }
+  /**
+   * A family may be `Pending` here, not only a rule or a refusal. `Object.keys`
+   * works and `$.arr.keys()` is refused, and the working half still lives in
+   * src/codegen.ts — without `Pending` the row had to invent an emitter for it.
+   */
+  | { perFamily: Record<F, Rule<In, Out> | Refusal | Pending>; uncertain?: Emit<In, Out> }
   /**
    * Dispatch on the ARGUMENT SHAPE — the third axis, alongside position
    * (`where`) and receiver (`on`). `ObjectId()` mints one, `ObjectId("<hex>")`

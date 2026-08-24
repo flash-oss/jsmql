@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: fifteen name rows described the form that does not exist
+
+Fifteen rows claimed `where: ["value"]` with a working expression cell, for names whose value
+form throws. The nine mutators are legal at statement position and nowhere else —
+`$.tags.sort()` errors while `$.tags.sort();` lowers to
+`[{"$set":{"tags":{"$sortArray":{"input":"$tags","sortBy":{"t":1}}}}}]` — so their `where` is
+`["statement"]`, plus `"stream"` for `sort`, which is also a chain link
+(`$$ = $$.sort("t")` → `[{"$sort":{"t":1}}]`). `push` takes both an array and a stream
+receiver, is a statement on either, and is refused mid-chain, which the split `stream` and
+`statement` cells can now say in one row.
+
+`keys`, `values` and `entries` were backwards. The row said `on: "array"` with a lowering,
+but `$.arr.keys()` is *".keys() returns an iterator in JavaScript and has no MongoDB
+equivalent"* — the form that works is `Object.keys($.doc)`, which had no row at all. They are
+now `on: ["array", "Object"]` with a per-family cell: the array family carries the refusal,
+the `Object` family carries the lowering. That forced one vocabulary change — `perFamily` now
+accepts `Pending`, because the working half still lives in [src/codegen.ts](src/codegen.ts)
+and without it the row had to invent an emitter for a lowering it does not hold.
+
+The remaining shims (`forEach`, `toLocaleString`, `unzipWith`) have no working form in any
+position, so their `where` is empty and all six cells carry the refusal the compiler already
+words. Every message here is taken from the grid declaration rather than rewritten, so the
+registry and the thrown error cannot drift.
+
+---
+
 ## 2026-08-24 — fix: the MongoDB operator rows now state what the compiler enforces
 
 Every `mongo` row's shape and per-cell arity is regenerated from the rules the compiler
