@@ -698,7 +698,7 @@ export const NAMES = {
     category: "comparison",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: pending("src/index.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
@@ -1501,9 +1501,9 @@ export const NAMES = {
   $size: mongo({
     doc: "Returns the number of elements in the array.",
     category: "array",
-    where: ["value", "filter"],
+    where: ["value"],
     shape: "single",
-    filter: pending("src/match-translation.ts"),
+    filter: viaFallback,
     expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2452,9 +2452,9 @@ export const NAMES = {
   $rand: mongo({
     doc: "Returns a random float between 0 and 1.",
     category: "miscellaneous",
-    where: ["value", "filter"],
+    where: ["value"],
     shape: "none",
-    filter: pending("src/match-translation.ts"),
+    filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$rand' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rand' is not valid in a $setWindowFields output position — see its 'where'."),

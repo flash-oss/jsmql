@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: productions state which comparison folds them, and the JavaScript they must refuse
+
+`composedInto` had been a guess. Each owner set is now measured: every literal kind was
+compiled against all eight comparisons and the result checked for a `$expr` wrapper, so a row
+names only the operators that really fold it. The results are not uniform — a number or a
+string folds under all six of `===`, `!==`, `>`, `>=`, `<`, `<=`; a boolean and an ObjectId
+only under the two equality forms; `null` also under `==` and `!=`, which fold *nothing else*
+natively (`$.a == 1` is a `$expr`). A regex literal folds under no comparison at all but does
+under `methodCall` — `$.name.match(/^a/i)` → `{name:/^a/i}` — and so does an array literal,
+through `.includes`.
+
+Two rows were hiding native query forms behind a `composedInto` whose named owner never
+consumed them. `$.tags.includes("vip")` → `{tags:"vip"}` and `$sampleRate(0.1)` →
+`{"$sampleRate":0.1}` both render alone, so `methodCall` and `operatorCall` are owners, not
+composed parts, and their `where` now lists `"filter"`. The reverse also held:
+`fieldReference` and `objectIdLiteral` claimed `"filter"` while a bare `$.a` produces
+`{"$expr":{"$and":[…truthiness…]}}`, so they drop it. `undefinedLiteral` had a permanent
+refusal for a form that is indexable — `$.a === undefined` → `{a:{$exists:false}}`.
+
+Three rows carried a precedence and a fixity for a level they are not on: `operatorCall`,
+`namespacedCall` and `typeCast` are parsed by `parsePrimary`, one below the postfix level, and
+have no left operand. And the JavaScript-conformance refusals are now stated where a parser
+can read them: `noMixWith` on `nullishCoalescing` and `exponentiation`, `neverAWriteTarget` on
+`optionalMemberAccess` — `$.a ?? $.b || $.c`, `typeof $.a ** $.b` and `$.a?.b = 1` are all
+accepted today and all `SyntaxError` under `node --check`. On the operator side, `$rand`
+claimed a native query rendering that mongod rejects outright (*"unknown operator: $rand"*),
+and `$size` claimed one it never had — `{ tags: $size(3) }` is *"'$size' expects an array, but
+got a number."* Both are `viaFallback` now, and `$eq` points at the object-literal passthrough
+in [src/index.ts](src/index.ts), which is where its query form actually comes from.
+
+---
+
 ## 2026-08-24 — fix: the JavaScript name rows now agree with the compiler on receiver, result and arity
 
 The 162 remaining `name` rows had their `on`, `returns`, `where`, argument rule and `pending`
