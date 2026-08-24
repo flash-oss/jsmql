@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-24 — fix: the MongoDB operator rows now state what the compiler enforces
+
+Every `mongo` row's shape and per-cell arity is regenerated from the rules the compiler
+actually applies ([src/operators.ts](src/operators.ts), [src/stages.ts](src/stages.ts)) plus
+what a live mongod accepts. The rows had been generated from the vendored YAML's `type:`
+block, which is not an argument list, so seven rows demanded a key the server refuses —
+`{$filter:{input:"$a",resolvesToArray:["$a"],cond:true}}` → *"Unrecognized parameter to
+$filter: resolvesToArray"* — and `$reduce` listed `this` and `value`, which are the variables
+its `in` expression may read, not arguments it takes.
+
+Three classes of arity were wrong in ways with different consequences. Twenty-nine fixed
+arities had collapsed to `atLeast: 1`, so `$divide($.a)` would have been accepted and
+`{$divide:["$a"]}` emitted, which mongod refuses. Nine accumulators claimed the variadic
+expression rule inside a `$group` slot, where `{$group:{v:{$avg:["$a","$b"]}}}` is *"The $avg
+accumulator is a unary operator"* — but that unary rule holds only for operand-list shapes:
+an object-bodied accumulator takes a positional call there, `$group({_id:"$d", v: $top($.score,
+{score:-1})})`, so the two are now separate. And the six comparisons' `aggOnly` flag is gone:
+it meant "this count applies only as an expression", which the per-position cells say
+directly — `expr` takes two operands, `filter` takes one, because `{ age: $gt(18) }` is a
+query.
+
+`BodyRule.positional` pins JSMQL's own key order against the YAML's. Thirteen rows had
+adopted the YAML's, and that failure is silent: `$top($.score, { score: -1 })` stays
+`{ output, sortBy }`, where the YAML order emits a document that runs and answers a different
+question. The object-shaped rows now share one `objectBody` renderer that reads its key order
+back through `ExprIn.keys`, because the per-row emitter read `args[0]` alone and dropped every
+later argument — `$dateTrunc($.t, "day")` would have lost `"day"`. Also landed from server
+probes: `$top` and `$topN` gain the `window` position they were refusing, `$shift` stops
+requiring its optional `default`, `$documents` and `$changeStreamSplitLargeEvent` add
+`$lookup` and `$unionWith` to `forbiddenIn`, `$rankFusion` and `$scoreFusion` become
+first-stage-only with their nested `input.pipelines.*`, and the six stages `jsmql.update`
+whitelists finally carry `only: ["update"]`. The four named enum references are resolved to
+their member lists, except `regexFlags`, which is a set of characters rather than a list of
+values and so has its own field.
+
+---
+
 ## 2026-08-24 — refactor: one registry cell per position, and the nine facts that had nowhere to go
 
 Eight audits read the JSMQL that [test/](test/) writes and [docs/LANGUAGE.md](docs/LANGUAGE.md)

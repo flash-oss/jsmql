@@ -48,7 +48,22 @@ export type OperatorCategory =
   | "type"
   | "variable"
   | "window";
-export type ArgType = "number" | "string" | "int" | "date" | "bool" | "object" | "array";
+/**
+ * A checkable argument type. Verbatim from what src/operators.ts enforces —
+ * `int-or-long` and `number-or-date` are single checks there, not unions of two,
+ * and collapsing them would state a narrower rule than the compiler applies.
+ */
+export type ArgType =
+  | "number"
+  | "string"
+  | "int"
+  | "int-or-long"
+  | "number-or-date"
+  | "date"
+  | "timestamp"
+  | "bool"
+  | "object"
+  | "array";
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 1. LEXICAL — the tokens the lexer can produce, and the nodes the parser builds
@@ -355,7 +370,17 @@ export type BodyRule = {
   optional: readonly string[];
   /** false = extra keys pass through (HR2 passthrough). */
   closed: boolean;
+  /** A key whose literal value must be one of a closed list. */
   enums?: Readonly<Record<string, readonly string[]>>;
+  /**
+   * A key whose literal value is a STRING OF FLAGS, each character of which must
+   * be in the given set. Not an `enums` entry: the value is not one of a list,
+   * it is any combination of the characters. `$regexMatch`'s `options` accepts
+   * "imxs" and refuses a JavaScript "g" or "y".
+   */
+  charSets?: Readonly<Record<string, string>>;
+  /** Keys whose literal value is compared case-insensitively — `startOfWeek`. */
+  caseInsensitiveKeys?: readonly string[];
   keyTypes?: Readonly<Record<string, ArgType>>;
   /** Keys whose value must be a compile-time constant. */
   constantKeys?: readonly string[];
@@ -393,6 +418,8 @@ export type FilterIn = {
   /** The receiver as a field path ("a.b.c"). Present only when it IS one. */
   path: string;
   args: readonly Expr[];
+  /** This entry's `shape.positional` key order, empty when it has none. */
+  keys: readonly string[];
   /** A callback body as a query document: `d => d.n > 1` → `{ n: { $gt: 1 } }`. */
   predicate: (cb: Expr) => QueryDoc | null;
   /** An argument's compile-time value, or null when it is not constant. */
@@ -405,6 +432,8 @@ export type ExprIn = {
   /** The receiver, ALREADY lowered. Absent for a namespace receiver. */
   recv: unknown;
   args: readonly Expr[];
+  /** See FilterIn.keys. */
+  keys: readonly string[];
   gen: (e: Expr) => unknown;
   /** A callback as `{ as, in }` with the parameter bound as `$$name`. */
   iteratee: (cb?: Expr) => { as: string; in: unknown };
@@ -426,7 +455,13 @@ export type StageIn = {
   fresh: (hint: string) => [string, string];
 };
 
-export type GroupIn = { name: string; args: readonly Expr[]; gen: (e: Expr) => unknown };
+export type GroupIn = {
+  name: string;
+  args: readonly Expr[];
+  /** See FilterIn.keys. */
+  keys: readonly string[];
+  gen: (e: Expr) => unknown;
+};
 
 export type SugarIn = {
   /** This entry's own key. See FilterIn.name. */
@@ -691,6 +726,28 @@ export const op = <const W extends readonly Position[]>(e: {
     stream: listed("stream") ? { args: stageArity, emit: asStage } : unsupported(why),
     statement: listed("statement") ? { args: stageArity, emit: asStage } : unsupported(why),
   } as MongoOpParts<W>;
+};
+
+/**
+ * The rendering every OBJECT-SHAPED operator shares.
+ *
+ * One argument is the object-literal call and passes straight through. Two or
+ * more is a POSITIONAL call, zipped onto the key order the entry already states
+ * in `shape.positional` and handed back through `keys` — so the order is written
+ * once per row, not twice:
+ *   $dateTrunc({ date: $.t, unit: "day" })  → { $dateTrunc: { date: "$t", unit: "day" } }
+ *   $dateTrunc($.t, "day")                  → the same document
+ * The previous per-row emitter read `args[0]` alone and dropped "day".
+ */
+export const objectBody = (input: {
+  name: string;
+  args: readonly Expr[];
+  keys: readonly string[];
+  gen: (e: Expr) => unknown;
+}): unknown => {
+  const { name, args, keys, gen } = input;
+  if (args.length <= 1 || keys.length === 0) return { [name]: gen(args[0]) };
+  return { [name]: Object.fromEntries(args.map((a, i) => [keys[i], gen(a)])) };
 };
 
 export type Operand = { path: string } | { lowered: unknown };
