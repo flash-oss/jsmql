@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-26 — feat: phase 3 begins — the desugar pass, and how a rewrite is tested
+
+`src/compiler/passes/desugar.ts` rewrites a sugar into the construct it means, so phases 4 and 5
+see fewer shapes — and a shape they never see is one they cannot mishandle. That is the whole
+argument for the pass: sugar recognised DURING lowering must be recognised by every loop that
+lowers, and a loop that does not know a form mis-lowers it silently.
+
+**A rewrite is tested against the tree its explicit form parses to, not against a tree written by
+hand.** `$.a += 1` and `$.a = $.a + 1` must produce the identical AST, and the table of such pairs
+doubles as the documentation of what each sugar means. A rule cannot pass by building something
+merely plausible. Fifteen pairs, all identical, including the cases that look like they might not
+be: a dotted path writes back to the same path, string concatenation falls out of the ordinary
+`+` once the compound form is gone, and the same rewrite serves a `let` binding whose slot is not
+resolved until much later.
+
+The two properties the sugar audits proved necessary are both in the driver. The rules run in a
+FIXED ORDER, because twelve pairs of them match one input and reversing either turns a working
+query into an error. And the pass REPEATS until a whole round changes nothing, because a rewrite
+can produce more sugar — `$$ = $$.reduce((a, d) => d.ok ? a.concat(d.items) : a, [])` becomes
+`$$ = $$.filter(d => d.ok); $ = $.items;`, which is still two sugars. Identity is the test for
+settling: the walker returns the same object when no rule fired. Failing to settle after 24 rounds
+is reported as a bug in the rule table rather than in the input, because that is what it is.
+
+Two guards run BEFORE their rewrite, and the order is not cosmetic. `$ += 1` is refused today with
+*"Cannot use compound assignment on bare '$'"*, while `$ = $ + 1` compiles cleanly to
+`[{"$replaceWith":{"$add":["$$ROOT",1]}}]`. Rewriting first would silently turn the first into the
+second and lose the message.
+
+The walker is REFLECTIVE, and deliberately so. The tree has 35 node types and a hand-written
+switch over them compiles fine while skipping whichever one a later commit adds — exactly the
+failure that let the hand-written `NodeName` drift from the shapes it described. Walking own
+properties cannot skip a node because it never names one, which is why a sugar buried inside a
+callback, inside an object literal, inside a stage body is rewritten with no rule knowing it is
+there.
+
+---
+
 ## 2026-08-25 — feat: a row says what its callback's parameters bind
 
 One written shape means three different things and only the NAME says which:
