@@ -7,7 +7,7 @@
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
-import type { Family, On, Position } from "../registry/vocabulary.ts";
+import type { Family, IterateeSlots, On, Position } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
 /** Every row, by name. Null-prototype: `toString` and `valueOf` are real rows. */
@@ -73,6 +73,33 @@ export function immutableTwinOf(name: string): string | undefined {
 export function arrayLiteralOrderOf(name: string): "receiver, then arguments" | "arguments, then receiver" | undefined {
   return (row(name) as { asArrayLiteral?: "receiver, then arguments" | "arguments, then receiver" } | undefined)
     ?.asArrayLiteral;
+}
+
+/**
+ * The slot layout for `name` on `family`: which argument slots stand in for an
+ * arrow and with which spellings, or `{ arrowOnly }` when none does.
+ */
+export function iterateeSlotsOf(name: string, family: Family): IterateeSlots | undefined {
+  const decl = (row(name) as { iterateeSlots?: Readonly<Partial<Record<Family, IterateeSlots>>> } | undefined)
+    ?.iterateeSlots;
+  return decl?.[family];
+}
+
+/**
+ * The receiver family a name is called on, as far as the SOURCE shows it.
+ *
+ * Three cases, and no type inference: a stream is a stream, a receiver that names
+ * a static namespace is that namespace, and anything else is the one value family
+ * the row lists. Enough for a rewrite, because a receiver that turns out not to be
+ * that family is refused by the row's own receiver gate either way.
+ */
+export function receiverFamily(receiverName: string | null, onStream: boolean, name: string): Family | undefined {
+  if (onStream) return "stream";
+  const fams = families(row(name)?.on);
+  if (fams === undefined || fams === "any") return undefined;
+  if (receiverName !== null && fams.includes(receiverName as Family)) return receiverName as Family;
+  const values = fams.filter((f) => FIELD_FAMILIES.includes(f));
+  return values.length === 1 ? values[0] : undefined;
 }
 
 /** The positions a name is legal in, or undefined when there is no such name. */

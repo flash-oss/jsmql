@@ -51,6 +51,30 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: an iteratee shorthand becomes the arrow it means
+
+`$.items.filter({ active: true })` is now rewritten to `$.items.filter(x => x.active === true)`
+before anything lowers it, and the same for a property path, a path/value pair, and an
+omitted iteratee. The pass reads `iterateeSlots` and never the argument's shape, so
+`$.items.toSorted({ rank: 1 })` — where the same object is a DIRECTION — is left alone.
+
+It is a fix, not a tidy-up. Two spellings of one meaning diverged in filter position:
+`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` and
+`$.items.some({ active: true })` an `$expr` `$anyElementTrue`, which cannot use an index and,
+on a document whose `items` is a string, fails the query where `$elemMatch` returns the
+answer. One shape reaches the lowering now, so the divergence cannot arise.
+
+A bare callable is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
+unapplied and accepted as `x => Math.asinh(x)`, so rewriting it would WIDEN the language;
+which callables may be passed bare belongs to the row that states it. The synthesised
+parameter steps aside from any name the spliced-in values mention, so
+`$.items.filter({ a: x })` becomes `x2 => x2.a === x` and not a silent capture.
+
+Every rewrite is tested against the tree its arrow spelling parses to, including the three
+shapes that look like a matcher and are not: a computed key, a spread, and an empty object.
+
+---
+
 ## 2026-08-26 — feat: a row says which argument slots stand in for an arrow
 
 A higher-order name takes its iteratee in more than one spelling — `$.rows.uniqBy("id")`,

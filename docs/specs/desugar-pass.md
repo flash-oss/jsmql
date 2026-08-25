@@ -43,6 +43,7 @@ recognises, in what order, and the constraints that order must respect.
 | field path | `$.a.b` | one `FieldRef` holding `a.b` |
 | mutator with a twin | `$.items.sort();` | `$.items = $.items.toSorted();` |
 | mutator as a literal | `$.items.push(9);` | `$.items = [...$.items, 9];` |
+| iteratee shorthand | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 
 ## Position, and why the pass needs it
 
@@ -98,6 +99,37 @@ The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)` an
 `$.items.filter(p).sort()` have no destination and are not statements at all.
 Declining a non-path receiver is also what keeps `$$.push(…)` (`$unionWith`) and
 `$$.sort(…)` (`$sort`) out of a rule meant for fields.
+
+## The iteratee shorthands
+
+A shorthand is a shorter spelling of an arrow, so rewriting it is the plainest
+sugar the pass has. Doing it here rather than inside each lowering is what makes
+the spellings agree — and today they do not:
+
+```
+$.items.some(x => x.active === true)  →  {"items":{"$elemMatch":{"active":true}}}
+$.items.some({ active: true })        →  {"$expr":{"$anyElementTrue":{"$map":…}}}
+```
+
+Same meaning. On a document whose `items` is a string the second fails the query
+outright while the first answers it, and the second cannot use an index either.
+Rewriting first leaves one shape to lower, so the divergence cannot arise.
+
+Which slots may be rewritten is stated by `iterateeSlots` on the row and is never
+read off the argument, because three other kinds of slot wear the same spellings:
+
+| Spelling | As an iteratee | As something else |
+|---|---|---|
+| `"f"` | `$.items.map("f")` → pluck | `$.items.toSorted("f")` → a sort KEY |
+| `{f: 1}` | `$.items.filter({f: 1})` → a matcher | `$.items.toSorted({f: 1})` → a DIRECTION |
+| `["a", "b"]` | `$.items.find(["a", "b"])` → a path/value pair | `$.items.toSorted(["a", "b"])` → two sort keys |
+
+`bareCallable` is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
+unapplied and accepted as `x => Math.asinh(x)`, so a rewrite would widen the
+language — which callables may be passed bare is the row's call, in `asReference`.
+
+The synthesised parameter cannot capture: it steps aside from any name the values
+spliced into the body mention. See `freshParam`.
 
 ## Order constraints
 

@@ -52,6 +52,18 @@ const EQUIVALENT: [string, string][] = [
   // the same rewrite reached through the other two statement spellings
   ["$.a = 1; $.items.sort();", "$.a = 1; $.items = $.items.toSorted();"],
   ["[$match($.x > 1), $.items.sort()]", "[$match($.x > 1), $.items = $.items.toSorted()]"],
+  // an iteratee shorthand is the shortest sugar there is: a spelling of an arrow
+  ['$.items.map("name")', "$.items.map(x => x.name)"],
+  ['$.items.map("a.b")', "$.items.map(x => x.a.b)"],
+  ["$.items.filter({ active: true })", "$.items.filter(x => x.active === true)"],
+  ["$.items.filter({ a: 1, b: 2, c: 3 })", "$.items.filter(x => x.a === 1 && x.b === 2 && x.c === 3)"],
+  ['$.items.filter({ "a.b": 1 })', "$.items.filter(x => x.a.b === 1)"],
+  ['$.items.filter(["active", true])', "$.items.filter(x => x.active === true)"],
+  ['$.items.filter(["a.b", 1])', "$.items.filter(x => x.a.b === 1)"],
+  ["$.items.countBy()", "$.items.countBy(x => x)"],
+  ['$.items.differenceBy($.other, "id")', "$.items.differenceBy($.other, x => x.id)"],
+  ['$$ = $$.filter({ cat: "a" });', '$$ = $$.filter(x => x.cat === "a");'],
+  ['$$ = $$.groupBy("k");', "$$ = $$.groupBy(x => x.k);"],
 ];
 
 describe("compiler/passes/desugar — a sugar becomes the source it means", () => {
@@ -241,5 +253,75 @@ describe("compiler/passes/position — the position each node stands in", () => 
     // one stage, it does not turn them into expressions.
     expect(at("$.a = 1;", "statement")).toEqual(["AssignExpr", "UpdateFilter"]);
     expect(at("delete $.a;", "statement")).toEqual(["DeleteStmt", "UpdateFilter"]);
+  });
+});
+
+describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW says so", () => {
+  /** What the first (or given) argument became. */
+  const arg = (src: string, slot = 0): string => {
+    const t = desugar(parse(src)) as {
+      type: string;
+      args?: { type: string }[];
+      ops?: { value: { args: { type: string }[] } }[];
+    };
+    const call = t.type === "MethodCall" ? t : (t.ops?.[0].value as { args: { type: string }[] });
+    return call.args?.[slot]?.type ?? "absent";
+  };
+
+  it("rewrites a shorthand in a slot the row declares", () => {
+    expect(arg('$.items.map("name")')).toBe("Lambda");
+    expect(arg("$.items.filter({ active: true })")).toBe("Lambda");
+    expect(arg('$.items.filter(["active", true])')).toBe("Lambda");
+    expect(arg('$.items.differenceBy($.other, "id")', 1)).toBe("Lambda");
+  });
+
+  it("leaves a sort SPEC alone, which wears the same three spellings", () => {
+    // `{f: 1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`, and
+    // `["a", "b"]` is a path/value pair to one and two sort keys to the other.
+    expect(arg('$.items.toSorted("name")')).toBe("StringLiteral");
+    expect(arg("$.items.toSorted({ rank: 1 })")).toBe("ObjectLiteral");
+    expect(arg('$.items.toSorted(["a", "b"])')).toBe("ArrayLiteral");
+    expect(arg('$.user.pick(["a", "b"])')).toBe("ArrayLiteral");
+  });
+
+  it("leaves the one spelling that is a stage body alone", () => {
+    // `$$.groupBy({ … })` is a raw `$group` document; its other spellings are not.
+    expect(arg("$$ = $$.groupBy({ _id: $.k, n: $sum(1) });")).toBe("ObjectLiteral");
+    expect(arg('$$ = $$.groupBy("k");')).toBe("Lambda");
+  });
+
+  it("leaves a slot the row declares arrow-only alone", () => {
+    expect(arg('$.o.mapValues("f")')).toBe("StringLiteral");
+    expect(arg("$.items.reduce((a, v) => a + v, 0)")).toBe("Lambda");
+    // `Object.groupBy(collection, discriminator)` puts the collection FIRST, so a
+    // layout keyed by position rather than by receiver would rewrite the wrong slot.
+    expect(arg('Object.groupBy($.items, ["a", 1])')).toBe("FieldRef");
+    expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");
+  });
+
+  it("leaves a bare callable alone, because rewriting it would WIDEN the language", () => {
+    // `$.items.map(Math.asinh)` is refused unapplied and accepted as
+    // `x => Math.asinh(x)`. Which callables may be passed bare is the row's call.
+    expect(arg("$.items.map(Number)")).toBe("Ident");
+    expect(arg("$.items.map(Math.floor)")).toBe("MemberAccess");
+  });
+
+  it("does not capture a name the rewritten value mentions", () => {
+    expect(shape("let x = 1; $.items.filter({ a: x });")).toBe(shape("let x = 1; $.items.filter(x2 => x2.a === x);"));
+    // Nothing claims `x`, so the ordinary case keeps the plain name.
+    expect(shape('$.items.filter({ a: "x" });')).toBe(shape('$.items.filter(x => x.a === "x");'));
+  });
+
+  it("declines a matcher whose key is not written out", () => {
+    // A computed key or a spread is not a matcher: there is no path to compare.
+    expect(arg("$.items.filter({ [$.k]: 1 })")).toBe("ObjectLiteral");
+    expect(arg("$.items.filter({ ...$.spec })")).toBe("ObjectLiteral");
+    expect(arg("$.items.filter({})")).toBe("ObjectLiteral");
+  });
+
+  it("declines an array that is not a path/value pair", () => {
+    expect(arg("$.items.filter([1, 2])")).toBe("ArrayLiteral");
+    expect(arg('$.items.filter(["a", 1, 2])')).toBe("ArrayLiteral");
+    expect(arg('$.items.filter(["a"])')).toBe("ArrayLiteral");
   });
 });

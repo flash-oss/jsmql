@@ -24,7 +24,8 @@
 
 import type { AssignOp, BinaryOp, Expr, Program } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
-import { arrayLiteralOrderOf, immutableTwinOf, isFieldProperty } from "../rows.ts";
+import { arrayLiteralOrderOf, immutableTwinOf, isFieldProperty, iterateeSlotsOf, receiverFamily } from "../rows.ts";
+import { freshParam } from "./fresh.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
 import { mapTreeIn } from "./walk.ts";
@@ -261,6 +262,125 @@ const mutatorSpread: Rule = {
   },
 };
 
+// ── the iteratee shorthands ──────────────────────────────────────────────────
+//
+// A shorthand is a shorter spelling of an arrow, so this is the plainest kind of
+// sugar there is. Doing it here rather than inside each lowering is what makes
+// the spellings agree, and today they do not:
+//
+//   $.items.some(x => x.active === true)  → {"items":{"$elemMatch":{"active":true}}}
+//   $.items.some({ active: true })        → {"$expr":{"$anyElementTrue":{"$map":…}}}
+//
+// Same meaning, and on a document whose `items` is a string the second FAILS the
+// query while the first answers it. Rewriting first leaves one shape to lower.
+//
+// WHICH slots may be rewritten is stated by the row and never read off the
+// argument: `{f:1}` is a matcher to `.filter()` and a DIRECTION to `.toSorted()`.
+// See `iterateeSlots` in names.ts.
+
+/** `x` → `x.a.b`, one MemberAccess per dotted segment. */
+function pathOn(param: string, path: string, pos: number): object {
+  let out: object = { type: "Ident", name: param, pos };
+  for (const segment of path.split(".")) {
+    out = { type: "MemberAccess", object: out, name: segment, optional: false, pos };
+  }
+  return out;
+}
+
+const strictEq = (left: object, right: object, pos: number): object => ({
+  type: "BinaryExpr",
+  op: "===",
+  left,
+  right,
+  pos,
+});
+
+/** The static key an object entry was written with, or null if it was computed. */
+function writtenKey(entry: object): string | null {
+  const e = entry as { type: string; key?: { kind?: string; name?: string } };
+  if (e.type !== "KeyValueEntry" || e.key?.kind !== "static") return null;
+  return typeof e.key.name === "string" ? e.key.name : null;
+}
+
+/**
+ * The arrow a short spelling means, or undefined when this argument is not one of
+ * the spellings this slot accepts.
+ *
+ * `bareCallable` is deliberately absent. `$.items.map(Math.asinh)` is REFUSED
+ * unapplied and accepted as `x => Math.asinh(x)`, so rewriting it would widen the
+ * language — a decision for the row that states which callables may be passed
+ * bare, not for a rewrite that cannot see it.
+ */
+function asArrow(arg: object | undefined, forms: readonly string[], pos: number): object | undefined {
+  const accepts = (form: string): boolean => forms.includes(form);
+
+  if (arg === undefined) {
+    if (!accepts("omitted")) return undefined;
+    const param = "x";
+    return { type: "Lambda", params: [param], body: { type: "Ident", name: param, pos }, pos };
+  }
+
+  const a = arg as { type: string; value?: unknown; entries?: readonly object[]; elements?: readonly object[] };
+  // The parameter must not capture a name the spliced-in values mention.
+  const param = freshParam("x", arg);
+
+  if (a.type === "StringLiteral" && accepts("propertyPath") && typeof a.value === "string") {
+    return { type: "Lambda", params: [param], body: pathOn(param, a.value, pos), pos };
+  }
+
+  if (a.type === "ObjectLiteral" && accepts("matchesObject") && a.entries !== undefined) {
+    if (a.entries.length === 0) return undefined;
+    const tests: object[] = [];
+    for (const entry of a.entries) {
+      const key = writtenKey(entry);
+      if (key === null) return undefined; // a spread or a computed key is not a matcher
+      tests.push(strictEq(pathOn(param, key, pos), (entry as { value: object }).value, pos));
+    }
+    // Left-associated, which is how `a === 1 && b === 2 && c === 3` parses.
+    const body = tests.reduce((left, right) => ({ type: "BinaryExpr", op: "&&", left, right, pos }));
+    return { type: "Lambda", params: [param], body, pos };
+  }
+
+  if (a.type === "ArrayLiteral" && accepts("matchesPropertyPair") && a.elements?.length === 2) {
+    const [path, value] = a.elements;
+    const p = path as { type: string; value?: unknown };
+    if (p.type !== "StringLiteral" || typeof p.value !== "string") return undefined;
+    return { type: "Lambda", params: [param], body: strictEq(pathOn(param, p.value, pos), value, pos), pos };
+  }
+
+  return undefined;
+}
+
+const iterateeShorthand: Rule = {
+  name: "iterateeShorthand",
+  apply: (node, where) => {
+    const n = node as Node;
+    if (n.type !== "MethodCall" || typeof n.name !== "string") return node;
+
+    const recv = n.object as { type?: string; name?: string } | undefined;
+    const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
+    const family = receiverFamily(named, where.at === "stream", n.name);
+    if (family === undefined) return node;
+
+    const layout = iterateeSlotsOf(n.name, family);
+    if (layout === undefined || "arrowOnly" in layout) return node;
+
+    const args = n.args as readonly object[];
+    const next = [...args];
+    let changed = false;
+    for (const [key, forms] of Object.entries(layout)) {
+      const slot = Number(key);
+      // An absent slot is the `omitted` case, and only when it is the next one.
+      if (slot > args.length) continue;
+      const arrow = asArrow(args[slot], forms as readonly string[], n.pos);
+      if (arrow === undefined) continue;
+      next[slot] = arrow;
+      changed = true;
+    }
+    return changed ? ({ ...n, args: next } as object) : node;
+  },
+};
+
 /**
  * Every rule, in the order the audits established. Order is load-bearing where
  * two rules match one input; where they cannot collide it is declaration order
@@ -280,6 +400,9 @@ export const RULES: readonly Rule[] = [
   // or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
+  // Independent of every rule above: it rewrites an ARGUMENT of a call none of
+  // them matches, and the arrow it builds is not a shape any of them looks for.
+  iterateeShorthand,
 ];
 
 // ── the driver ───────────────────────────────────────────────────────────────
