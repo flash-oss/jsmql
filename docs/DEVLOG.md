@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-26 — fix: the three callbacks `params` had missed, and a kind for a declared variable
+
+A coverage sweep probed all 504 rows with more than twenty lambda shapes each and found exactly
+three names that take a callback and had no `params`: `aggregate`, `Array.from`, and `$let`. No row
+claimed one falsely.
+
+`aggregate` binds `(value, index, collection)`, and its middle slot is unusual enough to be worth
+recording: the index EXISTS but is refused if read — *"'i' … has no meaning inside
+'.aggregate((d, i, …) => …)' — MongoDB streams have no per-doc index. Keep it unused (e.g.
+'(d, _i, coll)') only to reach the 3rd 'collection' parameter."* `Array.from` binds
+`(value, index)` where the value is always null, which is why the `{ length: n }` form exists.
+
+`$let` needed a new `ParamKind`. Its parameters bind variables DECLARED IN A SIBLING ARGUMENT —
+`$let({ x: 1, y: 2 }, (p, q) => p + q)` binds `p` to `x` — so none of `value`, `index`, `key`,
+`accumulator` or `collection` describes them. Writing `["value", "value"]` would be exactly the
+class of lie the field exists to remove, so `"binding"` is the honest answer, with `paramsRepeat`
+because the arity comes from that sibling.
+
+The sweep also settled a question worth writing down: the `$op(...)` operator rows do NOT need
+`params`, and not because they were overlooked. `$map`, `$filter`, `$reduce`, `$sortArray`,
+`$switch`, `$function` and `$accumulator` accept no lambda at all — a raw operator is the MongoDB
+shape spelled positionally, so its variable is a NAME STRING (`$map($.a, "x", …)`) and its body is
+an expression over MongoDB's own `$$this` / `$$value`. The user has already spelled the binding
+out, so there is nothing to disambiguate, which is the whole purpose of the field. `$let` is the
+single exception.
+
+`.filter` gains the per-position form: three parameters as a value, exactly one as a chain link,
+where `$$ = $$.filter((d, i) => …)` is *"must take exactly one parameter"*. `find` was checked for
+the same split and does not need it — it accepts three on a foreign receiver and is refused as a
+chain link outright.
+
+---
+
 ## 2026-08-26 — chore: the `params` field validated, and one audit deleted for never firing
 
 Two validation passes over the work just committed.

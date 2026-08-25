@@ -314,7 +314,15 @@ export type ParamKind =
   /** An object entry's key. */
   | "key"
   /** The whole collection being walked. */
-  | "collection";
+  | "collection"
+  /**
+   * A variable DECLARED in a sibling argument, not drawn from a receiver:
+   *   $let({ x: 1, y: 2 }, (p, q) => p + q)   p binds x, q binds y
+   * Its arity comes from that sibling, so a row using it also sets
+   * `paramsRepeat`. Calling this `"value"` would be a lie of the same kind the
+   * field exists to remove — the parameter is a binding, not an element.
+   */
+  | "binding";
 
 /**
  * A callback's parameter list, in order. Needed because one written shape means

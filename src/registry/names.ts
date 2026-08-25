@@ -158,6 +158,10 @@ type MongoSpec<
   subPipelineFields?: readonly string[];
   /** See MongoOpParts.minVersion. */
   minVersion?: string;
+  /** What this operator's callback parameters bind. See `CallbackParams`. */
+  params?: CallbackParams;
+  /** See NameSpec.paramsRepeat. */
+  paramsRepeat?: true;
   /**
    * true when this stage REPLACES the document, so nothing carried in a field
    * survives it. MEASURED — the six that do, and the near neighbours that do not:
@@ -2526,6 +2530,8 @@ export const NAMES = {
   $let: mongo({
     doc: "Defines variables for use within the scope of a subexpression and returns the result.",
     category: "variable",
+    params: ["binding"],
+    paramsRepeat: true,
     where: ["value"],
     shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
     filter: unsupported("'$let' is not valid in filter position — see its 'where'."),
@@ -4448,7 +4454,9 @@ export const NAMES = {
     doc: "'.filter()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    params: ["value", "index", "collection"],
+    // MEASURED: three parameters as a value, exactly one as a chain link —
+    // `$$ = $$.filter((d, i) => …)` is "must take exactly one parameter".
+    params: { value: ["value", "index", "collection"], stream: ["value"] },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
@@ -7548,6 +7556,7 @@ export const NAMES = {
     doc: "'.aggregate(pipeline)' — splices raw stages into the chain. Takes an array or a block body.",
     call: true,
     on: "stream",
+    params: ["value", "index", "collection"],
     returns: "stream",
     where: ["stream"],
     blockBody: "stages",
@@ -8506,6 +8515,7 @@ export const NAMES = {
     doc: "An array of `n` indices, from `{ length: n }`. No other form is supported.",
     call: true,
     on: "any",
+    params: ["value", "index"],
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
