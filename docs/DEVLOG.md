@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: a row says what its callback's parameters bind
+
+One written shape means three different things and only the NAME says which:
+
+```
+$.a.map((x, i) => …)          x is the element,     i is the index
+$.a.reduce((x, i) => …, 0)    x is the accumulator, i is the element
+$.o.mapValues((x, i) => …)    x is the value,       i is the key
+```
+
+Nothing in the registry said it, so a compiler had to keep a hardcoded list of names — the one
+thing the registry exists to remove. `params` now carries the list, on 39 rows in 8 groups.
+
+The vocabulary is not invented here. `Array.prototype.map` defines `(value, index, collection)`,
+`Array.prototype.reduce` defines `(accumulator, value, index, collection)`, and lodash's
+`mapValues` defines `(value, key, object)`; a row records the signature its own API already
+publishes. Every arity was then MEASURED against the compiler rather than assumed from the
+signature, which is how the two smallest groups were found: `findIndex` and `findLastIndex` stop
+at the index and take no collection parameter, and the whole lodash `*By` family takes exactly
+one.
+
+Two names need a per-POSITION answer, and both were measured. `toSorted` takes a one-parameter
+KEY function as a value and a two-parameter COMPARATOR as a stream link —
+`$.a.toSorted(d => d.x)` → `{"$sortArray":{"input":"$a","sortBy":{"x":1}}}` while
+`$$ = $$.toSorted(d => d.n)` is *"comparator requires two parameters"*. `sort` splits the same
+way between statement and stream. `zipWith` needs `paramsRepeat`, because it binds one value per
+collection handed in.
+
+---
+
 ## 2026-08-25 — feat: the parser reads the entry form
 
 `parseEntry` completes phase 2. The sugar audit found the gap by trying to use it:

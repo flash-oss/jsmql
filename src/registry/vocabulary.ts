@@ -296,6 +296,44 @@ export type Returns =
   | "unknown"
   | Partial<Record<Family, Kind | "element" | "unknown">>;
 
+/**
+ * What one positional parameter of a callback BINDS.
+ *
+ * The names are JavaScript's and lodash's own, not invented here: `Array.map`
+ * gives `(value, index, collection)`, `Array.reduce` gives
+ * `(accumulator, value, index, collection)`, and lodash's `mapValues` gives
+ * `(value, key, object)`. A row records the list its own API defines.
+ */
+export type ParamKind =
+  /** reduce's running value. Becomes MongoDB's fixed `$$value`. */
+  | "accumulator"
+  /** The element, or an object entry's value. Two of them make a comparator. */
+  | "value"
+  /** The element's position. Referencing it changes what is iterated. */
+  | "index"
+  /** An object entry's key. */
+  | "key"
+  /** The whole collection being walked. */
+  | "collection";
+
+/**
+ * A callback's parameter list, in order. Needed because one written shape means
+ * three different things and only the NAME says which:
+ *   $.a.map((x, i) => …)          x is the element,     i is the index
+ *   $.a.reduce((x, i) => …, 0)    x is the accumulator, i is the element
+ *   $.o.mapValues((x, i) => …)    x is the value,       i is the key
+ * Without this a compiler must keep a hardcoded list of names, which is the one
+ * thing the registry exists to remove.
+ *
+ * PER POSITION where the answer differs. `toSorted` is the measured case: a
+ * one-parameter KEY function as a value, a two-parameter COMPARATOR as a stream
+ * link.
+ *   $.a.toSorted(d => d.x)              → { $sortArray: { sortBy: { x: 1 } } }
+ *   $$ = $$.toSorted((a, b) => a.n - b.n) → [{ $sort: { n: 1 } }]
+ *   $$ = $$.toSorted(d => d.n)          → "comparator requires two parameters"
+ */
+export type CallbackParams = readonly ParamKind[] | Readonly<Partial<Record<Position, readonly ParamKind[]>>>;
+
 /** An argument-count rule. Lives per RENDERER, and per FAMILY within one. */
 export type Arity = {
   /** The human signature, for the error message: "start[, end]". */
