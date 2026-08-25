@@ -143,6 +143,18 @@ type MongoSpec<
   subPipelineFields?: readonly string[];
   /** See MongoOpParts.minVersion. */
   minVersion?: string;
+  /**
+   * true when this stage REPLACES the document, so nothing carried in a field
+   * survives it. MEASURED — the six that do, and the near neighbours that do not:
+   *   let t = $.a; $group({_id:$.k}); $.b = t   → "`t` … can't be read after '$group'"
+   *   let t = $.a; $project({a:1});   $.b = t   → compiles
+   *   let t = $.a; $sort({a:1});      $.b = t   → compiles
+   * Three separate consumers need it: the scope tracker that drops `let`
+   * bindings, the peephole that skips the trailing namespace cleanup, and the
+   * stream-chain form. It was six hardcoded strings in src/pipeline.ts, so all
+   * three read a set no row declared.
+   */
+  replacesDocument?: true;
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
@@ -3194,6 +3206,7 @@ export const NAMES = {
   $bucket: mongo({
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream"],
+    replacesDocument: true,
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
     forbiddenIn: [],
@@ -3209,6 +3222,7 @@ export const NAMES = {
   $bucketAuto: mongo({
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream"],
+    replacesDocument: true,
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
     forbiddenIn: [],
@@ -3321,6 +3335,7 @@ export const NAMES = {
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     where: ["stream"],
+    replacesDocument: true,
     body: pending("src/stage-validation.ts"),
     subPipelineFields: ["*"],
     forbiddenIn: ["$facet"],
@@ -3382,6 +3397,7 @@ export const NAMES = {
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
     where: ["stream"],
+    replacesDocument: true,
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
     forbiddenIn: [],
@@ -3617,6 +3633,7 @@ export const NAMES = {
   $replaceRoot: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream"],
+    replacesDocument: true,
     only: ["update"],
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
@@ -3633,6 +3650,7 @@ export const NAMES = {
   $replaceWith: mongo({
     doc: "Replaces a document with the specified embedded document. The operation replaces all existing fields in the input document, including the _id field.",
     where: ["stream"],
+    replacesDocument: true,
     only: ["update"],
     body: pending("src/stage-validation.ts"),
     subPipelineFields: [],
@@ -7506,11 +7524,11 @@ export const NAMES = {
     call: true,
     on: "Object",
     returns: "object",
-    where: ["value"],
+    where: ["value", "statement"],
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "...sources", atLeast: 1, spread: true }),
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    statement: unsupported("'Object.assign()' produces a value, not a statement."),
+    statement: pending("src/pipeline.ts"),
     group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",

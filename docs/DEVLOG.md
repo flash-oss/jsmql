@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — fix: `Object.assign` at statement position, and the stage fact three readers shared
+
+Two registry gaps found while auditing the language's sugars ahead of the desugar phase.
+
+The `assign` row contradicted itself. Its own doc read "At statement position it writes the
+target" while `where` listed only `"value"` and the `statement` cell was a refusal — yet
+`Object.assign($.profile, { a: 1 });` compiles to
+`[{"$set":{"profile":{"$mergeObjects":["$profile",{"a":1}]}}}]`. I wrote both halves in the same
+commit, which is the clearest possible demonstration that a doc string is not a check. `where`
+now lists `"statement"` and the cell points at its lowering.
+
+The second gap is a fact three separate readers needed and no row carried. Six stages replace
+the document, so nothing held in a field survives them, and the scope tracker, the peephole that
+skips the trailing namespace cleanup, and the stream-chain form all consulted the same six
+hardcoded strings in [src/pipeline.ts](src/pipeline.ts). `replacesDocument` now states it on
+`$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, `$replaceWith` and `$facet`, measured against
+the compiler in both directions — `let t = $.a; $group({_id:$.k}); $.b = t` is *"`t` … can't be
+read after '$group'"* while the same program with `$project` or `$sort` compiles.
+
+---
+
 ## 2026-08-25 — feat: one Pratt loop replaces the fourteen-method cascade
 
 Phase 2 of [src/compiler/](src/compiler/CLAUDE.md) reads `precedence`,
