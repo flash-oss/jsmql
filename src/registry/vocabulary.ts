@@ -207,6 +207,14 @@ export type ArgShape =
   | "none" //                             ObjectId()
   | "constant" //                         ObjectId("507f…"), new Date("2024-01-01")
   | "dynamic" //                          ObjectId($.id), new Date($.ms)
+  /**
+   * MORE THAN ONE argument, whatever their types. A count, not a type — which is
+   * why it cannot be folded into `dynamic`:
+   *   new Date($.ms)            → { $toDate: "$ms" }
+   *   new Date($.y, $.m, $.d)   → { $dateFromParts: { year, month, day } }
+   * Same name, same receiver, same position; the ARITY picks the operator.
+   */
+  | "multiple"
   | { objectWithKeys: readonly string[] }; // Array.from({ length: n })
 
 /** The type a result has. Not the same set as `Family`. */
@@ -559,7 +567,12 @@ export type Emitter<F extends Family, In, Out> =
    * receiver, same position, three different MQL. Ordered — the first matching
    * row wins — so precedence between `constant` and `dynamic` is visible.
    */
-  | { byArgs: readonly ({ when: ArgShape } & Rule<In, Out>)[] };
+  /**
+   * A row may be `Pending` instead of a rule: the argument shape and the arity
+   * are registry facts, the lowering is code. Without it a new shape had to
+   * invent a placeholder emitter to be written down at all.
+   */
+  | { byArgs: readonly ({ when: ArgShape } & (Rule<In, Out> | Pending))[] };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. THE AGREEMENT RULE — `where` is written by hand and cannot contradict the

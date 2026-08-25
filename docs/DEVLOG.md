@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — fix: `new Date`'s calendar-parts shape, and a spread flag that claimed too much
+
+Two more gaps from the sugar audit, both measured against the compiler.
+
+The `Date` row declared three argument shapes and all three were `exact: 1`, so the form a
+calendar date is actually written in had no row: `new Date($.y, $.m, $.d)` →
+`{"$dateFromParts":{"year":"$y","month":"$m","day":"$d"}}`, and an eighth argument is *"takes at
+most 7 arguments"*. `ArgShape` gains `"multiple"` for it, because the discriminator is the COUNT
+and not the type — `new Date($.ms)` and `new Date($.y, $.m, $.d)` are the same name, the same
+receiver and the same position, and only the arity picks between `$toDate` and `$dateFromParts`.
+`"dynamic"` could not carry both.
+
+Writing that row exposed something the vocabulary made awkward. A `byArgs` row had to hold an
+emitter, so a shape whose lowering has not moved could only be written with a placeholder
+`emit: () => null` — which states something false. A row may now be `Pending` instead: the shape
+and the arity are registry facts, the lowering is code. That is the same split the compiler's
+own README states, applied one level deeper.
+
+`hypot` claimed `spread: true` and refuses one: `Math.hypot(...$.a)` is *"Spread (...) is not
+supported as an argument to .hypot()"* while `Math.max(...$.a)` → `{"$max":"$a"}`. The four names
+that really do accept a spread — `concat`, `min`, `max`, `assign` — now carry the flag and
+nothing else does, so the refusal list stops being hand-maintained.
+
+Also recorded, not fixed: `new Date(...$.a)` is a parse error under the old parser and the new
+one accepts it. The new parser is right — that is valid JavaScript syntax — so the refusal
+belongs in a later phase reading `args.spread`, which is exactly what the flag above is for.
+
+---
+
 ## 2026-08-25 — fix: `Object.assign` at statement position, and the stage fact three readers shared
 
 Two registry gaps found while auditing the language's sugars ahead of the desugar phase.

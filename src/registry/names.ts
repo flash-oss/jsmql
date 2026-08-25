@@ -8133,7 +8133,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+    expr: pending("src/codegen.ts", { sig: "...values", atLeast: 1 }),
     stream: unsupported("'Math.hypot()' produces a value, not a stream of documents."),
     statement: unsupported("'Math.hypot()' produces a value, not a statement."),
     group: unsupported("'Math.hypot()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -8292,6 +8292,13 @@ export const NAMES = {
         { when: "none", args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
         { when: "constant", args: { sig: "iso", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
         { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDate: gen(args[0]) }) },
+        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
+        // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
+        {
+          when: "multiple",
+          args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
+          pending: "src/mql-date.ts",
+        },
       ],
     },
     stream: unsupported("'Date' produces a value, not a stream of documents."),
