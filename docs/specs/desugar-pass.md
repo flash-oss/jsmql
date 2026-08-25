@@ -40,6 +40,64 @@ recognises, in what order, and the constraints that order must respect.
 | union | `$$.push({ … });` | `$unionWith` — [union-stage.md](union-stage.md) |
 | system source stage | `$$.indexStats();` | a diagnostic stage — [system-stages.md](system-stages.md) |
 | guard | `assert(cond, msg);` | a conditional-error `$match` — [assert.md](assert.md) |
+| field path | `$.a.b` | one `FieldRef` holding `a.b` |
+| mutator with a twin | `$.items.sort();` | `$.items = $.items.toSorted();` |
+| mutator as a literal | `$.items.push(9);` | `$.items = [...$.items, 9];` |
+
+## Position, and why the pass needs it
+
+Several forms mean one thing as a **statement** and are refused everywhere else:
+
+```
+$.items.sort();        →  [{ "$set": { "items": { "$sortArray": { "input": "$items", "sortBy": 1 } } } }]
+$.a = $.items.sort()   →  ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'"
+```
+
+One tree shape, two meanings. A rewrite blind to position would turn the second
+into a nested assignment and throw away the message the row carries — so the
+position arrives WITH the node, computed on the way down by `edge` in
+`src/compiler/passes/position.ts` and carried by `mapTreeIn`.
+
+It cannot be a set of nodes looked up by identity: the walk rebuilds a parent as
+soon as one of its children changes, so by the time a rule runs, the object it
+holds is not the object anyone recorded.
+
+A statement stands in one of four places, and the fourth is read off a row:
+
+| Slot | Example |
+|---|---|
+| the program root | `$.items.sort()` |
+| an element of a `;`-separated program | `$.a = 1; $.items.sort();` |
+| an element of a bracketed pipeline | `[$match(…), $.items.sort()]` |
+| an element of a stage's sub-pipeline | `$lookup({ …, pipeline: [$.items.sort()], … })` |
+
+The last one asks the stage's own `subPipelineFields`, so `$facet`'s `["*"]` —
+every key holds a pipeline — needs no clause of its own.
+
+## The statement mutators
+
+A mutator is the one JavaScript shape whose whole meaning is "write this back",
+so the rewrite is a write. Which mutators are rewritten is stated by the row, in
+two fields, and the test for both is the SAME ARGUMENTS:
+
+| Field | Rows | Rewrite |
+|---|---|---|
+| `immutableTwin` | `sort`, `reverse`, `splice` | `$.a = $.a.<twin>(<same args>)` |
+| `asArrayLiteral` | `push`, `unshift` | `$.a = [...$.a, <args>]` or `[<args>, ...$.a]` |
+
+Spread and not `.concat()`, because they are not the same function: `[1].push([2])`
+is `[1, [2]]` and `[1].concat([2])` is `[1, 2]`.
+
+`pop`, `shift`, `fill` and `copyWithin` carry neither field and are lowered
+directly. `.toSpliced(-1, 1)` does compute what `.pop()` does, but from arguments
+the caller never wrote — and re-deriving them spends the receiver-family proof
+the mutator's own row supplies, so the MQL comes out 1.5x the size for `.pop()`
+and 4.4x for `.shift()`.
+
+The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)` and
+`$.items.filter(p).sort()` have no destination and are not statements at all.
+Declining a non-path receiver is also what keeps `$$.push(…)` (`$unionWith`) and
+`$$.sort(…)` (`$sort`) out of a rule meant for fields.
 
 ## Order constraints
 

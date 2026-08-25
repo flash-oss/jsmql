@@ -31,6 +31,39 @@ apart from that trailing comma.
 
 ---
 
+## 2026-08-26 — feat: position travels down the tree, and the statement mutators desugar
+
+Phase 3 could not run on its own. `$.items.sort()` is a write at statement position and a refusal
+anywhere else, and one tree shape with two meanings needs the position — which `mapTree` could not
+supply, because it rebuilds a parent as soon as a child changes and a node recorded beforehand is not
+the node a rule receives. `mapTreeIn` in `src/compiler/passes/walk.ts` carries an inherited value down
+instead, and `src/compiler/passes/position.ts` says what that value becomes on each parent-to-property
+step. The sub-pipeline case reads the stage's own `subPipelineFields`, so `$facet`'s `["*"]` needs no
+clause: `$lookup({ pipeline: [$.items.sort()] })` finds the statement, `$.a = [1, $.items.push(2)]`
+does not.
+
+Three rules landed on top of it. `$.a.b` folds to one `FieldRef` holding `a.b`, and `.length` is the
+one name that declines because its row is the only one READ rather than called on something a field
+can hold — so `$.a.length` stays the size while `$.a.length.b` folds past it into a field really
+called `length`. Then the mutators: `$.items.sort();` becomes `$.items = $.items.toSorted();` and
+`$.items.push(9);` becomes `$.items = [...$.items, 9];`. Spread and not `.concat()`, because
+`[1].push([2])` is `[1, [2]]` and `[1].concat([2])` is `[1, 2]`.
+
+Which mutators rewrite is stated by two new registry fields, `immutableTwin` and `asArrayLiteral`, and
+the test for both is the same arguments. `.pop()` gets neither even though `.toSpliced(-1, 1)` computes
+the same array: those arguments are not the ones the caller wrote, and re-deriving them spends the
+receiver-family proof the row supplies — measured at 1.5x the MQL for `.pop()` and 4.4x for
+`.shift()`. Those four are lowered directly instead. Every rewrite was checked twice: against the tree
+its explicit form parses to, and by running both forms on a live `mongod` and comparing the documents.
+
+That second check found a seventh place where the shipped compiler emits MQL the server refuses.
+`.splice(start, count)` and `.toSpliced(start, count)` both lower to a `$slice` whose third argument is
+`{ $max: [0, …] }`, and MongoDB rejects a third argument of `0` — so both spellings fail on any array
+shorter than `start + count`, including `[1].splice(1, 2)` and every empty array. `.shift()` uses
+`{ $max: [1, …] }` and is correct, so the fix is local to the splice lowering.
+
+---
+
 ## 2026-08-26 — fix: the three callbacks `params` had missed, and a kind for a declared variable
 
 A coverage sweep probed all 504 rows with more than twenty lambda shapes each and found exactly

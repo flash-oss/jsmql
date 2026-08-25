@@ -35,6 +35,21 @@ const EQUIVALENT: [string, string][] = [
   // a block whose only statement is the return
   ["$.items.map(x => { return x * 2 });", "$.items.map(x => x * 2);"],
   ["$.items.filter(x => { return x > 1 });", "$.items.filter(x => x > 1);"],
+  // a mutator whose row names an immutable twin, arguments forwarded untouched
+  ["$.items.sort();", "$.items = $.items.toSorted();"],
+  ["$.items.sort(x => x.n);", "$.items = $.items.toSorted(x => x.n);"],
+  ["$.items.reverse();", "$.items = $.items.toReversed();"],
+  ["$.items.splice(1, 2);", "$.items = $.items.toSpliced(1, 2);"],
+  ["$.items.splice(1, 2, 7, 8);", "$.items = $.items.toSpliced(1, 2, 7, 8);"],
+  ["$.a.b.sort();", "$.a.b = $.a.b.toSorted();"],
+  // a mutator whose immutable spelling is a shape rather than a name
+  ["$.items.push(9);", "$.items = [...$.items, 9];"],
+  ["$.items.push(9, 10);", "$.items = [...$.items, 9, 10];"],
+  ["$.items.unshift(0);", "$.items = [0, ...$.items];"],
+  ["$.items.unshift(0, 1);", "$.items = [0, 1, ...$.items];"],
+  // the same rewrite reached through the other two statement spellings
+  ["$.a = 1; $.items.sort();", "$.a = 1; $.items = $.items.toSorted();"],
+  ["[$match($.x > 1), $.items.sort()]", "[$match($.x > 1), $.items = $.items.toSorted()]"],
 ];
 
 describe("compiler/passes/desugar — a sugar becomes the source it means", () => {
@@ -100,5 +115,67 @@ describe("compiler/passes/desugar — the walker cannot skip a node type", () =>
 
   it("rewrites both sides of a comma-joined write run", () => {
     expect(shape("$.a += 1, $.b++;")).toBe(shape("$.a = $.a + 1, $.b = $.b + 1;"));
+  });
+});
+
+describe("compiler/passes/desugar — a field path is ONE node", () => {
+  /** The path a source spells, or the node type when it did not become one. */
+  const pathOf = (src: string): string => {
+    const node = desugar(parse(src)) as { type: string; path?: string };
+    return node.type === "FieldRef" ? (node.path as string) : node.type;
+  };
+
+  it("folds a dotted read into a single FieldRef", () => {
+    expect(pathOf("$.a.b")).toBe("a.b");
+    expect(pathOf("$.a.b.c.d")).toBe("a.b.c.d");
+    // `?.` and `.` are the same path in MQL: a missing prefix yields missing.
+    expect(pathOf("$.a?.b")).toBe("a.b");
+    // A method NAME with no call behind it is an ordinary field.
+    expect(pathOf("$.a.map")).toBe("a.map");
+  });
+
+  it("leaves `.length` alone, because its row is READ and not called", () => {
+    expect(pathOf("$.a.length")).toBe("MemberAccess");
+    // …but a segment AFTER it makes the whole chain a path again, which is why
+    // the rule collects the chain instead of folding one link at a time.
+    expect(pathOf("$.a.length.b")).toBe("a.length.b");
+  });
+
+  it("folds nothing that is not rooted in the document", () => {
+    expect(pathOf("$.a[0].b")).toBe("MemberAccess");
+    expect(pathOf("$$.a.b")).toBe("MemberAccess");
+    expect(pathOf("$$$.coll.f")).toBe("MemberAccess");
+  });
+});
+
+describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement", () => {
+  /** What the program became, named closely enough to tell a write from a call. */
+  const became = (src: string): string => {
+    const t = desugar(parse(src)) as { type: string; ops?: { value: { type: string } }[] };
+    return t.type === "UpdateFilter" ? `write(${t.ops?.[0].value.type})` : t.type;
+  };
+
+  it("declines a mutator in every position that is not a statement", () => {
+    // The row's own refusal has to survive to phase 5 to be seen at all.
+    expect(became("$.a = $.items.sort()")).toBe("write(MethodCall)");
+    expect(became("$.a = [1, $.items.push(2)]")).toBe("write(ArrayLiteral)");
+  });
+
+  it("declines a receiver MQL cannot write back to", () => {
+    expect(became("$.items[0].push(1);")).toBe("MethodCall");
+    expect(became("$.items.filter(x => x > 1).sort();")).toBe("MethodCall");
+  });
+
+  it("declines the stream, whose `$$.push` and `$$.sort` are other stages", () => {
+    expect(became("$$.push($$$.other);")).toBe("MethodCall");
+    expect(became("$$.sort({ x: 1 });")).toBe("MethodCall");
+  });
+
+  it("declines a mutator with no same-argument immutable spelling", () => {
+    // `.toSpliced(-1, 1)` computes what `.pop()` does, but from arguments the
+    // caller never wrote — so these four are lowered directly instead.
+    for (const src of ["$.items.pop();", "$.items.shift();", "$.items.fill(0);", "$.items.copyWithin(0, 3);"]) {
+      expect(became(src), src).toBe("MethodCall");
+    }
   });
 });

@@ -72,7 +72,7 @@ type RootSpec<W extends readonly Position[]> = {
   window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
 };
 
-type NameSpec<W extends readonly Position[], O extends On> = {
+type NameSpec<W extends readonly Position[], O extends On, T extends string = never> = {
   doc: string;
   /** true = called (`filter(…)`); false = read (`length`). */
   call: boolean;
@@ -101,6 +101,28 @@ type NameSpec<W extends readonly Position[], O extends On> = {
    * the length of the list above.
    */
   paramsRepeat?: true;
+  /**
+   * The name that means the SAME THING without mutating, taking the SAME
+   * arguments. Present only on a mutator, and only where such a name exists:
+   *   $.a.sort(k);      immutableTwin: "toSorted"     → $.a = $.a.toSorted(k)
+   *   $.a.reverse();    immutableTwin: "toReversed"   → $.a = $.a.toReversed()
+   *
+   * "Same arguments" is the whole of the test. `.pop()` has no entry even though
+   * `.toSpliced(-1, 1)` computes the same array: those arguments are not the ones
+   * the caller wrote, so the rewrite has to invent them, and the MQL comes out
+   * 1.5x the size of lowering `.pop()` on its own (`.shift()`, 4.4x). A mutator
+   * with no entry here is lowered directly instead.
+   */
+  immutableTwin?: T;
+  /**
+   * The mutation, written as an ARRAY LITERAL. The other way a mutator can have
+   * an immutable spelling — a shape rather than a name, so it cannot go above:
+   *   $.a.push(9);      "receiver, then arguments"   → $.a = [...$.a, 9]
+   *   $.a.unshift(9);   "arguments, then receiver"   → $.a = [9, ...$.a]
+   * Spelled out in words because the two orders are the entire content of the
+   * field, and "start"/"end" would leave the reader asking start of what.
+   */
+  asArrayLiteral?: "receiver, then arguments" | "arguments, then receiver";
   /**
    * What a `{ … }` body on this name MEANS. Absent = "javascript", which is every
    * name but one: a stage inside such a block is refused with a rewrite hint.
@@ -237,7 +259,9 @@ type GlobalSpec<W extends readonly Position[]> = {
 };
 
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
-export type NameEntry<W extends readonly Position[], O extends On> = NameSpec<W, O> & { kind: "name" };
+export type NameEntry<W extends readonly Position[], O extends On, T extends string = never> = NameSpec<W, O, T> & {
+  kind: "name";
+};
 export type MongoEntry<
   W extends readonly Position[],
   F extends readonly string[] = readonly never[],
@@ -249,10 +273,12 @@ export type GlobalEntry<W extends readonly Position[]> = GlobalSpec<W> & { kind:
 // no `forbiddenIn` would otherwise widen `F` to `readonly string[]` and the
 // audit below would pass while checking nothing.
 const root = <const W extends readonly Position[]>(e: RootSpec<W>): RootEntry<W> => ({ ...e, kind: "root" });
-const name = <const W extends readonly Position[], const O extends On>(e: NameSpec<W, O>): NameEntry<W, O> => ({
-  ...e,
-  kind: "name",
-});
+// `T` carries the `immutableTwin` LITERAL out to the audit at the foot of the
+// file. Declared on the spec alone it would widen to `string`, the audit would
+// read `string` from every row, and it could never name the offender.
+const name = <const W extends readonly Position[], const O extends On, const T extends string = never>(
+  e: NameSpec<W, O, T>,
+): NameEntry<W, O, T> => ({ ...e, kind: "name" });
 const mongo = <
   const W extends readonly Position[],
   const F extends readonly string[] = readonly never[],
@@ -4297,6 +4323,7 @@ export const NAMES = {
     doc: "'.reverse()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    immutableTwin: "toReversed",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'.reverse()' writes a field; it is not a filter predicate."),
@@ -4664,6 +4691,7 @@ export const NAMES = {
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    immutableTwin: "toSorted",
     params: { statement: ["value"], stream: ["value", "value"] },
     returns: "unknown",
     where: ["stream", "statement"],
@@ -4681,6 +4709,7 @@ export const NAMES = {
     doc: "'.splice()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    immutableTwin: "toSpliced",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'.splice()' writes a field; it is not a filter predicate."),
@@ -4697,6 +4726,7 @@ export const NAMES = {
     doc: "'.push()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
+    asArrayLiteral: "receiver, then arguments",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'.push()' writes a field; it is not a filter predicate."),
@@ -4745,6 +4775,7 @@ export const NAMES = {
     doc: "'.unshift()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    asArrayLiteral: "arguments, then receiver",
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'.unshift()' writes a field; it is not a filter predicate."),
@@ -8606,6 +8637,15 @@ type ContainersOf<K extends NameKey> = [FieldOf<K, "onlyInside">] extends [never
 type DanglingOnlyInside = Exclude<{ [K in NameKey]: ContainersOf<K> }[NameKey], NameKey>;
 const _onlyInsideResolves: [DanglingOnlyInside] extends [never] ? true : DanglingOnlyInside = true;
 
+// ── audit: every `immutableTwin` names a key of this same registry ───────────
+//
+// A twin is a NAME the desugar pass will rewrite to. A typo would silently make
+// the mutator un-rewritable rather than fail, so the type checker names it here.
+
+type DanglingImmutableTwin = Exclude<Mentioned<"immutableTwin">, NameKey>;
+const _immutableTwinResolves: [DanglingImmutableTwin] extends [never] ? true : DanglingImmutableTwin = true;
+
+void _immutableTwinResolves;
 void _everyKeyMatchesItsKind;
 void _forbiddenInResolves;
 void _onlyInsideResolves;
