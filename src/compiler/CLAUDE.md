@@ -8,9 +8,17 @@ registry file that owns its facts and invents nothing a row could have stated.
   │  1. LEX    │──►│  2. PARSE  │──►│ 3.DESUGAR │──►│ 4.POSITION │──►│  5.EMIT  │
   └─────┬──────┘   └─────┬──────┘   └─────┬─────┘   └─────┬──────┘   └────┬─────┘
         │                │                │               │               │
-   tokens.ts        productions.ts    names.ts        productions.ts   names.ts
-   keywords.ts                                        + names.ts
+   tokens.ts        productions.ts    names.ts        names.ts         names.ts
+   keywords.ts                        + position       + productions    + productions
 ```
+
+**Phase 4 runs inside phase 3 as well as after it.** Several sugars mean one
+thing as a statement and are refused everywhere else, so a rewrite has to know
+where it stands — and the answer cannot be looked up by identity, because the
+walk rebuilds a parent as soon as a child changes. `passes/position.ts` says what
+the position becomes on each parent-to-property step, and `mapTreeIn` carries it
+down. `passes/shape.ts` answers the other half: which DOCUMENT the whole program
+becomes, which no single step can see.
 
 ## The one rule that shapes everything
 

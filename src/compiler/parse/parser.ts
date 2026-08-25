@@ -209,16 +209,22 @@ class Parser {
   program(): Program {
     const stmts = this.statements();
     this.expectEnd();
-    // One expression, or one run of writes, stands on its own — a bare predicate
-    // stays an expression so the position phase can read it as a Filter. A lone
-    // declaration cannot: nothing would read it, so it needs the Pipeline shape
-    // for the later phase to reject it against.
-    if (stmts.length === 1) {
+    // A bare predicate stands on its own, so the shape phase can read it as a
+    // Filter. A lone declaration cannot — nothing would read it — and neither
+    // can a statement the source ENDED with a `;`, because that `;` is the token
+    // that says pipeline. Collapsing it threw the distinction away:
+    //   Object.assign($.a, $.b)    a value, and a Filter
+    //   Object.assign($.a, $.b);   a write, and a Pipeline
+    // parsed to the same tree, and nothing downstream could tell them apart.
+    if (stmts.length === 1 && !this.sawTopLevelSemi) {
       const only = stmts[0];
       if (only.type !== "LetDecl" && only.type !== "FuncDecl") return only;
     }
     return { type: "Pipeline", stmts, pos: 0 };
   }
+
+  /** Set by `statements()` when a `;` ends a top-level statement. See `program`. */
+  private sawTopLevelSemi = false;
 
   private statements(): PipelineStmt[] {
     const out: PipelineStmt[] = [];
@@ -232,6 +238,7 @@ class Parser {
       // `function f(x) { … }` ends with its closing brace, so the separator is
       // optional after it — the same rule JavaScript uses.
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
+      if (this.c.is("Semi")) this.sawTopLevelSemi = true;
       if (!this.c.eat("Semi") && !this.c.is("EOF") && !blockBodied) {
         throw new ParseError(`Expected ${spell("Semi")} but got ${found(this.c.peek())}`, this.c.peek().pos);
       }
@@ -833,6 +840,10 @@ class Parser {
    */
   private arrayElement(): ArrayElement {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    // `[ function double(x) { … }, $set(…) ]` — a declaration, not a function
+    // VALUE. Without this it parsed as a lambda, and the lambda made the literal
+    // look like an array of values rather than a pipeline.
+    if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writeRun();
     return this.expression();
   }

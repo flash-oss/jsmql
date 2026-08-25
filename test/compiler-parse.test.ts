@@ -24,6 +24,16 @@ function harvestInputs(): string[] {
   return [...found];
 }
 
+/**
+ * The one statement of a program. A trailing `;` keeps the `Pipeline` wrapper —
+ * that `;` is the token that says pipeline — so a test about the statement
+ * itself unwraps it first.
+ */
+const only = (src: string): { type: string } & Record<string, unknown> => {
+  const n = parse(src) as { type: string; stmts?: unknown[] } & Record<string, unknown>;
+  return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
+};
+
 describe("compiler/parse — parses everything the old compiler accepts", () => {
   it("has no input the old compiler compiles and the new parser cannot read", () => {
     const failures: string[] = [];
@@ -145,12 +155,12 @@ describe("compiler/parse — name-blind", () => {
 
 describe("compiler/parse — the parser decides nothing about meaning", () => {
   it("keeps a compound write as written, for desugar to reduce", () => {
-    expect(parse("$.views += 2;")).toMatchObject({ type: "UpdateFilter", ops: [{ type: "AssignExpr", op: "+=" }] });
-    expect(parse("$.views++;")).toMatchObject({ ops: [{ op: "++" }] });
+    expect(only("$.views += 2;")).toMatchObject({ type: "UpdateFilter", ops: [{ type: "AssignExpr", op: "+=" }] });
+    expect(only("$.views++;")).toMatchObject({ ops: [{ op: "++" }] });
   });
 
   it("records a stage-shaped callback block without judging it", () => {
-    const t = parse("$$ = $$.aggregate(o => { $sort({ a: 1 }); });") as {
+    const t = only("$$ = $$.aggregate(o => { $sort({ a: 1 }); });") as unknown as {
       ops: [{ value: { args: [{ stages?: unknown; body?: unknown }] } }];
     };
     const lambda = t.ops[0].value.args[0];
@@ -257,8 +267,32 @@ describe("compiler/parse — a run of writes is ONE element, and keeps every op"
   });
 
   it("gives every target of a chained assignment the same value", () => {
-    const t = parse("$.a = $.b = 1;") as { ops: { target: { path: string }; value: { value: number } }[] };
+    const t = only("$.a = $.b = 1;") as unknown as { ops: { target: { path: string }; value: { value: number } }[] };
     expect(t.ops.map((o) => o.target.path)).toEqual(["a", "b"]);
     expect(t.ops.map((o) => o.value.value)).toEqual([1, 1]);
+  });
+});
+
+describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE", () => {
+  it("wraps a lone statement the source ended with `;`", () => {
+    // `Object.assign($.a, $.b)` merges two objects and
+    // `Object.assign($.a, $.b);` writes the document. Collapsing the single
+    // statement threw that `;` away and the two parsed to the same tree.
+    expect(parse("Object.assign($.a, $.b)").type).toBe("MethodCall");
+    expect(parse("Object.assign($.a, $.b);").type).toBe("Pipeline");
+  });
+
+  it("leaves a statement with no `;` standing on its own", () => {
+    expect(parse("$.a > 1").type).toBe("BinaryExpr");
+    expect(parse("$.a = 1").type).toBe("UpdateFilter");
+    expect(parse("$.items.sort()").type).toBe("MethodCall");
+  });
+
+  it("reads a `function` declaration inside a bracketed pipeline as a declaration", () => {
+    // As a function VALUE it made the literal look like an array of values.
+    const t = parse("[function double(x) { return x * 2 }, $set({ a: double($.price) })]") as {
+      elements: { type: string }[];
+    };
+    expect(t.elements[0].type).toBe("FuncDecl");
   });
 });

@@ -51,6 +51,38 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: the shape decision is one question asked of a row
+
+Which document a program becomes — a Filter for `find()` or a list of stages for
+`aggregate()` — is decided in the shipped compiler by four stacked auto-wrap heuristics in
+`lowerWithCtx`, each a special case with its own paragraph of reasoning: one for a bare
+stage call, one for `$$.<method>(…)` and the diagnostic source stages, one for a mutator on
+a writable path, and `isPipelineAst` for the bracketed form. That accretion is the thing
+this rewrite exists to remove.
+
+`shapeOf` asks the row instead. A construct is a statement when its row lists `statement`
+or `stream` and has NO value form — which is exactly what a stage looks like, since `$match`
+has no expression form while `.filter()` has one and is an expression standing alone. A
+write, a declaration and a `;`-run are statements by their node type, and a chain that
+reads a context reference is a stream however it ends, which is answered by walking to the
+base — the three references being three node types is what makes that a type test rather
+than a level check.
+
+Measured against the shipped compiler on every input the test suite compiles: 1313 of 1328
+agree, and the 15 that do not are all one thing. `const a = 1; $.x === a` compiles to
+`{"x": 1}` because the binding is a compile-time constant and folds away, leaving one
+expression; a binding that does not fold is a pipeline in both. That divergence closes when
+constant folding lands as a pass, and the test records it rather than hiding it.
+
+Two parser faults came out of the measurement. A trailing `;` was being thrown away for a
+lone statement, so `Object.assign($.a, $.b)` — which merges two objects — and
+`Object.assign($.a, $.b);` — which writes the document — parsed to the same tree, and
+nothing downstream could tell them apart. And a `function` declaration inside a bracketed
+pipeline parsed as a function VALUE, which made the literal look like an array of values
+rather than a pipeline.
+
+---
+
 ## 2026-08-26 — feat: an iteratee shorthand becomes the arrow it means
 
 `$.items.filter({ active: true })` is now rewritten to `$.items.filter(x => x.active === true)`

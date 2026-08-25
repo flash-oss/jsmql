@@ -66,6 +66,12 @@ const EQUIVALENT: [string, string][] = [
   ['$$ = $$.groupBy("k");', "$$ = $$.groupBy(x => x.k);"],
 ];
 
+/** The one statement of a program, or the program when it is not a `;` run. */
+const only = (node: unknown): { type: string } & Record<string, unknown> => {
+  const n = node as { type: string; stmts?: unknown[] } & Record<string, unknown>;
+  return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
+};
+
 describe("compiler/passes/desugar — a sugar becomes the source it means", () => {
   for (const [sugar, plain] of EQUIVALENT) {
     it(`${sugar}  ≡  ${plain}`, () => {
@@ -165,7 +171,7 @@ describe("compiler/passes/desugar — a field path is ONE node", () => {
 describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement", () => {
   /** What the program became, named closely enough to tell a write from a call. */
   const became = (src: string): string => {
-    const t = desugar(parse(src)) as { type: string; ops?: { value: { type: string } }[] };
+    const t = only(desugar(parse(src))) as { type: string; ops?: { value: { type: string } }[] };
     return t.type === "UpdateFilter" ? `write(${t.ops?.[0].value.type})` : t.type;
   };
 
@@ -250,16 +256,17 @@ describe("compiler/passes/position — the position each node stands in", () => 
     expect(at("delete $.a;", "target")).toEqual(["FieldRef"]);
     expect(at("$.a = 1;", "value")).toEqual(["NumberLiteral"]);
     // The write itself is a statement, not a value: the run groups writes into
-    // one stage, it does not turn them into expressions.
-    expect(at("$.a = 1;", "statement")).toEqual(["AssignExpr", "UpdateFilter"]);
-    expect(at("delete $.a;", "statement")).toEqual(["DeleteStmt", "UpdateFilter"]);
+    // one stage, it does not turn them into expressions. The trailing `;` keeps
+    // the `Pipeline` wrapper, because that `;` is what says pipeline.
+    expect(at("$.a = 1;", "statement")).toEqual(["AssignExpr", "UpdateFilter", "Pipeline"]);
+    expect(at("delete $.a;", "statement")).toEqual(["DeleteStmt", "UpdateFilter", "Pipeline"]);
   });
 });
 
 describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW says so", () => {
   /** What the first (or given) argument became. */
   const arg = (src: string, slot = 0): string => {
-    const t = desugar(parse(src)) as {
+    const t = only(desugar(parse(src))) as {
       type: string;
       args?: { type: string }[];
       ops?: { value: { args: { type: string }[] } }[];
