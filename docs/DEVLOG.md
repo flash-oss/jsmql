@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — fix: `tracksDepth` and `resumesTemplateAtDepth` were on the wrong row
+
+Both flags landed on the `$$$$` row instead of `{` and `}`. The edit that added them matched a
+multi-line row terminator, and the two brace rows are single-line, so the regex ran past them
+and appended to the next multi-line row it found. Nothing caught it: the flags were type-valid
+wherever they sat, and no reader existed yet to notice they described the wrong token.
+
+The first reader found it immediately. The new lexer asks the `}` row whether it ends a
+template interpolation, and got `undefined`, so every template with an interpolation failed —
+16 of the suite's inputs, all with the same message. `` `n=${42}` `` now lexes to
+`TemplateStart TemplateChars TemplateExprStart Number TemplateChars TemplateEnd`, with no
+`RBrace` in it, which is the whole point of the flag.
+
+---
+
 ## 2026-08-25 — feat: every name gets a row, including the ten that live inside another operator
 
 Ten names had been left out on the grounds that they never stand alone —

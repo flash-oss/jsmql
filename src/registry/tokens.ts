@@ -80,8 +80,25 @@ export const TOKENS = {
   ")": token({ doc: "The `)` token.", token: "RParen", role: "close", closes: "(" }),
   "[": token({ doc: "The `[` token.", token: "LBracket", role: "open" }),
   "]": token({ doc: "The `]` token.", token: "RBracket", role: "close", closes: "[" }),
-  "{": token({ doc: "The `{` token.", token: "LBrace", role: "open" }),
-  "}": token({ doc: "The `}` token.", token: "RBrace", role: "close", closes: "{" }),
+  "{": token({
+    doc: "The `{` token.",
+    token: "LBrace",
+    role: "open",
+    // Counts depth so a template interpolation can tell its OWN closing brace
+    // from a nested object's: `${ {a: 1} }` has two, and only the outer one ends
+    // the interpolation.
+    tracksDepth: true,
+  }),
+  "}": token({
+    doc: "The `}` token.",
+    token: "RBrace",
+    role: "close",
+    closes: "{",
+    // When its depth matches an open interpolation this brace emits NO token at
+    // all — it ends the interpolation and template text resumes. The one closer
+    // whose row produces nothing.
+    resumesTemplateAtDepth: true,
+  }),
   ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
   ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
   ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
@@ -96,8 +113,6 @@ export const TOKENS = {
     token: "QuadDollar",
     role: "reference",
     maxRun: { limit: 4, tooLong: "Up to 4 levels of context reference are supported ('$.', '$$', '$$$', '$$$$')" },
-    tracksDepth: true,
-    resumesTemplateAtDepth: true,
   }),
   "...": token({ doc: "The `...` token.", token: "Spread", role: "spread" }),
   "+": token({ doc: "The `+` token.", token: "Plus", role: "operator" }),
@@ -181,6 +196,31 @@ export const TOKENS = {
 };
 
 export type TokenKey = keyof typeof TOKENS;
+
+/**
+ * The token types after which a `/` is DIVISION rather than the start of a regex.
+ *
+ * `chooseBy` on the `/` row states the rule — "decided on the preceding token" —
+ * but not which tokens count as a value, and that list is the other half of the
+ * same fact. Kept as one declaration rather than a flag per row, because the
+ * backtick row covers two token types and only `TemplateEnd` ends a value.
+ *
+ *   `$.a / 2`   → Slash        the preceding token is a field reference
+ *   `/ab/.test` → RegexLiteral nothing precedes it
+ */
+export const ENDS_A_VALUE: readonly TokenName[] = [
+  "Number",
+  "BigInt",
+  "String",
+  "True",
+  "False",
+  "Null",
+  "Undefined",
+  "Ident",
+  "RParen",
+  "RBracket",
+  "TemplateEnd",
+];
 
 // ── audit: every `closes` names a key of this same table ─────────────────────
 
