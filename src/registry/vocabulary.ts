@@ -375,19 +375,6 @@ export type Arity = {
    * for an object-shaped body.
    */
   slotEnums?: Readonly<Record<number, readonly string[]>>;
-  /**
-   * Per-slot accepted SPELLINGS. Absent means a plain value expression only.
-   *
-   * Every higher-order name takes its iteratee in more than one form, and `sig`
-   * alone ("iteratee") cannot say which:
-   *   $.rows.uniqBy(r => r.id)         a lambda
-   *   $.rows.uniqBy("id")              a property path
-   *   $.rows.filter({ active: true })  a matcher object
-   *   $.rows.filter(["a.b", 1])        a path/value pair
-   *   $.items.map(String)              a bare callable, handed over unapplied
-   *   $.rows.sumBy()                   omitted — identity
-   */
-  slotForms?: Readonly<Record<number, readonly SlotForm[]>>;
 };
 
 /**
@@ -399,14 +386,26 @@ export type Arity = {
  *   $.items.map(Math.asinh)  → refused, though it is equally unary
  * so a row that lists this form still states its own set beside it.
  */
-export type SlotForm =
-  | "expression"
-  | "lambda"
-  | "propertyPath"
-  | "matchesObject"
-  | "matchesPropertyPair"
-  | "bareCallable"
-  | "omitted";
+/**
+ * One spelling that stands in for the arrow in an iteratee slot.
+ *
+ *   propertyPath         $.rows.uniqBy("id")             means `r => r.id`
+ *   matchesObject        $.rows.filter({ active: true })  means `r => r.active === true`
+ *   matchesPropertyPair  $.rows.filter(["a.b", 1])        means `r => r.a.b === 1`
+ *   bareCallable         $.items.map(String)              handed over unapplied
+ *   omitted              $.rows.countBy()                 identity
+ *
+ * The arrow itself is not listed: every iteratee slot takes one, so naming it
+ * would say nothing. See `NameSpec.iterateeSlots`.
+ */
+export type SlotForm = "propertyPath" | "matchesObject" | "matchesPropertyPair" | "bareCallable" | "omitted";
+
+/**
+ * Which argument slots take an ITERATEE, and what each accepts besides the arrow.
+ * Keyed by slot index, because the iteratee is not always the first argument:
+ * `$.a.differenceBy($.b, "id")` compares against an array first.
+ */
+export type IterateeSlots = Readonly<Record<number, readonly SlotForm[]>>;
 
 /** An object-shaped body: operators in object style, and every stage. */
 export type BodyRule = {

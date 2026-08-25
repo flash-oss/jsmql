@@ -51,6 +51,47 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: a row says which argument slots stand in for an arrow
+
+A higher-order name takes its iteratee in more than one spelling — `$.rows.uniqBy("id")`,
+`$.rows.filter({ active: true })`, `$.rows.filter(["a.b", 1])`, `$.items.map(String)` — and
+until now nothing in the registry recorded which slot accepts which. The fact lived only in
+`shorthandToLambda`, `keyExpr` and `mql-sort.ts`.
+
+Reading it off the argument's SHAPE instead is not an option, because three other kinds of
+slot wear the same three spellings and mean none of them. `$.items.filter({ f: 1 })` is a
+matcher and `$.items.toSorted({ f: 1 })` is a DIRECTION; `$.items.find(["a", "b"])` is a
+path/value pair and `$.items.toSorted(["a", "b"])` is two sort keys; `$.user.pick(["a","b"])`
+is a list of field names, and `$$ = $$.groupBy({ _id: … })` is a raw `$group` document.
+`.sortBy()` already refuses the object form because of this collision and its message says
+so. A rewrite driven by shape would turn a sort into a matcher silently.
+
+`iterateeSlots` states it, per position where it differs, exactly as `params` does. It is
+NOT on `Arity`, where a field of this name sat unused by every row: an `Arity` requires a
+`sig` and a count, so a cell could not state a spelling without also inventing an argument
+count it had no reason to claim. That is why the field was never filled in, and moving it
+cost nothing because nothing referenced it.
+
+The values are measured, not assumed. A harness compiles each spelling and the arrow that
+means the same thing, erases the binding names the compiler chose for itself, and compares
+— and the test that does so is committed, so the claim stays checked in both directions:
+every declared spelling compiles and agrees with its arrow, and every spelling a slot leaves
+out is refused. Two rows are narrower than their siblings for a reason the server gives:
+`$$.map` and `$$.flatMap` accept a property path only, because `$replaceWith` needs a
+document and `$unwind` needs a field path, and a matcher is provably a boolean.
+
+Building the harness turned up three MQL shapes the server rejects. `$$ = $$.map(d => d.a === 1)`
+emits `{"$replaceWith":{"$eq":["$a",1]}}` and mongod answers *'replacement document' must
+evaluate to an object, but resulting value was: true*; `$$ = $$.map("a")` does the same for a
+scalar field. And two spellings of one meaning diverge in filter position:
+`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` while
+`$.items.some({ active: true })` emits an `$expr` `$anyElementTrue` — which cannot use an
+index and, on a document whose `items` is a string, fails the query outright where
+`$elemMatch` returns the right answer. Rewriting the shorthand into its arrow before any
+lowering runs removes that divergence, so the pass is a fix rather than a tidy-up.
+
+---
+
 ## 2026-08-26 — feat: one place asks a row what it says, and the refusal surface works before any lowering does
 
 `consult(name, position)` reads the cell a row holds for a position and answers with one of
