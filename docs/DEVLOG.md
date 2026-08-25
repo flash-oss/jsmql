@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: one Pratt loop replaces the fourteen-method cascade
+
+Phase 2 of [src/compiler/](src/compiler/CLAUDE.md) reads `precedence`,
+`associativity` and `fixity` off the rows. The old parser encoded the fourteen levels as the
+call order of fourteen mutually-recursive methods — `parseTernary` called `parseNullish` called
+`parseOr`, down to `parsePostfix` — so nothing named a level and adding an operator meant
+inserting a method in the right place. The level is now the number on the row.
+
+Building the tables found something the rows had not said. A trigger may head SEVERAL rules —
+`.` heads `memberAccess`, `methodCall` and `namespacedCall`, and only a following `(` says which
+— so the table groups by trigger and checks that everything sharing one agrees on the level.
+Disagreeing would mean one of them binds differently and no lookahead could repair it, so it
+throws while the table is built. Two facts the parser would otherwise have hard-coded moved onto
+rows instead: `tokens[0]` is now documented as the TRIGGER, and `word` carries the literal text a
+rule needs when its trigger is the `identifier` class — `function` is not lexer-reserved, so
+`function f(x) { return x }` needs the text, and the text belongs on `functionBinding`.
+
+The eight JavaScript-syntax forms the old parser wrongly accepted are refused, which is the
+point of having stated them: `$.a ?? $.b || $.c`, `typeof $.a ** $.b` and `$.a?.b = 1` are all
+`SyntaxError` under `node --check` and all compiled before. Parenthesising still works, because
+a group deliberately forgets which rule produced it. `associativity: "none"` now does what it
+says — `$.a < $.b < $.c` is refused with a message naming the fix rather than silently grouping
+left.
+
+Every one of the 1,691 suite inputs the old compiler accepts parses, with zero exceptions,
+asserted in [test/compiler-parse.test.ts](test/compiler-parse.test.ts). Reaching zero took six
+rounds and each gap was a real one: `$in(…)` and `$let(…)` name a reserved word after the `$`;
+a callback block may hold pipeline STAGES rather than a `return`; trailing commas are legal in
+every list JavaScript has; an object key may be a number; `{ x }` is shorthand; an array literal
+may hold statements, which is the bracketed pipeline form; `$.a = $.b = 5` chains and assigns to
+both; and a formatter parenthesises each write in a run, so `($.a = 1), ($.b = 2)` unwraps per
+element. 648 further inputs parse that the old compiler rejects later, in a phase the parser is
+not.
+
+---
+
 ## 2026-08-25 — feat: a name-blind AST, in the registry, with NodeName derived from it
 
 [src/registry/ast.ts](src/registry/ast.ts) holds the tree the new parser builds: 33 node types

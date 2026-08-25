@@ -36,7 +36,9 @@ const EVERY_NODE: Record<Node["type"], true> = {
   ArrayLiteral: true,
   ObjectLiteral: true,
   FieldRef: true,
-  ContextRef: true,
+  CollectionRef: true,
+  DatabaseRef: true,
+  ClusterRef: true,
   Ident: true,
   MemberAccess: true,
   IndexAccess: true,
@@ -61,7 +63,7 @@ const EVERY_NODE: Record<Node["type"], true> = {
 
 describe("registry/ast — the tree and the rules agree", () => {
   it("has one node type per shape and no more", () => {
-    expect(Object.keys(EVERY_NODE)).toHaveLength(33);
+    expect(Object.keys(EVERY_NODE)).toHaveLength(35);
   });
 
   it("every node a production claims to build exists in the tree", () => {

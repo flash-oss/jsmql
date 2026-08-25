@@ -70,7 +70,14 @@ export type ObjectKey =
 
 export type KeyValueEntry = { type: "KeyValueEntry"; key: ObjectKey; value: Expr; pos: number };
 export type ObjectEntry = KeyValueEntry | SpreadElement;
-export type ArrayElement = Expr | SpreadElement;
+/**
+ * An array literal's element. A STATEMENT is allowed because the bracketed
+ * pipeline form writes its stages as an array:
+ *   [const double = x => x * 2, $set({ y: double($.x) })]
+ * Which array literals may hold one is the position phase's question, not the
+ * parser's — it records what was written.
+ */
+export type ArrayElement = Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp;
 export type CallArg = Expr | SpreadElement;
 
 /**
@@ -109,11 +116,22 @@ export type Expr =
   /** `$.a.b` and the bare `$`, which is the whole document and has an empty path. */
   | { type: "FieldRef"; path: string; pos: number }
   /**
-   * `$$` / `$$$` / `$$$$` by depth: 2 is the collection, 3 the database, 4 the
-   * cluster. One node with a level, rather than three node types, because every
-   * reader treats them as the same construct at different scope.
+   * `$$` — the current collection, as a stream of documents.
+   *
+   * Three spellings, three node types, never one node with a level. They are
+   * three different things: `$$` is a stream you may filter and replace, `$$$`
+   * names another collection to read or write, and `$$$$` reaches the cluster and
+   * cannot be read from at all. A reader that had to check a number before
+   * knowing which it held would carry that check everywhere.
+   *
+   * The postfix `.name` and `[expr]` compose on top through MemberAccess and
+   * IndexAccess, so none of the three carries a path of its own.
    */
-  | { type: "ContextRef"; level: 2 | 3 | 4; pos: number }
+  | { type: "CollectionRef"; pos: number }
+  /** `$$$` — database scope. `$$$.<coll>` names another collection. */
+  | { type: "DatabaseRef"; pos: number }
+  /** `$$$$` — cluster scope. Writes work; cross-database reads are refused. */
+  | { type: "ClusterRef"; pos: number }
   /**
    * A bare name. `Math`, `String`, a lambda's parameter, a `let` binding, a
    * declared function — all of them. WHICH it is comes from scope and from
@@ -186,6 +204,9 @@ export type Pipeline = { type: "Pipeline"; stmts: readonly PipelineStmt[]; pos: 
 
 /** What the parser hands back. */
 export type Program = Expr | UpdateFilter | Pipeline;
+
+/** The lambda variant, named so a parser can return it directly. */
+export type Lambda = Extract<Expr, { type: "Lambda" }>;
 
 /** Every node the parser can build, for `becomes` in productions.ts. */
 export type Node = Expr | SpreadElement | KeyValueEntry | LetDecl | FuncDecl | UpdateOp | UpdateFilter | Pipeline;

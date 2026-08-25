@@ -34,7 +34,14 @@ export type ProductionSpec<
   C extends readonly string[] = readonly never[],
 > = {
   doc: string;
-  /** The symbols this rule consumes — keys of tokens.ts or keywords.ts. */
+  /**
+   * The symbols this rule consumes — keys of tokens.ts or keywords.ts.
+   *
+   * THE FIRST ENTRY IS THE TRIGGER: the lexeme whose appearance selects this
+   * rule. A parser builds its dispatch tables from `tokens[0]`, so the order of
+   * the rest is free but the head is not. `conditional` leads with `?` and not
+   * `:`, `methodCall` with `.` and not `(`.
+   */
   tokens: T;
   /** The AST node it builds; a list when it builds several; or nothing at all. */
   becomes: NodeName | readonly NodeName[] | { notANode: string };
@@ -49,6 +56,16 @@ export type ProductionSpec<
   only?: readonly Only[];
   /** Rules this must be tried AFTER, when triggers overlap. Audited below. */
   after?: A;
+  /**
+   * The literal identifier text this rule requires, when its trigger is the
+   * `identifier` class rather than a fixed spelling.
+   *
+   * `function` is NOT a reserved word here — it lexes as a name, so keywords.ts
+   * correctly has no row for it — yet the parser must still recognise the text to
+   * parse `function f(x) { return x }`. The word belongs on the rule that needs
+   * it, so no phase carries a hard-coded name.
+   */
+  word?: string;
   /**
    * Rules this one may NOT combine with unparenthesised, because JAVASCRIPT
    * forbids the mix. A precedence number always permits a mix, so the cascade
@@ -734,8 +751,8 @@ export const PRODUCTIONS = {
   streamReference: production({
     doc: "`$$` — the current collection as a stream.",
     tokens: ["$$"],
-    // `$$` is level 2.
-    becomes: "ContextRef",
+    // `$$` — the current collection as a stream.
+    becomes: "CollectionRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -748,8 +765,8 @@ export const PRODUCTIONS = {
   collectionReference: production({
     doc: "`$$$.<coll>` — another collection.",
     tokens: ["$$$"],
-    // `$$$` is level 3.
-    becomes: "ContextRef",
+    // `$$$` — database scope; `$$$.<coll>` names a collection.
+    becomes: "DatabaseRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -762,8 +779,8 @@ export const PRODUCTIONS = {
   clusterReference: production({
     doc: "`$$$$` — cluster scope, for the diagnostic source stages.",
     tokens: ["$$$$"],
-    // `$$$$` is level 4.
-    becomes: "ContextRef",
+    // `$$$$` — cluster scope.
+    becomes: "ClusterRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -1044,6 +1061,7 @@ export const PRODUCTIONS = {
 
   functionBinding: production({
     doc: "A reusable expression over parameters. `function` is NOT reserved — it lexes as an identifier.",
+    word: "function",
     tokens: ["identifier", "const", "=", "=>", "(", ")", "let", "{", "}", "return"],
     becomes: "FuncDecl",
     on: "any",
