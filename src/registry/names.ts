@@ -95,6 +95,10 @@ type NameSpec<W extends readonly Position[], O extends On> = {
   /**
    * true when the parameter list REPEATS once per collection given:
    * `$.a.zipWith($.b, $.c, (p, q, r) => …)` binds one value per array.
+   *
+   * The count is then EXACT, not a maximum — with two arrays, both one and three
+   * parameters are refused. A checker must count the collections handed in, never
+   * the length of the list above.
    */
   paramsRepeat?: true;
   /**

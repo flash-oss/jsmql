@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-26 — chore: the `params` field validated, and one audit deleted for never firing
+
+Two validation passes over the work just committed.
+
+**`params` is right on all 39 rows** — arity and meaning both measured, zero wrong. Thirteen of
+the lists are deliberately SHORTER than the API they name, and each refusal says so:
+`$.a.findIndex((v, i, arr) => arr)` is *"callbacks take at most 2 parameters (element, index); the
+third 'array' argument isn't supported"*. So a list records what JSMQL accepts and the API name
+says where to look for the difference; the vocabulary now states that, rather than leaving a
+reader to wonder whether a short list is an omission. It also exposes one asymmetry worth naming:
+`.filter` takes the index and `.reject`, its own negation, does not. And `paramsRepeat` turns out
+to mean an EXACT count rather than a maximum — with two arrays `zipWith` refuses both one and
+three parameters — so a checker must count the collections handed in, never the length of the list.
+
+**`DanglingTokens` is deleted, because it could never fire.** Five audits were tested by feeding
+each a bogus value and confirming an error naming it; all five fire. The sixth does not, and for a
+reason distinct from the two failure modes found earlier: **constraint collapse**. When a row's
+`tokens` literal violates `T extends readonly Lexeme[]`, TypeScript reports it and then
+instantiates `T` with the CONSTRAINT — so `Mentioned<"tokens">` yields `Lexeme` and the audit
+reads `never`. The inputs that would make it fire are exactly the ones the constraint intercepts
+first, and interception erases them from the type the audit reads.
+
+The right response is removal, not repair. The invariant is already enforced, and enforced better:
+injecting a bogus lexeme gives one error, on the offending ROW, where a reader can act on it,
+rather than on a line at the foot of the file. A check that cannot fire is worse than no check,
+because it reads as assurance. `after` keeps its audit, because `A extends readonly string[]`
+imposes no equivalent constraint — the comment in its place explains that difference so the dead
+check is not re-added.
+
+---
+
 ## 2026-08-26 — feat: phase 3 begins — the desugar pass, and how a rewrite is tested
 
 `src/compiler/passes/desugar.ts` rewrites a sugar into the construct it means, so phases 4 and 5

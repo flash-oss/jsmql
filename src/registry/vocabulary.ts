@@ -331,6 +331,15 @@ export type ParamKind =
  *   $.a.toSorted(d => d.x)              → { $sortArray: { sortBy: { x: 1 } } }
  *   $$ = $$.toSorted((a, b) => a.n - b.n) → [{ $sort: { n: 1 } }]
  *   $$ = $$.toSorted(d => d.n)          → "comparator requires two parameters"
+ *
+ * A list may be SHORTER than the API it names, and 13 of them are. That is
+ * deliberate, not an omission, and each refusal says which:
+ *   $.a.findIndex((v, i, arr) => arr)
+ *     → "callbacks take at most 2 parameters (element, index); the third 'array'
+ *        argument isn't supported. Reference the receiver directly instead."
+ * So a list records what JSMQL accepts, and the API name says where to look for
+ * the difference. One asymmetry it exposes: `.filter` takes the index and
+ * `.reject`, its own negation, does not.
  */
 export type CallbackParams = readonly ParamKind[] | Readonly<Partial<Record<Position, readonly ParamKind[]>>>;
 

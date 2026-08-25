@@ -1229,9 +1229,17 @@ type Mentioned<F extends string> = {
       : FieldOf<K, F>;
 }[ProductionKey];
 
-/** Every `tokens` entry must be a key of tokens.ts or keywords.ts. */
-type DanglingTokens = Exclude<Mentioned<"tokens">, Lexeme>;
-const _tokensResolve: [DanglingTokens] extends [never] ? true : DanglingTokens = true;
+// There is deliberately NO audit over `tokens`. The rule — every entry is a key
+// of tokens.ts or keywords.ts — is already enforced by `T extends readonly
+// Lexeme[]` on the row itself, and enforced BETTER: the error lands on the
+// offending row rather than on a line at the foot of the file.
+//
+// An audit here could not work even if it were wanted. When a row's literal
+// violates the constraint, TypeScript reports it and then instantiates `T` with
+// the CONSTRAINT, so `Mentioned<"tokens">` yields `Lexeme` and the audit reads
+// `never`. Verified: injecting a bogus lexeme gives exactly one error, at the
+// row, while the audit stays silent. `after` needs its audit because
+// `A extends readonly string[]` imposes no equivalent constraint.
 
 /** Every `after` entry must be a rule in this same file. */
 type DanglingAfter = Exclude<Mentioned<"after">, ProductionKey>;
@@ -1271,6 +1279,5 @@ type OwnersNamedBy<K extends ProductionKey> = {
 type DanglingComposedInto = Exclude<{ [K in ProductionKey]: OwnersNamedBy<K> }[ProductionKey], ProductionKey>;
 const _composedIntoResolves: [DanglingComposedInto] extends [never] ? true : DanglingComposedInto = true;
 
-void _tokensResolve;
 void _afterResolves;
 void _composedIntoResolves;
