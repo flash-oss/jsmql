@@ -31,6 +31,43 @@ apart from that trailing comma.
 
 ---
 
+## 2026-08-26 — feat: three more places a node can stand
+
+`Where` held two of the seven positions, and the gaps were not neutral. A `$$ = <chain>`
+right-hand side is a STREAM of documents and every link back down the chain is one too,
+while the lambda inside `$$.filter(d => d.x)` is an ordinary expression over one document
+— so a chain link and its callback needed telling apart. And the left of `=` was being
+reported as a value, which it is not: it names a place to write and is never evaluated.
+A rule meant for expressions would have fired on it, so it is now `target`.
+
+The third was an outright error rather than a gap. The writes inside an `UpdateFilter`
+were reaching rules as values. The `,`-joined run groups writes into one stage; it does
+not turn them into expressions, so its `ops` are statements.
+
+Four positions remain unmodelled, and not because they were forgotten: `filter` and
+`updateDoc` are properties of the whole program chosen once at the root, not decisions
+about one parent-to-property step, and `group` and `window` sit inside a stage body whose
+accumulator slots no row states yet.
+
+---
+
+## 2026-08-26 — feat: a synthesised lambda parameter that cannot capture
+
+A rewrite that BUILDS a lambda has to name its parameter, and that name lands in the same
+flat scope as everything around it. `$.items.filter({ a: n })` rewritten to
+`$.items.filter(n => n.a === n)` emits valid MQL and the wrong answer — the binding the
+developer meant is unreachable. That is the worst shape a bug can take, and the mutator
+rewrites got away without the machinery only because none of them splices a user
+expression into a body.
+
+`freshParam` needs no scope, no gensym counter and no state, because shadowing only
+matters for names the BODY mentions and a synthesised body mentions exactly what the
+rewrite splices in. So the arguments in hand answer the whole question. The suffix starts
+at 2, so the ordinary case keeps the bare name: `$.items.map("name")` reads as
+`x => x.name` and its MQL as `$$x`, not as a mangled compiler name.
+
+---
+
 ## 2026-08-26 — feat: position travels down the tree, and the statement mutators desugar
 
 Phase 3 could not run on its own. `$.items.sort()` is a write at statement position and a refusal

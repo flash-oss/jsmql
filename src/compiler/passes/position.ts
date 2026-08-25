@@ -15,14 +15,31 @@ import { subPipelineFieldsOf } from "../rows.ts";
 /**
  * Where a node stands.
  *
- * Two of the seven positions so far, plus the one waypoint that is not a position
- * at all: `stageBody` is the inside of `$lookup({ … })`, where the next step
- * decides between a sub-pipeline (statements) and an ordinary field (a value).
+ * Three of the seven positions so far, plus the one waypoint that is not a
+ * position at all: `stageBody` is the inside of `$lookup({ … })`, where the next
+ * step decides between a sub-pipeline (statements) and an ordinary field.
+ *
+ * The four still missing — `filter`, `group`, `window`, `updateDoc` — are not
+ * edge decisions in the same way. `filter` and `updateDoc` are properties of the
+ * whole PROGRAM, chosen once at the root; the other two sit inside a stage body
+ * whose accumulator slots the stage's row has yet to state.
  */
-export type Where = { at: "statement" } | { at: "value" } | { at: "stageBody"; stage: string };
+export type Where =
+  | { at: "statement" }
+  | { at: "value" }
+  | { at: "stream" }
+  | { at: "target" }
+  | { at: "stageBody"; stage: string };
 
 export const STATEMENT: Where = { at: "statement" };
 export const VALUE: Where = { at: "value" };
+export const STREAM: Where = { at: "stream" };
+/**
+ * The left of `=`, or the operand of `delete`. Named apart from `value` because
+ * it is not evaluated: it names a place to write. Calling it a value would let a
+ * rule meant for expressions fire on the destination of a write.
+ */
+export const TARGET: Where = { at: "target" };
 
 type Any = { type: string } & Record<string, unknown>;
 
@@ -44,6 +61,10 @@ export function edge(node: object, key: string, here: Where): Where {
   // A `;`-separated program: every element is a statement, whatever it looks like.
   if (n.type === "Pipeline" && key === "stmts") return STATEMENT;
 
+  // The writes of a `,`-joined run. Each is a statement in its own right — the
+  // run groups them into one stage, it does not make them values.
+  if (n.type === "UpdateFilter" && key === "ops") return STATEMENT;
+
   // `[ $match(…), … ]` is a pipeline only where a statement may stand. The very
   // same shape one step further in is an array value.
   if (n.type === "ArrayLiteral" && key === "elements" && here.at === "statement") return STATEMENT;
@@ -63,6 +84,18 @@ export function edge(node: object, key: string, here: Where): Where {
     // `["*"]` is `$facet`, where every key holds a pipeline.
     return fields.includes("*") || fields.includes(name) ? STATEMENT : VALUE;
   }
+
+  // The destination of a write names a place; it is never evaluated.
+  if ((n.type === "AssignExpr" || n.type === "DeleteStmt") && key === "target") return TARGET;
+
+  // `$$ = <chain>` — the right-hand side is a STREAM of documents, and every
+  // link back down the chain is one too. Its arguments are not: the lambda in
+  // `$$.filter(d => d.x)` is an ordinary expression over one document.
+  if (n.type === "AssignExpr" && key === "value") {
+    const target = n.target as { type?: string } | undefined;
+    if (target?.type === "CollectionRef") return STREAM;
+  }
+  if (here.at === "stream" && n.type === "MethodCall" && key === "object") return STREAM;
 
   return VALUE;
 }

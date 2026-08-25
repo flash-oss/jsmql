@@ -8,6 +8,8 @@
 import { describe, expect, it } from "vitest";
 import { parse } from "../src/compiler/parse/parser.ts";
 import { desugar, desugarVerbose, RULES } from "../src/compiler/passes/desugar.ts";
+import { edge, STATEMENT } from "../src/compiler/passes/position.ts";
+import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
 /** The tree, with source offsets erased — two spellings sit at different columns. */
 const shape = (src: string): string => JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : v));
@@ -177,5 +179,67 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
     for (const src of ["$.items.pop();", "$.items.shift();", "$.items.fill(0);", "$.items.copyWithin(0, 3);"]) {
       expect(became(src), src).toBe("MethodCall");
     }
+  });
+});
+
+describe("compiler/passes/position — the position each node stands in", () => {
+  /** Every node, tagged with the position that reached it. */
+  const positions = (src: string): string[] => {
+    const seen: string[] = [];
+    mapTreeIn(parse(src), STATEMENT, edge, (node, where) => {
+      const n = node as { type: string; name?: string };
+      seen.push(`${where.at}:${n.type}${n.name === undefined ? "" : "." + n.name}`);
+      return node;
+    });
+    return seen;
+  };
+  const at = (src: string, where: string): string[] =>
+    positions(src)
+      .filter((s) => s.startsWith(where + ":"))
+      .map((s) => s.slice(where.length + 1));
+
+  it("finds a statement in each of the four slots that holds one", () => {
+    expect(at("$.items.sort()", "statement")).toContain("MethodCall.sort");
+    expect(at("$.a = 1; $.items.sort();", "statement")).toContain("MethodCall.sort");
+    expect(at("[$match($.x > 1), $.items.sort()]", "statement")).toContain("MethodCall.sort");
+    // The sub-pipeline slot comes from the stage's own `subPipelineFields`.
+    expect(at('$lookup({ from: "x", pipeline: [$.items.sort()], as: "y" });', "statement")).toContain(
+      "MethodCall.sort",
+    );
+    expect(at("$facet({ a: [$.items.sort()] });", "statement")).toContain("MethodCall.sort");
+  });
+
+  it("finds no statement where the same shape is a value", () => {
+    expect(at("$.a = $.items.sort()", "statement")).not.toContain("MethodCall.sort");
+    expect(at("$.a = [1, $.items.push(2)]", "statement")).not.toContain("MethodCall.push");
+    // A key of a stage body that holds no pipeline stays a value.
+    expect(at('$lookup({ from: "x", localField: $.a.sort(), as: "y" });', "statement")).not.toContain(
+      "MethodCall.sort",
+    );
+  });
+
+  it("carries the stream down every link of a `$$ = …` chain, but not into a callback", () => {
+    const src = "$$ = $$.filter(d => d.x).map(d => d.y);";
+    // Children first — the walk is bottom-up, so the chain reads inside out.
+    expect(at(src, "stream")).toEqual(["CollectionRef", "MethodCall.filter", "MethodCall.map"]);
+    // The lambda reads one document, so it is an ordinary expression.
+    expect(at(src, "value")).toContain("Lambda");
+  });
+
+  it("carries the stream through a foreign source, whose `$$$` is not itself one", () => {
+    // `$$$` is a scope, not a source: only `$$$.<coll>` names a stream. So the
+    // bare `DatabaseRef` is left to its own row to refuse.
+    expect(at("$$ = $$$.orders.filter(d => d.x);", "stream")).toEqual(["MemberAccess.orders", "MethodCall.filter"]);
+  });
+
+  it("keeps the left of a write out of value position", () => {
+    expect(at("$$ = $$.filter(d => d.x);", "target")).toEqual(["CollectionRef"]);
+    expect(at("$.a = 1;", "target")).toEqual(["FieldRef"]);
+    expect(at("delete $.a;", "target")).toEqual(["FieldRef"]);
+    expect(at("$.a = 1;", "value")).toEqual(["NumberLiteral"]);
+    // The write itself is a statement, not a value: the run groups writes into
+    // one stage, it does not turn them into expressions.
+    expect(at("$.a = 1;", "statement")).toEqual(["AssignExpr", "UpdateFilter"]);
+    expect(at("delete $.a;", "statement")).toEqual(["DeleteStmt", "UpdateFilter"]);
   });
 });
