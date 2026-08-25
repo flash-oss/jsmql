@@ -149,3 +149,48 @@ describe("compiler/emit/consult — a waypoint is not a position", () => {
     expect(positionOf({ at: "stageBody", stage: "$lookup" })).toBeNull();
   });
 });
+
+describe("registry — a production names itself by its SPELLING, never by its key", () => {
+  type Row = { spelling: string } & Record<string, { unsupported?: string; subjectFromCaller?: true } | unknown>;
+  const productions = (): [string, Row][] => Object.entries(PRODUCTIONS) as [string, Row][];
+  const CELLS = ["filter", "expr", "stream", "statement"] as const;
+
+  it("states a spelling on every row", () => {
+    const missing = productions()
+      .filter(([, r]) => typeof r.spelling !== "string" || r.spelling.length === 0)
+      .map(([k]) => k);
+    expect(missing).toEqual([]);
+  });
+
+  it("never leaks the descriptive key into a message a user reads", () => {
+    // The key exists so two rules cannot collide on a symbol. Nobody types the
+    // word "conditional", so a message that quotes it is unusable.
+    const leaks: string[] = [];
+    for (const [key, row] of productions()) {
+      for (const cell of CELLS) {
+        const message = (row[cell] as { unsupported?: string } | undefined)?.unsupported;
+        if (typeof message === "string" && message.includes(key)) leaks.push(`${key} @ ${cell}`);
+      }
+    }
+    expect(leaks).toEqual([]);
+  });
+
+  it("names the spelling in every refusal that carries its own subject", () => {
+    const silent: string[] = [];
+    for (const [key, row] of productions()) {
+      for (const cell of CELLS) {
+        const c = row[cell] as { unsupported?: string; subjectFromCaller?: true } | undefined;
+        if (typeof c?.unsupported !== "string" || c.subjectFromCaller === true) continue;
+        if (!c.unsupported.includes(row.spelling)) silent.push(`${key} @ ${cell} (${row.spelling})`);
+      }
+    }
+    expect(silent).toEqual([]);
+  });
+
+  it("gives a spelling that is not the key it replaces", () => {
+    const same = productions()
+      .filter(([k, r]) => r.spelling === k)
+      .map(([k]) => k);
+    expect(same).toEqual([]);
+  });
+});

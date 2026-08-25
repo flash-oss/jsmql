@@ -51,6 +51,32 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — fix: a production names itself by its spelling, never by its key
+
+`productions.ts` is keyed descriptively — `conditional`, `remainder`, `methodCall` — so that
+two rules cannot collide on a symbol. 143 refusal messages were interpolating that key into
+text a user reads: *'conditional' produces a value, not a stage*, and worse,
+*'.conditional()' is not a statement*, which applies method-call phrasing to a ternary.
+Nobody types the word "conditional".
+
+`tokens` cannot supply the spelling either, because it lists every lexeme the rule consumes.
+Joined, it gives `?:` for the ternary and `.(),?.$identifier` for a method call. So a row
+now states its `spelling`, and the messages are regenerated from it — including the six
+that named no construct at all (*"a declaration is not a filter predicate."*).
+
+Three of the choices were between two defensible spellings, and the tie-breaker each time
+was whether the message could MISNAME what the reader wrote. `namespacedCall` is
+`Class.method()` rather than `Math.abs(x)`, because one row covers five namespaces and a
+message quoting `Math` to someone who wrote `Object.keys(o)` is wrong. `parameterReference`
+is `<param>` rather than a plausible identifier, for the same reason. And `pipelineStatement`
+says what to do — *';' makes the output a Pipeline, which is not a filter predicate. Drop
+the ';' to write a filter.*
+
+Four tests hold it: every row states one, no message contains its key, every refusal that
+carries its own subject names its spelling, and no spelling is just the key again.
+
+---
+
 ## 2026-08-26 — feat: the shape decision is one question asked of a row
 
 Which document a program becomes — a Filter for `find()` or a list of stages for
