@@ -242,11 +242,7 @@ class Parser {
   private statement(): PipelineStmt {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
     if (this.functionAhead()) return this.functionDecl();
-    if (this.c.is("Delete") || this.c.is("PlusPlus") || this.c.is("MinusMinus") || this.startsAWrite()) {
-      return this.writes();
-    }
-    // A formatter wraps each write in parentheses; `writes()` unwraps them.
-    if (this.c.is("LParen") && this.parenWriteAhead()) return this.writes();
+    if (this.writeAhead()) return this.writes();
     return this.expression();
   }
 
@@ -318,6 +314,18 @@ class Parser {
     }
   }
 
+  /**
+   * A write starts here. Asked in three places — a `;` statement, an array
+   * element, and after a `,` inside brackets — so it is one predicate: three
+   * copies of the condition is how the array form came to miss the `(`-wrapped
+   * spelling the other two accepted.
+   */
+  private writeAhead(): boolean {
+    if (this.c.is("Delete") || this.c.is("PlusPlus") || this.c.is("MinusMinus")) return true;
+    if (this.c.is("LParen")) return this.parenWriteAhead();
+    return this.startsAWrite();
+  }
+
   private startsAWrite(): boolean {
     const save = this.c.mark();
     try {
@@ -331,54 +339,92 @@ class Parser {
     }
   }
 
+  /**
+   * ONE write, or a parenthesised group of them.
+   *
+   * A formatter writes `($.a = 1, $.b = 2)`, and inside the parentheses a `,`
+   * always continues the group because the `)` is what ends it. Outside them the
+   * `,` means different things in the two callers below, which is the whole
+   * reason this is a separate method.
+   */
+  private writeGroup(): UpdateOp[] {
+    if (this.c.is("LParen") && this.parenWriteAhead()) {
+      this.c.next();
+      const ops: UpdateOp[] = [];
+      do {
+        ops.push(...this.writeGroup());
+      } while (this.c.eat("Comma") && !this.c.is("RParen"));
+      this.c.expect("RParen");
+      return ops;
+    }
+    if (this.c.is("Delete")) {
+      const kw = this.c.next();
+      return [{ type: "DeleteStmt", target: this.expression(), pos: kw.pos }];
+    }
+    // `++$.a` and `$.a++` mean the same write; the row says `prefixOrPostfix`.
+    const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
+    const target = this.expression();
+    const op = prefix ?? this.c.next();
+    const spelling = ASSIGN_OPS.get(op.type);
+    if (spelling === undefined) {
+      throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
+    }
+    // `a?.b = 1` is a JavaScript SyntaxError. The row says so; this enforces it.
+    this.refuseOptionalWriteTarget(target, op.pos);
+    // `$.a = $.b = 1` — every target in the chain takes the SAME value, so the
+    // chain is one write per target and not a nested assignment expression.
+    if (spelling === "=") {
+      const targets = [target];
+      let value = this.expression();
+      while (this.c.is("Eq")) {
+        const eq = this.c.next();
+        this.refuseOptionalWriteTarget(value, eq.pos);
+        targets.push(value);
+        value = this.expression();
+      }
+      return targets.map((t) => ({ type: "AssignExpr", target: t, op: "=" as const, value, pos: op.pos }));
+    }
+    const value = spelling === "++" || spelling === "--" ? target : this.expression();
+    return [{ type: "AssignExpr", target, op: spelling, value, pos: op.pos }];
+  }
+
+  /** The `;` form: a `,` continues the run until the `;` or the end of input. */
   private writes(): UpdateFilter {
     const pos = this.c.peek().pos;
     const ops: UpdateOp[] = [];
     do {
-      const wrapped = this.c.is("LParen") ? this.c.mark() : -1;
-      if (wrapped >= 0) this.c.next();
-      const closeWrap = (): void => {
-        if (wrapped >= 0) this.c.expect("RParen");
-      };
-      if (this.c.eat("Delete")) {
-        ops.push({ type: "DeleteStmt", target: this.expression(), pos });
-        closeWrap();
-        continue;
-      }
-      // `++$.a` and `$.a++` mean the same write; the row says `prefixOrPostfix`.
-      const prefix = this.c.is("PlusPlus") || this.c.is("MinusMinus") ? this.c.next() : null;
-      const target = this.expression();
-      const op = prefix ?? this.c.next();
-      const spelling = ASSIGN_OPS.get(op.type);
-      if (spelling === undefined) {
-        throw new ParseError(`Expected an assignment but got ${found(op)}`, op.pos);
-      }
-      // `a?.b = 1` is a JavaScript SyntaxError. The row says so; this enforces it.
-      this.refuseOptionalWriteTarget(target, op.pos);
-      if (spelling === "++" || spelling === "--") {
-        ops.push({ type: "AssignExpr", target, op: spelling, value: target, pos: op.pos });
-      }
-      if (spelling === "=") {
-        const targets = [target];
-        let value = this.expression();
-        while (this.c.is("Eq")) {
-          const eq = this.c.next();
-          this.refuseOptionalWriteTarget(value, eq.pos);
-          targets.push(value);
-          value = this.expression();
-        }
-        for (const t of targets) ops.push({ type: "AssignExpr", target: t, op: "=", value, pos: op.pos });
-        closeWrap();
-        continue;
-      }
-      if (spelling === "++" || spelling === "--") {
-        closeWrap();
-        continue;
-      }
-      ops.push({ type: "AssignExpr", target, op: spelling, value: this.expression(), pos: op.pos });
-      closeWrap();
-    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi"));
+      ops.push(...this.writeGroup());
+      // `}` ends the run as surely as `;` does: a callback block is a statement
+      // list too, and a formatter puts a trailing comma before its brace.
+    } while (this.c.eat("Comma") && !this.c.is("EOF") && !this.c.is("Semi") && !this.c.is("RBrace"));
     return { type: "UpdateFilter", ops, pos };
+  }
+
+  /**
+   * The bracketed form: a `,` continues the run only when a WRITE follows.
+   *
+   * A run of writes is one stage and a value after the comma is the next element:
+   *   [$.a = 1, ++$.b]        → [{ "$set": { "a": 1, "b": { "$add": ["$b", 1] } } }]
+   *   [$.a = 1, $match(…)]    → [{ "$set": { "a": 1 } }, { "$match": … }]
+   */
+  private writeRun(): UpdateFilter {
+    const pos = this.c.peek().pos;
+    const ops: UpdateOp[] = [...this.writeGroup()];
+    while (this.c.is("Comma") && this.writeAfterComma()) {
+      this.c.next();
+      ops.push(...this.writeGroup());
+    }
+    return { type: "UpdateFilter", ops, pos };
+  }
+
+  private writeAfterComma(): boolean {
+    const save = this.c.mark();
+    try {
+      this.c.next();
+      return this.writeAhead();
+    } finally {
+      this.c.reset(save);
+    }
   }
 
   private refuseOptionalWriteTarget(target: Expr, pos: number): void {
@@ -787,32 +833,8 @@ class Parser {
    */
   private arrayElement(): ArrayElement {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
-    if (this.c.is("PlusPlus") || this.c.is("MinusMinus")) return this.writes().ops[0];
-    // A formatter wraps a write in parentheses here as well.
-    if (this.c.is("LParen")) {
-      const save = this.c.mark();
-      this.c.next();
-      if (this.c.is("Delete") || this.c.is("PlusPlus") || this.c.is("MinusMinus") || this.startsAWrite()) {
-        const writes = this.writes();
-        this.c.expect("RParen");
-        return writes.ops[0];
-      }
-      this.c.reset(save);
-    }
-    if (this.c.is("Delete")) {
-      const d = this.c.next();
-      return { type: "DeleteStmt", target: this.expression(), pos: d.pos };
-    }
-    const target = this.expression();
-    const spelling = ASSIGN_OPS.get(this.c.type);
-    // A `,` inside brackets separates ELEMENTS, so one element is one write.
-    if (spelling === undefined) return target;
-    const op = this.c.next();
-    this.refuseOptionalWriteTarget(target, op.pos);
-    if (spelling === "++" || spelling === "--") {
-      return { type: "AssignExpr", target, op: spelling, value: target, pos: op.pos };
-    }
-    return { type: "AssignExpr", target, op: spelling, value: this.expression(), pos: op.pos };
+    if (this.writeAhead()) return this.writeRun();
+    return this.expression();
   }
 
   private objectEntry(): KeyValueEntry {

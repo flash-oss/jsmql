@@ -218,3 +218,47 @@ describe("compiler/parse — the entry form", () => {
     });
   }
 });
+
+describe("compiler/parse — a run of writes is ONE element, and keeps every op", () => {
+  /** The elements of a bracketed pipeline, each written as what it holds. */
+  const elements = (src: string): string[] => {
+    const t = parse(src) as { elements: { type: string; ops?: { target?: { path?: string } }[] }[] };
+    return t.elements.map((e) =>
+      e.type === "UpdateFilter" ? `write(${e.ops?.map((o) => o.target?.path ?? "?").join(",")})` : e.type,
+    );
+  };
+
+  it("joins consecutive writes into a single update element", () => {
+    expect(elements("[$.b = 1, $.c = 2]")).toEqual(["write(b,c)"]);
+    expect(elements("[++$.a, ++$.b]")).toEqual(["write(a,b)"]);
+    expect(elements("[delete $.a, delete $.b]")).toEqual(["write(a,b)"]);
+    expect(elements("[$.b = 1, ++$.c]")).toEqual(["write(b,c)"]);
+  });
+
+  it("ends the run at the first element that is not a write", () => {
+    expect(elements("[$.b = 1, $match($.x > 1)]")).toEqual(["write(b)", "OperatorCall"]);
+    expect(elements("[$match($.x > 1), ++$.a, ++$.b]")).toEqual(["OperatorCall", "write(a,b)"]);
+  });
+
+  it("keeps every op of a run a formatter wrapped in parentheses", () => {
+    expect(elements("[($.b = 1, $.c = 2)]")).toEqual(["write(b,c)"]);
+    expect(elements("[(delete $.a, delete $.b)]")).toEqual(["write(a,b)"]);
+  });
+
+  it("leaves an array of values an array of values", () => {
+    expect(elements("[1, 2, 3]")).toEqual(["NumberLiteral", "NumberLiteral", "NumberLiteral"]);
+    expect(elements("[...$.a, ...$.b]")).toEqual(["SpreadElement", "SpreadElement"]);
+  });
+
+  it("accepts the trailing comma a formatter leaves before a closing brace", () => {
+    const block = parseEntry("({ $ }) => { $.a = 1, $.b = 2, }").program as { ops: unknown[] };
+    expect(block.ops).toHaveLength(2);
+    expect((parse("[$.a = 1, $.b = 2,]") as { elements: { ops: unknown[] }[] }).elements[0].ops).toHaveLength(2);
+  });
+
+  it("gives every target of a chained assignment the same value", () => {
+    const t = parse("$.a = $.b = 1;") as { ops: { target: { path: string }; value: { value: number } }[] };
+    expect(t.ops.map((o) => o.target.path)).toEqual(["a", "b"]);
+    expect(t.ops.map((o) => o.value.value)).toEqual([1, 1]);
+  });
+});

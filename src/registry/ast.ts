@@ -77,7 +77,12 @@ export type ObjectEntry = KeyValueEntry | SpreadElement;
  * Which array literals may hold one is the position phase's question, not the
  * parser's — it records what was written.
  */
-export type ArrayElement = Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp;
+/**
+ * One element of an array literal. The write cases are what make a bracketed
+ * literal a PIPELINE, and a `,`-joined run of them is one `UpdateFilter` — one
+ * element, one stage, however many fields it writes.
+ */
+export type ArrayElement = Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp | UpdateFilter;
 export type CallArg = Expr | SpreadElement;
 
 /**

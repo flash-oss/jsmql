@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-26 — fix: three silent drops in the bracketed write path
+
+`arrayElement` in the new parser took `writes().ops[0]` in two branches and threw the rest away. So
+`[++$.a, ++$.b]` parsed as one increment, `[(delete $.a, delete $.b)]` as one delete, and
+`[($.b = 1, $.c = 2)]` as one assignment — no error, just a missing write. The old compiler emits one
+`$set` with both fields for the first and refuses the other two outright, so all three were wrong.
+
+The cause was three copies of the same "does a write start here" condition, one per caller, and the
+array copy was the one that had drifted. There is now a single `writeAhead()`, and the run itself is
+split in two: `writes()` is the `;` form where a `,` always continues, and `writeRun()` is the
+bracketed form where a `,` continues only when a write follows. That second rule is what makes
+`[$.b = 1, ++$.c]` one stage and `[$.b = 1, $match(…)]` two, matching the old compiler on both.
+
+`ArrayElement` in `src/registry/ast.ts` gains `UpdateFilter`, which is what the branches lacked a way
+to return. A trailing comma before a closing brace now parses too — `({ $ }) => { $.a = 1, $.b = 2, }`
+— because a callback block is a statement list and a formatter puts one there. Verified against a
+1849-input corpus harvested from the test suite: 1828 accepted before and after, zero differences
+apart from that trailing comma.
+
+---
+
 ## 2026-08-26 — fix: the three callbacks `params` had missed, and a kind for a declared variable
 
 A coverage sweep probed all 504 rows with more than twenty lambda shapes each and found exactly
