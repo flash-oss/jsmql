@@ -10,6 +10,41 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: a name-blind AST, in the registry, with NodeName derived from it
+
+[src/registry/ast.ts](src/registry/ast.ts) holds the tree the new parser builds: 33 node types
+where [src/ast.ts](src/ast.ts) has 48. Eighteen went, three arrived. It imports nothing, like
+every registry file, which is what lets `NodeName` in
+[src/registry/vocabulary.ts](src/registry/vocabulary.ts) be DERIVED from the shapes instead of
+written a second time by hand — and the hand-written copy had already drifted, still naming
+`MathCall`, `TypeCastRef` and eleven more with nothing to check it.
+
+The tree is **name-blind**: the parser never compares a name against a set.
+`Math.max($.a, $.b)` and `$.rows.max()` are one node type whose receiver differs, because they
+are one name on two receivers and `names.ts` already says `max` serves both the `Math` and the
+`array` family. That alone removed fourteen node types that existed only because the old parser
+knew particular names — `MathCall`, `MathConst`, `ObjectCall`, `NumberStatic`, `NewSet`,
+`NewDate`, `DateNow`, `DateUTC`, `ArrayFrom`, `TypeCast`, `TypeCastRef`, `MathCallRef`,
+`ObjectIdRef`, and `ParamRef`, which was never distinguishable from any other bare name.
+`CollectionRef` / `DatabaseRef` / `ClusterRef` became one `ContextRef` with a level, and
+`TypeofExpr` folded into `UnaryExpr`, since `typeof` is a prefix operator. `ObjectIdLiteral`
+stays: `0x` followed by exactly 24 hex digits is a re-reading of a NUMBER token, a syntactic
+fact rather than a name.
+
+Two things survive parsing that used to be resolved during it. `AssignOp` keeps `+=`, `-=`,
+`*=`, `/=`, `++` and `--` exactly as written, so the parser holds no meaning and the desugar
+phase reduces them to `=` over a `BinaryExpr`. And a `Lambda` carries either a `body` or
+`stages`, never both — a `{ … }` callback is JavaScript unless the name's row says
+`blockBody: "stages"`, which only `aggregate` does.
+
+Deriving `NodeName` turned nine `becomes` values into compile errors, which is the point:
+[test/compiler-ast.test.ts](test/compiler-ast.test.ts) now checks both directions, that no rule
+claims a node the tree lacks and that no node exists which no syntax builds. It also dissolves
+an earlier finding — `collectionReference` was reported as wrongly claiming both `DatabaseRef`
+and `CollectionRef`, and with one `ContextRef` node the question no longer exists.
+
+---
+
 ## 2026-08-25 — feat: src/compiler/ begins, with the lexer reading the token table
 
 The compiler is being rebuilt as five phases over `src/registry/`, each reading the one file

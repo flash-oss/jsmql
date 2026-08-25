@@ -503,7 +503,8 @@ export const PRODUCTIONS = {
   typeCheck: production({
     doc: "The type name of a value.",
     tokens: ["typeof"],
-    becomes: "TypeofExpr",
+    // `typeof` is a prefix operator, so it needs no node of its own.
+    becomes: "UnaryExpr",
     precedence: 13,
     associativity: "right",
     fixity: "prefix",
@@ -631,7 +632,10 @@ export const PRODUCTIONS = {
   namespacedCall: production({
     doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`, `Array.from(...)`.",
     tokens: [".", "(", ")", ",", "identifier"],
-    becomes: ["MathCall", "ObjectCall", "NumberStatic", "DateNow", "DateUTC", "ArrayFrom", "MathConst"],
+    // `Math.max(a, b)` is a MethodCall whose object is the name `Math`; `Math.PI` is a
+    // MemberAccess. Seven node types collapsed here — the parser no longer knows
+    // which namespace it is looking at.
+    becomes: ["MethodCall", "MemberAccess"],
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -644,7 +648,8 @@ export const PRODUCTIONS = {
   constructorCall: production({
     doc: "`new Date(…)`, `new Set(…)`, `new ObjectId(…)`. What each constructor means is in names.ts.",
     tokens: ["new", "(", ")", ",", "identifier"],
-    becomes: ["NewDate", "NewSet", "ObjectIdLiteral"],
+    // One node for every `new X(…)`. Which constructor it is comes from names.ts.
+    becomes: "NewExpression",
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -664,7 +669,9 @@ export const PRODUCTIONS = {
   typeCast: production({
     doc: "`Number(x)`, `String(x)`, `Boolean(x)` — a bare global conversion.",
     tokens: ["(", ")", "identifier"],
-    becomes: "TypeCast",
+    // `Number($.s)` is a call whose callee is a name. Nothing about it is special
+    // until names.ts resolves `Number`.
+    becomes: "CallExpression",
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -677,7 +684,9 @@ export const PRODUCTIONS = {
   unappliedReference: production({
     doc: "A callable handed to a higher-order name without being applied: `map(String)`, `map(Math.abs)`.",
     tokens: ["identifier"],
-    becomes: ["TypeCastRef", "MathCallRef", "ObjectIdRef"],
+    // A bare name handed over unapplied is still just a name. Whether it MAY be is
+    // the `asReference` field on its row.
+    becomes: "Ident",
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -725,7 +734,8 @@ export const PRODUCTIONS = {
   streamReference: production({
     doc: "`$$` — the current collection as a stream.",
     tokens: ["$$"],
-    becomes: "CollectionRef",
+    // `$$` is level 2.
+    becomes: "ContextRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -738,7 +748,8 @@ export const PRODUCTIONS = {
   collectionReference: production({
     doc: "`$$$.<coll>` — another collection.",
     tokens: ["$$$"],
-    becomes: ["DatabaseRef", "CollectionRef"],
+    // `$$$` is level 3.
+    becomes: "ContextRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -751,7 +762,8 @@ export const PRODUCTIONS = {
   clusterReference: production({
     doc: "`$$$$` — cluster scope, for the diagnostic source stages.",
     tokens: ["$$$$"],
-    becomes: "ClusterRef",
+    // `$$$$` is level 4.
+    becomes: "ContextRef",
     on: "any",
     returns: "unknown",
     where: ["stream"],
@@ -764,7 +776,8 @@ export const PRODUCTIONS = {
   parameterReference: production({
     doc: "A name bound by the parameter destructure.",
     tokens: ["identifier"],
-    becomes: "ParamRef",
+    // Indistinguishable from any other bare name at parse time — scope decides.
+    becomes: "Ident",
     on: "any",
     returns: "unknown",
     where: ["value"],

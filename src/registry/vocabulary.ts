@@ -20,9 +20,12 @@
 //     at — a production's tokens, a sugar form's precedence, a stage's forbidden
 //     containers.
 //
-// ── stand-ins for types that already exist in the repo ────────────────────────
-export type Expr = { type: string; pos: number };
-export type Node = Expr;
+// The tree lives in ./ast.ts, which imports nothing, so `NodeName` below is
+// DERIVED from the real shapes rather than written a second time by hand.
+import type { Expr as AstExpr, Node as AstNode } from "./ast.ts";
+
+export type Expr = AstExpr;
+export type Node = AstNode;
 export type QueryDoc = Record<string, unknown>;
 export type Stage = Record<string, unknown>;
 /** OPERATOR_CATEGORIES from src/operators.ts, verbatim. */
@@ -141,59 +144,12 @@ export type TokenName =
   | "Ident"
   | "EOF";
 
-/** The AST node a construct produces. Named so `forms` below can be checked. */
-export type NodeName =
-  | "MemberAccess"
-  | "MethodCall"
-  | "IndexAccess"
-  | "CallExpression"
-  | "MathCall"
-  | "MathConst"
-  | "ObjectCall"
-  | "NumberStatic"
-  | "NewSet"
-  | "FieldRef"
-  | "CollectionRef"
-  | "DatabaseRef"
-  | "ClusterRef"
-  | "ParamRef"
-  | "BinaryExpr"
-  | "UnaryExpr"
-  | "TernaryExpr"
-  | "TypeofExpr"
-  | "ObjectLiteral"
-  | "ArrayLiteral"
-  | "TemplateLiteral"
-  | "Lambda"
-  | "OperatorCall"
-  | "LetDecl"
-  | "FuncDecl"
-  | "UpdateFilter"
-  | "Pipeline"
-  // The constructor and conversion nodes, each its own kind in the parser.
-  | "NewDate"
-  | "DateNow"
-  | "DateUTC"
-  | "NewSet"
-  | "ArrayFrom"
-  | "ObjectIdLiteral"
-  | "ObjectIdRef"
-  | "TypeCast"
-  | "TypeCastRef"
-  | "MathCallRef"
-  | "SpreadElement"
-  | "AssignExpr"
-  | "DeleteStmt"
-  | "ExprBlock"
-  // The literal nodes.
-  | "KeyValueEntry"
-  | "NumberLiteral"
-  | "StringLiteral"
-  | "BigIntLiteral"
-  | "BooleanLiteral"
-  | "NullLiteral"
-  | "UndefinedLiteral"
-  | "RegexLiteral";
+/**
+ * Every node a construct can produce, DERIVED from ./ast.ts. Written by hand it
+ * drifted: the list still named MathCall, ObjectCall, TypeCastRef and eleven more
+ * that the name-blind tree does not have, and nothing checked it.
+ */
+export type NodeName = AstNode["type"];
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 2. THE VOCABULARY
