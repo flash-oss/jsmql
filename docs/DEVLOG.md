@@ -51,6 +51,36 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: one place asks a row what it says, and the refusal surface works before any lowering does
+
+`consult(name, position)` reads the cell a row holds for a position and answers with one of
+eight verdicts. Five of them are final without a lowering existing — a refusal, a fallback,
+a compose-only, an unknown name, a position the row has no cell for — so the whole refusal
+surface of the language works now, from the rows' own text, with nothing hard-coded.
+
+It reads BOTH registries. A name is an identifier the source writes (`sort`, `Math`,
+`$inc`); a production is a construct (`%`, `===`, `?:`). Both carry the same cells, so a
+caller never has to know which registry its name came from, and the keys cannot collide
+because a production is keyed descriptively and no name row uses one of those words.
+
+Asked across every row and every position, the type-level agreement rule between `where`
+and the cells beside it holds at runtime too: nothing listed is refused, and nothing
+omitted offers a lowering. Two things did not hold. `length` claimed `viaFallback` in filter
+position for all three of its families, which promised that `$$.length > 1` merely scans
+when in fact it does not compile — the exact failure the `NonEmitter.perFamily`
+documentation cites as its own reason for existing, written in the doc and not applied to
+the row. It is now per family. And `Pending` was being read under the wrong key, so a
+position whose lowering has not moved yet reported that a lowering was ready.
+
+A refusal now says whether it carries its own subject. Thirty-seven cells hold the REASON
+only, because one reason serves every spelling that reaches it — `'.toReversed(...)' isn't
+available on '$$' — reverses the stream, and …` — and the caller is the only one that knows
+which spelling it is looking at. That was previously detectable only by reading the first
+letter of the message and guessing, a coupling nothing declared; `because(...)` states it,
+and `refusalSentence` is the one place that joins the two halves.
+
+---
+
 ## 2026-08-26 — feat: a synthesised lambda parameter that cannot capture
 
 A rewrite that BUILDS a lambda has to name its parameter, and that name lands in the same

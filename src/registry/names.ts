@@ -50,7 +50,7 @@ import type {
   TokenName,
   ViaFallback,
 } from "./vocabulary.ts";
-import { Anchored, objectBody, op, pending, Range, unsupported, viaFallback } from "./vocabulary.ts";
+import { Anchored, because, objectBody, op, pending, Range, unsupported, viaFallback } from "./vocabulary.ts";
 
 type RootSpec<W extends readonly Position[]> = {
   doc: string;
@@ -4344,7 +4344,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported(
+    stream: because(
       "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
     ),
     statement: unsupported("'.toReversed()' is not a statement — see its 'where'."),
@@ -4409,7 +4409,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, deleteCount, ...items]", atLeast: 1 }),
-    stream: unsupported("addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'."),
+    stream: because("addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'."),
     statement: unsupported("'.toSpliced()' is not a statement — see its 'where'."),
     group: unsupported("'.toSpliced()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -4425,7 +4425,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "index, value", exact: 2 }),
-    stream: unsupported("replaces the element at an index. Use '.map(d => …)' with a condition on the document."),
+    stream: because("replaces the element at an index. Use '.map(d => …)' with a condition on the document."),
     statement: unsupported("'.with()' is not a statement — see its 'where'."),
     group: unsupported("'.with()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.with()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -4439,7 +4439,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "depth", allowed: [0, 1] }),
-    stream: unsupported(
+    stream: because(
       "flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",
     ),
     statement: unsupported("'.flat()' is not a statement — see its 'where'."),
@@ -4520,7 +4520,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "callback", exact: 1 }),
-    stream: unsupported("returns an index, and a stream has no index."),
+    stream: because("returns an index, and a stream has no index."),
     statement: unsupported("'.findIndex()' is not a statement — see its 'where'."),
     group: unsupported("'.findIndex()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -4537,7 +4537,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stream: unsupported(
+    stream: because(
       "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
     ),
     statement: unsupported("'.findLast()' is not a statement — see its 'where'."),
@@ -4556,7 +4556,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "callback", exact: 1 }),
-    stream: unsupported("returns an index, and a stream has no index."),
+    stream: because("returns an index, and a stream has no index."),
     statement: unsupported("'.findLastIndex()' is not a statement — see its 'where'."),
     group: unsupported("'.findLastIndex()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -4645,7 +4645,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "lambda, initialValue", exact: 2 }),
-    stream: unsupported(
+    stream: because(
       "folds from the END, which needs the whole stream buffered, and collapses it to one value. Use the '.reduce' wrap forms — see the '.reduce' error for the three shapes.",
     ),
     statement: unsupported("'.reduceRight()' is not a statement — see its 'where'."),
@@ -4663,7 +4663,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "separator", allowed: [0, 1] }),
-    stream: unsupported(
+    stream: because(
       "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
     ),
     statement: unsupported("'.join()' is not a statement — see its 'where'."),
@@ -4733,7 +4733,7 @@ export const NAMES = {
     expr: unsupported(
       ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
-    stream: unsupported("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
+    stream: because("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
     statement: pending("src/pipeline.ts"),
     group: unsupported("'.push()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.push()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -5651,7 +5651,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...values", atLeast: 1 }),
-    stream: unsupported("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
+    stream: because("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
     statement: unsupported("'.without()' is not a statement — see its 'where'."),
     group: unsupported("'.without()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.without()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -5665,9 +5665,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stream: unsupported(
-      "compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'.",
-    ),
+    stream: because("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
     statement: unsupported("'.xor()' is not a statement — see its 'where'."),
     group: unsupported("'.xor()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.xor()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -5682,7 +5680,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stream: unsupported("compares against a second array. Use '$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported("'.differenceBy()' is not a statement — see its 'where'."),
     group: unsupported("'.differenceBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -5699,7 +5697,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stream: unsupported("compares against a second array. Use '$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and keep the matches."),
     statement: unsupported("'.intersectionBy()' is not a statement — see its 'where'."),
     group: unsupported("'.intersectionBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -5716,7 +5714,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stream: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported("'.unionBy()' is not a statement — see its 'where'."),
     group: unsupported("'.unionBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unionBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -5731,7 +5729,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
-    stream: unsupported("compares against a second array. Compare against a collection with '$$.<coll>.find(<pred>)'."),
+    stream: because("compares against a second array. Compare against a collection with '$$.<coll>.find(<pred>)'."),
     statement: unsupported("'.xorBy()' is not a statement — see its 'where'."),
     group: unsupported("'.xorBy()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.xorBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -5745,7 +5743,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported(
+    stream: because(
       "drops falsy elements. Every stream element is a document, which is never falsy — use '.reject(<pred>)' for the condition you mean.",
     ),
     statement: unsupported("'.compact()' is not a statement — see its 'where'."),
@@ -5761,7 +5759,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported(
+    stream: because(
       "flattens nested ARRAYS; a stream holds documents. Use '.flatMap(d => d.<field>)' to expand an array field into documents.",
     ),
     statement: unsupported("'.flatten()' is not a statement — see its 'where'."),
@@ -5777,7 +5775,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "size", exact: 1 }),
-    stream: unsupported(
+    stream: because(
       "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
     ),
     statement: unsupported("'.chunk()' is not a statement — see its 'where'."),
@@ -5821,7 +5819,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stream: unsupported(
+    stream: because(
       "counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
     ),
     statement: unsupported("'.takeRight()' is not a statement — see its 'where'."),
@@ -5839,7 +5837,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stream: unsupported("counts from the END. Sort by the opposite key and use '.drop(n)'."),
+    stream: because("counts from the END. Sort by the opposite key and use '.drop(n)'."),
     statement: unsupported("'.dropRight()' is not a statement — see its 'where'."),
     group: unsupported("'.dropRight()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -5869,7 +5867,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported(
+    stream: because(
       "drops the LAST element, which needs the whole stream buffered. Sort by the opposite key and use '.drop(1)'.",
     ),
     statement: unsupported("'.initial()' is not a statement — see its 'where'."),
@@ -5990,7 +5988,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stream: unsupported("scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'."),
+    stream: because("scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'."),
     statement: unsupported("'.takeRightWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.takeRightWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -6007,7 +6005,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stream: unsupported("scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'."),
+    stream: because("scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'."),
     statement: unsupported("'.dropRightWhile()' is not a statement — see its 'where'."),
     group: unsupported("'.dropRightWhile()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -6053,7 +6051,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "values", exact: 1 }),
-    stream: unsupported("builds ONE object from keys and values, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from keys and values, so the result is a value rather than a stream."),
     statement: unsupported("'.zipObject()' is not a statement — see its 'where'."),
     group: unsupported("'.zipObject()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -6069,7 +6067,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...arrays", atLeast: 1 }),
-    stream: unsupported(
+    stream: because(
       "pairs elements positionally across arrays. A stream has no positions to pair on — join on a key instead with '$$$.<coll>.find(<pred>)'.",
     ),
     statement: unsupported("'.zip()' is not a statement — see its 'where'."),
@@ -6085,7 +6083,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported("transposes into ONE array of arrays, so the result is a value rather than a stream."),
+    stream: because("transposes into ONE array of arrays, so the result is a value rather than a stream."),
     statement: unsupported("'.unzip()' is not a statement — see its 'where'."),
     group: unsupported("'.unzip()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unzip()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -6101,7 +6099,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "...arrays, iteratee", atLeast: 2 }),
-    stream: unsupported("pairs elements positionally across arrays. Join on a key with '$$.<coll>.find(<pred>)'."),
+    stream: because("pairs elements positionally across arrays. Join on a key with '$$.<coll>.find(<pred>)'."),
     statement: unsupported("'.zipWith()' is not a statement — see its 'where'."),
     group: unsupported("'.zipWith()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.zipWith()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -6343,7 +6341,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: unsupported("builds ONE object from pairs, so the result is a value rather than a stream."),
+    stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
     statement: unsupported("'.fromPairs()' is not a statement — see its 'where'."),
     group: unsupported("'.fromPairs()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -6606,7 +6604,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
     statement: unsupported("'.intersection()' is not a statement — see its 'where'."),
     group: unsupported("'.intersection()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -6622,7 +6620,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stream: unsupported("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
+    stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported("'.union()' is not a statement — see its 'where'."),
     group: unsupported("'.union()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.union()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -6636,7 +6634,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "other", exact: 1 }),
-    stream: unsupported("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported("'.difference()' is not a statement — see its 'where'."),
     group: unsupported("'.difference()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
@@ -8364,7 +8362,7 @@ export const NAMES = {
     where: ["statement"],
     filter: unsupported("'$$$$.<db>.<coll>' names a collection, not a test."),
     expr: unsupported("'$$$$.<db>.<coll>' names a collection, not a value."),
-    stream: unsupported(
+    stream: because(
       "cross-database reads aren't supported, so '$$$$' cannot be a stream source. Cross-database WRITES do work: '$$$$.<db>.<coll> = $$' lowers to '$out'.",
     ),
     statement: pending("src/pipeline.ts"),
@@ -8382,7 +8380,7 @@ export const NAMES = {
     provides: "Date",
     returns: "date",
     where: ["value"],
-    filter: unsupported("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
+    filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
     expr: {
       byArgs: [
         { when: "none", args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
@@ -8410,7 +8408,7 @@ export const NAMES = {
     asReference: true,
     returns: "objectId",
     where: ["value"],
-    filter: unsupported("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
+    filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
     expr: {
       byArgs: [
         { when: "none", args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
@@ -8431,7 +8429,7 @@ export const NAMES = {
     asReference: false,
     returns: "array",
     where: ["value"],
-    filter: unsupported("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
+    filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
     expr: {
       byArgs: [
         { when: "constant", args: { sig: "values", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
@@ -8452,7 +8450,7 @@ export const NAMES = {
     provides: "Number",
     returns: "number",
     where: ["value"],
-    filter: unsupported("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
+    filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
       byArgs: [
         { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDouble: gen(args[0]) }) },
@@ -8486,7 +8484,18 @@ export const NAMES = {
     on: ["array", "string", "stream"],
     returns: "number",
     where: ["value"],
-    filter: viaFallback,
+    // Per family, because one answer for all three states a legality the stream
+    // form does not have: `$.tags.length < 5` scans, `$$.length > 1` does not
+    // compile at all. A flat `viaFallback` promised the third merely scans.
+    filter: {
+      perFamily: {
+        array: viaFallback,
+        string: viaFallback,
+        stream: unsupported(
+          "'$$.length' (the current stream's document count) needs Pipeline mode — it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$.length; … }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+        ),
+      },
+    },
     expr: {
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: recv }) },

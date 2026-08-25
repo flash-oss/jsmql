@@ -542,7 +542,21 @@ export const pending = (livesIn: string, args?: Arity): Pending =>
   args === undefined ? { pending: livesIn } : { pending: livesIn, args };
 
 /** A refusal that carries the message the user should read instead. */
-export type Refusal = { unsupported: string };
+export type Refusal = {
+  unsupported: string;
+  /**
+   * true when the message is the REASON only and the caller supplies the subject.
+   *
+   * One reason has to serve every spelling that can reach it, and the caller is
+   * the only one that knows which spelling it is looking at:
+   *   $$ = $$.toReversed()  →  "'.toReversed(...)' isn't available on '$$' — reverses
+   *                            the stream, and a stream has no defined order …"
+   * A row that spelled the subject itself would repeat the name the caller already
+   * holds. Stated rather than inferred: the alternative is reading the first letter
+   * of the message and guessing, which is a coupling nothing declares.
+   */
+  subjectFromCaller?: true;
+};
 
 /**
  * No NATIVE rendering in this position, but the code still compiles and runs:
@@ -582,6 +596,9 @@ export const composedInto = <const O extends readonly string[]>(...owners: O): {
 export const viaFallback: ViaFallback = { fallback: "expr" };
 
 export const unsupported = (why: string): Refusal => ({ unsupported: why });
+
+/** A refusal whose subject the caller supplies. See `subjectFromCaller`. */
+export const because = (reason: string): Refusal => ({ unsupported: reason, subjectFromCaller: true });
 
 /** The families a given `on` covers. */
 export type Of<O> = O extends readonly (infer F extends Family)[] ? F : O extends Family ? O : Family;
