@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — fix: three names could be passed unapplied and no row said so
+
+`asReference` records whether a name may be handed to a higher-order method without being
+called, and `ceil`, `floor` and `round` were missing it while the compiler accepts all three:
+`$.a.map(Math.floor)` → `{"$map":{"input":"$a","as":"v","in":{"$floor":"$$v"}}}`. They are the
+three rows the per-family split rewrote into `on: ["number", "Math"]` — the flag went in the
+same edit that added the namespace family, and only those three, which is what a hand-audit
+misses and a measurement does not. `Math.floor` is the very example the compiler's own rejection
+text uses for what IS allowed. The registry now claims exactly the 25 names the compiler accepts:
+four globals and twenty-one unary `Math` methods.
+
+---
+
 ## 2026-08-25 — fix: `new Date`'s calendar-parts shape, and a spread flag that claimed too much
 
 Two more gaps from the sugar audit, both measured against the compiler.
