@@ -66,17 +66,26 @@ is a list of field names, and `$$ = $$.groupBy({ _id: … })` is a raw `$group` 
 `.sortBy()` already refuses the object form because of this collision and its message says
 so. A rewrite driven by shape would turn a sort into a matcher silently.
 
-`iterateeSlots` states it, per position where it differs, exactly as `params` does. It is
+`iterateeSlots` states it, one entry per receiver family `on` lists. It is
 NOT on `Arity`, where a field of this name sat unused by every row: an `Arity` requires a
 `sig` and a count, so a cell could not state a spelling without also inventing an argument
 count it had no reason to claim. That is why the field was never filled in, and moving it
 cost nothing because nothing referenced it.
 
+Per FAMILY and not per position, because the slot layout is a property of the receiver:
+`$.items.groupBy(fn)` puts the iteratee first and `Object.groupBy($.items, fn)` puts the
+collection there, and one row serves both. Keyed by position, that row would have said the
+first slot takes a matcher on every receiver, and `Object.groupBy(["a", 1], fn)` would have
+been rewritten into a discriminator. Among these rows the family fixes the position anyway,
+so nothing is lost.
+
 The values are measured, not assumed. A harness compiles each spelling and the arrow that
 means the same thing, erases the binding names the compiler chose for itself, and compares
 — and the test that does so is committed, so the claim stays checked in both directions:
 every declared spelling compiles and agrees with its arrow, and every spelling a slot leaves
-out is refused. Two rows are narrower than their siblings for a reason the server gives:
+out is refused. It earned its place at once, by rejecting a claim of mine that `$$.groupBy`
+takes no shorthand at all: only its OBJECT form is a `$group` document, and `$$.groupBy("k")`
+is an ordinary iteratee. Two rows are narrower than their siblings for a reason the server gives:
 `$$.map` and `$$.flatMap` accept a property path only, because `$replaceWith` needs a
 document and `$unwind` needs a field path, and a matcher is provably a boolean.
 

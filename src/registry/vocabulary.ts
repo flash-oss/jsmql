@@ -401,11 +401,22 @@ export type Arity = {
 export type SlotForm = "propertyPath" | "matchesObject" | "matchesPropertyPair" | "bareCallable" | "omitted";
 
 /**
- * Which argument slots take an ITERATEE, and what each accepts besides the arrow.
+ * One receiver's slot layout: which argument slots take an ITERATEE, and what
+ * each accepts besides the arrow.
+ *
  * Keyed by slot index, because the iteratee is not always the first argument:
- * `$.a.differenceBy($.b, "id")` compares against an array first.
+ * `$.a.differenceBy($.b, "id")` compares against an array first — and which
+ * index it is depends on the RECEIVER, which is why the layout is stated per
+ * family. `$.items.groupBy(fn)` and `Object.groupBy($.items, fn)` are one row.
  */
-export type IterateeSlots = Readonly<Record<number, readonly SlotForm[]>>;
+export type IterateeSlots =
+  | Readonly<Record<number, readonly SlotForm[]>>
+  /**
+   * No slot on this receiver stands in for an arrow, and why. Spelled out rather
+   * than left as an empty layout: an omission and a decision look alike, and this
+   * is the half that a rewrite pass must not guess at.
+   */
+  | { arrowOnly: string };
 
 /** An object-shaped body: operators in object style, and every stage. */
 export type BodyRule = {

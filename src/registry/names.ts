@@ -95,8 +95,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   params?: CallbackParams;
   /**
    * The argument slots that take an ITERATEE — a function of one element — and
-   * what each accepts in place of the arrow. Per position where it differs,
-   * exactly like `params`. Absent means no slot here takes one.
+   * what each accepts in place of the arrow. One entry per receiver family `on`
+   * lists, because the SLOT LAYOUT is a property of the receiver:
+   *   $.items.groupBy(fn)            the iteratee is the first argument
+   *   Object.groupBy($.items, fn)    the collection is, and the arrow is second
+   * One row serves both, so a single layout would misplace one of them. Absent
+   * means no slot on any receiver takes one.
    *
    * ONLY these slots may have a short spelling rewritten into the arrow it
    * means, and that is the whole reason the field exists: three other kinds of
@@ -115,7 +119,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * `Arity` requires a `sig` and a count, so a cell could not state a spelling
    * without also inventing an argument count it had no reason to claim.
    */
-  iterateeSlots?: IterateeSlots | Readonly<Partial<Record<Position, IterateeSlots>>>;
+  iterateeSlots?: Readonly<Partial<Record<Family, IterateeSlots>>>;
   /**
    * true when the parameter list REPEATS once per collection given:
    * `$.a.zipWith($.b, $.c, (p, q, r) => …)` binds one value per array.
@@ -4477,7 +4481,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value", "index", "collection"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // $unwind needs a field path, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -4496,7 +4501,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value", "index", "collection"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // $replaceWith needs a document, and a matcher is provably a boolean.
       stream: { 0: ["propertyPath"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -4517,7 +4523,8 @@ export const NAMES = {
     // `$$ = $$.filter((d, i) => …)` is "must take exactly one parameter".
     params: { value: ["value", "index", "collection"], stream: ["value"] },
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -4535,7 +4542,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "collection"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -4553,7 +4560,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -4571,7 +4578,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "collection"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -4591,7 +4598,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -4634,7 +4641,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "collection"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
@@ -4650,7 +4657,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value", "index", "collection"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -5568,7 +5575,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
     where: ["value", "group"],
     filter: viaFallback,
@@ -5584,7 +5591,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "number",
     where: ["value", "group"],
     filter: viaFallback,
@@ -5600,7 +5607,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -5616,7 +5623,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -5647,7 +5654,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -5682,7 +5690,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -5730,7 +5739,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -5748,7 +5757,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -5766,7 +5775,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -5782,7 +5791,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -6009,7 +6018,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -6030,7 +6040,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
@@ -6050,7 +6061,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -6068,7 +6079,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -6205,7 +6216,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "object", stream: "stream" },
@@ -6224,7 +6236,14 @@ export const NAMES = {
     on: ["array", "stream", "Object"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
+      // '_id' is the group key. The other two spellings are iteratees as usual.
+      stream: { 0: ["propertyPath", "matchesPropertyPair"] },
+      Object: {
+        arrowOnly:
+          "'Object.groupBy(collection, discriminator)' takes the collection first; its discriminator is an arrow only.",
+      },
     },
     returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
@@ -6249,7 +6268,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "object", stream: "stream" },
@@ -6267,7 +6287,7 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
-    iterateeSlots: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+    iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -6286,7 +6306,8 @@ export const NAMES = {
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
-      value: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element is a document.
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
     },
     returns: { array: "array", stream: "stream" },
