@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: src/compiler/ begins, with the lexer reading the token table
+
+The compiler is being rebuilt as five phases over `src/registry/`, each reading the one file
+that owns its facts. [src/compiler/CLAUDE.md](src/compiler/CLAUDE.md) holds the diagram and the
+rule that shapes all of it: **the registry says what the language HAS, not how to build the
+MQL.** A row answers whether a name exists, what it attaches to, which of the seven positions
+it is legal in, how many arguments it takes there, and what the error says. It does not hold a
+renderer, because a lowering reads its neighbours — the receiver's provable type, the stages
+already emitted, a sibling argument's shape — and one row can see none of that. Lowerings are
+code, in `emit/`.
+
+Phase 1 is done. The old lexer wrote one `if` per spelling, ordered longest-first by hand, and
+promoted reserved words with an eleven-case switch; both are table reads now. Punctuator order
+is DERIVED from key length, so `===` cannot be shadowed by `==` and no row is placed by hand,
+and the promotion is `KEYWORDS` itself. The four decisions a longest-match table cannot imply
+are read from the rows that state them — `maxRun` refuses `$$$$$` rather than splitting it into
+two legal tokens, `chooseBy` reads `/` as division after a value and a regex otherwise,
+`tracksDepth` and `resumesTemplateAtDepth` let an interpolation find its own closing brace in
+`` `${ {a: 1} } px` ``. What stays hand-written is the scanners, because a table says which
+spelling makes which token while a scanner decides where a token ENDS: `1_000.5e-3` is one
+number and `0x507f1f77bcf86cd799439011` is an ObjectId at exactly 24 hex digits.
+
+The suite's own inputs are the specification. 2,381 JSMQL sources harvested from every test
+file lex to a byte-identical token stream under both lexers, with zero differences and none
+refused by only one of them — asserted in
+[test/compiler-lex.test.ts](test/compiler-lex.test.ts), which also checks that every reserved
+word and every fixed spelling lexes to the type its row names. Parity is guidance rather than
+the target: where the two disagree the new one may be right, so a difference has to be listed
+rather than tolerated. One already is — an unterminated regex at end of input used to lex as a
+complete token and is now refused.
+
+---
+
 ## 2026-08-25 — fix: `tracksDepth` and `resumesTemplateAtDepth` were on the wrong row
 
 Both flags landed on the `$$$$` row instead of `{` and `}`. The edit that added them matched a
