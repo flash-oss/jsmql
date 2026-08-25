@@ -7,7 +7,7 @@
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { parse, parseExpression } from "../src/compiler/parse/parser.ts";
+import { parse, parseEntry, parseExpression } from "../src/compiler/parse/parser.ts";
 import { INFIX, PREFIX } from "../src/compiler/parse/tables.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
@@ -170,4 +170,51 @@ describe("compiler/parse — the parser decides nothing about meaning", () => {
     expect(parse("const f = (x) => x + 1; $.y = f(2);")).toMatchObject({ type: "Pipeline" });
     expect(parse("function f(x) { return x + 1 } $.y = f(2);")).toMatchObject({ type: "Pipeline" });
   });
+});
+
+describe("compiler/parse — the entry form", () => {
+  it("separates the params destructure from the toolbox by its KEYS, not its position", () => {
+    const r = parseEntry("({ minAge }, { $ }) => $.age >= minAge");
+    expect(r.params.map((p) => p.key)).toEqual(["minAge"]);
+    expect(r.toolbox.map((p) => p.key)).toEqual(["$"]);
+    expect(r.program.type).toBe("BinaryExpr");
+  });
+
+  it("binds every toolbox spelling", () => {
+    expect(parseEntry("({ $, $$, $$$, $$$$ }) => $.a > 1").toolbox.map((p) => p.key)).toEqual([
+      "$",
+      "$$",
+      "$$$",
+      "$$$$",
+    ]);
+    expect(parseEntry("({ $, $match }) => $.a > 1").toolbox.map((p) => p.key)).toEqual(["$", "$match"]);
+  });
+
+  it("records a `key: alias` rename on both halves", () => {
+    const r = parseEntry("({ minAge: lo }, { $ }) => $.age >= lo");
+    expect(r.params[0]).toMatchObject({ key: "minAge", name: "lo" });
+  });
+
+  it("takes an expression body, a `return` body, or a statement body", () => {
+    expect(parseEntry("({ $ }) => $.age > 18").program.type).toBe("BinaryExpr");
+    expect(parseEntry("({ $ }) => { return $.age > 18 }").program.type).toBe("BinaryExpr");
+    expect(parseEntry("({ $ }) => { $.a = 1; $sort({ b: 1 }); }").program.type).toBe("Pipeline");
+  });
+
+  it("accepts no parameters at all", () => {
+    expect(parseEntry("() => $.age > 18").program.type).toBe("BinaryExpr");
+  });
+
+  const refused: [string, RegExp][] = [
+    ["({ $ }, { minAge }) => $.a > 1", /toolbox is the SECOND slot/],
+    ["({ $, minAge }) => $.a > 1", /either query parameters or the '\$'-prefixed toolbox/],
+    ["(o) => o.age > 18", /object destructure pattern/],
+    ["({ $ }, { a }, { b }) => $.a > 1", /at most two parameters/],
+    ["({}) => $.a > 1", /binds nothing/],
+  ];
+  for (const [src, message] of refused) {
+    it(`refuses ${src}`, () => {
+      expect(() => parseEntry(src)).toThrow(message);
+    });
+  }
 });

@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-25 — feat: the parser reads the entry form
+
+`parseEntry` completes phase 2. The sugar audit found the gap by trying to use it:
+`({ minAge }, { $ }) => $.age >= minAge` threw *"Expected ')' but got ','"*, so the form every
+`jsmql.compile` call is written in could not be parsed at all — while `ParamBinding` in
+[src/registry/ast.ts](src/registry/ast.ts) and the `destructuringParam` production had described
+it since the registry was written.
+
+Which slot is which comes from the KEYS, not from the position. A destructure whose keys are all
+`$`-prefixed is the toolbox; one with bare keys binds query parameters. That is what lets the
+"toolbox before params" mistake be caught by name rather than by counting, and it is why
+`({ $ }, { minAge }) => …` reports *"Reorder to '(params, { $, … }) => …' — the toolbox is the
+SECOND slot"* instead of silently binding `$` as a parameter. Mixing the two in one destructure
+is refused for the same reason. The bindings are held BESIDE the tree, never in it, which is what
+`destructuringParam`'s `becomes: { notANode: … }` has always said.
+
+Every `$`-family key is matched as its own TOKEN rather than by spelling — `$`, `$$`, `$$$`,
+`$$$$` are four distinct token types after the earlier `ContextRef` split, and `$name` is the
+`Dollar` token followed by an identifier. So the key vocabulary needs no string comparison.
+
+---
+
 ## 2026-08-25 — fix: three names could be passed unapplied and no row said so
 
 `asReference` records whether a name may be handed to a higher-order method without being

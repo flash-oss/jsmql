@@ -14,6 +14,7 @@
 
 import type {
   ArrayElement,
+  ParamBinding,
   AssignOp,
   BinaryOp,
   CallArg,
@@ -44,6 +45,23 @@ export function parse(source: string): Program {
   return new Parser(lex(source)).program();
 }
 
+/**
+ * The ENTRY form: `(params, { $, … }) => <body>`.
+ *
+ * Two destructures at most. The one whose keys are `$`-prefixed is the toolbox —
+ * it binds compiler services and is discarded once the body is parsed; the one
+ * with bare keys binds query parameters. Which is which comes from the KEYS, not
+ * from the position, so the "toolbox before params" mistake is caught by name.
+ *
+ * `destructuringParam` in productions.ts says `notANode` for a reason: the
+ * bindings are held BESIDE the tree, never in it.
+ */
+export type EntryForm = { params: readonly ParamBinding[]; toolbox: readonly ParamBinding[]; program: Program };
+
+export function parseEntry(source: string): EntryForm {
+  return new Parser(lex(source)).entry();
+}
+
 /** Exposed for the tests and for phases that already hold tokens. */
 export function parseExpression(source: string): Expr {
   const p = new Parser(lex(source));
@@ -63,6 +81,127 @@ class Parser {
     if (!this.c.is("EOF")) {
       throw new ParseError(`Unexpected ${found(this.c.peek())}`, this.c.peek().pos);
     }
+  }
+
+  // ── the entry form ────────────────────────────────────────────────────────
+
+  entry(): EntryForm {
+    this.c.expect("LParen");
+    const slots: ParamBinding[][] = [];
+    if (!this.c.is("RParen")) {
+      do {
+        if (this.c.is("RParen")) break;
+        slots.push(this.destructure());
+      } while (this.c.eat("Comma"));
+    }
+    this.c.expect("RParen");
+    if (slots.length > 2) {
+      throw new ParseError(
+        `An entry function takes at most two parameters — the params destructure and the toolbox destructure. Got ${slots.length}`,
+        0,
+      );
+    }
+    const isToolbox = (slot: readonly ParamBinding[]): boolean => slot.every((b) => b.key.startsWith("$"));
+    const isParams = (slot: readonly ParamBinding[]): boolean => slot.every((b) => !b.key.startsWith("$"));
+    for (const slot of slots) {
+      if (!isToolbox(slot) && !isParams(slot)) {
+        throw new ParseError(
+          "A destructure holds either query parameters or the '$'-prefixed toolbox, never both. Split them into two: '(params, { $, … }) => …'",
+          slot[0].pos,
+        );
+      }
+    }
+    if (slots.length === 2 && isToolbox(slots[0]) && !isToolbox(slots[1])) {
+      throw new ParseError("Reorder to '(params, { $, … }) => …' — the toolbox is the SECOND slot", slots[0][0].pos);
+    }
+    const toolbox = slots.find(isToolbox) ?? [];
+    const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
+    this.c.expect("Arrow");
+    // The body is a whole program: an expression, or `{ … }` holding statements.
+    const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
+    return { params, toolbox, program };
+  }
+
+  /** `{ a, b: alias, $, $$, $name }` — one slot of the entry parameter list. */
+  private destructure(): ParamBinding[] {
+    const open = this.c.peek();
+    if (!this.c.is("LBrace")) {
+      throw new ParseError(
+        `jsmql expects each parameter to be an object destructure pattern, e.g. '({ $ }) => …', but got ${found(open)}`,
+        open.pos,
+      );
+    }
+    this.c.next();
+    const out: ParamBinding[] = [];
+    if (!this.c.eat("RBrace")) {
+      do {
+        if (this.c.is("RBrace")) break;
+        const key = this.destructureKey();
+        const name = this.c.eat("Colon") ? this.identLike().text : key.text;
+        out.push({ key: key.text, name, pos: key.pos });
+      } while (this.c.eat("Comma"));
+      this.c.expect("RBrace");
+    }
+    if (out.length === 0) throw new ParseError("An empty destructure binds nothing", open.pos);
+    return out;
+  }
+
+  /**
+   * A destructure key: a bare name, or one of the `$` family. `$name` is an
+   * operator handle, and the bare `$`, `$$`, `$$$`, `$$$$` are the context refs —
+   * each a distinct token, so each is matched on its own rather than by spelling.
+   */
+  private destructureKey(): Token {
+    const t = this.c.peek();
+    if (t.type === "Dollar") {
+      this.c.next();
+      // `$abs` is one key; a lone `$` is the document handle.
+      if (this.c.is("Ident")) {
+        const name = this.c.next();
+        return { ...t, text: "$" + name.text, end: name.end };
+      }
+      return t;
+    }
+    if (t.type === "DoubleDollar" || t.type === "TripleDollar" || t.type === "QuadDollar") {
+      this.c.next();
+      return t;
+    }
+    return this.identLike();
+  }
+
+  /** `{ … }` as an entry body: statements, with an optional trailing `return`. */
+  private entryBlock(): Program {
+    this.c.expect("LBrace");
+    const stmts: PipelineStmt[] = [];
+    for (;;) {
+      while (this.c.eat("Semi")) {
+        /* an empty statement is not an error */
+      }
+      if (this.c.eat("RBrace")) break;
+      if (this.c.is("Return")) {
+        this.c.next();
+        const ret = this.expression();
+        while (this.c.eat("Semi")) {
+          /* empty */
+        }
+        this.c.expect("RBrace");
+        // A `return` in an entry block yields the expression itself, so a bare
+        // predicate stays a predicate and the position phase reads it as a Filter.
+        if (stmts.length > 0) {
+          throw new ParseError("A 'return' here isn't a jsmql statement — put the whole predicate in the return", 0);
+        }
+        return ret;
+      }
+      stmts.push(this.statement());
+      if (!this.c.eat("Semi") && !this.c.is("RBrace")) {
+        throw new ParseError(`Expected ${spell("Semi")} but got ${found(this.c.peek())}`, this.c.peek().pos);
+      }
+    }
+    if (stmts.length === 1) {
+      const only = stmts[0];
+      if (only.type !== "LetDecl" && only.type !== "FuncDecl") return only;
+    }
+    return { type: "Pipeline", stmts, pos: 0 };
   }
 
   // ── the whole input ───────────────────────────────────────────────────────
@@ -635,7 +774,7 @@ class Parser {
           entries.push({ type: "SpreadElement", argument: this.expression(), pos: s.pos });
           continue;
         }
-        entries.push(this.entry());
+        entries.push(this.objectEntry());
       } while (this.c.eat("Comma"));
       this.c.expect("RBrace");
     }
@@ -676,7 +815,7 @@ class Parser {
     return { type: "AssignExpr", target, op: spelling, value: this.expression(), pos: op.pos };
   }
 
-  private entry(): KeyValueEntry {
+  private objectEntry(): KeyValueEntry {
     const t = this.c.peek();
     let key: ObjectKey;
     if (t.type === "LBracket") {
