@@ -203,3 +203,87 @@ describe("compiler/passes/fold — what it computes is the LANGUAGE's answer", (
     expect(valueOf("Number.isFinite(4)")).toBe("(not constant)");
   });
 });
+
+describe("compiler/passes/fold — a scope is a scope, and a write is a write", () => {
+  /** Does the program still declare anything? If so, nothing was folded away. */
+  const keepsABinding = (src: string): boolean => {
+    const t = desugar(parse(src)) as { type: string; stmts?: { type: string }[] };
+    return JSON.stringify(t).includes('"LetDecl"');
+  };
+
+  it("does not push a constant through a nested statement scope", () => {
+    // The inner `const a = 2` is a DIFFERENT variable. Reading the outer one
+    // there answers 1 and leaves the inner declaration standing, unread.
+    const t = JSON.stringify(desugar(parse("const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })")));
+    expect(t).toContain('"value":2');
+    expect(t).not.toContain('"value":1');
+  });
+
+  it("does not push a constant through a bracketed sub-pipeline", () => {
+    expect(keepsABinding("const a = 1; [const a = 2, $match({ b: a })]")).toBe(true);
+  });
+
+  it("does not let one block declaration shadow another's outer name", () => {
+    // `z` must be `x.n + 1`, per document — not the constant 2.
+    expect(keepsABinding("const y = 1; $.a = $.items.map(x => { const y = x.n; const z = y + 1; return z })")).toBe(
+      true,
+    );
+  });
+
+  it("sees a write THROUGH a path, and never rewrites the place written to", () => {
+    // `a.p = 9` changes `a`. Folding it would answer with the old value, and
+    // substituting the target would produce `1 = 9`, which is not a program.
+    for (const src of [
+      "let a = { p: 1 }; a.p = 9; $.x === a.p",
+      "let a = [1, 2]; a[0] = 9; $.x === a",
+      "let a = { p: 1 }; delete a.p; $.x === a",
+      "const a = { p: { q: 1 } }; Object.assign(a.p, { q: 2 }); $.x === a.p.q",
+    ]) {
+      expect(keepsABinding(src), src).toBe(true);
+    }
+  });
+
+  it("sees a mutation that wears no `=`", () => {
+    // A call that IS a statement mutates its receiver; nothing reads the result.
+    for (const method of ["sort()", "reverse()", "push(9)", "unshift(9)", "splice(1,1)", "pop()", "shift()"]) {
+      expect(keepsABinding(`const a = [3, 1, 2]; a.${method}; $.x === a`), method).toBe(true);
+    }
+  });
+
+  it("does not answer a name read before it is declared", () => {
+    // JavaScript throws a ReferenceError; answering with the later value would
+    // invent a meaning the language does not have.
+    expect(keepsABinding("$.x === a; const a = 1")).toBe(true);
+  });
+
+  it("says so when an unspellable value is buried in a structure", () => {
+    // The same mistake as `const a = 1/0`, one level down.
+    expect(() => desugar(parse("const a = [1 / 0]; $.x === a"))).toThrow(/evaluates to Infinity/);
+    expect(() => desugar(parse("const a = { k: [0 / 0] }; $.x === a"))).toThrow(/evaluates to NaN/);
+  });
+
+  it("folds a nested scope in its own right", () => {
+    const t = JSON.stringify(desugar(parse("$$.aggregate(() => { const n = 2 * 3; $match({ b: n }) })")));
+    expect(t).toContain('"value":6');
+    expect(t).not.toContain('"LetDecl"');
+  });
+
+  it("settles on a chain of any length", () => {
+    const links = 40;
+    const src =
+      Array.from({ length: links }, (_, i) => `const v${i} = ${i === links - 1 ? "1" : `v${i + 1} + 1`};`)
+        .reverse()
+        .join(" ") + " $.x === v0";
+    expect(() => desugar(parse(src))).not.toThrow();
+  });
+
+  it("routes a receiver by what the LANGUAGE allows, not by its JavaScript type", () => {
+    // A RegExp and a BSON value are objects to JavaScript. Reading one with the
+    // object rules answers about the wrong thing: `/ab/.size()` would be
+    // `Object.keys(regex).length`, which is 0 and means nothing.
+    expect(valueOf("/ab/.size()")).toBe("(not constant)");
+    expect(valueOf("/ab/.pick(['source'])")).toBe("(not constant)");
+    expect(valueOf("(0x507f1f77bcf86cd799439011).size()")).toBe("(not constant)");
+    expect(valueOf("({ a: 1 }).size()")).toBe(1);
+  });
+});

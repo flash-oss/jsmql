@@ -161,10 +161,22 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (typeof receiver === "string") return stringMethod(receiver, name, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
-  if (typeof receiver === "object" && receiver !== null && !(receiver instanceof Date)) {
-    return objectMethod(receiver as Record<string, unknown>, name, args);
-  }
+  // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
+  // JavaScript, and reading one with the object rules answers about the wrong
+  // thing entirely: `/ab/.size()` would be `Object.keys(regex).length`, which
+  // is 0 and means nothing. The language refuses those receivers, and so does
+  // this — a fold may never answer a question the language does not ask.
+  if (isPlainObject(receiver)) return objectMethod(receiver as Record<string, unknown>, name, args);
   return NO;
+}
+
+/** An object whose own properties are all there is to it — not a Date, not BSON. */
+function isPlainObject(v: unknown): v is Record<string, unknown> {
+  if (typeof v !== "object" || v === null || Array.isArray(v)) return false;
+  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
+  if ((v as { _bsontype?: unknown })._bsontype !== undefined) return false;
+  const proto = Object.getPrototypeOf(v) as unknown;
+  return proto === Object.prototype || proto === null;
 }
 
 // ── the lodash string family ─────────────────────────────────────────────────
@@ -390,6 +402,50 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
   }
 }
 
+// ── the array set and aggregate helpers ──────────────────────────────────────
+
+/**
+ * Deep equality, the way MongoDB's set operators compare.
+ *
+ * `$setUnion` and friends compare VALUES, so `[{a:1}]` and `[{a:1}]` are one
+ * element to them and two to JavaScript's `includes`. The lodash set family here
+ * follows MongoDB; `.includes()` and `.indexOf()` keep JavaScript's identity,
+ * which is what the runtime lowering of those two does.
+ */
+const deepEqual = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b);
+
+const deepIncludes = (haystack: readonly unknown[], needle: unknown): boolean =>
+  haystack.some((h) => deepEqual(h, needle));
+
+/** Every element, keyed for comparison. Non-scalar keys have no MongoDB spelling. */
+function keyedBy(xs: readonly unknown[], fn: Callable): unknown[] | null {
+  const keys = xs.map((v, i) => fn(v, i, xs));
+  return keys;
+}
+
+/** A count argument that defaults to 1, as the lodash take/drop family does. */
+function countArg(a: unknown): number | null {
+  if (a === undefined) return 1;
+  return typeof a === "number" && Number.isInteger(a) ? a : null;
+}
+
+/** The numbers in a list, skipping everything else — what `$sum` does. */
+const numbersIn = (xs: readonly unknown[]): number[] => xs.filter((v): v is number => typeof v === "number");
+
+/** A stable sort by a computed key. Mixed or null keys have no BSON order here. */
+function sortByKeys(xs: readonly unknown[], keys: readonly unknown[], descending = false): unknown[] | null {
+  const kind = (k: unknown): string => (typeof k === "number" ? "number" : typeof k === "string" ? "string" : "other");
+  if (keys.some((k) => kind(k) === "other")) return null;
+  if (new Set(keys.map(kind)).size > 1) return null;
+  const paired = xs.map((v, i) => ({ v, k: keys[i], i }));
+  paired.sort((p, q) => {
+    if (p.k === q.k) return p.i - q.i; // stable
+    const less = (p.k as number) < (q.k as number);
+    return (less ? -1 : 1) * (descending ? -1 : 1);
+  });
+  return paired.map((p) => p.v);
+}
+
 function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluation {
   const [a, b] = args.map(valueOf);
   const fn = fnOf(args[0]);
@@ -463,10 +519,233 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       const i = a < 0 ? xs.length + a : Math.trunc(a);
       return i >= 0 && i < xs.length ? ok(xs[i]) : NO;
     }
+
+    // ── aggregates ──────────────────────────────────────────────────────────
+    case "sum":
+      // `$sum` skips what is not a number rather than refusing the list.
+      return ok(numbersIn(xs).reduce((t, n) => t + n, 0));
+    case "mean": {
+      const ns = numbersIn(xs);
+      // An empty list averages to null, not to a division by zero.
+      return ns.length === 0 ? ok(null) : ok(ns.reduce((t, n) => t + n, 0) / ns.length);
+    }
+    case "min":
+    case "max": {
+      if (xs.length === 0) return ok(null);
+      // Only numbers: across types MongoDB orders by its own rules, not by `<`.
+      if (!xs.every((v) => typeof v === "number")) return NO;
+      const ns = xs as number[];
+      return ok(name === "min" ? Math.min(...ns) : Math.max(...ns));
+    }
+    case "sumBy":
+    case "meanBy": {
+      if (fn === undefined) return NO;
+      const ns = numbersIn(xs.map((v, i) => fn(v, i, xs)));
+      if (name === "sumBy") return ok(ns.reduce((t, n) => t + n, 0));
+      return ns.length === 0 ? ok(null) : ok(ns.reduce((t, n) => t + n, 0) / ns.length);
+    }
+    case "minBy":
+    case "maxBy": {
+      if (fn === undefined || xs.length === 0) return NO;
+      const keys = xs.map((v, i) => fn(v, i, xs));
+      if (!keys.every((k) => typeof k === "number")) return NO;
+      const best = (keys as number[]).reduce(
+        (bi, k, i) => ((name === "minBy" ? k < (keys[bi] as number) : k > (keys[bi] as number)) ? i : bi),
+        0,
+      );
+      return ok(xs[best]);
+    }
+
+    // ── the set family, compared the way MongoDB compares ───────────────────
+    case "uniq":
+    case "sortedUniq": {
+      const out: unknown[] = [];
+      for (const v of xs) if (!deepIncludes(out, v)) out.push(v);
+      return ok(out);
+    }
+    case "uniqBy":
+    case "sortedUniqBy": {
+      if (fn === undefined) return NO;
+      const seen: unknown[] = [];
+      const out: unknown[] = [];
+      xs.forEach((v, i) => {
+        const k = fn(v, i, xs);
+        if (deepIncludes(seen, k)) return;
+        seen.push(k);
+        out.push(v);
+      });
+      return ok(out);
+    }
+    case "without":
+      return ok(xs.filter((v) => !deepIncludes(args.map(valueOf), v)));
+    case "xor": {
+      if (!Array.isArray(a)) return NO;
+      const other = a as unknown[];
+      return ok([...xs.filter((v) => !deepIncludes(other, v)), ...other.filter((v) => !deepIncludes(xs, v))]);
+    }
+    case "differenceBy":
+    case "intersectionBy":
+    case "unionBy":
+    case "xorBy": {
+      const other = a;
+      const by = fnOf(args[1]);
+      if (!Array.isArray(other) || by === undefined) return NO;
+      const keyOf = (v: unknown, i: number, list: readonly unknown[]): unknown => by(v, i, list);
+      const otherKeys = (other as unknown[]).map(keyOf);
+      const mine = xs.filter((v, i) => deepIncludes(otherKeys, keyOf(v, i, xs)));
+      const notMine = xs.filter((v, i) => !deepIncludes(otherKeys, keyOf(v, i, xs)));
+      if (name === "differenceBy") return ok(notMine);
+      if (name === "intersectionBy") return ok(mine);
+      const myKeys = xs.map(keyOf);
+      const extra = (other as unknown[]).filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other as unknown[])));
+      return ok(name === "unionBy" ? [...xs, ...extra] : [...notMine, ...extra]);
+    }
+
+    // ── slicing by count ────────────────────────────────────────────────────
+    case "take":
+    case "drop":
+    case "takeRight":
+    case "dropRight": {
+      const n = countArg(a);
+      if (n === null || n < 0) return NO;
+      if (name === "take") return ok(xs.slice(0, n));
+      if (name === "drop") return ok(xs.slice(n));
+      if (name === "takeRight") return ok(n === 0 ? [] : xs.slice(-n));
+      return ok(n === 0 ? [...xs] : xs.slice(0, -n));
+    }
+    case "takeWhile":
+    case "dropWhile": {
+      if (fn === undefined) return NO;
+      let i = 0;
+      while (i < xs.length && predicate(fn)(xs[i], i)) i++;
+      return ok(name === "takeWhile" ? xs.slice(0, i) : xs.slice(i));
+    }
+    case "takeRightWhile":
+    case "dropRightWhile": {
+      if (fn === undefined) return NO;
+      let i = xs.length;
+      while (i > 0 && predicate(fn)(xs[i - 1], i - 1)) i--;
+      return ok(name === "takeRightWhile" ? xs.slice(i) : xs.slice(0, i));
+    }
+    case "tail":
+      return ok(xs.slice(1));
+    case "initial":
+      return ok(xs.slice(0, -1));
+    case "head":
+    case "first":
+    case "last":
+      // An empty list reads as MISSING on the server, not as null.
+      return xs.length === 0 ? NO : ok(name === "last" ? xs[xs.length - 1] : xs[0]);
+    case "nth": {
+      const n = a === undefined ? 0 : a;
+      if (typeof n !== "number" || !Number.isInteger(n)) return NO;
+      const i = n < 0 ? xs.length + n : n;
+      return i >= 0 && i < xs.length ? ok(xs[i]) : NO;
+    }
+
+    // ── reshaping ───────────────────────────────────────────────────────────
+    case "chunk": {
+      if (typeof a !== "number" || !Number.isInteger(a) || a < 1) return NO;
+      const out: unknown[][] = [];
+      for (let i = 0; i < xs.length; i += a) out.push(xs.slice(i, i + a));
+      return ok(out);
+    }
+    case "compact":
+      return ok(xs.filter((v) => v !== 0 && v !== "" && v !== null && v !== false && v !== undefined));
+    case "flatten":
+      // ONE level, which is what the runtime lowering does.
+      return ok(xs.flat());
+    case "zip": {
+      const lists = [xs, ...args.map(valueOf)];
+      if (!lists.every((l) => Array.isArray(l))) return NO;
+      const width = Math.max(...(lists as unknown[][]).map((l) => l.length));
+      // Short lists are padded with null, not left ragged.
+      return ok(
+        Array.from({ length: width }, (_, i) => (lists as unknown[][]).map((l) => (i < l.length ? l[i] : null))),
+      );
+    }
+    case "unzip": {
+      if (!xs.every((row) => Array.isArray(row))) return NO;
+      const rows = xs as unknown[][];
+      const width = Math.max(0, ...rows.map((r) => r.length));
+      // A ragged row would produce a hole, and a hole has no BSON value.
+      if (!rows.every((r) => r.length === width)) return NO;
+      return ok(Array.from({ length: width }, (_, i) => rows.map((r) => r[i])));
+    }
+    case "zipWith": {
+      const lists = [xs, ...args.slice(0, -1).map(valueOf)];
+      const with_ = fnOf(args[args.length - 1]);
+      if (with_ === undefined || !lists.every((l) => Array.isArray(l))) return NO;
+      const width = Math.min(...(lists as unknown[][]).map((l) => l.length));
+      return ok(Array.from({ length: width }, (_, i) => with_(...(lists as unknown[][]).map((l) => l[i]))));
+    }
+    case "zipObject": {
+      if (!Array.isArray(a)) return NO;
+      const values = a as unknown[];
+      const out: Record<string, unknown> = {};
+      xs.forEach((k, i) => {
+        if (!isKey(k)) throw NOT_A_KEY;
+        out[String(k)] = i < values.length ? values[i] : null;
+      });
+      return ok(out);
+    }
+    case "fromPairs": {
+      const out: Record<string, unknown> = {};
+      for (const pair of xs) {
+        if (!Array.isArray(pair) || pair.length === 0 || !isKey(pair[0])) return NO;
+        out[String(pair[0])] = pair.length > 1 ? pair[1] : null;
+      }
+      return ok(out);
+    }
+    case "keyBy": {
+      if (fn === undefined) return NO;
+      const out: Record<string, unknown> = {};
+      for (const [i, v] of xs.entries()) {
+        const k = fn(v, i, xs);
+        if (!isKey(k)) return NO;
+        out[String(k)] = v; // last wins
+      }
+      return ok(out);
+    }
+    case "groupBy":
+    case "countBy": {
+      if (fn === undefined) return NO;
+      const out: Record<string, unknown> = {};
+      for (const [i, v] of xs.entries()) {
+        const k = fn(v, i, xs);
+        if (!isKey(k)) return NO;
+        const key = String(k);
+        if (name === "countBy") out[key] = ((out[key] as number) ?? 0) + 1;
+        else (out[key] = (out[key] as unknown[]) ?? []) && (out[key] as unknown[]).push(v);
+      }
+      return ok(out);
+    }
+
+    // ── ordering ────────────────────────────────────────────────────────────
+    case "sortBy": {
+      const keys = fn === undefined ? [...xs] : keyedBy(xs, fn);
+      if (keys === null) return NO;
+      const sorted = sortByKeys(xs, keys);
+      return sorted === null ? NO : ok(sorted);
+    }
+    case "orderBy": {
+      const by = fnOf(args[0]);
+      const direction = valueOf(args[1]);
+      const descending = direction === "desc" || direction === -1;
+      if (direction !== undefined && !descending && direction !== "asc" && direction !== 1) return NO;
+      const keys = by === undefined ? [...xs] : keyedBy(xs, by);
+      if (keys === null) return NO;
+      const sorted = sortByKeys(xs, keys, descending);
+      return sorted === null ? NO : ok(sorted);
+    }
+
     default:
       return NO;
   }
 }
+
+/** Thrown when a value with no MongoDB key spelling is used as one. */
+const NOT_A_KEY = Symbol("value cannot be an object key");
 
 /** Thrown by a predicate whose answer is not a boolean; caught by the caller. */
 export const NOT_A_BOOLEAN = Symbol("predicate did not answer with a boolean");

@@ -51,6 +51,53 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — fix: six ways the fold could answer with the wrong value
+
+Adversarial review of the new fold found six defects, all of the same family: the pass knew
+about SOME of the places a name can be bound or changed, and pushed a constant through the
+rest. Each is now covered by a test that fails without the fix.
+
+A nested statement list is a scope. `const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })`
+answered `b: 1` — the inner declaration binds a different variable, and it was left standing,
+unread, one line above the reference that should have used it. The same shape reached every
+bracketed sub-pipeline and every `$facet` branch. And a block's declarations did not shadow
+for each other, so `map(x => { const y = x.n; const z = y + 1; return z })` under an outer
+`const y = 1` made `z` the constant 2 instead of `x.n + 1` — a per-document answer replaced
+by a fixed one.
+
+A write through a PATH was invisible twice over. `let a = { p: 1 }; a.p = 9` folded `a` to
+its first value AND rewrote the destination, producing `1 = 9`, which is not a program at
+all. So was a mutation that wears no `=`: the pass claimed every array mutator had become a
+plain assignment before it looked, which is true only for a `$.field` receiver — on a
+binding, `a.sort()` stayed a call, and the fold then substituted the pre-mutation value into
+the mutator's own receiver. A call that IS a statement now excludes its receiver, which
+needs no list of method names to be kept in step with the language.
+
+The fallback for a value with no literal inlined the declaration's raw source, and `mapTree`
+does not walk into a replacement — so `const q = 2; const arr = [q / 0]` carried a free `q`
+to every use site, to be captured by a lambda parameter of that name or left with no binder
+anywhere. There is no fallback now: a value with no literal keeps its binding. That closed a
+third defect with it, since `unspellable` only looked at a top-level number and let
+`const a = [1 / 0]` through in silence where `const a = 1 / 0` was refused by name.
+
+Two more, from the same review. A receiver was routed by its JavaScript type, so a RegExp
+and a BSON value fell into the object rules — `/ab/.size()` folded to 0, which is
+`Object.keys(regex).length` and means nothing, where the language refuses the call outright.
+And a name read before its declaration folded to the later value; JavaScript throws a
+ReferenceError there, so the binding is kept and a later phase reports it.
+
+The fixpoint also gave up too early. A chain where each link needs the previous one folded
+AND a rule run on the result advances one link per round, and 24 rounds was not enough for
+23 links. Statements now resolve against what is known at the point they stand, so an
+ordinary chain settles in two rounds however long it is; the limit is raised for the
+alternating case, and its message no longer blames a rule bug for what may be the source.
+
+Alongside the fixes, the array family the pass was missing — the aggregates, the set
+operations, the count-based slicing, and the reshaping — 31 methods, each checked against a
+live mongod.
+
+---
+
 ## 2026-08-26 — feat: constant folding, and the one invariant that decides every rule in it
 
 A `const` whose value can be computed is computed, and every reference to it becomes the

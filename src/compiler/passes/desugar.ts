@@ -44,8 +44,15 @@ export type Rule = {
   apply: (node: object, where: Where) => object;
 };
 
-/** How many rounds before we conclude a rule pair is cycling. */
-const MAX_ROUNDS = 24;
+/**
+ * How many rounds before we give up.
+ *
+ * Set generously, because a round is not always one rewrite: a chain of
+ * declarations where each needs the previous one folded AND a rule run on the
+ * result advances one link per round, and there is no bound on how long a
+ * developer may make that chain. 24 was not enough for 23 of them.
+ */
+const MAX_ROUNDS = 200;
 
 // ── the rules, in the order they are tried ───────────────────────────────────
 
@@ -431,10 +438,13 @@ export function desugarVerbose(program: Program): DesugarResult {
     if (next === current) return { program: current, rounds: round };
     current = next;
   }
-  // Reaching here means two rules undo each other. That is a bug in the rule
-  // table, not in the input, so it says so.
+  // Two causes reach here and they want different words. Either two rules undo
+  // each other — a bug in the table — or the program chains more rewrites than
+  // the limit allows, which is a fact about the source. Neither is the reader's
+  // fault, so the message names both rather than guessing.
   throw new Error(
-    `jsmql internal error (please report): the desugar pass did not settle after ${MAX_ROUNDS} rounds — two rules are rewriting each other's output`,
+    `jsmql internal error (please report): the desugar pass did not settle after ${MAX_ROUNDS} rounds. ` +
+      "Either two rules are rewriting each other's output, or this program chains more rewrites than that.",
   );
 }
 
