@@ -102,6 +102,42 @@ export function receiverFamily(receiverName: string | null, onStream: boolean, n
   return values.length === 1 ? values[0] : undefined;
 }
 
+type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number; none?: true };
+
+/**
+ * How many arguments a name takes in value position, on a given receiver family.
+ *
+ * The family is not optional in practice: `max` is `.max()` on an array and
+ * `Math.max(a, b)` on the namespace, one row with two counts. Reading the first
+ * branch and hoping would refuse `Math.max(3, 7)` for taking two arguments.
+ */
+export function argCountOf(name: string, family?: Family): ArgCount | undefined {
+  const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
+  if (cell === null || typeof cell !== "object") return undefined;
+  const direct = (cell as { args?: ArgCount }).args;
+  if (direct !== undefined) return direct;
+  const perFamily = (cell as { perFamily?: Record<string, { args?: ArgCount }> }).perFamily;
+  if (perFamily === undefined) return undefined;
+  if (family !== undefined && perFamily[family]?.args !== undefined) return perFamily[family].args;
+  return undefined;
+}
+
+/**
+ * Does `count` satisfy the name's argument rule on this receiver?
+ *
+ * True when there is no rule to check against — a name the registry says nothing
+ * about is not this function's to reject.
+ */
+export function acceptsArgumentCount(name: string, count: number, family?: Family): boolean {
+  const rule = argCountOf(name, family);
+  if (rule === undefined) return true;
+  if (rule.none === true) return count === 0;
+  if (rule.exact !== undefined) return count === rule.exact;
+  if (rule.allowed !== undefined) return rule.allowed.includes(count);
+  if (rule.atLeast !== undefined) return count >= rule.atLeast;
+  return true;
+}
+
 /** The positions a name is legal in, or undefined when there is no such name. */
 export function positionsOf(name: string): readonly Position[] | undefined {
   return row(name)?.where;

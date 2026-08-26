@@ -28,6 +28,7 @@ import { arrayLiteralOrderOf, immutableTwinOf, isFieldProperty, iterateeSlotsOf,
 import { freshParam } from "./fresh.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
+import { fold } from "./fold.ts";
 import { mapTreeIn } from "./walk.ts";
 
 /**
@@ -421,6 +422,12 @@ export function desugarVerbose(program: Program): DesugarResult {
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let next = current;
     for (const rule of RULES) next = mapTreeIn(next, STATEMENT, edge, rule.apply);
+    // Folding runs AFTER the rules in each round, and the two feed each other.
+    // A mutator statement has become a plain assignment by now, so "was this name
+    // written to" is one question rather than a list of method names — and a
+    // constant the fold inlines becomes a literal the rules can match next round:
+    //   const k = "name"; $.items.map(k)   →   map("name")   →   map(x => x.name)
+    next = fold(next);
     if (next === current) return { program: current, rounds: round };
     current = next;
   }

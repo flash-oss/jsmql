@@ -51,6 +51,66 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: constant folding, and the one invariant that decides every rule in it
+
+A `const` whose value can be computed is computed, and every reference to it becomes the
+value. `const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay` reads as
+`{ "elapsedMs": { "$gt": 86400000 } }` — one Filter document instead of a pipeline that
+recomputes the number on every document it touches, in a `$set` nobody asked for, unable to
+use an index.
+
+THE INVARIANT is that a fold must not change the answer. Whatever it computes has to equal
+what the same expression computes on the server, or folding stops being an optimisation and
+becomes a second semantics. So the question for every operator is not "what does JavaScript
+do" but "where do JavaScript and MongoDB agree", and a committed suite runs both halves
+against a live mongod. Every rule that reads like an arbitrary restriction was put there by
+a failure of that suite:
+
+    Math.atanh(0.25)         JavaScript 0.25541281188299536   server …3
+    Math.round(0.5)          JavaScript 1                     server 0
+    123456789 * 987654321    JavaScript …260                  server …269
+
+The last is the sharpest: MongoDB multiplies two integers exactly in 64 bits while
+JavaScript rounds above 2^53. And eleven of the twenty-nine `Math` functions differ, so the
+line is drawn where IEEE-754 draws it — `sqrt` and the algebraic operations are pinned down,
+every transcendental is free — rather than where the sample points happen to agree.
+
+Folding runs INSIDE the desugar fixpoint, and the two feed each other. A mutator statement
+has become a plain assignment before the fold looks for one, so "was this name written to"
+is a single question instead of a list of mutating method names. And in the other direction
+a folded constant becomes a literal the rules can match on the next round, which makes
+`const k = "name"; $.items.map(k)` read as `$.items.map(x => x.name)` — a program the
+shipped compiler refuses outright, because its shorthand check runs before the constant
+reaches the slot.
+
+The pass folds any constant SUBEXPRESSION, not only a declaration's value. That is the root
+fix for most of what was missing: `const CONFIG = { minAge: 18 }; $.age > CONFIG.minAge`
+emitted `{"$getField":{"field":"minAge","input":{"minAge":18}}}`, which reads a constant
+object at run time and — measured with an index on `age` — turns an IXSCAN into a COLLSCAN.
+It now reads `{ "age": { "$gt": 18 } }`.
+
+Five holes in the shipped pass are closed by construction rather than by five checks. There
+is ONE spellability boundary, so `Infinity` cannot reach the driver from `.sum()` while the
+same value is refused from `1e308 * 10`, and `undefined` from `[1,2,3].at(9)` cannot arrive
+as a hole that silently drops an object key. The arity comes from the row, so
+`"abc".toUpperCase(1)` no longer folds away the error it should raise. Every rule runs
+inside a try/catch, so `"x".repeat(-1)` no longer reaches the user as a bare V8 `RangeError`
+with no position. And a fold that would ADD a name to the language is refused —
+`"hello".lastIndexOf(…)` and `Number.isFinite(…)` are not in it.
+
+Three more of the shipped holes close because folding puts a LITERAL back in the tree rather
+than a binding downstream phases must resolve. `const n = 0; $limit(n)` emitted
+`[{"$limit":0}]`, which mongod rejects, because the literal gate is syntactic and saw a
+reference; it now sees `$limit(0)`. `const n = 5; $.x === n.trim()` emitted
+`{"$trim":{"input":5}}` for the same reason; the receiver is now a number where the type
+gate can see it. And a source-typed `"$field"` no longer gains a `{"$literal":…}` wrap it
+never asked for, which HR1 says belongs to injected values alone.
+
+Measured against the shipped compiler on every input the test suite compiles, the two now
+agree on the output shape for all 1329 of them.
+
+---
+
 ## 2026-08-26 — fix: a production names itself by its spelling, never by its key
 
 `productions.ts` is keyed descriptively — `conditional`, `remainder`, `methodCall` — so that
