@@ -51,6 +51,50 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — fix: the fold, put to 30,000 expressions
+
+An adversarial sweep generated 29,957 expressions, folded each one, and compared it against
+what mongod computes for the same expression left alone. It found roughly 230 wrong answers
+and 1,250 cases where the fold answered where the program does not run. Both counts are now
+zero, and the whole set is a committed suite.
+
+TWO WERE DESIGN FAULTS rather than slips in a rule. Non-finite values were being handed on
+as ordinary values so the pass could name them, and only the FINAL value was checked — so
+`1 / 0 > 0` folded to `true` while the server refuses the division outright, and so did
+`` `${1/0}` ``, `(1/0) === (1/0)` and every other operator that consumes one and yields
+something spellable. A value with no MongoDB literal is now a third state that PROPAGATES,
+which also means an `Infinity` three operators deep reports by name exactly as one at the
+top does. And the evaluator recursed without a bound: `1 + 1 + …` in 2,600 terms threw a
+`RangeError` with no position, which is the one thing every rule in the file takes care not
+to produce. Depth is counted now, and so is size — `"x".padStart(500000000)` computes in a
+millisecond and yields half a gigabyte of string on its way to a 16 MB document.
+
+THE REST WERE JAVASCRIPT AND MONGODB DIFFERING, each found by the same method. Comparison
+was by JavaScript identity, so `[1,2] === [1,2]` folded to `false` where `$eq` says true —
+and every literal this evaluator builds is a fresh object, so that was every structural
+comparison there is. Strings were compared, indexed and padded in UTF-16 units where
+MongoDB works in code points; padding by units could even cut an astral character in half
+and hand the driver a lone surrogate, a string with no UTF-8 encoding. `$round` works in
+decimal, and reproducing it by scaling with `10 ** places` makes the rounding decision on a
+perturbed number — `(2.675).round(2)` is 2.68 that way and 2.67 on the server — so only the
+bare form folds. `-0` is a double to the driver where the same arithmetic gives MongoDB an
+int `0`. `$toString` of a double and JavaScript's own formatting disagree on exponents, so a
+number interpolated into a template stays runtime. And `.substring` does not swap its
+arguments, `.join` collapses to null on a null element, `.concat` and `.flatMap` take arrays
+only, `.startCase` lower-cases the tail, `.inRange` normalises a negative bound.
+
+Every index and count now has to be a 32-bit integer, because `$substrCP`, `$arrayElemAt`,
+`$slice` and `$range` all demand one — `"abc".charAt(1.5)` is `""` in JavaScript and an
+error on the server, and folding it made this pass a second, more permissive grammar than
+the one the parser enforces.
+
+One correction went the other way. `&&` and `||` were held to boolean operands on the
+reasoning that `$and` and `$or` answer with a boolean. They do not: jsmql lowers both to
+JavaScript's own truthiness, verified on the server, where `0 || 5` is 5 and `1 && 2` is 2.
+So `const timeout = envValue || 30000` folds, which is the shape people write.
+
+---
+
 ## 2026-08-26 — fix: six ways the fold could answer with the wrong value
 
 Adversarial review of the new fold found six defects, all of the same family: the pass knew

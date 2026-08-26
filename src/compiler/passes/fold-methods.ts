@@ -14,6 +14,7 @@
 // call stays a runtime one.
 
 import type { Evaluation } from "./evaluate.ts";
+import { sameValue } from "./evaluate.ts";
 
 const NO: Evaluation = { ok: false };
 const ok = (value: unknown): Evaluation => ({ ok: true, value });
@@ -35,6 +36,17 @@ const asciiLower = (s: string): string => s.replace(/[A-Z]/g, (c) => c.toLowerCa
 
 /** Code points, because `$strLenCP` and `$substrCP` count those, not UTF-16 units. */
 const points = (s: string): string[] => [...s];
+
+/**
+ * An index or a count MongoDB can actually take.
+ *
+ * `$substrCP`, `$arrayElemAt`, `$slice` and `$range` all demand a value
+ * representable as a 32-bit integer and refuse anything else — `"abc".charAt(1.5)`
+ * is an error there and `""` in JavaScript. Folding it would answer where the
+ * program does not run, which makes this pass a second, more permissive grammar.
+ */
+const isInt32 = (n: unknown): n is number =>
+  typeof n === "number" && Number.isInteger(n) && n >= -0x80000000 && n <= 0x7fffffff;
 
 // ── namespace calls ──────────────────────────────────────────────────────────
 
@@ -60,17 +72,21 @@ const MATH: Readonly<Record<string, (a: readonly number[]) => number>> = {
   min: (xs) => Math.min(...xs),
   max: (xs) => Math.max(...xs),
   // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-  round: ([x]) => bankersRound(x, 0),
+  round: ([x]) => bankersRound(x),
 };
 
-/** MongoDB's rounding: a half goes to the even neighbour. `$round`, `.round()`. */
-function bankersRound(n: number, places: number): number {
-  const scale = 10 ** places;
-  const scaled = n * scale;
-  const floor = Math.floor(scaled);
-  const diff = scaled - floor;
-  if (diff !== 0.5) return Math.round(scaled) / scale;
-  return (floor % 2 === 0 ? floor : floor + 1) / scale;
+/**
+ * MongoDB's rounding at ZERO places: a half goes to the even neighbour.
+ *
+ * Only zero. `$round` works in decimal, and reproducing it by scaling with
+ * `10 ** places` makes the rounding decision on a perturbed number:
+ * `(2.675).round(2)` is 2.68 that way and 2.67 on the server, because 2.675 is
+ * really 2.67499999999999982. A place count other than zero stays runtime.
+ */
+function bankersRound(n: number): number {
+  const floor = Math.floor(n);
+  if (n - floor !== 0.5) return Math.round(n);
+  return floor % 2 === 0 ? floor : floor + 1;
 }
 
 /**
@@ -216,7 +232,9 @@ function lodashString(s: string, name: string, args: readonly Arg[]): Evaluation
     case "startCase":
       return ok(
         wordsOf(s)
-          .map((w) => asciiUpper(w.slice(0, 1)) + w.slice(1))
+          // Upper-case the first character and LOWER-case the rest, which is
+          // what the lowering does: `"ABC"` becomes `"Abc"`, not `"ABC"`.
+          .map((w) => asciiUpper(w.slice(0, 1)) + asciiLower(w.slice(1)))
           .join(" "),
       );
     case "camelCase": {
@@ -269,14 +287,24 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return typeof a === "string" ? ok(s.endsWith(a, typeof b === "number" ? b : undefined)) : NO;
     case "includes":
       return typeof a === "string" ? ok(s.includes(a)) : NO;
-    case "indexOf":
-      return typeof a === "string" ? ok(s.indexOf(a, typeof b === "number" ? b : undefined)) : NO;
+    case "indexOf": {
+      // `$indexOfCP` answers in CODE POINTS. `"😀a".indexOf("a")` is 1 there and
+      // 2 in JavaScript, whose index counts UTF-16 units.
+      if (typeof a !== "string") return NO;
+      if (b !== undefined && !isInt32(b)) return NO;
+      const cps = points(s);
+      const needle = points(a);
+      for (let i = Math.max(0, typeof b === "number" ? b : 0); i <= cps.length - needle.length; i++) {
+        if (cps.slice(i, i + needle.length).join("") === a) return ok(i);
+      }
+      return ok(-1);
+    }
     // No `lastIndexOf`: the language refuses it on a string, because `$indexOfCP`
     // only searches forward. Folding it would ADD a method to the language.
     case "charAt":
-      return typeof a === "number" ? ok(points(s)[a] ?? "") : NO;
+      return isInt32(a) ? ok(points(s)[a] ?? "") : NO;
     case "at": {
-      if (typeof a !== "number") return NO;
+      if (!isInt32(a)) return NO;
       const cps = points(s);
       const i = a < 0 ? cps.length + a : a;
       // Out of range answers `undefined` in JavaScript and MISSING on the
@@ -286,23 +314,40 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
     case "slice":
       return sliceOf(points(s), a, b, (parts) => parts.join(""));
     case "substring": {
-      if (typeof a !== "number") return NO;
+      // `$substrCP(s, start, length)` with the length clamped at zero. It does
+      // NOT swap its arguments the way JavaScript's `substring` does, so
+      // `"abcd".substring(3, 1)` is `""` on the server and `"bc"` in JavaScript.
+      if (!isInt32(a) || a < 0) return NO;
+      if (b !== undefined && (!isInt32(b) || b < 0)) return NO;
       const cps = points(s);
-      const end = typeof b === "number" ? b : cps.length;
-      const [lo, hi] = [Math.max(0, Math.min(a, end)), Math.min(cps.length, Math.max(a, end))];
-      return ok(cps.slice(lo, hi).join(""));
+      const end = b === undefined ? cps.length : b;
+      return ok(cps.slice(a, a + Math.max(0, end - a)).join(""));
     }
     case "repeat":
-      // A negative count is a `RangeError` in JavaScript. Refusing keeps the
-      // error jsmql's, with a position, instead of a bare V8 message.
-      return typeof a === "number" && a >= 0 && Number.isFinite(a) ? ok(s.repeat(Math.floor(a))) : NO;
+      // A negative count is a `RangeError` in JavaScript and a fractional one is
+      // an error on the server. Refusing keeps both as jsmql's own, with a position.
+      return isInt32(a) && a >= 0 ? ok(s.repeat(a)) : NO;
     case "padStart":
-      return typeof a === "number" ? ok(s.padStart(a, typeof b === "string" ? b : " ")) : NO;
-    case "padEnd":
-      return typeof a === "number" ? ok(s.padEnd(a, typeof b === "string" ? b : " ")) : NO;
+    case "padEnd": {
+      // In CODE POINTS. JavaScript pads to a UTF-16 length and truncates the pad
+      // string by units, which for an astral character both pads to the wrong
+      // width and can cut one in half — producing a lone surrogate, a string with
+      // no UTF-8 encoding at all, on its way to the driver.
+      if (!isInt32(a)) return NO;
+      const fill = b === undefined ? " " : b;
+      if (typeof fill !== "string" || fill === "") return ok(s);
+      const cps = points(s);
+      if (cps.length >= a) return ok(s);
+      const pad = points(fill);
+      const built: string[] = [];
+      while (built.length < a - cps.length) built.push(pad[built.length % pad.length]);
+      return ok(name === "padStart" ? built.join("") + s : s + built.join(""));
+    }
     case "split":
       // `$split` rejects an empty separator, so the two disagree there.
-      return typeof a === "string" && a !== "" ? ok(s.split(a, typeof b === "number" ? b : undefined)) : NO;
+      if (typeof a !== "string" || a === "") return NO;
+      if (b !== undefined && !isInt32(b)) return NO;
+      return ok(s.split(a, typeof b === "number" ? b : undefined));
     case "concat":
       return args.every((x) => typeof valueOf(x) === "string") ? ok(s + args.map(valueOf).join("")) : NO;
     case "length":
@@ -314,30 +359,35 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
 
 /** `.slice(start, end)` over a list, with JavaScript's negative-index rules. */
 function sliceOf<T>(items: T[], start: unknown, end: unknown, done: (parts: T[]) => unknown): Evaluation {
-  if (start !== undefined && typeof start !== "number") return NO;
-  if (end !== undefined && typeof end !== "number") return NO;
+  if (start !== undefined && !isInt32(start)) return NO;
+  if (end !== undefined && !isInt32(end)) return NO;
   return ok(done(items.slice(start as number | undefined, end as number | undefined)));
 }
 
 function numberMethod(n: number, name: string, args: readonly Arg[]): Evaluation {
   const [a, b] = args.map(valueOf);
-  const places = typeof a === "number" && Number.isInteger(a) ? a : 0;
-  if (a !== undefined && !Number.isInteger(a)) return NO;
-  const scale = 10 ** places;
   switch (name) {
     case "round":
-      // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-      return ok(bankersRound(n, places));
     case "ceil":
-      return ok(Math.ceil(n * scale) / scale);
-    case "floor":
-      return ok(Math.floor(n * scale) / scale);
+    case "floor": {
+      // A place count other than zero would need decimal arithmetic; see
+      // `bankersRound`. The bare form is exact, so that is the form that folds.
+      if (a !== undefined && a !== 0) return NO;
+      if (name === "round") return ok(bankersRound(n));
+      return ok(name === "ceil" ? Math.ceil(n) : Math.floor(n));
+    }
     case "clamp":
+      // A BOUND, not a place count — it may be fractional.
       if (typeof a !== "number") return NO;
+      if (b !== undefined && typeof b !== "number") return NO;
       return typeof b === "number" ? ok(Math.min(Math.max(n, a), b)) : ok(Math.min(n, a));
     case "inRange":
       if (typeof a !== "number") return NO;
-      return typeof b === "number" ? ok(n >= Math.min(a, b) && n < Math.max(a, b)) : ok(n >= 0 && n < a);
+      if (b !== undefined && typeof b !== "number") return NO;
+      // With one bound, lodash treats a NEGATIVE one as the lower end and zero
+      // as the upper: `(-1).inRange(-1)` is true.
+      if (typeof b !== "number") return ok(n >= Math.min(0, a) && n < Math.max(0, a));
+      return ok(n >= Math.min(a, b) && n < Math.max(a, b));
     default:
       return NO;
   }
@@ -412,10 +462,8 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
  * follows MongoDB; `.includes()` and `.indexOf()` keep JavaScript's identity,
  * which is what the runtime lowering of those two does.
  */
-const deepEqual = (a: unknown, b: unknown): boolean => a === b || JSON.stringify(a) === JSON.stringify(b);
-
 const deepIncludes = (haystack: readonly unknown[], needle: unknown): boolean =>
-  haystack.some((h) => deepEqual(h, needle));
+  haystack.some((h) => sameValue(h, needle));
 
 /** Every element, keyed for comparison. Non-scalar keys have no MongoDB spelling. */
 function keyedBy(xs: readonly unknown[], fn: Callable): unknown[] | null {
@@ -426,7 +474,7 @@ function keyedBy(xs: readonly unknown[], fn: Callable): unknown[] | null {
 /** A count argument that defaults to 1, as the lodash take/drop family does. */
 function countArg(a: unknown): number | null {
   if (a === undefined) return 1;
-  return typeof a === "number" && Number.isInteger(a) ? a : null;
+  return isInt32(a) ? a : null;
 }
 
 /** The numbers in a list, skipping everything else — what `$sum` does. */
@@ -487,8 +535,15 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       for (let i = xs.length - 1; i >= 0; i--) if (test(xs[i], i)) return ok(i);
       return ok(-1);
     }
-    case "flatMap":
-      return fn === undefined ? NO : ok(xs.flatMap((v, i) => fn(v, i, xs) as unknown[]));
+    case "flatMap": {
+      if (fn === undefined) return NO;
+      const parts = xs.map((v, i) => fn(v, i, xs));
+      // JavaScript keeps a non-array result as one element; `$concatArrays`
+      // refuses it. `[1,2,3].flatMap(x => null)` is `[null,null,null]` there and
+      // `null` on the server.
+      if (!parts.every((p) => Array.isArray(p))) return NO;
+      return ok((parts as unknown[][]).flat());
+    }
     case "reduce": {
       if (fn === undefined || args.length < 2) return NO;
       return ok(xs.reduce((acc, v, i) => fn(acc, v, i, xs), valueOf(args[1])));
@@ -505,18 +560,33 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "toReversed":
       return ok([...xs].reverse());
     case "concat":
-      return ok(xs.concat(...(args.map(valueOf) as unknown[])));
+      // `$concatArrays` takes ARRAYS. `[1].concat(2)` is `[1,2]` in JavaScript
+      // and an error on the server.
+      if (!args.every((x) => Array.isArray(valueOf(x)))) return NO;
+      return ok(xs.concat(...(args.map(valueOf) as unknown[][])));
+    // Structurally, the way `$in` and `$indexOfArray` compare. JavaScript's
+    // identity would answer false for `[[1]].includes([1])`, where the server
+    // answers true, and every literal here is a fresh object.
     case "includes":
-      return ok(xs.includes(a));
+      return ok(xs.some((v) => sameValue(v, a)));
     case "indexOf":
-      return ok(xs.indexOf(a));
-    case "lastIndexOf":
-      return ok(xs.lastIndexOf(a));
-    case "join":
-      return a === undefined || typeof a === "string" ? ok(xs.join(a as string | undefined)) : NO;
+      return ok(xs.findIndex((v) => sameValue(v, a)));
+    case "lastIndexOf": {
+      for (let i = xs.length - 1; i >= 0; i--) if (sameValue(xs[i], a)) return ok(i);
+      return ok(-1);
+    }
+    case "join": {
+      if (a !== undefined && typeof a !== "string") return NO;
+      // The `$reduce` lowering uses an empty accumulator as its "first element"
+      // sentinel and `$toString` per element, so an EMPTY-STRING element yields a
+      // leading separator and a NULL element collapses the whole result to null.
+      // Neither matches JavaScript, so neither folds.
+      if (!xs.every((v) => (typeof v === "string" && v !== "") || typeof v === "number")) return NO;
+      return ok(xs.join(a as string | undefined));
+    }
     case "at": {
-      if (typeof a !== "number") return NO;
-      const i = a < 0 ? xs.length + a : Math.trunc(a);
+      if (!isInt32(a)) return NO;
+      const i = a < 0 ? xs.length + a : a;
       return i >= 0 && i < xs.length ? ok(xs[i]) : NO;
     }
 
@@ -638,14 +708,14 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       return xs.length === 0 ? NO : ok(name === "last" ? xs[xs.length - 1] : xs[0]);
     case "nth": {
       const n = a === undefined ? 0 : a;
-      if (typeof n !== "number" || !Number.isInteger(n)) return NO;
+      if (!isInt32(n)) return NO;
       const i = n < 0 ? xs.length + n : n;
       return i >= 0 && i < xs.length ? ok(xs[i]) : NO;
     }
 
     // ── reshaping ───────────────────────────────────────────────────────────
     case "chunk": {
-      if (typeof a !== "number" || !Number.isInteger(a) || a < 1) return NO;
+      if (!isInt32(a) || a < 1) return NO;
       const out: unknown[][] = [];
       for (let i = 0; i < xs.length; i += a) out.push(xs.slice(i, i + a));
       return ok(out);

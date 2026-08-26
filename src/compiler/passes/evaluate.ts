@@ -23,17 +23,88 @@ import { acceptsArgumentCount } from "../rows.ts";
 /** What is known so far: a name bound to a constant. */
 export type Constants = ReadonlyMap<string, unknown>;
 
-export type Evaluation = { ok: true; value: unknown } | { ok: false };
+/**
+ * A value, or the reason there is none.
+ *
+ * `unspellable` is the third state, and it exists because "this is not a
+ * constant" and "this IS a constant that MongoDB cannot write down" want
+ * different outcomes. It PROPAGATES: an `Infinity` that reaches an operator
+ * poisons everything built from it, so `1 / 0 > 0` does not quietly become
+ * `true` while the server refuses the division outright.
+ */
+export type Evaluation = { ok: true; value: unknown } | { ok: false; unspellable?: string };
 
 const NOT_CONSTANT: Evaluation = { ok: false };
 const ok = (value: unknown): Evaluation => ({ ok: true, value });
 
-/** Every operand of a list, or nothing if any one of them is not constant. */
-function all(nodes: readonly Expr[], env: Constants): unknown[] | null {
+/** A constant with no MongoDB literal, named so the caller can say which. */
+const unspellable = (name: string): Evaluation => ({ ok: false, unspellable: name });
+
+/** Pass a poisoned result through unchanged; anything else becomes a plain no. */
+const propagate = (r: Evaluation): Evaluation => (!r.ok && r.unspellable !== undefined ? r : NOT_CONSTANT);
+
+/** The value MongoDB cannot write down, or null when it can. */
+function nameIfUnspellable(value: unknown): string | null {
+  if (typeof value === "number") {
+    if (Number.isNaN(value)) return "NaN";
+    if (!Number.isFinite(value)) return String(value);
+    // `-0` is a DOUBLE to the driver where the same arithmetic gives MongoDB an
+    // int `0`: `0 * -7` is `-0` here and `0` there, and the two differ in
+    // `$type`, in `$toString` and in sort order.
+    if (Object.is(value, -0)) return "-0";
+  }
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const name = nameIfUnspellable(v);
+      if (name !== null) return name;
+    }
+  } else if (typeof value === "object" && value !== null && !(value instanceof Date)) {
+    for (const v of Object.values(value)) {
+      const name = nameIfUnspellable(v);
+      if (name !== null) return name;
+    }
+  }
+  return null;
+}
+
+/** Every value leaves through here, so one check covers every rule. */
+function spellable(value: unknown): Evaluation {
+  const name = nameIfUnspellable(value);
+  return name === null ? ok(value) : unspellable(name);
+}
+
+/**
+ * How deep an expression may nest before we stop.
+ *
+ * `1 + 1 + … + 1` is left-nested one `BinaryExpr` per term, and a recursive
+ * evaluator runs out of stack somewhere above 2,500 of them — as a `RangeError`
+ * with no position, which is exactly what every rule here takes care not to
+ * produce. Depth is cheap to count, so it is counted.
+ */
+const MAX_DEPTH = 400;
+
+/** A folded string or array may not exceed this. See `withinSize`. */
+const MAX_SIZE = 1_000_000;
+
+/**
+ * Refuse a value too large to belong in a query.
+ *
+ * `"x".padStart(500000000)` computes in a millisecond and yields half a gigabyte
+ * of string, which goes into the AST, then into the document, then past BSON's
+ * 16 MB limit. Nothing about that is a constant worth folding.
+ */
+function withinSize(value: unknown): boolean {
+  if (typeof value === "string") return value.length <= MAX_SIZE;
+  if (Array.isArray(value)) return value.length <= MAX_SIZE && value.every(withinSize);
+  return true;
+}
+
+/** Every operand of a list, or the reason one of them had no value. */
+function all(nodes: readonly Expr[], env: Constants, depth: number): unknown[] | Evaluation {
   const out: unknown[] = [];
   for (const node of nodes) {
-    const r = evaluate(node, env);
-    if (!r.ok) return null;
+    const r = at(node, env, depth);
+    if (!r.ok) return propagate(r);
     out.push(r.value);
   }
   return out;
@@ -49,7 +120,7 @@ function all(nodes: readonly Expr[], env: Constants): unknown[] | null {
 function plus(left: unknown, right: unknown): Evaluation {
   if (typeof left === "number" && typeof right === "number") {
     const sum = left + right;
-    return losesIntegerPrecision("+", left, right, sum) ? NOT_CONSTANT : ok(sum);
+    return losesIntegerPrecision("+", left, right, sum) ? NOT_CONSTANT : spellable(sum);
   }
   if (typeof left === "string" && typeof right === "string") return ok(left + right);
   return NOT_CONSTANT;
@@ -104,17 +175,38 @@ function arithmetic(op: string, left: unknown, right: unknown): Evaluation {
       return NOT_CONSTANT;
   }
   if (losesIntegerPrecision(op, left, right, value)) return NOT_CONSTANT;
-  // `Infinity` and `NaN` come back as VALUES even though MongoDB has no literal
-  // for either. Deciding what to do about that is the pass's job, not this one's:
-  // "not a constant" and "a constant nothing can spell" want different messages,
-  // and only one of them is worth telling the user about.
-  return ok(value);
+  return spellable(value);
 }
 
-/** `===` and `!==`. Deliberately NOT `==`: see `looseEquality` below. */
+/**
+ * `===` and `!==`, compared the way MongoDB compares.
+ *
+ * `$eq` looks at VALUES, so `[1,2] === [1,2]` is true on the server; JavaScript's
+ * `===` looks at identity, and every literal this evaluator builds is a fresh
+ * object, so it would answer false for every structural comparison there is.
+ */
 function strictEquality(op: string, left: unknown, right: unknown): Evaluation {
-  const same = left === right;
+  const same = sameValue(left, right);
   return ok(op === "===" ? same : !same);
+}
+
+/** Structural equality — what `$eq`, `$in` and the set operators all use. */
+export function sameValue(a: unknown, b: unknown): boolean {
+  if (a === b) return Object.is(a, -0) === Object.is(b, -0);
+  if (Array.isArray(a) && Array.isArray(b)) {
+    return a.length === b.length && a.every((v, i) => sameValue(v, b[i]));
+  }
+  if (a !== null && b !== null && typeof a === "object" && typeof b === "object") {
+    if (Array.isArray(a) || Array.isArray(b)) return false;
+    const ka = Object.keys(a as object);
+    const kb = Object.keys(b as object);
+    // Key ORDER is part of a BSON document's identity, so it is part of this.
+    return (
+      ka.length === kb.length &&
+      ka.every((k, i) => k === kb[i] && sameValue((a as Record<string, unknown>)[k], (b as Record<string, unknown>)[k]))
+    );
+  }
+  return false;
 }
 
 /**
@@ -122,23 +214,42 @@ function strictEquality(op: string, left: unknown, right: unknown): Evaluation {
  *
  * MongoDB compares ACROSS types by a total order of its own (a number sorts
  * before a string, always), which JavaScript does not have. Same-kind operands
- * are the region where the two agree.
+ * are the region where the two agree — and for strings, only once the comparison
+ * is done in code points. See `compareCodePoints`.
  */
 function ordering(op: string, left: unknown, right: unknown): Evaluation {
-  const comparable =
-    (typeof left === "number" && typeof right === "number") || (typeof left === "string" && typeof right === "string");
-  if (!comparable) return NOT_CONSTANT;
-  const l = left as number;
-  const r = right as number;
+  if (typeof left === "string" && typeof right === "string") {
+    // MongoDB compares the UTF-8 bytes, which is CODE POINT order. JavaScript
+    // compares UTF-16 units, and the two disagree for every character above
+    // U+D7FF: the ﬁ ligature sorts above 😀 there and below it here.
+    return orderingOf(op, compareCodePoints(left, right));
+  }
+  if (typeof left !== "number" || typeof right !== "number") return NOT_CONSTANT;
+  return orderingOf(op, left < right ? -1 : left > right ? 1 : 0);
+}
+
+/** Code point by code point, which is also UTF-8 byte order. */
+function compareCodePoints(a: string, b: string): number {
+  const x = [...a];
+  const y = [...b];
+  for (let i = 0; i < Math.min(x.length, y.length); i++) {
+    const p = x[i].codePointAt(0) as number;
+    const q = y[i].codePointAt(0) as number;
+    if (p !== q) return p < q ? -1 : 1;
+  }
+  return x.length === y.length ? 0 : x.length < y.length ? -1 : 1;
+}
+
+function orderingOf(op: string, sign: number): Evaluation {
   switch (op) {
     case "<":
-      return ok(l < r);
+      return ok(sign < 0);
     case ">":
-      return ok(l > r);
+      return ok(sign > 0);
     case "<=":
-      return ok(l <= r);
+      return ok(sign <= 0);
     case ">=":
-      return ok(l >= r);
+      return ok(sign >= 0);
     default:
       return NOT_CONSTANT;
   }
@@ -206,14 +317,14 @@ function binary(op: string, left: unknown, right: unknown): Evaluation {
  * null when it needs the right one too.
  *
  * Each of the three agrees with its MongoDB counterpart exactly here:
- *   false && x   both false, whatever `x` is
- *   true  || x   both true
+ *   false && x   the left operand, whatever `x` is
+ *   true  || x   the left operand
  *   v ?? x       `$ifNull` returns the first non-null, and so does JavaScript
  * The remaining halves need the right operand, and are handled by `binary`.
  */
 function decidedByLeft(op: string, left: unknown): Evaluation | null {
-  if (op === "&&" && left === false) return ok(false);
-  if (op === "||" && left === true) return ok(true);
+  if (op === "&&" && !truthy(left)) return ok(left);
+  if (op === "||" && truthy(left)) return ok(left);
   if (op === "??" && left !== null && left !== undefined) return ok(left);
   return null;
 }
@@ -221,16 +332,19 @@ function decidedByLeft(op: string, left: unknown): Evaluation | null {
 /**
  * `&&` and `||` once the left operand did not decide it.
  *
- * JavaScript yields an OPERAND and MongoDB's `$and`/`$or` yield a boolean, so
- * the two agree only where that operand is already a boolean: `true && 2` is `2`
- * in JavaScript and `true` in MongoDB.
+ * Both yield an OPERAND, not a boolean — jsmql lowers them to JavaScript's own
+ * truthiness, verified on the server: `0 || 5` is 5 and `1 && 2` is 2 there as
+ * well as here. So `const timeout = envValue || 30000` folds, which is the shape
+ * a developer actually writes.
  */
 function logical(op: string, left: unknown, right: unknown): Evaluation {
-  if (typeof right !== "boolean") return NOT_CONSTANT;
-  if (op === "&&") return left === true ? ok(right) : NOT_CONSTANT;
-  if (op === "||") return left === false ? ok(right) : NOT_CONSTANT;
+  if (op === "&&") return truthy(left) ? ok(right) : ok(left);
+  if (op === "||") return truthy(left) ? ok(left) : ok(right);
   return NOT_CONSTANT;
 }
+
+/** JavaScript's truthiness, which is what the lowering emits — measured. */
+const truthy = (v: unknown): boolean => Boolean(v);
 
 /**
  * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — and not JavaScript's key test.
@@ -238,13 +352,13 @@ function logical(op: string, left: unknown, right: unknown): Evaluation {
  */
 function membership(needle: unknown, haystack: unknown): Evaluation {
   if (!Array.isArray(haystack)) return NOT_CONSTANT;
-  return ok(haystack.includes(needle));
+  return ok(haystack.some((h) => sameValue(h, needle)));
 }
 
 function unary(op: string, operand: unknown): Evaluation {
   switch (op) {
     case "-":
-      return typeof operand === "number" ? ok(-operand) : NOT_CONSTANT;
+      return typeof operand === "number" ? spellable(-operand) : NOT_CONSTANT;
     case "!":
       return typeof operand === "boolean" ? ok(!operand) : NOT_CONSTANT;
     case "~":
@@ -328,7 +442,7 @@ function element(receiver: unknown, index: unknown): Evaluation {
  * A block body with declarations is honoured too, since `x => { const y = x * 2;
  * return y }` is an ordinary constant expression once `x` is known.
  */
-export function applyLambda(lambda: Any, args: readonly unknown[], env: Constants): Evaluation {
+export function applyLambda(lambda: Any, args: readonly unknown[], env: Constants, depth = 0): Evaluation {
   const params = lambda.params as readonly string[] | undefined;
   if (params === undefined) return NOT_CONSTANT;
   // A `stages` body is a pipeline, not a value.
@@ -341,13 +455,13 @@ export function applyLambda(lambda: Any, args: readonly unknown[], env: Constant
   if ((body as Any).type === "ExprBlock") {
     const block = body as unknown as { decls: readonly Any[]; ret: Expr };
     for (const decl of block.decls) {
-      const value = evaluate(decl.value as Expr, scope);
-      if (!value.ok) return NOT_CONSTANT;
+      const value = at(decl.value as Expr, scope, depth + 1);
+      if (!value.ok) return propagate(value);
       scope.set(decl.name as string, value.value);
     }
-    return evaluate(block.ret, scope);
+    return at(block.ret, scope, depth + 1);
   }
-  return evaluate(body, scope);
+  return at(body, scope, depth + 1);
 }
 
 type Any = { type: string } & Record<string, unknown>;
@@ -364,17 +478,17 @@ const NAMESPACES: ReadonlySet<string> = new Set(["Math", "Object", "Number", "Da
  * that `[1, 2].map(x => $.a)` fails the whole call from inside `Array.prototype.map`
  * — there is no way to answer "not constant" from within a JavaScript callback.
  */
-function asArg(node: Expr, env: Constants): Arg | null {
+function asArg(node: Expr, env: Constants, depth: number): Arg | null {
   if ((node as Any).type === "Lambda") {
     return {
       fn: (...args: unknown[]) => {
-        const r = applyLambda(node as unknown as Any, args, env);
+        const r = applyLambda(node as unknown as Any, args, env, depth + 1);
         if (!r.ok) throw NOT_CONSTANT_CALLBACK;
         return r.value;
       },
     };
   }
-  const value = evaluate(node, env);
+  const value = at(node, env, depth + 1);
   return value.ok ? { value: value.value } : null;
 }
 
@@ -401,7 +515,7 @@ function familyOfValue(value: unknown): Family | undefined {
  * error with no position. And the RESULT must be spellable, so `Infinity` and
  * `undefined` stay runtime instead of reaching the driver.
  */
-function methodCall(node: Any, env: Constants): Evaluation {
+function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   const name = node.name as string;
   const argNodes = node.args as readonly Expr[];
   if (argNodes.some((a) => (a as Any).type === "SpreadElement")) return NOT_CONSTANT;
@@ -412,8 +526,8 @@ function methodCall(node: Any, env: Constants): Evaluation {
   const onNamespace = receiverNode.type === "Ident" && NAMESPACES.has(receiverNode.name as string);
   let receiverValue: unknown;
   if (!onNamespace) {
-    const receiver = evaluate(receiverNode as unknown as Expr, env);
-    if (!receiver.ok) return NOT_CONSTANT;
+    const receiver = at(receiverNode as unknown as Expr, env, depth + 1);
+    if (!receiver.ok) return propagate(receiver);
     receiverValue = receiver.value;
   }
   const family = onNamespace ? (receiverNode.name as Family) : familyOfValue(receiverValue);
@@ -421,7 +535,7 @@ function methodCall(node: Any, env: Constants): Evaluation {
 
   const args: Arg[] = [];
   for (const argNode of argNodes) {
-    const arg = asArg(argNode, env);
+    const arg = asArg(argNode, env, depth);
     if (arg === null) return NOT_CONSTANT;
     args.push(arg);
   }
@@ -436,12 +550,18 @@ function methodCall(node: Any, env: Constants): Evaluation {
     // or a built-in that threw. None of them fold; none of them are errors here.
     return NOT_CONSTANT;
   }
-  if (!result.ok) return NOT_CONSTANT;
-  return isSpellable(result.value) ? result : NOT_CONSTANT;
+  if (!result.ok) return propagate(result);
+  if (!withinSize(result.value)) return NOT_CONSTANT;
+  return spellable(result.value);
 }
 
 /** The value of `node`, given the constants already known. */ /** The value of `node`, given the constants already known. */
 export function evaluate(node: Expr, env: Constants): Evaluation {
+  return at(node, env, 0);
+}
+
+function at(node: Expr, env: Constants, depth: number): Evaluation {
+  if (depth > MAX_DEPTH) return NOT_CONSTANT;
   const literal = readLiteral(node);
   if (literal.ok) return literal;
 
@@ -453,8 +573,9 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
       const out: unknown[] = [];
       for (const element of node.elements) {
         if (element.type === "SpreadElement") {
-          const spread = evaluate(element.argument, env);
-          if (!spread.ok || !Array.isArray(spread.value)) return NOT_CONSTANT;
+          const spread = at(element.argument, env, depth + 1);
+          if (!spread.ok) return propagate(spread);
+          if (!Array.isArray(spread.value)) return NOT_CONSTANT;
           out.push(...spread.value);
           continue;
         }
@@ -463,19 +584,20 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
         if (element.type === "LetDecl" || element.type === "FuncDecl") return NOT_CONSTANT;
         if (element.type === "AssignExpr" || element.type === "DeleteStmt") return NOT_CONSTANT;
         if (element.type === "UpdateFilter") return NOT_CONSTANT;
-        const value = evaluate(element, env);
-        if (!value.ok) return NOT_CONSTANT;
+        const value = at(element, env, depth + 1);
+        if (!value.ok) return propagate(value);
         out.push(value.value);
       }
-      return ok(out);
+      return spellable(out);
     }
 
     case "ObjectLiteral": {
       const out: Record<string, unknown> = {};
       for (const entry of node.entries) {
         if (entry.type === "SpreadElement") {
-          const spread = evaluate(entry.argument, env);
-          if (!spread.ok || spread.value === null || typeof spread.value !== "object") return NOT_CONSTANT;
+          const spread = at(entry.argument, env, depth + 1);
+          if (!spread.ok) return propagate(spread);
+          if (spread.value === null || typeof spread.value !== "object") return NOT_CONSTANT;
           Object.assign(out, spread.value);
           continue;
         }
@@ -484,48 +606,53 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
         if (key.kind === "static") {
           name = key.name;
         } else {
-          const computed = evaluate(key.expr, env);
-          if (!computed.ok || typeof computed.value !== "string") return NOT_CONSTANT;
+          const computed = at(key.expr, env, depth + 1);
+          if (!computed.ok) return propagate(computed);
+          if (typeof computed.value !== "string") return NOT_CONSTANT;
           name = computed.value;
         }
-        const value = evaluate(entry.value, env);
-        if (!value.ok) return NOT_CONSTANT;
+        const value = at(entry.value, env, depth + 1);
+        if (!value.ok) return propagate(value);
         out[name] = value.value;
       }
       return ok(out);
     }
 
     case "TemplateLiteral": {
-      const parts = all(node.exprs, env);
-      if (parts === null) return NOT_CONSTANT;
-      // Only the kinds MongoDB's `$concat` would also join without complaint.
-      if (!parts.every((p) => typeof p === "string" || typeof p === "number")) return NOT_CONSTANT;
+      const parts = all(node.exprs, env, depth);
+      if (!Array.isArray(parts)) return parts;
+      // STRINGS only. `$toString` of a double and JavaScript's own formatting
+      // part company on exponents and on the thresholds for using one at all:
+      // `1e-7` writes as "1e-7" here and "1e-07" there, and `0.000001` as
+      // "0.000001" here and "1e-06" there. A number interpolation stays runtime.
+      if (!parts.every((p) => typeof p === "string")) return NOT_CONSTANT;
       let out = node.quasis[0] ?? "";
       for (let i = 0; i < parts.length; i++) out += String(parts[i]) + (node.quasis[i + 1] ?? "");
-      return ok(out);
+      return spellable(out);
     }
 
     case "UnaryExpr": {
-      const operand = evaluate(node.argument, env);
-      return operand.ok ? unary(node.op, operand.value) : NOT_CONSTANT;
+      const operand = at(node.argument, env, depth + 1);
+      return operand.ok ? unary(node.op, operand.value) : propagate(operand);
     }
 
     case "BinaryExpr": {
-      const left = evaluate(node.left, env);
-      if (!left.ok) return NOT_CONSTANT;
+      const left = at(node.left, env, depth + 1);
+      if (!left.ok) return propagate(left);
       // Three operators decide on the left alone, and the right may be anything
       // at all — including something this cannot evaluate.
       const shortCircuit = decidedByLeft(node.op, left.value);
       if (shortCircuit !== null) return shortCircuit;
-      const right = evaluate(node.right, env);
-      if (!right.ok) return NOT_CONSTANT;
+      const right = at(node.right, env, depth + 1);
+      if (!right.ok) return propagate(right);
       return binary(node.op, left.value, right.value);
     }
 
     case "TernaryExpr": {
-      const test = evaluate(node.test, env);
-      if (!test.ok || typeof test.value !== "boolean") return NOT_CONSTANT;
-      return evaluate(test.value ? node.consequent : node.alternate, env);
+      const test = at(node.test, env, depth + 1);
+      if (!test.ok) return propagate(test);
+      if (typeof test.value !== "boolean") return NOT_CONSTANT;
+      return at(test.value ? node.consequent : node.alternate, env, depth + 1);
     }
 
     case "MemberAccess": {
@@ -535,19 +662,19 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
         return foldNamespaceConstant(on.name as string, node.name);
       }
       // `?.` reads the same on a value that is present, and a constant is.
-      const receiver = evaluate(node.object, env);
-      return receiver.ok ? property(receiver.value, node.name) : NOT_CONSTANT;
+      const receiver = at(node.object, env, depth + 1);
+      return receiver.ok ? property(receiver.value, node.name) : propagate(receiver);
     }
 
     case "IndexAccess": {
-      const receiver = evaluate(node.object, env);
-      if (!receiver.ok) return NOT_CONSTANT;
-      const index = evaluate(node.index, env);
-      return index.ok ? element(receiver.value, index.value) : NOT_CONSTANT;
+      const receiver = at(node.object, env, depth + 1);
+      if (!receiver.ok) return propagate(receiver);
+      const index = at(node.index, env, depth + 1);
+      return index.ok ? element(receiver.value, index.value) : propagate(index);
     }
 
     case "MethodCall":
-      return methodCall(node as unknown as Any, env);
+      return methodCall(node as unknown as Any, env, depth);
 
     default:
       return NOT_CONSTANT;

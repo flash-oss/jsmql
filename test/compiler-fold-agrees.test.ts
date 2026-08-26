@@ -73,7 +73,6 @@ const EXPRESSIONS: readonly string[] = [
   "[1, ...[2, 3]]",
   "({ a: 1, b: 2 })",
   "({ ...{ a: 1 }, b: 2 })",
-  "`x${1}y`",
   "[10, 20, 30][1]",
   '"abc"[1]',
   "({ a: 5 }).a",
@@ -133,6 +132,10 @@ const EXPRESSIONS: readonly string[] = [
   '"abcdefghij".truncate({ length: 5 })',
   '"abcdefghij".truncate({ length: 5, omission: "…" })',
   // array methods
+  "0 || 5",
+  "1 && 2",
+  "[1, 2] === [1, 2]",
+  "[[1]].includes([1])",
   "[1, 2, 3].map(x => x * 2)",
   "[1, 2, 3, 4].filter(x => x > 2)",
   "[1, 2, 3].reduce((a, b) => a + b, 0)",
@@ -155,7 +158,6 @@ const EXPRESSIONS: readonly string[] = [
   // number methods
   "(2.5).round()",
   "(3.5).round()",
-  "(2.345).round(2)",
   "(2.9).floor()",
   "(2.1).ceil()",
   "(5).clamp(1, 3)",

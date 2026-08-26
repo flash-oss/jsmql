@@ -251,24 +251,6 @@ const EVALUABLE: ReadonlySet<string> = new Set([
 
 // ── the pass ─────────────────────────────────────────────────────────────────
 
-/** What a value is called when it has no MongoDB literal, for the message. */
-function unspellable(value: unknown): string | null {
-  if (typeof value === "number" && !Number.isFinite(value)) return Number.isNaN(value) ? "NaN" : String(value);
-  if (Array.isArray(value)) {
-    for (const v of value) {
-      const name = unspellable(v);
-      if (name !== null) return name;
-    }
-  }
-  if (typeof value === "object" && value !== null && !(value instanceof Date)) {
-    for (const v of Object.values(value)) {
-      const name = unspellable(v);
-      if (name !== null) return name;
-    }
-  }
-  return null;
-}
-
 /**
  * Fold every declaration that can be folded, and drop it.
  *
@@ -340,14 +322,16 @@ function foldStatements(stmts: readonly PipelineStmt[]): { stmts: readonly Pipel
 
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
       const result = evaluate(resolved.value, EMPTY);
+      // A constant MongoDB cannot write down is worth saying out loud. The
+      // evaluator names it and propagates it, so an `Infinity` buried three
+      // operators deep reports the same way one at the top does.
+      if (!result.ok && result.unspellable !== undefined) {
+        throw new ParseError(
+          `This constant expression evaluates to ${result.unspellable}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range.`,
+          resolved.pos,
+        );
+      }
       if (result.ok) {
-        const name = unspellable(result.value);
-        if (name !== null) {
-          throw new ParseError(
-            `This constant expression evaluates to ${name}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range.`,
-            resolved.pos,
-          );
-        }
         // Only a value with a literal spelling. Anything else keeps its binding:
         // inlining the source expression instead would carry that expression's
         // own free names to every use site, where they can be captured by a

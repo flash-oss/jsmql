@@ -145,8 +145,61 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     expect(valueOf('"a" + 1')).toBe("(not constant)"); // $concat takes strings
     expect(valueOf("1 == 1")).toBe("(not constant)"); // loose equality coerces
     expect(valueOf("typeof 1")).toBe("(not constant)"); // $type has its own names
-    expect(valueOf("true && 2")).toBe("(not constant)"); // $and answers a boolean
     expect(valueOf('1 < "a"')).toBe("(not constant)"); // BSON orders across types
+  });
+
+  it("folds `&&` and `||` the way the LOWERING does, which is JavaScript's truthiness", () => {
+    // Measured on the server: `0 || 5` is 5 there and `1 && 2` is 2, so the
+    // boolean-only rule this once had refused the shape people actually write.
+    expect(valueOf("0 || 5")).toBe(5);
+    expect(valueOf('"" || "x"')).toBe("x");
+    expect(valueOf("1 && 2")).toBe(2);
+    expect(valueOf("0 && 5")).toBe(0);
+    expect(valueOf("null || 5")).toBe(5);
+  });
+
+  it("compares structurally, the way `$eq` and `$in` do", () => {
+    // Every literal here is a fresh object, so JavaScript's identity would answer
+    // false for every structural comparison there is.
+    expect(valueOf("[1, 2] === [1, 2]")).toBe(true);
+    expect(valueOf("({ a: 1 }) === ({ a: 1 })")).toBe(true);
+    expect(valueOf("[[1]].includes([1])")).toBe(true);
+    expect(valueOf("[{ a: 1 }].indexOf({ a: 1 })")).toBe(0);
+  });
+
+  it("answers in CODE POINTS, because that is what MongoDB counts and orders by", () => {
+    // JavaScript counts UTF-16 units, and the two part company above U+D7FF.
+    expect(valueOf('"\u{1f600}a".indexOf("a")')).toBe(1);
+    expect(valueOf('"\u{fb01}" < "\u{1f600}"')).toBe(true);
+    // Padding by units both pads to the wrong width and can cut a character in
+    // half, producing a string with no UTF-8 encoding at all.
+    expect(valueOf('"\u{1f600}".padStart(2)')).toBe(" \u{1f600}".normalize());
+    expect(valueOf('".".padStart(2, "\u{1f600}\u{1f600}")')).toBe("\u{1f600}.".normalize());
+  });
+
+  it("refuses what it cannot compute the way the server would", () => {
+    // Reproducing `$round`'s decimal arithmetic by scaling makes the rounding
+    // decision on a perturbed number: `(2.675).round(2)` is 2.68 that way, 2.67
+    // on the server. A place count other than zero stays runtime.
+    expect(valueOf("(2.675).round(2)")).toBe("(not constant)");
+    // `-0` is a DOUBLE to the driver where the same arithmetic gives an int `0`.
+    expect(valueOf("0 * -7")).toBe("(not constant)");
+    // `$toString` of a double and JavaScript's own formatting differ on exponents.
+    expect(valueOf("`${1e-7}`")).toBe("(not constant)");
+    // An index the server cannot take as a 32-bit integer.
+    expect(valueOf('"abc".charAt(1.5)')).toBe("(not constant)");
+    expect(valueOf("[1, 2, 3].at(2.5)")).toBe("(not constant)");
+    // `$concatArrays` takes arrays; JavaScript's `concat` takes anything.
+    expect(valueOf("[1].concat(2)")).toBe("(not constant)");
+  });
+
+  it("stops before the stack does, and before the value gets absurd", () => {
+    // A `RangeError` with no position is what every rule here takes care not to
+    // produce, and half a gigabyte of string has no place in a query.
+    const deep = Array.from({ length: 3000 }, () => "1").join("+");
+    expect(valueOf(deep)).toBe("(not constant)");
+    expect(valueOf('"x".padStart(500000000, "ab")')).toBe("(not constant)");
+    expect(valueOf('"x".repeat(10000000)')).toBe("(not constant)");
   });
 
   it("leaves the escape hatch alone, so pasted MQL round-trips", () => {
