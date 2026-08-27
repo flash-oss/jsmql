@@ -56,14 +56,13 @@ $.a = $.items.sort()   →  ".sort() mutates the array in JavaScript. In express
 
 One tree shape, two meanings. A rewrite blind to position would turn the second
 into a nested assignment and throw away the message the row carries — so the
-position arrives WITH the node, computed on the way down by `edge` in
-`src/compiler/passes/position.ts` and carried by `mapTreeIn`.
+position arrives WITH the node, carried down by `mapTreeIn`. It cannot be a set
+of nodes looked up by identity: the walk rebuilds a parent as soon as one of its
+children changes, so by the time a rule runs, the object it holds is not the
+object anyone recorded.
 
-It cannot be a set of nodes looked up by identity: the walk rebuilds a parent as
-soon as one of its children changes, so by the time a rule runs, the object it
-holds is not the object anyone recorded.
-
-A statement stands in one of four places, and the fourth is read off a row:
+Where each position comes from, and how a stage's body is laid out, is owned by
+[position-pass.md](position-pass.md). The four places a statement can stand:
 
 | Slot | Example |
 |---|---|
@@ -71,9 +70,6 @@ A statement stands in one of four places, and the fourth is read off a row:
 | an element of a `;`-separated program | `$.a = 1; $.items.sort();` |
 | an element of a bracketed pipeline | `[$match(…), $.items.sort()]` |
 | an element of a stage's sub-pipeline | `$lookup({ …, pipeline: [$.items.sort()], … })` |
-
-The last one asks the stage's own `subPipelineFields`, so `$facet`'s `["*"]` —
-every key holds a pipeline — needs no clause of its own.
 
 ## The statement mutators
 

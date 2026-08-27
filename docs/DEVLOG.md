@@ -10,6 +10,53 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-27 — fix(registry): a stage body's positions are stated, and an accumulator slot takes one operand
+
+Phase 4 supplied three of the seven positions. `filter`, `group`, `window` and `updateDoc` had no way
+to arrive, and the comment in [position.ts](../src/compiler/passes/position.ts) argued that `filter`
+was "a property of the whole PROGRAM, chosen once at the root". That reasoning was incomplete: a
+`$match` body is a **local** filter position, and so are `$geoNear.query` and
+`$graphLookup.restrictSearchWithMatch`. The shipped compiler emits a bare aggregation expression into
+all three, and mongod refuses every one with *"unknown top level operator: $eq"*. `$group` output was
+the fourth: `$group({_id: null, s: $sum($.x, $.y)})` emits `{$sum:["$x","$y"]}`, which mongod refuses
+with *"The $sum accumulator is a unary operator"* — while the registry's own `group` cell had said
+`exact: 1` all along and had nowhere to be consulted from.
+
+`MongoSpec.subPipelineFields` is now `bodyPositions`, which states the position of every path inside a
+stage's body rather than only the paths that hold a pipeline. Same dotted-path vocabulary (`""` is the
+body, `*` is any key, longest covering key wins, a literal beats a `*`), so `$rankFusion`'s
+`"input.pipelines.*"` still reaches two levels down, and `$group`'s
+`{ "": "value", "*": "group", _id: "value" }` now reads as written — `_id` is an expression and every
+other key is an accumulator. Replacing the old field rather than adding three siblings to it was the
+call because the old one was a special case of the new one; keeping both would have made "which key
+holds a pipeline" answerable from two places. A type-level check makes the `""` key mandatory, and a
+test asserts that exactly the stage rows carry a layout: a stage with none sends its whole body to
+`value`, which is where all four bugs above came from. Owned by
+[docs/specs/position-pass.md](specs/position-pass.md).
+
+The `window` cells were wrong in the more dangerous direction. `op()` claimed a window slot is
+"variadic-tolerant, so it keeps `arity` unchanged" — true syntactically and false in the answer:
+`{$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}` returns **0** where the unary form returns 4,
+and nothing reports it. Ten `window` cells stated `atLeast 1`; all are now `exact: 1`, except
+`$covariancePop`/`$covarianceSamp`, which genuinely take an array of two (one operand answers `null`).
+Three `group` cells rendered `args.map(gen)` behind an `exact: 1` arity, emitting `{$concatArrays:["$a"]}`
+— refused, because every accumulator refuses a one-element list. All 29 operand-shaped accumulator
+cells now share one emitter, `accumulated`, and the dead `op()` generator that stated the false window
+rule is deleted along with the `MongoOpParts` type no row used.
+
+`accumulated` also shields an operand that renders as an array, because `{acc: [ … ]}` is read as an
+operand list wherever it appears: `$push([$.x, $.y])` becomes
+`{$push:{$let:{vars:{},in:["$x","$y"]}}}`, which answers `[[1,2],[3,4]]` — exactly what the bare array
+already answers in a window slot, where it is accepted. The shield is only needed in a `$group` slot,
+but both cells use the one emitter so the rule is stated once and the two cannot drift apart.
+[test/compiler-accumulator-agrees.test.ts](../test/compiler-accumulator-agrees.test.ts) runs every one
+of these documents — emitted by the registry itself — on a live mongod, and separately asserts the
+shielded form answers what the bare form answers wherever the bare form runs: a fix may not change an
+answer to buy a shape. Two audits keep the rule: a `group`/`window` cell may never state `atLeast`, and
+a cell using `accumulated` must state `exact: 1`.
+
+---
+
 ## 2026-08-26 — fix: three silent drops in the bracketed write path
 
 `arrayElement` in the new parser took `writes().ops[0]` in two branches and threw the rest away. So

@@ -50,15 +50,66 @@ export function isFieldProperty(name: string): boolean {
   return fams.some((f) => FIELD_FAMILIES.includes(f));
 }
 
+/** A stage's stated body layout, or undefined when the name is not a stage. */
+function bodyLayoutOf(name: string): Readonly<Record<string, Position>> | undefined {
+  return (row(name) as { bodyPositions?: Readonly<Record<string, Position>> } | undefined)?.bodyPositions;
+}
+
+/** Is `name` a stage — a name whose argument is a BODY with a stated layout? */
+export function isStageName(name: string): boolean {
+  return bodyLayoutOf(name) !== undefined;
+}
+
 /**
- * The keys of a stage's body whose value is a SUB-PIPELINE, or undefined when the
- * name is not a stage. `["*"]` means every key holds one — that is `$facet`.
+ * Where a path inside a stage's body stands.
  *
- * A statement slot is not only a top-level thing: the elements of a sub-pipeline
- * are statements too, and only the row knows which key holds one.
+ * `{ deeper: true }` is not an answer but an instruction: a longer key claims
+ * something below this path, so the walk must descend one more step before the
+ * row can answer. Without it `$setWindowFields`'s body would settle as a value
+ * and its `output` keys would never reach the window position.
  */
-export function subPipelineFieldsOf(name: string): readonly string[] | undefined {
-  return (row(name) as { subPipelineFields?: readonly string[] } | undefined)?.subPipelineFields;
+export type BodySlot = { at: Position } | { deeper: true };
+
+/** A body path, one segment per key. `null` is a COMPUTED key — `{ [k]: … }`. */
+export type BodyPath = readonly (string | null)[];
+
+const segmentsOf = (key: string): readonly string[] => (key === "" ? [] : key.split("."));
+
+/**
+ * Does `key` cover `path`'s first `key.length` segments?
+ *
+ * A `*` covers any key, including a computed one. A LITERAL segment never covers
+ * a computed key: `{ [k]: … }` cannot be known to be the key the row names.
+ */
+function covers(key: readonly string[], path: BodyPath): boolean {
+  if (key.length > path.length) return false;
+  return key.every((seg, i) => seg === "*" || seg === path[i]);
+}
+
+const wildcards = (key: readonly string[]): number => key.filter((seg) => seg === "*").length;
+
+/**
+ * Which position `path` holds inside `stage`'s body — see `bodyPositions` for the
+ * path vocabulary. Undefined when `stage` is not a stage at all.
+ *
+ * The longest covering key wins, and a literal beats a `*` of the same length,
+ * so `$group`'s `{ "": "value", "*": "group", _id: "value" }` reads as written:
+ * `_id` is an expression and every other key is an accumulator.
+ */
+export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined {
+  const layout = bodyLayoutOf(stage);
+  if (layout === undefined) return undefined;
+  const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
+  if (keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path))) {
+    return { deeper: true };
+  }
+  let best: { key: string; seg: readonly string[] } | undefined;
+  for (const cand of keys) {
+    if (!covers(cand.seg, path)) continue;
+    if (best === undefined || cand.seg.length > best.seg.length) best = cand;
+    else if (cand.seg.length === best.seg.length && wildcards(cand.seg) < wildcards(best.seg)) best = cand;
+  }
+  return best === undefined ? undefined : { at: layout[best.key] };
 }
 
 /**

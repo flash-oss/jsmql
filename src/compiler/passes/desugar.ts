@@ -419,16 +419,30 @@ export const RULES: readonly Rule[] = [
 export type DesugarResult = { program: Program; rounds: number };
 
 /**
+ * Where the ROOT of a program stands. Four entry points, four answers, and no
+ * program can tell them apart on its own:
+ *
+ *   jsmql(<pipeline>)  a `;`-separated program        → STATEMENT
+ *   jsmql(<filter>)    one predicate, no `;`          → FILTER
+ *   jsmql.expr(...)    one aggregation expression     → VALUE
+ *   jsmql.update(...)  the object form of an update   → UPDATE_DOC
+ *
+ * `shapeOf` decides between the first two; the other two are the caller's own
+ * fact. Every step below the root is `edge`'s to answer.
+ */
+export type RootWhere = Where;
+
+/**
  * Apply every rule, repeatedly, until a whole round changes nothing.
  *
  * Identity is the test: `mapTree` returns the same object when no rule fired, so
  * a round that produces the same reference is the fixpoint.
  */
-export function desugarVerbose(program: Program): DesugarResult {
+export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): DesugarResult {
   let current: Program = program;
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let next = current;
-    for (const rule of RULES) next = mapTreeIn(next, STATEMENT, edge, rule.apply);
+    for (const rule of RULES) next = mapTreeIn(next, root, edge, rule.apply);
     // Folding runs AFTER the rules in each round, and the two feed each other.
     // A mutator statement has become a plain assignment by now, so "was this name
     // written to" is one question rather than a list of method names — and a
@@ -448,6 +462,6 @@ export function desugarVerbose(program: Program): DesugarResult {
   );
 }
 
-export function desugar(program: Program): Program {
-  return desugarVerbose(program).program;
+export function desugar(program: Program, root: RootWhere = STATEMENT): Program {
+  return desugarVerbose(program, root).program;
 }

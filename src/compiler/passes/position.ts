@@ -10,30 +10,30 @@
 // The answer travels DOWN the tree, one parent-to-property step at a time, so a
 // pass that rewrites while it descends always has it. See `mapTreeIn`.
 
-import { subPipelineFieldsOf } from "../rows.ts";
+import type { Position } from "../../registry/vocabulary.ts";
+import type { BodyPath, BodySlot } from "../rows.ts";
+import { bodySlotAt } from "../rows.ts";
 
 /**
- * Where a node stands.
+ * Where a node stands: one of the seven positions, or one of the two answers
+ * that are not positions at all.
  *
- * Three of the seven positions so far, plus the one waypoint that is not a
- * position at all: `stageBody` is the inside of `$lookup({ … })`, where the next
- * step decides between a sub-pipeline (statements) and an ordinary field.
- *
- * The four still missing — `filter`, `group`, `window`, `updateDoc` — are not
- * edge decisions in the same way. `filter` and `updateDoc` are properties of the
- * whole PROGRAM, chosen once at the root; the other two sit inside a stage body
- * whose accumulator slots the stage's row has yet to state.
+ * `{ at: Position }` rather than nine spelled-out members, so a new position in
+ * the registry's `Position` is a position here on the same day.
  */
 export type Where =
-  | { at: "statement" }
-  | { at: "value" }
-  | { at: "stream" }
+  | { at: Position }
   | { at: "target" }
-  | { at: "stageBody"; stage: string };
+  /** Inside a stage body, part-way down a path the stage's row still owns. */
+  | { at: "stageBody"; stage: string; path: BodyPath };
 
 export const STATEMENT: Where = { at: "statement" };
 export const VALUE: Where = { at: "value" };
 export const STREAM: Where = { at: "stream" };
+export const FILTER: Where = { at: "filter" };
+export const GROUP: Where = { at: "group" };
+export const WINDOW: Where = { at: "window" };
+export const UPDATE_DOC: Where = { at: "updateDoc" };
 /**
  * The left of `=`, or the operand of `delete`. Named apart from `value` because
  * it is not evaluated: it names a place to write. Calling it a value would let a
@@ -43,17 +43,22 @@ export const TARGET: Where = { at: "target" };
 
 type Any = { type: string } & Record<string, unknown>;
 
-/** The static key an object entry was written with, or undefined if computed. */
-function staticKey(entry: Any): string | undefined {
+/** The static key an object entry was written with, or null if computed. */
+function staticKey(entry: Any): string | null {
   const key = entry.key as { kind?: string; name?: string } | undefined;
-  return key?.kind === "static" && typeof key.name === "string" ? key.name : undefined;
+  return key?.kind === "static" && typeof key.name === "string" ? key.name : null;
+}
+
+/** A resolved slot, or the waypoint that says "one more step down". */
+function reached(stage: string, path: BodyPath, slot: BodySlot): Where {
+  return "deeper" in slot ? { at: "stageBody", stage, path } : { at: slot.at };
 }
 
 /**
  * What the position becomes on the step from `node` along its property `key`.
  *
- * Every clause is a statement about the LANGUAGE, and the one clause that needs
- * to know which key of a stage holds a pipeline asks the stage's own row.
+ * Every clause is a statement about the LANGUAGE, and the clauses that need to
+ * know how a stage's body is laid out ask the stage's own row.
  */
 export function edge(node: object, key: string, here: Where): Where {
   const n = node as Any;
@@ -69,20 +74,23 @@ export function edge(node: object, key: string, here: Where): Where {
   // same shape one step further in is an array value.
   if (n.type === "ArrayLiteral" && key === "elements" && here.at === "statement") return STATEMENT;
 
-  // `$lookup({ … })` — enter the body, but decide nothing yet.
+  // A stage's argument is its BODY. `$match($.a > 1)` is a query predicate,
+  // `$group({ … })` mixes an expression with accumulators, and only the row can
+  // say which is which — so ask it, and keep asking as the walk descends.
   if (n.type === "OperatorCall" && key === "args" && typeof n.name === "string") {
-    const fields = subPipelineFieldsOf(n.name);
-    if (fields !== undefined && fields.length > 0) return { at: "stageBody", stage: n.name };
+    const slot = bodySlotAt(n.name, []);
+    if (slot !== undefined) return reached(n.name, [], slot);
   }
-  // The body's own object literal and its entry list are still the body.
-  if (here.at === "stageBody" && (n.type === "ObjectLiteral" || n.type === "KeyValueEntry")) {
+  // The body's own object literal and its entry list are still the body; only
+  // stepping into an entry's VALUE moves one key deeper.
+  if (here.at === "stageBody") {
     if (n.type === "ObjectLiteral") return here;
-    if (key !== "value") return here;
-    const name = staticKey(n);
-    if (name === undefined) return VALUE;
-    const fields = subPipelineFieldsOf(here.stage) ?? [];
-    // `["*"]` is `$facet`, where every key holds a pipeline.
-    return fields.includes("*") || fields.includes(name) ? STATEMENT : VALUE;
+    if (n.type === "KeyValueEntry") {
+      if (key !== "value") return here;
+      const path: BodyPath = [...here.path, staticKey(n)];
+      const slot = bodySlotAt(here.stage, path);
+      return slot === undefined ? VALUE : reached(here.stage, path, slot);
+    }
   }
 
   // The destination of a write names a place; it is never evaluated.

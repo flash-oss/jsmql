@@ -8,6 +8,7 @@ import { describe, expect, it } from "vitest";
 import { consult, everyName, listedIn, positionOf, refusalSentence } from "../src/compiler/emit/consult.ts";
 import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
+import { accumulated } from "../src/registry/vocabulary.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
@@ -280,6 +281,38 @@ describe("registry — an operator cannot accept more operands than it renders",
         if (cell.emit === undefined) continue;
         const ceiling = accepts(cell.args);
         if (ceiling > capacity) wrong.push(`${name}: accepts ${ceiling}, renders ${capacity}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("never lets an accumulator slot state an unbounded operand count", () => {
+    // A `$group` output slot and a `$setWindowFields.output` slot each take ONE
+    // expression, and the two report a second operand differently:
+    //   {$group:{_id:null,s:{$sum:["$x","$y"]}}}          → "unary operator"
+    //   {$setWindowFields:{…,output:{r:{$sum:["$x","$y"]}}}}  → 0, where "$x" → 4
+    // The second is the reason `atLeast` is banned here rather than merely
+    // discouraged: nothing reports it, so only the registry can.
+    const unbounded: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      for (const pos of ["group", "window"] as const) {
+        const cell = row[pos];
+        if (cell === undefined || typeof cell !== "object" || cell.args === undefined) continue;
+        if ((cell.args as { atLeast?: number }).atLeast !== undefined) unbounded.push(`${name}.${pos}`);
+      }
+    }
+    expect(unbounded).toEqual([]);
+  });
+
+  it("states `exact: 1` wherever the accumulator emitter renders the operand", () => {
+    // `accumulated` reads args[0] and nothing else. Any other count would drop
+    // an operand the row said it would accept.
+    const wrong: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      for (const pos of ["group", "window"] as const) {
+        const cell = row[pos];
+        if (cell === undefined || typeof cell !== "object" || cell.emit !== accumulated) continue;
+        if ((cell.args as { exact?: number } | undefined)?.exact !== 1) wrong.push(`${name}.${pos}`);
       }
     }
     expect(wrong).toEqual([]);

@@ -49,7 +49,9 @@ lex/
                where a token ENDS.
 
 parse/         the Pratt loop driven by precedence / associativity / fixity.
-passes/        desugar (source → source), then position (the output shape).
+passes/        desugar (source → source), then position and shape (which
+               document the program becomes). See docs/specs/desugar-pass.md
+               and docs/specs/position-pass.md.
 emit/          the lowerings, and the dispatcher that checks a row before running one.
 ```
 
@@ -62,5 +64,7 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
   `unsupported(...)` text or built from a row's `args.sig`. No phase writes prose
   the registry could have carried.
 - **Positions come from `where`, never from a tree probe.** If a construct is
-  legal somewhere, its row says so, and phase 4 reads it.
+  legal somewhere, its row says so, and phase 4 reads it. A stage BODY mixes
+  positions, and the row states the layout in `bodyPositions` — never derive it
+  from a key's name.
 - **Strippable TypeScript only**, same as the rest of `src/` — see `src/CLAUDE.md`.

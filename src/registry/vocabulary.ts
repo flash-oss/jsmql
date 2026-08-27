@@ -711,104 +711,27 @@ export type On = Family | readonly Family[] | "any";
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * A MongoDB operator, written as one line.
+ * The rendering every ACCUMULATOR slot shares — `$group` output and
+ * `$setWindowFields.output` both.
  *
- * What it generates is the MQL SHAPE, which for an operator is `{ $name: … }`
- * by definition of `shape` — the same three lines for 75 of the 182, with only
- * the name changing, and the name is already the key. What it does NOT generate
- * is `where`: applicability stays written on every entry, because that is the
- * fact a reader needs and the one a generator must never guess.
+ * ONE operand, rendered plainly. Never as a one-element list, which every
+ * accumulator refuses:
+ *   {$group:{_id:null,r:{$push:["$a"]}}}  → "The $push accumulator is a unary operator"
+ *   {$group:{_id:null,r:{$push:"$a"}}}    → accepted
+ *
+ * An operand that RENDERS as an array needs the shield, because `{acc: [ … ]}`
+ * is read as an operand LIST there. Measured for `$push([$.x, $.y])`, whose one
+ * argument is an array literal:
+ *   {$group:{_id:null,r:{$push:["$x","$y"]}}}                      refused, as above
+ *   {$group:{_id:null,r:{$push:{$let:{vars:{},in:["$x","$y"]}}}}}   → [[1,2],[3,4]]
+ * The shield is only NEEDED in a $group slot — a window slot evaluates a bare
+ * array as an expression and answers the same [[1,2],[3,4]] without it. Both
+ * cells use this one emitter anyway, so the rule is stated once and the two
+ * slots cannot drift apart.
  */
-/**
- * What `op` returns: the six cells plus the facts it was given. names.ts feeds
- * this straight into `mongo({...})`. Kept structural rather than importing
- * `MongoEntry`, so vocabulary.ts stays a leaf that imports nothing.
- */
-export type MongoOpParts<W extends readonly Position[]> = {
-  kind: "mongo";
-  shape: "single" | "array" | "none" | "flex" | { object: BodyRule };
-  category?: OperatorCategory;
-  doc: string;
-  where: W;
-  only?: readonly Only[];
-  /**
-   * The lowest server version that accepts this name. Stated only where it was
-   * MEASURED to matter — the binary may hold a name the running FCV refuses:
-   *   {$addFields:{v:{$sigmoid:"$a"}}}
-   *     → "not allowed in the current feature compatibility version"
-   * Absent means every version jsmql targets accepts it.
-   */
-  minVersion?: string;
-  filter: Emitter<Family, FilterIn, QueryDoc> | NonEmitter<Family> | Pending;
-  expr: Emitter<Family, ExprIn, unknown> | NonEmitter<Family> | Pending;
-  group: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
-  window: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
-  stream: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
-  statement: Emitter<Family, StageIn, Stage[]> | NonEmitter<Family> | Pending;
-  updateDoc: Emitter<Family, GroupIn, unknown> | NonEmitter<Family> | Pending;
-};
-
-export const op = <const W extends readonly Position[]>(e: {
-  where: W;
-  shape: "single" | "array" | "none" | "flex" | { object: BodyRule };
-  category: OperatorCategory;
-  doc: string;
-  only?: readonly Only[];
-  /** Stated only where the vendored spec constrains the operands. */
-  args?: Arity;
-  /** See `MongoOpParts.minVersion`. */
-  minVersion?: string;
-}): MongoOpParts<W> => {
-  const arity: Arity = e.args ?? { sig: "operands", atLeast: 0 };
-  const body = typeof e.shape === "object" ? e.shape.object : null;
-  const shaped = (input: { name: string; args: readonly Expr[]; gen: (x: Expr) => unknown }): unknown => {
-    const vals = input.args.map(input.gen);
-    if (e.shape === "none") return { [input.name]: {} };
-    if (e.shape === "single") return { [input.name]: vals[0] };
-    // An object-shaped operator called POSITIONALLY: zip the operands onto the
-    // key order the row states. One argument is the object-literal call and
-    // passes straight through. See `BodyRule.positional`.
-    if (body !== null) {
-      if (vals.length <= 1 || body.positional === undefined) return { [input.name]: vals[0] };
-      const keys = body.positional;
-      return { [input.name]: Object.fromEntries(vals.map((v, i) => [keys[i], v])) };
-    }
-    return { [input.name]: vals.length === 1 && e.shape === "flex" ? vals[0] : vals };
-  };
-  /**
-   * A $group output slot takes exactly ONE argument, whatever the operator's
-   * expression form allows. Measured on mongod:
-   *   {$group:{v:{$avg:"$a"}}}        → accepted
-   *   {$group:{v:{$avg:["$a","$b"]}}} → "The $avg accumulator is a unary operator"
-   * A window slot is variadic-tolerant, so it keeps `arity` unchanged.
-   */
-  const groupArity: Arity = { sig: "operand", exact: 1 };
-  /**
-   * A stage takes one body. The SAME rendering serves both stage positions —
-   * `$$ = $$.$match(...)` as a chain link and `$match(...);` as a statement —
-   * so the two cells share one emitter and differ only in whether `where`
-   * lists them.
-   */
-  const stageArity: Arity = { sig: "body", exact: 1 };
-  const asStage = (i: StageIn): Stage[] => [{ [i.name]: i.gen(i.args[0]) }];
-  const listed = (pos: Position) => (e.where as readonly Position[]).includes(pos);
-  const why = `'${"$"}<op>' is not valid here — see its 'where'.`;
-  return {
-    kind: "mongo",
-    shape: e.shape,
-    category: e.category,
-    doc: e.doc,
-    where: e.where,
-    ...(e.only === undefined ? {} : { only: e.only }),
-    ...(e.minVersion === undefined ? {} : { minVersion: e.minVersion }),
-    filter: listed("filter") ? { args: arity, emit: shaped } : unsupported(why),
-    expr: listed("value") ? { args: arity, emit: shaped } : unsupported(why),
-    group: listed("group") ? { args: groupArity, emit: shaped } : unsupported(why),
-    window: listed("window") ? { args: arity, emit: shaped } : unsupported(why),
-    stream: listed("stream") ? { args: stageArity, emit: asStage } : unsupported(why),
-    statement: listed("statement") ? { args: stageArity, emit: asStage } : unsupported(why),
-    updateDoc: listed("updateDoc") ? { args: arity, emit: shaped } : unsupported(why),
-  } as MongoOpParts<W>;
+export const accumulated = (input: { name: string; args: readonly Expr[]; gen: (e: Expr) => unknown }): unknown => {
+  const operand = input.gen(input.args[0]);
+  return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
 };
 
 /**
