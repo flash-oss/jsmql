@@ -247,6 +247,8 @@ const EVALUABLE: ReadonlySet<string> = new Set([
   "MemberAccess",
   "IndexAccess",
   "MethodCall",
+  "CallExpression",
+  "NewExpression",
 ]);
 
 // ── the pass ─────────────────────────────────────────────────────────────────

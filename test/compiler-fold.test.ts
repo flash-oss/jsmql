@@ -340,3 +340,52 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
     expect(valueOf("({ a: 1 }).size()")).toBe(1);
   });
 });
+
+describe("compiler/passes/fold — a constant date, and the named conversions", () => {
+  it("answers in UTC and in MongoDB's numbering", () => {
+    // `$month` counts from 1 where JavaScript's getUTCMonth counts from 0, and
+    // `$dayOfWeek` counts from 1 with Sunday first where JavaScript says 4 for a
+    // Thursday. The LOCAL-sounding getters read UTC, because `$hour` does — one
+    // that read local time would answer differently on every machine.
+    const d = 'new Date("2020-03-05T20:30:40.123Z")';
+    expect(valueOf(`${d}.getMonth()`)).toBe(3);
+    expect(valueOf(`${d}.getDay()`)).toBe(5);
+    expect(valueOf(`${d}.getHours()`)).toBe(20);
+    expect(valueOf(`${d}.getFullYear()`)).toBe(2020);
+    expect(valueOf(`${d}.dayOfYear()`)).toBe(65);
+    expect(valueOf(`${d}.quarter()`)).toBe(1);
+  });
+
+  it("counts the calendar-parts constructor's months from ONE", () => {
+    // `new Date(2020, 1, 1)` is January here and February in JavaScript.
+    expect(valueOf("new Date(2020, 1, 1).getMonth()")).toBe(1);
+    expect(valueOf("new Date(2020, 1, 1).getFullYear()")).toBe(2020);
+  });
+
+  it("never folds a date that reads the clock", () => {
+    expect(valueOf("new Date()")).toBe("(not constant)");
+    expect(valueOf("Date.now()")).toBe("(not constant)");
+    // An unparseable string is an error the language raises with a position;
+    // folding it to `Invalid Date` would swallow that.
+    expect(valueOf('new Date("nope")')).toBe("(not constant)");
+  });
+
+  it("converts only where the server converts", () => {
+    expect(valueOf('Number("42")')).toBe(42);
+    expect(valueOf('parseInt("42")')).toBe(42);
+    // `$convert` with no `onError` fails on a string it cannot parse, and `$toInt`
+    // refuses a fractional string rather than truncating it the way JavaScript does.
+    expect(valueOf('Number("nope")')).toBe("(not constant)");
+    expect(valueOf('parseInt("4.9")')).toBe("(not constant)");
+    // `$toString(null)` is null, not the four letters.
+    expect(valueOf("String(null)")).toBe(null);
+    // A number's spelling differs between `$toString` and JavaScript.
+    expect(valueOf("String(42)")).toBe("(not constant)");
+  });
+
+  it("reads `new Set([…])` as the array, because that is what the language does", () => {
+    // jsmql has no set type: the constructor is a way of writing an array that
+    // the set operators then read, and it does NOT de-duplicate.
+    expect(valueOf("new Set([1, 2, 2, 3])")).toEqual([1, 2, 2, 3]);
+  });
+});

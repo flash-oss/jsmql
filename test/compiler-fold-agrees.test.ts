@@ -213,6 +213,52 @@ const EXPRESSIONS: readonly string[] = [
   "[{ n: 1 }, { n: 2 }].differenceBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }, { n: 2 }].intersectionBy([{ n: 2 }], o => o.n)",
   "[{ n: 1 }].unionBy([{ n: 1 }, { n: 2 }], o => o.n)",
+  // named conversions and constructors
+  'String("a")',
+  "String(true)",
+  "String(null)",
+  'Number("42")',
+  'Number("4.5")',
+  "Number(true)",
+  "Boolean(1)",
+  "Boolean(0)",
+  'Boolean("")',
+  'Boolean("x")',
+  "Boolean(null)",
+  'parseInt("42")',
+  'parseFloat("4.5")',
+  'ObjectId("507f1f77bcf86cd799439011")',
+  'new ObjectId("507f1f77bcf86cd799439011")',
+  "Date.UTC(2020, 1, 1)",
+  "new Set([1, 2, 2, 3])",
+  "new Set([])",
+  // dates: UTC, and MongoDB's own numbering
+  'new Date("2020-03-05T20:30:40.123Z").getFullYear()',
+  'new Date("2020-03-05T20:30:40.123Z").getMonth()',
+  'new Date("2020-03-05T20:30:40.123Z").getDate()',
+  'new Date("2020-03-05T20:30:40.123Z").getDay()',
+  'new Date("2020-03-05T20:30:40.123Z").getHours()',
+  'new Date("2020-03-05T20:30:40.123Z").getMinutes()',
+  'new Date("2020-03-05T20:30:40.123Z").getSeconds()',
+  'new Date("2020-03-05T20:30:40.123Z").getMilliseconds()',
+  'new Date("2020-03-05T20:30:40.123Z").getUTCMonth()',
+  'new Date("2020-03-05T20:30:40.123Z").getUTCDay()',
+  'new Date("2020-03-05T20:30:40.123Z").toISOString()',
+  'new Date("2020-03-05T20:30:40.123Z").quarter()',
+  'new Date("2020-03-05T20:30:40.123Z").dayOfYear()',
+  'new Date("2020-03-05T20:30:40.123Z").week()',
+  'new Date("2020-03-05T20:30:40.123Z").isoWeek()',
+  'new Date("2020-03-05T20:30:40.123Z").isoWeekYear()',
+  'new Date("2020-03-05T20:30:40.123Z").isoWeekday()',
+  "new Date(0).getFullYear()",
+  "new Date(2020, 1, 1).getMonth()",
+  // the week arithmetic, across the year boundaries where it is hardest
+  'new Date("2021-01-01").week()',
+  'new Date("2021-01-01").isoWeek()',
+  'new Date("2021-01-03").week()',
+  'new Date("2019-12-30").isoWeek()',
+  'new Date("2019-12-30").isoWeekYear()',
+  'new Date("2020-12-31").dayOfYear()',
   // object methods
   "({ a: 1, b: 2 }).size()",
   "({ a: 1, b: 2 }).pick(['a'])",
@@ -263,8 +309,11 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
       const folded = evaluate(parseExpression(src), new Map());
       if (!folded.ok) continue;
       const server = await run(src);
-      if (JSON.stringify(folded.value) !== JSON.stringify(server)) {
-        disagree.push(`${src}  fold=${JSON.stringify(folded.value)}  server=${JSON.stringify(server)}`);
+      // A Date compares by the instant it names; the driver hands back its own.
+      const mine = folded.value instanceof Date ? folded.value.toISOString() : folded.value;
+      const theirs = server instanceof Date ? server.toISOString() : server;
+      if (JSON.stringify(mine) !== JSON.stringify(theirs)) {
+        disagree.push(`${src}  fold=${JSON.stringify(mine)}  server=${JSON.stringify(theirs)}`);
       }
     }
     expect(disagree).toEqual([]);

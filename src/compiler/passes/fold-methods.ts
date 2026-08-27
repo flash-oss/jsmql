@@ -14,7 +14,9 @@
 // call stays a runtime one.
 
 import type { Evaluation } from "./evaluate.ts";
+import { ObjectId } from "../../objectid.ts";
 import { sameValue } from "./evaluate.ts";
+import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
 
 const NO: Evaluation = { ok: false };
 const ok = (value: unknown): Evaluation => ({ ok: true, value });
@@ -119,6 +121,11 @@ export function foldNamespaceCall(namespace: string, name: string, args: readonl
     }
   }
 
+  if (namespace === "Date") {
+    // `Date.now()` reads the clock; only `Date.UTC` is a function of its arguments.
+    return name === "UTC" ? foldDateUTC(values) : NO;
+  }
+
   if (namespace === "Object") {
     const [o, b] = values;
     const plain = (v: unknown): v is Record<string, unknown> =>
@@ -164,6 +171,84 @@ export function foldNamespaceConstant(namespace: string, name: string): Evaluati
   return NO;
 }
 
+/**
+ * `new X(…)` with constant arguments.
+ *
+ * `new Set([…])` answers with the ARRAY, unchanged and un-deduplicated, because
+ * that is what the language does — measured: `new Set([1,2,2,3])` reads back as
+ * `[1,2,2,3]` from the server. jsmql has no set type; the constructor is a way
+ * of writing an array that the set operators then read.
+ */
+export function foldConstructor(name: string, args: readonly Arg[]): Evaluation {
+  const values = args.map(valueOf);
+  switch (name) {
+    case "Date":
+      return foldNewDate(values);
+    case "Set": {
+      const [a] = values;
+      if (args.length === 0) return ok([]);
+      return Array.isArray(a) ? ok(a) : NO;
+    }
+    case "ObjectId":
+      return objectIdFrom(values);
+    default:
+      // `new RegExp(…)` and anything else: not something this knows.
+      return NO;
+  }
+}
+
+/**
+ * A named call: `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")`.
+ *
+ * Each is a conversion, and each refuses exactly where the SERVER refuses:
+ * `$convert` with no `onError` fails on a string it cannot parse, so
+ * `Number("nope")` and `parseInt("4.9")` are errors there and quiet answers in
+ * JavaScript. Folding either would answer where the program does not run.
+ */
+export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
+  const values = args.map(valueOf);
+  const [a] = values;
+  switch (name) {
+    case "String":
+      // `$toString(null)` is null, not the four letters "null".
+      if (a === null) return ok(null);
+      if (typeof a === "string") return ok(a);
+      if (typeof a === "boolean") return ok(String(a));
+      // A number's spelling differs between `$toString` and JavaScript on
+      // exponents, so it stays runtime. See the template-literal rule.
+      return NO;
+    case "Boolean":
+      return args.length === 1 ? ok(Boolean(a)) : NO;
+    case "Number":
+    case "parseFloat": {
+      if (typeof a === "number") return ok(a);
+      if (typeof a === "boolean") return ok(a ? 1 : 0);
+      if (typeof a !== "string") return NO;
+      const n = Number(a.trim());
+      // Unparseable is a server error, and so is the empty string.
+      return a.trim() !== "" && Number.isFinite(n) ? ok(n) : NO;
+    }
+    case "parseInt": {
+      if (typeof a !== "string") return NO;
+      const n = Number(a.trim());
+      // `$toInt` refuses a fractional string outright — it does not truncate the
+      // way JavaScript's `parseInt` does.
+      return Number.isInteger(n) ? ok(n) : NO;
+    }
+    case "ObjectId":
+      return objectIdFrom(values);
+    default:
+      return NO;
+  }
+}
+
+/** A 24-hex string, and nothing else: `ObjectId()` mints one and is not constant. */
+function objectIdFrom(values: readonly unknown[]): Evaluation {
+  const [a] = values;
+  if (typeof a !== "string" || !/^[0-9a-fA-F]{24}$/.test(a)) return NO;
+  return ok(new ObjectId(a.toLowerCase()));
+}
+
 // ── instance calls ───────────────────────────────────────────────────────────
 
 /**
@@ -177,6 +262,7 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (typeof receiver === "string") return stringMethod(receiver, name, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
+  if (receiver instanceof Date) return foldDateMethod(receiver, name, args.map(valueOf));
   // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
   // JavaScript, and reading one with the object rules answers about the wrong
   // thing entirely: `/ab/.size()` would be `Object.keys(regex).length`, which

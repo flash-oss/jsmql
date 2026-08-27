@@ -51,6 +51,40 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: a constant date, and the named conversions
+
+The two node types the evaluator had no case for. `CallExpression` covers `String`, `Number`,
+`Boolean`, `parseInt`, `parseFloat` and `ObjectId`; `NewExpression` covers `new Date`,
+`new Set` and `new ObjectId`; and a Date receiver now reaches a table of its own. So
+`const year = new Date("2020-01-01").getFullYear(); $.x === year` reads as `{ "x": 2020 }`
+where it used to keep a binding and three stages.
+
+Every rule answers the LANGUAGE's question, and the language disagrees with JavaScript in
+four places worth naming. `$month` counts from ONE, so `new Date("2020-03-05…").getMonth()`
+is 3 where JavaScript says 2, and `new Date(2020, 1, 1)` is January where JavaScript says
+February. `$dayOfWeek` counts from one with Sunday first, so a Thursday is 5 and not 4. The
+local-sounding getters — `getHours`, `getDate` — read UTC, because `$hour` and `$dayOfMonth`
+do; one that read local time would answer differently on every machine that compiled the
+same query. And `$toString(null)` is null, not the four letters.
+
+The conversions refuse exactly where the SERVER refuses, which is not where JavaScript
+refuses. `$convert` with no `onError` fails on a string it cannot parse, so `Number("nope")`
+is an error there and `NaN` in JavaScript; `$toInt` refuses a fractional string outright
+rather than truncating it, so `parseInt("4.9")` is an error too. `String(42)` does not fold
+either, for the reason a number in a template literal does not: `$toString` of a double and
+JavaScript's own formatting disagree on exponents.
+
+`new Set([1, 2, 2, 3])` folds to `[1, 2, 2, 3]`, un-deduplicated, because that is what the
+language does — jsmql has no set type, and the constructor is a way of writing an array that
+the set operators then read. `new Date()` and `Date.now()` never fold, and neither does
+`new Date("nope")`: the language raises a positioned error for that string, and folding it to
+`Invalid Date` would swallow it.
+
+53 probes against a live mongod, including the ISO-week arithmetic at the year boundaries
+where it is hardest: 46 agree, and the rest are refusals the server shares.
+
+---
+
 ## 2026-08-26 — fix: the fold, put to 30,000 expressions
 
 An adversarial sweep generated 29,957 expressions, folded each one, and compared it against

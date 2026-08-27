@@ -16,7 +16,13 @@
 import type { Expr } from "../../registry/ast.ts";
 import { isSpellable, readLiteral } from "./literal.ts";
 import type { Arg } from "./fold-methods.ts";
-import { foldInstanceCall, foldNamespaceCall, foldNamespaceConstant } from "./fold-methods.ts";
+import {
+  foldConstructor,
+  foldInstanceCall,
+  foldNamedCall,
+  foldNamespaceCall,
+  foldNamespaceConstant,
+} from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
 import { acceptsArgumentCount } from "../rows.ts";
 
@@ -555,7 +561,36 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   return spellable(result.value);
 }
 
-/** The value of `node`, given the constants already known. */ /** The value of `node`, given the constants already known. */
+/**
+ * Evaluate a call's arguments and hand them to a rule, with the same three gates
+ * a method call gets: no spread, every rule inside a try/catch, and a result that
+ * has to be spellable and of a sane size.
+ */
+function applyCall(
+  argNodes: readonly Expr[],
+  env: Constants,
+  depth: number,
+  run: (args: readonly Arg[]) => Evaluation,
+): Evaluation {
+  if (argNodes.some((a) => (a as Any).type === "SpreadElement")) return NOT_CONSTANT;
+  const args: Arg[] = [];
+  for (const argNode of argNodes) {
+    const arg = asArg(argNode, env, depth);
+    if (arg === null) return NOT_CONSTANT;
+    args.push(arg);
+  }
+  let result: Evaluation;
+  try {
+    result = run(args);
+  } catch {
+    return NOT_CONSTANT;
+  }
+  if (!result.ok) return propagate(result);
+  if (!withinSize(result.value)) return NOT_CONSTANT;
+  return spellable(result.value);
+}
+
+/** The value of `node`, given the constants already known. */
 export function evaluate(node: Expr, env: Constants): Evaluation {
   return at(node, env, 0);
 }
@@ -675,6 +710,26 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
 
     case "MethodCall":
       return methodCall(node as unknown as Any, env, depth);
+
+    case "CallExpression": {
+      // `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")` — a named
+      // conversion. A call on anything but a bare name (a declared function, an
+      // immediately-applied arrow) is not one this knows.
+      const callee = node.callee as unknown as Any;
+      if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT;
+      // A binding of that name shadows the global one.
+      if (env.has(callee.name as string)) return NOT_CONSTANT;
+      return applyCall(node.args as readonly Expr[], env, depth, (args) => foldNamedCall(callee.name as string, args));
+    }
+
+    case "NewExpression": {
+      const callee = node.callee as unknown as Any;
+      if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT;
+      if (env.has(callee.name as string)) return NOT_CONSTANT;
+      return applyCall(node.args as readonly Expr[], env, depth, (args) =>
+        foldConstructor(callee.name as string, args),
+      );
+    }
 
     default:
       return NOT_CONSTANT;
