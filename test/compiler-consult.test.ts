@@ -6,7 +6,7 @@
 
 import { describe, expect, it } from "vitest";
 import { consult, everyName, listedIn, positionOf, refusalSentence } from "../src/compiler/emit/consult.ts";
-import type { Position } from "../src/registry/vocabulary.ts";
+import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
@@ -192,5 +192,108 @@ describe("registry — a production names itself by its SPELLING, never by its k
       .filter(([k, r]) => r.spelling === k)
       .map(([k]) => k);
     expect(same).toEqual([]);
+  });
+});
+
+describe("registry — a stage is one construct with two spellings", () => {
+  /** Every MongoDB row that is a pipeline stage: the ones listing `stream`. */
+  const stageRows = (): [string, { where: readonly Position[]; kind?: string }][] =>
+    (Object.entries(NAMES) as [string, { where: readonly Position[]; kind?: string }][]).filter(
+      ([, r]) => r.kind === "mongo" && r.where.includes("stream"),
+    );
+
+  it("lists both positions on every stage row", () => {
+    // `$match(<body>);` and `$$ = $$.$match(<body>)` are the same stage written
+    // two ways, and the language accepts both — measured on every one of them.
+    // A row that listed only `stream` refused the canonical spelling, which is
+    // the one every pipeline program in the docs uses.
+    const oneSided = stageRows()
+      .filter(([, r]) => !r.where.includes("statement"))
+      .map(([n]) => n);
+    expect(oneSided).toEqual([]);
+  });
+
+  it("renders the same document in both", () => {
+    const differ: string[] = [];
+    for (const [name] of stageRows()) {
+      const stream = consult(name, "stream");
+      const statement = consult(name, "statement");
+      if (stream.kind !== statement.kind) differ.push(`${name}: ${stream.kind} vs ${statement.kind}`);
+      else if (stream.kind === "lower" && statement.kind === "lower") {
+        // The same emitter, not merely an equivalent one: one construct, one
+        // rendering, so the two cannot drift apart later.
+        if (JSON.stringify(stream.cell) !== JSON.stringify(statement.cell)) differ.push(`${name}: cells differ`);
+      }
+    }
+    expect(differ).toEqual([]);
+  });
+});
+
+describe("registry — an operator cannot accept more operands than it renders", () => {
+  type Shape = "single" | "array" | "none" | "flex" | { object: { positional?: readonly string[] } };
+  type Cell = { args?: Arity; emit?: unknown };
+  type Row = { kind?: string; shape?: Shape } & Partial<Record<Position, Cell>>;
+
+  /**
+   * The cells whose rendering is governed by the row's `shape` — the ones that
+   * put OPERANDS into `{ $name: … }`.
+   *
+   * `stream` and `statement` are not among them: a stage renders its BODY, and
+   * `$count` proves the two are different renderings of one row — `$count("total")`
+   * is a stage taking one argument, while `$count()` as an accumulator takes none.
+   * `filter` renders a query document, which is not this shape either.
+   */
+  const SHAPED: readonly Position[] = ["value", "group", "window", "updateDoc"];
+  const arityCells = (row: Row): Cell[] =>
+    SHAPED.map((p) => row[p === "value" ? ("expr" as Position) : p]).filter(
+      (c): c is Cell => c !== undefined && typeof c === "object" && c.args !== undefined,
+    );
+
+  /** How many operands the row's SHAPE can actually put into a document. */
+  const renders = (shape: Shape): number => {
+    if (shape === "none") return 0;
+    if (shape === "single") return 1;
+    if (typeof shape === "object") return shape.object.positional?.length ?? 1;
+    return Infinity; // "array" and "flex" render the whole list
+  };
+
+  /** The most operands the row's ARITY lets through. */
+  const accepts = (args: Arity | undefined): number => {
+    if (args === undefined) return Infinity;
+    if (args.none === true) return 0;
+    if (args.exact !== undefined) return args.exact;
+    if (args.allowed !== undefined) return Math.max(...args.allowed);
+    return Infinity; // `atLeast` states no ceiling
+  };
+
+  it("never states an arity its shape cannot render", () => {
+    // An operand accepted and then not rendered VANISHES. `$abs($.a, $.b)` used
+    // to emit `{"$abs":"$a"}` — valid MQL and the wrong answer — and the three
+    // object-shaped date operators emitted a shape mongod refuses outright:
+    //   {$dateDiff:"$a"} → "$dateDiff only supports an object as its argument"
+    // `BodyRule.positional`'s own doc records this regression once already.
+    const wrong: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || row.shape === undefined) continue;
+      const capacity = renders(row.shape);
+      for (const cell of arityCells(row)) {
+        if (cell.emit === undefined) continue;
+        const ceiling = accepts(cell.args);
+        if (ceiling > capacity) wrong.push(`${name}: accepts ${ceiling}, renders ${capacity}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("states the key order for every object-shaped operator that takes a positional call", () => {
+    const missing: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" || typeof row.shape !== "object") continue;
+      // One argument is the object literal itself and needs no key order.
+      const ceiling = Math.max(0, ...arityCells(row).map((c) => accepts(c.args)));
+      if (ceiling <= 1) continue;
+      if (row.shape.object.positional === undefined) missing.push(name);
+    }
+    expect(missing).toEqual([]);
   });
 });

@@ -51,6 +51,44 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — fix: a stage is one construct, and an operator cannot accept operands it does not render
+
+Two registry faults, each found independently by two auditors, and each one silently corrupts
+anything phase 5 builds on top of it.
+
+**All 45 stage rows denied `statement`.** `$match(<body>);` and `$$ = $$.$match(<body>)` are the
+same stage written two ways and the language accepts both — measured on every one of the 45. The
+rows listed only `stream`, so `consult("$match", "statement")` answered *"'$match' is not a
+statement"*, and phase 4 puts every element of a `;`-separated program at statement position. No
+pipeline program could have compiled. `MongoSpec.statement`'s own documentation states the rule and
+`op()` already builds both cells from one emitter; the hand-written rows did not follow either. Both
+cells now hold the same emitter, and a test asserts they stay the same one rather than merely
+equivalent — one construct, one rendering, so the two cannot drift.
+
+**73 operator rows accepted more operands than their shape can render.** An operand accepted and
+then not rendered VANISHES:
+
+    $abs($.a, $.b)   would emit {"$abs":"$a"}   — valid MQL, wrong answer
+
+70 `single`-shaped rows carried the generic `atLeast: 1`. Four object-shaped rows were worse, and
+mongod refuses their output outright: `{$dateDiff:"$a"}` is *"$dateDiff only supports an object as
+its argument"*. Those four now state the key order a positional call maps onto, which is what
+`objectBody` zips against — `BodyRule.positional`'s own doc records this exact regression having
+happened once before.
+
+The audit that holds it asks one question: can the arity a cell states exceed what the row's shape
+renders? Writing it turned up seven more. Five accumulators (`$first`, `$last`, `$addToSet`, `$push`,
+`$linearFill`) stated no ceiling in their WINDOW cell while `$group` correctly stated one, and mongod
+answers *"The $first accumulator is a unary operator"*. `$locf` did the same. And `$count` demanded
+an argument its own emitter throws away — the shipped compiler refuses `$count({})` and accepts
+`$count()`, which is the exact opposite of what the row said.
+
+Scoping that audit was itself a finding: `$count("total")` is a STAGE taking one argument while
+`$count()` as an accumulator takes none, so one row renders two ways and only the operand-shaped
+cells — `value`, `group`, `window`, `updateDoc` — are governed by `shape`.
+
+---
+
 ## 2026-08-26 — feat: a declared function called with constants
 
 The last third of the `CallExpression` gap. `function double(x) { return x * 2 }` followed by
