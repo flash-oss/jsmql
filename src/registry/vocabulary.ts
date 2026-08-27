@@ -218,7 +218,18 @@ export type ArgShape =
   | { objectWithKeys: readonly string[] }; // Array.from({ length: n })
 
 /** The type a result has. Not the same set as `Family`. */
-export type Kind = "string" | "array" | "number" | "object" | "date" | "bool" | "stream" | "objectId";
+export type Kind =
+  | "string"
+  | "array"
+  | "number"
+  | "object"
+  | "date"
+  | "bool"
+  | "stream"
+  | "objectId"
+  // MEASURED: { $type: { $hash: { input: "$s", algorithm: "sha256" } } } → "binData",
+  // and the same for $toUUID. No other name produces one.
+  | "binData";
 
 /**
  * A position something can be written in. Each REQUIRES the matching renderer,

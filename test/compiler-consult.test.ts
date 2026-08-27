@@ -9,6 +9,7 @@ import { consult, everyName, listedIn, positionOf, refusalSentence } from "../sr
 import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { accumulated } from "../src/registry/vocabulary.ts";
+import { OPERATOR_RETURNS } from "../src/operators.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
@@ -328,5 +329,64 @@ describe("registry — an operator cannot accept more operands than it renders",
       if (row.shape.object.positional === undefined) missing.push(name);
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("registry — exactly the value-producing rows state a return type", () => {
+  type Row = { kind?: string; where?: readonly Position[]; returns?: unknown };
+  /** The positions in which a name produces a VALUE whose type a caller can use. */
+  const PRODUCES: readonly Position[] = ["value", "group", "window"];
+  const produces = (row: Row): boolean => PRODUCES.some((p) => row.where?.includes(p) === true);
+
+  it("states one on every value-producing row and on no other", () => {
+    // A missing `returns` and a `returns: "unknown"` mean the same thing to a
+    // type check and different things to a reader: absent is "produces no value
+    // at all", `"unknown"` is "a value whose type follows the operands". Tying
+    // presence to `where` is what keeps the two from being read as one.
+    const wrong: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" && row.kind !== "root") continue;
+      const stated = row.returns !== undefined;
+      if (produces(row) !== stated) wrong.push(`${name}: produces=${produces(row)} states=${stated}`);
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("names a kind the vocabulary has", () => {
+    const KINDS: readonly string[] = [
+      "string",
+      "array",
+      "number",
+      "object",
+      "date",
+      "bool",
+      "stream",
+      "objectId",
+      "binData",
+      "unknown",
+    ];
+    const wrong: string[] = [];
+    for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
+      if (row.kind !== "mongo" && row.kind !== "root") continue;
+      if (row.returns === undefined) continue;
+      if (typeof row.returns !== "string" || !KINDS.includes(row.returns)) {
+        wrong.push(`${name} = ${JSON.stringify(row.returns)}`);
+      }
+    }
+    expect(wrong).toEqual([]);
+  });
+
+  it("agrees with the shipped table wherever both state one", () => {
+    // The shipped `OPERATOR_RETURNS` holds 127 entries, each measured on a
+    // mongod when it was written. An independent re-measurement agreed with all
+    // 127, so a disagreement here is a regression in one of the two, not a
+    // difference of opinion.
+    const differ: string[] = [];
+    for (const [name, shipped] of Object.entries(OPERATOR_RETURNS)) {
+      const row = (NAMES as Record<string, Row>)[name];
+      if (row?.returns === undefined || row.returns === "unknown") continue;
+      if (row.returns !== shipped) differ.push(`${name}: registry=${String(row.returns)} shipped=${shipped}`);
+    }
+    expect(differ).toEqual([]);
   });
 });

@@ -60,6 +60,13 @@ type RootSpec<W extends readonly Position[]> = {
   provides: OperandClass;
   /** The receiver family a name bound to this root is resolved against. */
   family?: Family;
+  /**
+   * The type of the value this root reads as, or absent when it is not a value.
+   * `$` alone is the whole document — MEASURED: `{ $type: "$$ROOT" }` → "object".
+   * A namespace (`Math`) and a context ref (`$$`) produce no value, so neither
+   * states one. See MongoSpec.returns.
+   */
+  returns?: Returns;
   where: W;
   // A root is gated like every other entry. Before these six cells existed, the
   // three context refs said `where: ["stream"]` while their only stated message
@@ -237,6 +244,24 @@ type MongoSpec<
   /** See NameSpec.paramsRepeat. */
   paramsRepeat?: true;
   /**
+   * The type of the value this name produces, or absent when it produces none —
+   * a stage, or a query fragment like `$box`. Stated exactly on the rows whose
+   * `where` includes `value`, `group` or `window`; a test holds both directions.
+   *
+   * MEASURED, one operator at a time, with `{ $type: <a well-typed call> }` on a
+   * running mongod. Never read off the vendored spec's `type:` field, which says
+   * `resolvesToString` for `$trunc` — the one row where all three sources
+   * disagree, and the reason the process is written down here.
+   *
+   * `"unknown"` is a fact, not a gap: the type FOLLOWS THE OPERANDS, so no single
+   * answer is true. Each was measured twice, with operands of two families:
+   *   { $subtract: ["$d", 1000] }  → date        { $subtract: ["$d", "$d"] } → long
+   *   { $max: "$n" }               → int         { $max: "$s" }              → string
+   * Absence would mean the same thing to a type check, and say nothing to a
+   * reader — so the rows that vary say so.
+   */
+  returns?: Returns;
+  /**
    * true when this stage REPLACES the document, so nothing carried in a field
    * survives it. MEASURED — the six that do, and the near neighbours that do not:
    *   let t = $.a; $group({_id:$.k}); $.b = t   → "`t` … can't be read after '$group'"
@@ -344,6 +369,7 @@ export const NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$abs' is not valid in filter position — see its 'where'."),
@@ -358,6 +384,7 @@ export const NAMES = {
   $add: mongo({
     doc: "Adds numbers to return the sum, or adds numbers and a date to return a new date.",
     category: "arithmetic",
+    returns: "unknown",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$add' is not valid in filter position — see its 'where'."),
@@ -372,6 +399,7 @@ export const NAMES = {
   $ceil: mongo({
     doc: "Returns the smallest integer greater than or equal to the specified number.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$ceil' is not valid in filter position — see its 'where'."),
@@ -386,6 +414,7 @@ export const NAMES = {
   $divide: mongo({
     doc: "Returns the result of dividing the first number by the second.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$divide' is not valid in filter position — see its 'where'."),
@@ -403,6 +432,7 @@ export const NAMES = {
   $exp: mongo({
     doc: "Raises e to the specified exponent.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$exp' is not valid in filter position — see its 'where'."),
@@ -417,6 +447,7 @@ export const NAMES = {
   $floor: mongo({
     doc: "Returns the largest integer less than or equal to the specified number.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$floor' is not valid in filter position — see its 'where'."),
@@ -431,6 +462,7 @@ export const NAMES = {
   $ln: mongo({
     doc: "Calculates the natural log of a number.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$ln' is not valid in filter position — see its 'where'."),
@@ -445,6 +477,7 @@ export const NAMES = {
   $log: mongo({
     doc: "Calculates the log of a number in the specified base.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$log' is not valid in filter position — see its 'where'."),
@@ -462,6 +495,7 @@ export const NAMES = {
   $log10: mongo({
     doc: "Calculates the log base 10 of a number.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$log10' is not valid in filter position — see its 'where'."),
@@ -476,6 +510,7 @@ export const NAMES = {
   $mod: mongo({
     doc: "Returns the remainder of the first number divided by the second.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
@@ -493,6 +528,7 @@ export const NAMES = {
   $multiply: mongo({
     doc: "Multiplies numbers to return the product.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$multiply' is not valid in filter position — see its 'where'."),
@@ -507,6 +543,7 @@ export const NAMES = {
   $pow: mongo({
     doc: "Raises a number to the specified exponent.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$pow' is not valid in filter position — see its 'where'."),
@@ -524,6 +561,7 @@ export const NAMES = {
   $round: mongo({
     doc: "Rounds a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "flex",
     filter: unsupported("'$round' is not valid in filter position — see its 'where'."),
@@ -541,6 +579,7 @@ export const NAMES = {
   $sigmoid: mongo({
     doc: "Returns the sigmoid of a value, defined as 1 / (1 + e^(-x)). The result is between 0 and 1.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     minVersion: "8.1",
     shape: "single",
@@ -556,6 +595,7 @@ export const NAMES = {
   $sqrt: mongo({
     doc: "Calculates the square root.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sqrt' is not valid in filter position — see its 'where'."),
@@ -570,6 +610,7 @@ export const NAMES = {
   $subtract: mongo({
     doc: "Returns the result of subtracting the second value from the first.",
     category: "arithmetic",
+    returns: "unknown",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$subtract' is not valid in filter position — see its 'where'."),
@@ -587,6 +628,7 @@ export const NAMES = {
   $trunc: mongo({
     doc: "Truncates a number to a whole integer or to a specified decimal place.",
     category: "arithmetic",
+    returns: "number",
     where: ["value"],
     shape: "flex",
     filter: unsupported("'$trunc' is not valid in filter position — see its 'where'."),
@@ -604,6 +646,7 @@ export const NAMES = {
   $bitAnd: mongo({
     doc: "Returns the result of a bitwise AND operation on an array of int or long values.",
     category: "bitwise",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitAnd' is not valid in filter position — see its 'where'."),
@@ -618,6 +661,7 @@ export const NAMES = {
   $bitNot: mongo({
     doc: "Returns the result of a bitwise NOT operation on a single int or long value.",
     category: "bitwise",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$bitNot' is not valid in filter position — see its 'where'."),
@@ -632,6 +676,7 @@ export const NAMES = {
   $bitOr: mongo({
     doc: "Returns the result of a bitwise OR operation on an array of int or long values.",
     category: "bitwise",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitOr' is not valid in filter position — see its 'where'."),
@@ -646,6 +691,7 @@ export const NAMES = {
   $bitXor: mongo({
     doc: "Returns the result of a bitwise XOR (exclusive or) operation on an array of int and long values.",
     category: "bitwise",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitXor' is not valid in filter position — see its 'where'."),
@@ -660,6 +706,7 @@ export const NAMES = {
   $sin: mongo({
     doc: "Returns the sine of a value that is measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sin' is not valid in filter position — see its 'where'."),
@@ -674,6 +721,7 @@ export const NAMES = {
   $cos: mongo({
     doc: "Returns the cosine of a value that is measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$cos' is not valid in filter position — see its 'where'."),
@@ -688,6 +736,7 @@ export const NAMES = {
   $tan: mongo({
     doc: "Returns the tangent of a value that is measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tan' is not valid in filter position — see its 'where'."),
@@ -702,6 +751,7 @@ export const NAMES = {
   $asin: mongo({
     doc: "Returns the inverse sine (arc sine) of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$asin' is not valid in filter position — see its 'where'."),
@@ -716,6 +766,7 @@ export const NAMES = {
   $acos: mongo({
     doc: "Returns the inverse cosine (arc cosine) of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$acos' is not valid in filter position — see its 'where'."),
@@ -730,6 +781,7 @@ export const NAMES = {
   $atan: mongo({
     doc: "Returns the inverse tangent (arc tangent) of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$atan' is not valid in filter position — see its 'where'."),
@@ -744,6 +796,7 @@ export const NAMES = {
   $atan2: mongo({
     doc: "Returns the inverse tangent of y / x in radians, where y and x are the first and second arguments.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$atan2' is not valid in filter position — see its 'where'."),
@@ -761,6 +814,7 @@ export const NAMES = {
   $sinh: mongo({
     doc: "Returns the hyperbolic sine of a value measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sinh' is not valid in filter position — see its 'where'."),
@@ -775,6 +829,7 @@ export const NAMES = {
   $cosh: mongo({
     doc: "Returns the hyperbolic cosine of a value measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$cosh' is not valid in filter position — see its 'where'."),
@@ -789,6 +844,7 @@ export const NAMES = {
   $tanh: mongo({
     doc: "Returns the hyperbolic tangent of a value measured in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tanh' is not valid in filter position — see its 'where'."),
@@ -803,6 +859,7 @@ export const NAMES = {
   $asinh: mongo({
     doc: "Returns the inverse hyperbolic sine of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$asinh' is not valid in filter position — see its 'where'."),
@@ -817,6 +874,7 @@ export const NAMES = {
   $acosh: mongo({
     doc: "Returns the inverse hyperbolic cosine of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$acosh' is not valid in filter position — see its 'where'."),
@@ -831,6 +889,7 @@ export const NAMES = {
   $atanh: mongo({
     doc: "Returns the inverse hyperbolic tangent of a value in radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$atanh' is not valid in filter position — see its 'where'."),
@@ -845,6 +904,7 @@ export const NAMES = {
   $degreesToRadians: mongo({
     doc: "Converts a value from degrees to radians.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$degreesToRadians' is not valid in filter position — see its 'where'."),
@@ -859,6 +919,7 @@ export const NAMES = {
   $radiansToDegrees: mongo({
     doc: "Converts a value from radians to degrees.",
     category: "trigonometry",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$radiansToDegrees' is not valid in filter position — see its 'where'."),
@@ -873,6 +934,7 @@ export const NAMES = {
   $cmp: mongo({
     doc: "Returns 0 if the two values are equivalent, 1 if the first is greater, and -1 if less.",
     category: "comparison",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$cmp' is not valid in filter position — see its 'where'."),
@@ -887,6 +949,7 @@ export const NAMES = {
   $eq: mongo({
     doc: "Returns true if the values are equivalent.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/index.ts", { sig: "value", exact: 1 }),
@@ -904,6 +967,7 @@ export const NAMES = {
   $ne: mongo({
     doc: "Returns true if the values are not equivalent.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
@@ -921,6 +985,7 @@ export const NAMES = {
   $gt: mongo({
     doc: "Returns true if the first value is greater than the second.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
@@ -938,6 +1003,7 @@ export const NAMES = {
   $gte: mongo({
     doc: "Returns true if the first value is greater than or equal to the second.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
@@ -955,6 +1021,7 @@ export const NAMES = {
   $lt: mongo({
     doc: "Returns true if the first value is less than the second.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
@@ -972,6 +1039,7 @@ export const NAMES = {
   $lte: mongo({
     doc: "Returns true if the first value is less than or equal to the second.",
     category: "comparison",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
@@ -989,6 +1057,7 @@ export const NAMES = {
   $and: mongo({
     doc: "Returns true only when all its expressions evaluate to true.",
     category: "boolean",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
@@ -1003,6 +1072,7 @@ export const NAMES = {
   $or: mongo({
     doc: "Returns true when any of its expressions evaluates to true.",
     category: "boolean",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
@@ -1017,6 +1087,7 @@ export const NAMES = {
   $not: mongo({
     doc: "Returns the boolean value that is the opposite of its argument expression.",
     category: "boolean",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "single",
     filter: pending("src/match-translation.ts"),
@@ -1031,6 +1102,7 @@ export const NAMES = {
   $cond: mongo({
     doc: "A ternary operator that evaluates one expression and returns one of two other expressions based on the result.",
     category: "conditional",
+    returns: "unknown",
     where: ["value"],
     shape: {
       object: { required: ["if", "then", "else"], optional: [], closed: true, positional: ["if", "then", "else"] },
@@ -1047,6 +1119,7 @@ export const NAMES = {
   $ifNull: mongo({
     doc: "Returns either the non-null result of the first expression or the result of the second expression.",
     category: "conditional",
+    returns: "unknown",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$ifNull' is not valid in filter position — see its 'where'."),
@@ -1064,6 +1137,7 @@ export const NAMES = {
   $switch: mongo({
     doc: "Evaluates a series of case expressions; executes the matching case's expression and breaks out of the control flow.",
     category: "conditional",
+    returns: "unknown",
     where: ["value"],
     shape: {
       object: { required: ["branches"], optional: ["default"], closed: true, positional: ["branches", "default"] },
@@ -1080,6 +1154,7 @@ export const NAMES = {
   $concat: mongo({
     doc: "Concatenates any number of strings.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$concat' is not valid in filter position — see its 'where'."),
@@ -1094,6 +1169,7 @@ export const NAMES = {
   $indexOfBytes: mongo({
     doc: "Searches a string for a substring and returns the UTF-8 byte index of the first occurrence, or -1.",
     category: "string",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$indexOfBytes' is not valid in filter position — see its 'where'."),
@@ -1111,6 +1187,7 @@ export const NAMES = {
   $indexOfCP: mongo({
     doc: "Searches a string for a substring and returns the UTF-8 code point index of the first occurrence, or -1.",
     category: "string",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$indexOfCP' is not valid in filter position — see its 'where'."),
@@ -1128,6 +1205,7 @@ export const NAMES = {
   $ltrim: mongo({
     doc: "Removes whitespace or the specified characters from the beginning of a string.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
     filter: unsupported("'$ltrim' is not valid in filter position — see its 'where'."),
@@ -1142,6 +1220,7 @@ export const NAMES = {
   $rtrim: mongo({
     doc: "Removes whitespace or the specified characters from the end of a string.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
     filter: unsupported("'$rtrim' is not valid in filter position — see its 'where'."),
@@ -1156,6 +1235,7 @@ export const NAMES = {
   $trim: mongo({
     doc: "Removes whitespace or the specified characters from the beginning and end of a string.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
     filter: unsupported("'$trim' is not valid in filter position — see its 'where'."),
@@ -1170,6 +1250,7 @@ export const NAMES = {
   $regexFind: mongo({
     doc: "Applies a regular expression to a string and returns information on the first matched substring.",
     category: "string",
+    returns: "object",
     where: ["value"],
     shape: {
       object: {
@@ -1192,6 +1273,7 @@ export const NAMES = {
   $regexFindAll: mongo({
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
+    returns: "array",
     where: ["value"],
     shape: {
       object: {
@@ -1214,6 +1296,7 @@ export const NAMES = {
   $regexMatch: mongo({
     doc: "Applies a regular expression to a string and returns a boolean indicating whether a match is found.",
     category: "string",
+    returns: "bool",
     where: ["value"],
     shape: {
       object: {
@@ -1236,6 +1319,7 @@ export const NAMES = {
   $replaceAll: mongo({
     doc: "Replaces all instances of a search string in an input string with a replacement string.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: {
       object: {
@@ -1257,6 +1341,7 @@ export const NAMES = {
   $replaceOne: mongo({
     doc: "Replaces the first instance of a matched string in a given input.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: {
       object: {
@@ -1278,6 +1363,7 @@ export const NAMES = {
   $split: mongo({
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
+    returns: "array",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$split' is not valid in filter position — see its 'where'."),
@@ -1292,6 +1378,7 @@ export const NAMES = {
   $strLenBytes: mongo({
     doc: "Returns the number of UTF-8 encoded bytes in a string.",
     category: "string",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$strLenBytes' is not valid in filter position — see its 'where'."),
@@ -1306,6 +1393,7 @@ export const NAMES = {
   $strLenCP: mongo({
     doc: "Returns the number of UTF-8 code points in a string.",
     category: "string",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$strLenCP' is not valid in filter position — see its 'where'."),
@@ -1320,6 +1408,7 @@ export const NAMES = {
   $strcasecmp: mongo({
     doc: "Performs case-insensitive string comparison.",
     category: "string",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$strcasecmp' is not valid in filter position — see its 'where'."),
@@ -1334,6 +1423,7 @@ export const NAMES = {
   $substr: mongo({
     doc: "Deprecated. Use $substrBytes or $substrCP.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$substr' is not valid in filter position — see its 'where'."),
@@ -1351,6 +1441,7 @@ export const NAMES = {
   $substrBytes: mongo({
     doc: "Returns the substring of a string starting at the specified UTF-8 byte index.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$substrBytes' is not valid in filter position — see its 'where'."),
@@ -1368,6 +1459,7 @@ export const NAMES = {
   $substrCP: mongo({
     doc: "Returns the substring of a string starting at the specified UTF-8 code point index.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$substrCP' is not valid in filter position — see its 'where'."),
@@ -1385,6 +1477,7 @@ export const NAMES = {
   $toLower: mongo({
     doc: "Converts a string to lowercase.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toLower' is not valid in filter position — see its 'where'."),
@@ -1399,6 +1492,7 @@ export const NAMES = {
   $toUpper: mongo({
     doc: "Converts a string to uppercase.",
     category: "string",
+    returns: "string",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toUpper' is not valid in filter position — see its 'where'."),
@@ -1413,6 +1507,7 @@ export const NAMES = {
   $encStrContains: mongo({
     doc: "Returns true if a substring exists within the encrypted string.",
     category: "encrypted-string",
+    returns: "bool",
     where: ["value"],
     shape: {
       object: { required: [], optional: ["input", "substring"], closed: true, positional: ["input", "substring"] },
@@ -1429,6 +1524,7 @@ export const NAMES = {
   $encStrEndsWith: mongo({
     doc: "Returns true if the encrypted string ends with the specified suffix.",
     category: "encrypted-string",
+    returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "suffix"], closed: true, positional: ["input", "suffix"] } },
     filter: unsupported("'$encStrEndsWith' is not valid in filter position — see its 'where'."),
@@ -1443,6 +1539,7 @@ export const NAMES = {
   $encStrNormalizedEq: mongo({
     doc: "Returns true if the normalized encrypted string equals the specified string.",
     category: "encrypted-string",
+    returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "string"], closed: true, positional: ["input", "string"] } },
     filter: unsupported("'$encStrNormalizedEq' is not valid in filter position — see its 'where'."),
@@ -1457,6 +1554,7 @@ export const NAMES = {
   $encStrStartsWith: mongo({
     doc: "Returns true if the encrypted string starts with the specified prefix.",
     category: "encrypted-string",
+    returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "prefix"], closed: true, positional: ["input", "prefix"] } },
     filter: unsupported("'$encStrStartsWith' is not valid in filter position — see its 'where'."),
@@ -1471,6 +1569,7 @@ export const NAMES = {
   $arrayElemAt: mongo({
     doc: "Returns the element at the specified array index.",
     category: "array",
+    returns: "unknown",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$arrayElemAt' is not valid in filter position — see its 'where'."),
@@ -1485,6 +1584,7 @@ export const NAMES = {
   $arrayToObject: mongo({
     doc: "Converts an array of key-value pairs to a document.",
     category: "array",
+    returns: "object",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$arrayToObject' is not valid in filter position — see its 'where'."),
@@ -1499,6 +1599,7 @@ export const NAMES = {
   $concatArrays: mongo({
     doc: "Concatenates arrays to return the concatenated array.",
     category: "array",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: "array",
     filter: unsupported("'$concatArrays' is not valid in filter position — see its 'where'."),
@@ -1513,6 +1614,7 @@ export const NAMES = {
   $filter: mongo({
     doc: "Selects a subset of the array, returning only elements that match the filter condition.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: {
       object: {
@@ -1534,6 +1636,7 @@ export const NAMES = {
   $first: mongo({
     doc: "Returns the result of an expression for the first document in an array.",
     category: "array",
+    returns: "unknown",
     where: ["value", "group", "window"],
     shape: "single",
     filter: unsupported("'$first' is not valid in filter position — see its 'where'."),
@@ -1548,6 +1651,7 @@ export const NAMES = {
   $firstN: mongo({
     doc: "Returns a specified number of elements from the beginning of an array.",
     category: "array",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
     filter: unsupported("'$firstN' is not valid in filter position — see its 'where'."),
@@ -1562,6 +1666,7 @@ export const NAMES = {
   $in: mongo({
     doc: "Returns a boolean indicating whether a specified value is in an array.",
     category: "array",
+    returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
     filter: pending("src/match-translation.ts"),
@@ -1579,6 +1684,7 @@ export const NAMES = {
   $indexOfArray: mongo({
     doc: "Searches an array for a value and returns the index of the first occurrence, or -1.",
     category: "array",
+    returns: "number",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$indexOfArray' is not valid in filter position — see its 'where'."),
@@ -1596,6 +1702,7 @@ export const NAMES = {
   $isArray: mongo({
     doc: "Determines if the operand is an array.",
     category: "array",
+    returns: "bool",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isArray' is not valid in filter position — see its 'where'."),
@@ -1610,6 +1717,7 @@ export const NAMES = {
   $last: mongo({
     doc: "Returns the result of an expression for the last document in an array.",
     category: "array",
+    returns: "unknown",
     where: ["value", "group", "window"],
     shape: "single",
     filter: unsupported("'$last' is not valid in filter position — see its 'where'."),
@@ -1624,6 +1732,7 @@ export const NAMES = {
   $lastN: mongo({
     doc: "Returns a specified number of elements from the end of an array.",
     category: "array",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
     filter: unsupported("'$lastN' is not valid in filter position — see its 'where'."),
@@ -1638,6 +1747,7 @@ export const NAMES = {
   $map: mongo({
     doc: "Applies a subexpression to each element of an array and returns the array of resulting values.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: { object: { required: ["input", "in"], optional: ["as"], closed: true, positional: ["input", "as", "in"] } },
     filter: unsupported("'$map' is not valid in filter position — see its 'where'."),
@@ -1652,6 +1762,7 @@ export const NAMES = {
   $maxN: mongo({
     doc: "Returns the n largest values in an array.",
     category: "array",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
     filter: unsupported("'$maxN' is not valid in filter position — see its 'where'."),
@@ -1666,6 +1777,7 @@ export const NAMES = {
   $minN: mongo({
     doc: "Returns the n smallest values in an array.",
     category: "array",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
     filter: unsupported("'$minN' is not valid in filter position — see its 'where'."),
@@ -1680,6 +1792,7 @@ export const NAMES = {
   $objectToArray: mongo({
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$objectToArray' is not valid in filter position — see its 'where'."),
@@ -1694,6 +1807,7 @@ export const NAMES = {
   $range: mongo({
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$range' is not valid in filter position — see its 'where'."),
@@ -1711,6 +1825,7 @@ export const NAMES = {
   $reduce: mongo({
     doc: "Applies an expression to each element in an array and combines them into a single value.",
     category: "array",
+    returns: "unknown",
     where: ["value"],
     shape: {
       object: {
@@ -1732,6 +1847,7 @@ export const NAMES = {
   $reverseArray: mongo({
     doc: "Returns an array with the elements in reverse order.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$reverseArray' is not valid in filter position — see its 'where'."),
@@ -1746,6 +1862,7 @@ export const NAMES = {
   $size: mongo({
     doc: "Returns the number of elements in the array.",
     category: "array",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -1760,6 +1877,7 @@ export const NAMES = {
   $slice: mongo({
     doc: "Returns a subset of an array.",
     category: "array",
+    returns: "array",
     where: ["value", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     shape: "array",
@@ -1778,6 +1896,7 @@ export const NAMES = {
   $sortArray: mongo({
     doc: "Sorts the elements of an array.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: { object: { required: ["input", "sortBy"], optional: [], closed: true, positional: ["input", "sortBy"] } },
     filter: unsupported("'$sortArray' is not valid in filter position — see its 'where'."),
@@ -1792,6 +1911,7 @@ export const NAMES = {
   $zip: mongo({
     doc: "Merges two or more arrays element-wise into a single array of arrays.",
     category: "array",
+    returns: "array",
     where: ["value"],
     shape: {
       object: {
@@ -1813,6 +1933,7 @@ export const NAMES = {
   $allElementsTrue: mongo({
     doc: "Returns true if no element of a set evaluates to false.",
     category: "set",
+    returns: "bool",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$allElementsTrue' is not valid in filter position — see its 'where'."),
@@ -1827,6 +1948,7 @@ export const NAMES = {
   $anyElementTrue: mongo({
     doc: "Returns true if any elements of a set evaluate to true.",
     category: "set",
+    returns: "bool",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$anyElementTrue' is not valid in filter position — see its 'where'."),
@@ -1841,6 +1963,7 @@ export const NAMES = {
   $setDifference: mongo({
     doc: "Returns a set with elements that appear in the first set but not in the second set.",
     category: "set",
+    returns: "array",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setDifference' is not valid in filter position — see its 'where'."),
@@ -1855,6 +1978,7 @@ export const NAMES = {
   $setEquals: mongo({
     doc: "Returns true if the input sets have the same distinct elements.",
     category: "set",
+    returns: "bool",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setEquals' is not valid in filter position — see its 'where'."),
@@ -1869,6 +1993,7 @@ export const NAMES = {
   $setIntersection: mongo({
     doc: "Returns a set with elements that appear in all of the input sets.",
     category: "set",
+    returns: "array",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setIntersection' is not valid in filter position — see its 'where'."),
@@ -1883,6 +2008,7 @@ export const NAMES = {
   $setIsSubset: mongo({
     doc: "Returns true if all elements of the first set appear in the second set.",
     category: "set",
+    returns: "bool",
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setIsSubset' is not valid in filter position — see its 'where'."),
@@ -1897,6 +2023,7 @@ export const NAMES = {
   $setUnion: mongo({
     doc: "Returns a set with elements that appear in any of the input sets.",
     category: "set",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: "array",
     filter: unsupported("'$setUnion' is not valid in filter position — see its 'where'."),
@@ -1911,6 +2038,7 @@ export const NAMES = {
   $getField: mongo({
     doc: "Returns the value of a specified field from a document, including fields whose names contain periods or start with $.",
     category: "object",
+    returns: "unknown",
     where: ["value"],
     shape: { object: { required: ["field"], optional: ["input"], closed: true, positional: ["field", "input"] } },
     filter: unsupported("'$getField' is not valid in filter position — see its 'where'."),
@@ -1925,6 +2053,7 @@ export const NAMES = {
   $mergeObjects: mongo({
     doc: "Combines multiple documents into a single document.",
     category: "object",
+    returns: "object",
     where: ["value", "group"],
     shape: "flex",
     filter: unsupported("'$mergeObjects' is not valid in filter position — see its 'where'."),
@@ -1942,6 +2071,7 @@ export const NAMES = {
   $setField: mongo({
     doc: "Adds, updates, or removes a specified field in a document.",
     category: "object",
+    returns: "object",
     where: ["value"],
     shape: {
       object: {
@@ -1963,6 +2093,7 @@ export const NAMES = {
   $unsetField: mongo({
     doc: "Removes a specified field from a document. Alias for $setField using $$REMOVE.",
     category: "object",
+    returns: "object",
     where: ["value"],
     shape: { object: { required: ["field", "input"], optional: [], closed: true, positional: ["field", "input"] } },
     filter: unsupported("'$unsetField' is not valid in filter position — see its 'where'."),
@@ -1977,6 +2108,7 @@ export const NAMES = {
   $dateAdd: mongo({
     doc: "Adds a number of time units to a date object.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: {
       object: {
@@ -2000,6 +2132,7 @@ export const NAMES = {
   $dateDiff: mongo({
     doc: "Returns the difference between two dates.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: {
       object: {
@@ -2024,6 +2157,7 @@ export const NAMES = {
   $dateFromParts: mongo({
     doc: "Constructs a BSON Date object given the date's constituent parts.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: {
       object: {
@@ -2048,6 +2182,7 @@ export const NAMES = {
   $dateFromString: mongo({
     doc: "Converts a date/time string to a date object.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: {
       object: {
@@ -2072,6 +2207,7 @@ export const NAMES = {
   $dateSubtract: mongo({
     doc: "Subtracts a number of time units from a date object.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: {
       object: {
@@ -2095,6 +2231,7 @@ export const NAMES = {
   $dateToParts: mongo({
     doc: "Returns a document containing the constituent parts of a date.",
     category: "date",
+    returns: "object",
     where: ["value"],
     shape: {
       object: {
@@ -2117,6 +2254,7 @@ export const NAMES = {
   $dateToString: mongo({
     doc: "Returns the date as a formatted string.",
     category: "date",
+    returns: "string",
     where: ["value"],
     shape: {
       object: {
@@ -2139,6 +2277,7 @@ export const NAMES = {
   $dateTrunc: mongo({
     doc: "Truncates a date.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: {
       object: {
@@ -2165,6 +2304,7 @@ export const NAMES = {
   $dayOfMonth: mongo({
     doc: "Returns the day of the month for a date as a number between 1 and 31.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfMonth' is not valid in filter position — see its 'where'."),
@@ -2179,6 +2319,7 @@ export const NAMES = {
   $dayOfWeek: mongo({
     doc: "Returns the day of the week for a date as a number between 1 (Sunday) and 7 (Saturday).",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfWeek' is not valid in filter position — see its 'where'."),
@@ -2193,6 +2334,7 @@ export const NAMES = {
   $dayOfYear: mongo({
     doc: "Returns the day of the year for a date as a number between 1 and 366.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfYear' is not valid in filter position — see its 'where'."),
@@ -2207,6 +2349,7 @@ export const NAMES = {
   $hour: mongo({
     doc: "Returns the hour for a date as a number between 0 and 23.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$hour' is not valid in filter position — see its 'where'."),
@@ -2221,6 +2364,7 @@ export const NAMES = {
   $isoDayOfWeek: mongo({
     doc: "Returns the weekday number in ISO 8601 format, ranging from 1 (Monday) to 7 (Sunday).",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoDayOfWeek' is not valid in filter position — see its 'where'."),
@@ -2235,6 +2379,7 @@ export const NAMES = {
   $isoWeek: mongo({
     doc: "Returns the week number in ISO 8601 format, ranging from 1 to 53.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoWeek' is not valid in filter position — see its 'where'."),
@@ -2249,6 +2394,7 @@ export const NAMES = {
   $isoWeekYear: mongo({
     doc: "Returns the year number in ISO 8601 format.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoWeekYear' is not valid in filter position — see its 'where'."),
@@ -2263,6 +2409,7 @@ export const NAMES = {
   $millisecond: mongo({
     doc: "Returns the milliseconds of a date as a number between 0 and 999.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$millisecond' is not valid in filter position — see its 'where'."),
@@ -2277,6 +2424,7 @@ export const NAMES = {
   $minute: mongo({
     doc: "Returns the minute for a date as a number between 0 and 59.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$minute' is not valid in filter position — see its 'where'."),
@@ -2291,6 +2439,7 @@ export const NAMES = {
   $month: mongo({
     doc: "Returns the month for a date as a number between 1 (January) and 12 (December).",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$month' is not valid in filter position — see its 'where'."),
@@ -2305,6 +2454,7 @@ export const NAMES = {
   $second: mongo({
     doc: "Returns the seconds for a date as a number between 0 and 60 (leap seconds).",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$second' is not valid in filter position — see its 'where'."),
@@ -2319,6 +2469,7 @@ export const NAMES = {
   $toDate: mongo({
     doc: "Converts a value to a Date.",
     category: "date",
+    returns: "date",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDate' is not valid in filter position — see its 'where'."),
@@ -2333,6 +2484,7 @@ export const NAMES = {
   $week: mongo({
     doc: "Returns the week number for a date as a number between 0 and 53.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$week' is not valid in filter position — see its 'where'."),
@@ -2347,6 +2499,7 @@ export const NAMES = {
   $year: mongo({
     doc: "Returns the year for a date as a number.",
     category: "date",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$year' is not valid in filter position — see its 'where'."),
@@ -2361,6 +2514,7 @@ export const NAMES = {
   $tsIncrement: mongo({
     doc: "Returns the incrementing ordinal from a timestamp as a long.",
     category: "timestamp",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tsIncrement' is not valid in filter position — see its 'where'."),
@@ -2375,6 +2529,7 @@ export const NAMES = {
   $tsSecond: mongo({
     doc: "Returns the seconds from a timestamp as a long.",
     category: "timestamp",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tsSecond' is not valid in filter position — see its 'where'."),
@@ -2389,6 +2544,7 @@ export const NAMES = {
   $convert: mongo({
     doc: "Converts a value to a specified type.",
     category: "type",
+    returns: "unknown",
     where: ["value"],
     shape: {
       object: {
@@ -2434,6 +2590,7 @@ export const NAMES = {
   $isNumber: mongo({
     doc: "Returns true if the expression resolves to an integer, decimal, double, or long.",
     category: "type",
+    returns: "bool",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isNumber' is not valid in filter position — see its 'where'."),
@@ -2448,6 +2605,7 @@ export const NAMES = {
   $toArray: mongo({
     doc: "Converts a value to an array.",
     category: "type",
+    returns: "array",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toArray' is not valid in filter position — see its 'where'."),
@@ -2462,6 +2620,7 @@ export const NAMES = {
   $toBool: mongo({
     doc: "Converts a value to a boolean.",
     category: "type",
+    returns: "bool",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toBool' is not valid in filter position — see its 'where'."),
@@ -2476,6 +2635,7 @@ export const NAMES = {
   $toDecimal: mongo({
     doc: "Converts a value to a Decimal128.",
     category: "type",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDecimal' is not valid in filter position — see its 'where'."),
@@ -2490,6 +2650,7 @@ export const NAMES = {
   $toDouble: mongo({
     doc: "Converts a value to a double.",
     category: "type",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDouble' is not valid in filter position — see its 'where'."),
@@ -2504,6 +2665,7 @@ export const NAMES = {
   $toInt: mongo({
     doc: "Converts a value to an integer.",
     category: "type",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toInt' is not valid in filter position — see its 'where'."),
@@ -2518,6 +2680,7 @@ export const NAMES = {
   $toLong: mongo({
     doc: "Converts a value to a long.",
     category: "type",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toLong' is not valid in filter position — see its 'where'."),
@@ -2532,6 +2695,7 @@ export const NAMES = {
   $toObject: mongo({
     doc: "Converts a string to an object.",
     category: "type",
+    returns: "object",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toObject' is not valid in filter position — see its 'where'."),
@@ -2546,6 +2710,7 @@ export const NAMES = {
   $toObjectId: mongo({
     doc: "Converts a value to an ObjectId.",
     category: "type",
+    returns: "objectId",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toObjectId' is not valid in filter position — see its 'where'."),
@@ -2560,6 +2725,7 @@ export const NAMES = {
   $toString: mongo({
     doc: "Converts a value to a string.",
     category: "type",
+    returns: "string",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toString' is not valid in filter position — see its 'where'."),
@@ -2574,6 +2740,7 @@ export const NAMES = {
   $toUUID: mongo({
     doc: "Converts a string to a UUID.",
     category: "type",
+    returns: "binData",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toUUID' is not valid in filter position — see its 'where'."),
@@ -2588,6 +2755,7 @@ export const NAMES = {
   $type: mongo({
     doc: "Returns the BSON data type of the field.",
     category: "type",
+    returns: "string",
     where: ["value", "filter"],
     shape: "single",
     filter: pending("src/match-translation.ts"),
@@ -2602,6 +2770,7 @@ export const NAMES = {
   $literal: mongo({
     doc: "Returns a value without parsing. Use to keep values that the pipeline would otherwise interpret as expressions (e.g. strings starting with $).",
     category: "literal",
+    returns: "unknown",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$literal' is not valid in filter position — see its 'where'."),
@@ -2618,6 +2787,7 @@ export const NAMES = {
     category: "variable",
     params: ["binding"],
     paramsRepeat: true,
+    returns: "unknown",
     where: ["value"],
     shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
     filter: unsupported("'$let' is not valid in filter position — see its 'where'."),
@@ -2632,6 +2802,7 @@ export const NAMES = {
   $accumulator: mongo({
     doc: "Defines a custom accumulator function. Body fields hold JavaScript source executed by the server.",
     category: "custom-aggregation",
+    returns: "unknown",
     where: ["group"],
     shape: {
       object: {
@@ -2659,6 +2830,7 @@ export const NAMES = {
   $function: mongo({
     doc: "Defines a custom function. The body field is JavaScript source executed by the server.",
     category: "custom-aggregation",
+    returns: "unknown",
     where: ["value"],
     shape: {
       object: {
@@ -2681,6 +2853,7 @@ export const NAMES = {
   $binarySize: mongo({
     doc: "Returns the size of a string or binary data value's content in bytes.",
     category: "data-size",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$binarySize' is not valid in filter position — see its 'where'."),
@@ -2695,6 +2868,7 @@ export const NAMES = {
   $bsonSize: mongo({
     doc: "Returns the size in bytes of a document when encoded as BSON.",
     category: "data-size",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$bsonSize' is not valid in filter position — see its 'where'."),
@@ -2709,6 +2883,7 @@ export const NAMES = {
   $meta: mongo({
     doc: 'Accesses per-document metadata related to the aggregation operation. Argument is a keyword string (e.g. "textScore"), not an arbitrary expression.',
     category: "text",
+    returns: "unknown",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$meta' is not valid in filter position — see its 'where'."),
@@ -2723,6 +2898,7 @@ export const NAMES = {
   $createObjectId: mongo({
     doc: "Returns a random ObjectId.",
     category: "miscellaneous",
+    returns: "objectId",
     where: ["value"],
     shape: "none",
     filter: unsupported("'$createObjectId' is not valid in filter position — see its 'where'."),
@@ -2737,6 +2913,7 @@ export const NAMES = {
   $hash: mongo({
     doc: "Generates a binary hash value (BinData) from a UTF-8 string or binary data.",
     category: "miscellaneous",
+    returns: "binData",
     where: ["value"],
     minVersion: "8.3",
     shape: {
@@ -2754,6 +2931,7 @@ export const NAMES = {
   $hexHash: mongo({
     doc: "Generates an uppercase hexadecimal hash string from a UTF-8 string or binary data.",
     category: "miscellaneous",
+    returns: "string",
     where: ["value"],
     minVersion: "8.3",
     shape: {
@@ -2771,6 +2949,7 @@ export const NAMES = {
   $rand: mongo({
     doc: "Returns a random float between 0 and 1.",
     category: "miscellaneous",
+    returns: "number",
     where: ["value"],
     shape: "none",
     filter: viaFallback,
@@ -2799,6 +2978,7 @@ export const NAMES = {
   $toHashedIndexKey: mongo({
     doc: "Computes the hash of the input expression using MongoDB's hashed-index hash function.",
     category: "miscellaneous",
+    returns: "number",
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toHashedIndexKey' is not valid in filter position — see its 'where'."),
@@ -2813,6 +2993,7 @@ export const NAMES = {
   $addToSet: mongo({
     doc: "Returns an array of unique expression values for each group.",
     category: "array",
+    returns: "array",
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported("'$addToSet' is not valid in filter position — see its 'where'."),
@@ -2827,6 +3008,7 @@ export const NAMES = {
   $avg: mongo({
     doc: "Returns the average for the specified expression.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: unsupported("'$avg' is not valid in filter position — see its 'where'."),
@@ -2847,6 +3029,7 @@ export const NAMES = {
       stage: "Returns a count of the number of documents at this stage of the aggregation pipeline.",
     },
     category: "array",
+    returns: "number",
     where: ["group", "window", "stream", "statement"],
     shape: "none",
     body: pending("src/stage-validation.ts"),
@@ -2864,6 +3047,7 @@ export const NAMES = {
   $max: mongo({
     doc: "Returns the maximum value that results from applying an expression.",
     category: "comparison",
+    returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
     shape: "flex",
     filter: unsupported("'$max' is not valid in filter position — see its 'where'."),
@@ -2881,6 +3065,7 @@ export const NAMES = {
   $median: mongo({
     doc: "Returns an approximation of the median (50th percentile) as a scalar value.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "group", "window"],
     shape: {
       object: {
@@ -2903,6 +3088,7 @@ export const NAMES = {
   $min: mongo({
     doc: "Returns the minimum value that results from applying an expression.",
     category: "comparison",
+    returns: "unknown",
     where: ["value", "group", "window", "updateDoc"],
     shape: "flex",
     filter: unsupported("'$min' is not valid in filter position — see its 'where'."),
@@ -2920,6 +3106,7 @@ export const NAMES = {
   $percentile: mongo({
     doc: "Returns an array of scalar values that correspond to specified percentile values.",
     category: "arithmetic",
+    returns: "array",
     where: ["value", "group", "window"],
     shape: {
       object: {
@@ -2942,6 +3129,7 @@ export const NAMES = {
   $push: mongo({
     doc: "Returns an array of values that result from applying an expression.",
     category: "array",
+    returns: "array",
     where: ["group", "window", "updateDoc"],
     shape: "single",
     filter: unsupported("'$push' is not valid in filter position — see its 'where'."),
@@ -2956,6 +3144,7 @@ export const NAMES = {
   $stdDevPop: mongo({
     doc: "Calculates the population standard deviation of the input values.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: unsupported("'$stdDevPop' is not valid in filter position — see its 'where'."),
@@ -2973,6 +3162,7 @@ export const NAMES = {
   $stdDevSamp: mongo({
     doc: "Calculates the sample standard deviation of the input values.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: unsupported("'$stdDevSamp' is not valid in filter position — see its 'where'."),
@@ -2990,6 +3180,7 @@ export const NAMES = {
   $sum: mongo({
     doc: "Returns a sum of numerical values, ignoring non-numeric values.",
     category: "arithmetic",
+    returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
     filter: unsupported("'$sum' is not valid in filter position — see its 'where'."),
@@ -3007,6 +3198,7 @@ export const NAMES = {
   $bottom: mongo({
     doc: "Returns the bottom element within a group according to the specified sort order.",
     category: "array",
+    returns: "unknown",
     where: ["group", "window"],
     shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
     filter: unsupported("'$bottom' is not valid in filter position — see its 'where'."),
@@ -3021,6 +3213,7 @@ export const NAMES = {
   $bottomN: mongo({
     doc: "Returns an aggregation of the bottom n elements within a group, according to the specified sort order.",
     category: "array",
+    returns: "array",
     where: ["group", "window"],
     shape: {
       object: {
@@ -3042,6 +3235,7 @@ export const NAMES = {
   $top: mongo({
     doc: "Returns the top element within a group according to the specified sort order.",
     category: "array",
+    returns: "unknown",
     where: ["group", "window"],
     shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
     filter: unsupported("'$top' is not valid in filter position — see its 'where'."),
@@ -3056,6 +3250,7 @@ export const NAMES = {
   $topN: mongo({
     doc: "Returns an aggregation of the top n fields within a group, according to the specified sort order.",
     category: "array",
+    returns: "array",
     where: ["group", "window"],
     shape: {
       object: {
@@ -3077,6 +3272,7 @@ export const NAMES = {
   $covariancePop: mongo({
     doc: "Returns the population covariance of two numeric expressions.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "array",
     filter: unsupported("'$covariancePop' is not valid in filter position — see its 'where'."),
@@ -3094,6 +3290,7 @@ export const NAMES = {
   $covarianceSamp: mongo({
     doc: "Returns the sample covariance of two numeric expressions.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "array",
     filter: unsupported("'$covarianceSamp' is not valid in filter position — see its 'where'."),
@@ -3111,6 +3308,7 @@ export const NAMES = {
   $denseRank: mongo({
     doc: "Returns the document position (rank) within the partition. There are no gaps; ties receive the same rank.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "none",
     filter: unsupported("'$denseRank' is not valid in filter position — see its 'where'."),
@@ -3125,6 +3323,7 @@ export const NAMES = {
   $derivative: mongo({
     doc: "Returns the average rate of change within the specified window.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: {
       object: {
@@ -3147,6 +3346,7 @@ export const NAMES = {
   $documentNumber: mongo({
     doc: "Returns the position of a document in the $setWindowFields partition. Ties produce different adjacent numbers.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "none",
     filter: unsupported("'$documentNumber' is not valid in filter position — see its 'where'."),
@@ -3161,6 +3361,7 @@ export const NAMES = {
   $expMovingAvg: mongo({
     doc: "Returns the exponential moving average for the numeric expression.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: {
       object: {
@@ -3183,6 +3384,7 @@ export const NAMES = {
   $integral: mongo({
     doc: "Returns the approximation of the area under a curve.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: {
       object: {
@@ -3205,6 +3407,7 @@ export const NAMES = {
   $linearFill: mongo({
     doc: "Fills null and missing fields in a window using linear interpolation based on surrounding field values.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "single",
     filter: unsupported("'$linearFill' is not valid in filter position — see its 'where'."),
@@ -3219,6 +3422,7 @@ export const NAMES = {
   $locf: mongo({
     doc: "Last observation carried forward — sets null/missing fields in a window to the last non-null value.",
     category: "window",
+    returns: "unknown",
     where: ["window"],
     shape: "single",
     filter: unsupported("'$locf' is not valid in filter position — see its 'where'."),
@@ -3233,6 +3437,7 @@ export const NAMES = {
   $rank: mongo({
     doc: "Returns the document position (rank) within the $setWindowFields partition.",
     category: "window",
+    returns: "number",
     where: ["window"],
     shape: "none",
     filter: unsupported("'$rank' is not valid in filter position — see its 'where'."),
@@ -3247,6 +3452,7 @@ export const NAMES = {
   $shift: mongo({
     doc: "Returns the value from an expression applied to a document in a specified position relative to the current document.",
     category: "window",
+    returns: "unknown",
     where: ["window"],
     shape: {
       object: {
@@ -7049,6 +7255,7 @@ export const NAMES = {
 
   $case: mongo({
     doc: "One branch of a '$switch': its test and its result.",
+    returns: "unknown",
     where: ["value"],
     onlyInside: { value: ["$switch"] },
     filter: unsupported(
@@ -8413,6 +8620,7 @@ export const NAMES = {
     // `$ === 1` → {"": 1}, which mongod accepts and which matches nothing.
     // `where: ["value","filter"]` claimed an indexable form that does not exist,
     // and contradicted `rootReference` in productions.ts, which had it right.
+    returns: "object",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: () => "$$ROOT" },

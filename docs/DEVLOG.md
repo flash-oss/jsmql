@@ -10,6 +10,51 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-27 — feat(registry): every value-producing name states the type it returns, measured
+
+All 264 `mongo` rows carried no `returns`, so nothing in the new compiler could type an operator's
+result. Without it phase 5 loses the receiver-type error — `$.v = $toUpper($.s).map(x => x)` has to say
+*"'.map(...)' expects an array receiver, but '$toUpper(...)' returns a string"* — or grows a hardcoded
+table, which is the shape this rewrite exists to remove. The shipped compiler's `OPERATOR_RETURNS`
+holds 127 entries and is that table.
+
+Measured rather than copied, one operator at a time, with `{ $type: <a well-typed call> }` on a running
+mongod. The call is built from two things already in the repo — the vendored spec's
+`arguments[].type` (what each operand must resolve to) and the row's own `shape` (how the operands are
+written) — so the generator covers a new operator the day its row lands, and only the ~55 calls it
+cannot express are written out. Three independent sources were compared: the vendored `type:` field,
+the shipped table, and the server. All three agree on 154 of the 157 the vendored examples could
+exercise. The three exceptions are the interesting ones: `$trunc`, where the YAML says
+`resolvesToString` and the server says double — the error CLAUDE.md already warns about, rediscovered
+independently — and `$add`/`$subtract`, where all three agree the type follows the operands.
+
+A single measurement cannot tell `$push` (always an array) from `$max` (whatever it was given), so each
+operator was asked twice, with operands of two families. That found `$subtract` — one call gave a
+number, the pair gave `date` and `long` — and it corrected the shipped table's absences in the other
+direction too. Absence there means both "depends on the arguments" and "never measured", and 32 of the
+55 absent rows turn out to be invariant: the N-readers return an *array* of n elements rather than one
+element (`$firstN`, `$topN`, …), the collectors always do (`$push`, `$addToSet`), the id and hash
+producers have one type each, and the window operators that compute rather than carry are numeric
+(`$derivative`, `$integral`, `$covariance*`, …). Only the ones that carry a value read from elsewhere
+vary (`$shift`, `$locf`, `$top`, `$bottom`).
+
+So the registry separates the two facts. `returns` is stated on exactly the rows whose `where` includes
+`value`, `group` or `window` — 182 mongo rows plus `$`, whose `$$ROOT` measures as an object — with
+`"unknown"` where the kind follows the operands, and absence meaning "produces no value at all". A
+test holds both directions of that equivalence. `Kind` gains `"binData"`, which `$hash` and `$toUUID`
+produce and nothing else does.
+
+[test/compiler-returns-agrees.test.ts](../test/compiler-returns-agrees.test.ts) is the guard, because
+`returns` is measured data and only a re-measurement can catch it rotting. It re-derives each call,
+asks the server, and checks the stated kind. It also runs the varying-operand pairs — and checks them
+in BOTH directions, which closed a hole found by making the suite fail: asking only "does every
+`unknown` row vary" let a row quietly claim to be invariant, and that is the more dangerous mistake,
+because it makes the type check reject valid code. Four operators cannot be asked at all — the
+Queryable Encryption predicates need encrypted fields, and `$meta` needs `$search` — so they are named
+with reasons, and the suite fails if one of them starts working.
+
+---
+
 ## 2026-08-27 — fix(registry): a stage body's positions are stated, and an accumulator slot takes one operand
 
 Phase 4 supplied three of the seven positions. `filter`, `group`, `window` and `updateDoc` had no way
