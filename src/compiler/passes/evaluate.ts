@@ -26,8 +26,23 @@ import {
 import type { Family } from "../../registry/vocabulary.ts";
 import { acceptsArgumentCount } from "../rows.ts";
 
-/** What is known so far: a name bound to a constant. */
+/** What is known so far: a name bound to a constant, or to a declared function. */
 export type Constants = ReadonlyMap<string, unknown>;
+
+/**
+ * A declared function, held so a CALL to it can be evaluated.
+ *
+ * Wrapped rather than stored bare, because it must never be mistaken for a
+ * value: a function has no MongoDB literal, and substituting one into the tree
+ * would put a lambda where an expression belongs. `fold` keeps these in the
+ * environment and out of the substitution map for exactly that reason.
+ */
+export type DeclaredFunction = { readonly lambda: object };
+
+export const asDeclaredFunction = (lambda: object): DeclaredFunction => ({ lambda });
+
+const isDeclaredFunction = (v: unknown): v is DeclaredFunction =>
+  typeof v === "object" && v !== null && "lambda" in v && Object.keys(v).length === 1;
 
 /**
  * A value, or the reason there is none.
@@ -561,6 +576,21 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
   return spellable(result.value);
 }
 
+/** Apply a lambda to constant arguments, with the same gates a rule gets. */
+function applyHere(lambda: Any, argNodes: readonly Expr[], env: Constants, depth: number): Evaluation {
+  if (argNodes.some((a) => (a as Any).type === "SpreadElement")) return NOT_CONSTANT;
+  const values: unknown[] = [];
+  for (const argNode of argNodes) {
+    const value = at(argNode, env, depth + 1);
+    if (!value.ok) return propagate(value);
+    values.push(value.value);
+  }
+  const result = applyLambda(lambda, values, env, depth + 1);
+  if (!result.ok) return propagate(result);
+  if (!withinSize(result.value)) return NOT_CONSTANT;
+  return spellable(result.value);
+}
+
 /**
  * Evaluate a call's arguments and hand them to a rule, with the same three gates
  * a method call gets: no spread, every rule inside a try/catch, and a result that
@@ -712,13 +742,19 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       return methodCall(node as unknown as Any, env, depth);
 
     case "CallExpression": {
-      // `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")` — a named
-      // conversion. A call on anything but a bare name (a declared function, an
-      // immediately-applied arrow) is not one this knows.
       const callee = node.callee as unknown as Any;
+      // `((a) => a * 2)(3)` — a lambda applied where it stands.
+      if (callee.type === "Lambda") return applyHere(callee, node.args as readonly Expr[], env, depth);
       if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT;
-      // A binding of that name shadows the global one.
+      const bound = env.get(callee.name as string);
+      // `function double(x) { … }` then `double(3)` — a declared function called
+      // with constants is a constant, and the declaration itself emits nothing.
+      if (isDeclaredFunction(bound)) {
+        return applyHere(bound.lambda as Any, node.args as readonly Expr[], env, depth);
+      }
+      // A binding that holds a VALUE is not callable, and shadows the global name.
       if (env.has(callee.name as string)) return NOT_CONSTANT;
+      // `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")` — a named conversion.
       return applyCall(node.args as readonly Expr[], env, depth, (args) => foldNamedCall(callee.name as string, args));
     }
 

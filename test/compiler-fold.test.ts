@@ -389,3 +389,48 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf("new Set([1, 2, 2, 3])")).toEqual([1, 2, 2, 3]);
   });
 });
+
+describe("compiler/passes/fold — a declared function called with constants", () => {
+  /** The right-hand side of the trailing comparison, which is the use site. */
+  const useSite = (src: string): string => {
+    const t = desugar(parse(src)) as { type: string; stmts?: unknown[]; right?: unknown };
+    const last = t.type === "Pipeline" ? (t.stmts as { right?: unknown }[])[(t.stmts as unknown[]).length - 1] : t;
+    return JSON.stringify(last.right ?? last, (k, v) => (k === "pos" ? 0 : v));
+  };
+  const folds = (src: string, value: number): void => {
+    expect(useSite(src)).toBe(JSON.stringify({ type: "NumberLiteral", value, pos: 0 }));
+  };
+
+  it("calls a `function` declaration", () => {
+    folds("function f(x) { return x * 2 } const v = f(3); $.x === v", 6);
+    folds("function f() { return 42 } $.x === f()", 42);
+  });
+
+  it("calls an arrow bound with `const`", () => {
+    folds("const f = x => x * 2; $.x === f(3)", 6);
+  });
+
+  it("calls a lambda applied where it stands", () => {
+    folds("$.x === ((a) => a * 2)(3)", 6);
+  });
+
+  it("calls one declared function from inside another", () => {
+    folds("function f(x) { return x + 1 } function g(x) { return f(x) * 2 } $.x === g(3)", 8);
+  });
+
+  it("leaves a call whose argument is not constant", () => {
+    expect(useSite("function f(x) { return x * 2 } $.x === f($.n)")).toContain("CallExpression");
+  });
+
+  it("does not substitute into a CALLEE, which names a function rather than valuing one", () => {
+    // `const g = 3; g(1)` is a TypeError in JavaScript. Replacing `g` with 3
+    // would leave `3(1)` in the tree, which is not a program — the name stays so
+    // a later phase can say what is actually wrong.
+    expect(useSite("const g = 3; $.x === g(1)")).toContain('"name":"g"');
+    expect(useSite("const g = 3; $.x === new g(1)")).toContain('"name":"g"');
+  });
+
+  it("does not let a lambda parameter reach the outer function of that name", () => {
+    expect(useSite("function f(x) { return x * 2 } $.a = $.items.map(f => f(1));")).toContain("CallExpression");
+  });
+});

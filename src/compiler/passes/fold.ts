@@ -28,7 +28,7 @@ import type { Expr, PipelineStmt, Program } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
 import { asLiteral } from "./literal.ts";
 import type { Constants } from "./evaluate.ts";
-import { evaluate } from "./evaluate.ts";
+import { asDeclaredFunction, evaluate } from "./evaluate.ts";
 import { mapTree, mapTreeIn } from "./walk.ts";
 
 type Any = { type: string } & Record<string, unknown>;
@@ -142,7 +142,7 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
 // ── substitution ─────────────────────────────────────────────────────────────
 
 /** What travels down the tree while substituting. */
-type Scope = { shadowed: ReadonlySet<string>; inTarget: boolean };
+type Scope = { shadowed: ReadonlySet<string>; naming: boolean };
 
 /**
  * Every name a node binds for the subtree under `key`.
@@ -174,29 +174,39 @@ const declaredIn = (list: unknown): readonly string[] =>
  * Replace every free reference to a folded name with the value it holds.
  *
  * Two things it must never do. It must not cross a binder of the same name — see
- * `shadowedIn`. And it must not touch the LEFT of a write: `a.p = 9` names a
- * place, and replacing `a` there with its value produces `1 = 9`, which is not a
- * program at all.
+ * `shadowedIn`. And it must not touch an identifier that NAMES something rather
+ * than valuing it: `a.p = 9` names a place and `g(1)` names a function, so
+ * replacing either with its value produces `1 = 9` or `3(1)`, neither of which is
+ * a program.
  */
 function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Program {
-  const start: Scope = { shadowed: new Set(), inTarget: false };
+  const start: Scope = { shadowed: new Set(), naming: false };
+
+  /**
+   * Two places an identifier NAMES something instead of valuing it: the left of a
+   * write, and the callee of a call. Replacing either with a value produces
+   * something that is not a program — `1 = 9`, or `3(1)`.
+   */
+  const namesSomething = (n: Any, key: string): boolean =>
+    ((n.type === "AssignExpr" || n.type === "DeleteStmt") && key === "target") ||
+    ((n.type === "CallExpression" || n.type === "NewExpression") && key === "callee");
 
   const step = (node: object, key: string, here: Scope): Scope => {
     const n = node as Any;
-    const entersTarget = (n.type === "AssignExpr" || n.type === "DeleteStmt") && key === "target";
+    const naming = namesSomething(n, key);
     const names = shadowedIn(n, key);
     if (names.length === 0) {
-      return entersTarget === here.inTarget ? here : { shadowed: here.shadowed, inTarget: entersTarget };
+      return naming === here.naming ? here : { shadowed: here.shadowed, naming };
     }
     const shadowed = new Set(here.shadowed);
     for (const name of names) shadowed.add(name);
-    return { shadowed, inTarget: entersTarget || here.inTarget };
+    return { shadowed, naming: naming || here.naming };
   };
 
   return mapTreeIn(program, start, step, (node, scope) => {
     const n = node as Any;
     if (n.type !== "Ident" || typeof n.name !== "string") return node;
-    if (scope.inTarget || scope.shadowed.has(n.name)) return node;
+    if (scope.naming || scope.shadowed.has(n.name)) return node;
     if (!folded.has(n.name)) return node;
     // Every folded value has a literal — `fold` only records the ones that do —
     // so there is no fallback here, and no un-substituted source to capture with.
@@ -219,14 +229,38 @@ function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Pro
  * must produce a value or stay a binding — a subexpression is perfectly able to
  * go on being computed at run time.
  */
-function foldConstantParts(program: Program): Program {
-  return mapTree(program, (node) => {
-    const n = node as Any;
-    if (!EVALUABLE.has(n.type)) return node;
-    const result = evaluate(n as unknown as Expr, EMPTY);
-    if (!result.ok) return node;
-    return (asLiteral(result.value, n.pos as number) ?? node) as object;
+function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY): T {
+  // The environment travels down and SHRINKS at every binder: a lambda parameter
+  // named the same as a declared function is a different thing entirely, and
+  // folding `f(1)` against the outer `f` inside `map(f => f(1))` would answer
+  // about the wrong one.
+  const step = (n: object, key: string, here: Constants): Constants => {
+    const names = shadowedIn(n as Any, key);
+    if (names.length === 0) return here;
+    const next = new Map(here);
+    for (const name of names) next.delete(name);
+    return next;
+  };
+
+  return mapTreeIn(node, known, step, (inner, env) => {
+    const n = inner as Any;
+    if (!EVALUABLE.has(n.type)) return inner;
+    const result = evaluate(n as unknown as Expr, env);
+    if (!result.ok) return inner;
+    return (asLiteral(result.value, n.pos as number) ?? inner) as object;
   });
+}
+
+/**
+ * Every statement of a list, with its constant parts folded against `known`.
+ *
+ * ONE STATEMENT at a time, never the list around it: a scope's own declarations
+ * are exactly what its statements should see, and descending through the
+ * `Pipeline` node would make `shadowedIn` hide them along with the nested ones.
+ */
+function foldPartsIn(stmts: readonly PipelineStmt[], known: Constants): readonly PipelineStmt[] {
+  const out = stmts.map((stmt) => foldConstantParts(stmt as unknown as object, known) as unknown as PipelineStmt);
+  return out.some((stmt, i) => stmt !== stmts[i]) ? out : stmts;
 }
 
 const EMPTY: Constants = new Map();
@@ -270,11 +304,12 @@ export function fold(program: Program): Program {
     const n = node as Any;
     if (n.type !== "Pipeline") return node;
     const inner = foldStatements(n.stmts as readonly PipelineStmt[]);
-    return inner.changed ? ({ ...n, stmts: inner.stmts } as object) : node;
+    const parts = foldPartsIn(inner.stmts, inner.env);
+    return inner.changed || parts !== inner.stmts ? ({ ...n, stmts: parts } as object) : node;
   };
 
   const root = program as Any;
-  if (root.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested));
+  if (root.type !== "Pipeline") return foldConstantParts(mapTree(program, foldNested) as object) as Program;
 
   // The root is folded BELOW, by the pass that also decides whether the program
   // collapses to one expression. Walking it here as well would do that work
@@ -287,9 +322,13 @@ export function fold(program: Program): Program {
   const top = foldStatements(stmts);
   const original = root.stmts as readonly PipelineStmt[];
   const nestedChanged = stmts.some((stmt, i) => stmt !== original[i]);
-  if (!top.changed && !nestedChanged) return foldConstantParts(program);
+  if (!top.changed && !nestedChanged) {
+    const parts = foldPartsIn(stmts, top.env);
+    if (parts === stmts) return program;
+    return { type: "Pipeline", stmts: parts, pos: root.pos as number } as unknown as Program;
+  }
 
-  const rewritten = foldConstantParts({ type: "Pipeline", stmts: top.stmts, pos: root.pos as number }) as Any;
+  const rewritten = { type: "Pipeline", stmts: foldPartsIn(top.stmts, top.env), pos: root.pos as number } as Any;
   const left = rewritten.stmts as readonly PipelineStmt[];
   // One EXPRESSION left is a Filter, not a pipeline of one predicate — which is
   // the whole reason `const a = 1; $.x === a` reads as `{ "x": 1 }`. Only an
@@ -304,9 +343,17 @@ export function fold(program: Program): Program {
 }
 
 /** One scope's worth of folding: the statements that survive, and whether any went. */
-function foldStatements(stmts: readonly PipelineStmt[]): { stmts: readonly PipelineStmt[]; changed: boolean } {
+function foldStatements(stmts: readonly PipelineStmt[]): {
+  stmts: readonly PipelineStmt[];
+  changed: boolean;
+  env: Constants;
+} {
   const excluded = unfoldable(stmts);
   const folded = new Map<string, unknown>();
+  // Declared functions live HERE and not in `folded`: a call to one may be
+  // evaluated, but the function itself is never substituted into the tree, where
+  // a lambda would sit in an expression's place.
+  const env = new Map<string, unknown>();
   const survivors: PipelineStmt[] = [];
   let changed = false;
 
@@ -322,8 +369,13 @@ function foldStatements(stmts: readonly PipelineStmt[]): { stmts: readonly Pipel
           ).stmts[0];
     if (resolved !== stmt) changed = true;
 
+    if (resolved.type === "FuncDecl" && !excluded.has(resolved.name)) {
+      env.set(resolved.name, asDeclaredFunction(resolved.lambda as unknown as object));
+      survivors.push(resolved);
+      continue;
+    }
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
-      const result = evaluate(resolved.value, EMPTY);
+      const result = evaluate(resolved.value, env);
       // A constant MongoDB cannot write down is worth saying out loud. The
       // evaluator names it and propagates it, so an `Infinity` buried three
       // operators deep reports the same way one at the top does.
@@ -340,15 +392,19 @@ function foldStatements(stmts: readonly PipelineStmt[]): { stmts: readonly Pipel
         // lambda parameter or left with no binder at all.
         if (asLiteral(result.value, 0) !== null) {
           folded.set(resolved.name, result.value);
+          env.set(resolved.name, result.value);
           changed = true;
           continue; // the declaration itself emits nothing
         }
       }
     }
     // A name that did not fold must not be read as one further down either.
-    if (resolved.type === "LetDecl" || resolved.type === "FuncDecl") folded.delete(resolved.name);
+    if (resolved.type === "LetDecl" || resolved.type === "FuncDecl") {
+      folded.delete(resolved.name);
+      env.delete(resolved.name);
+    }
     survivors.push(resolved);
   }
 
-  return { stmts: survivors, changed };
+  return { stmts: survivors, changed, env };
 }

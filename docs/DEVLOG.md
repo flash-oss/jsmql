@@ -51,6 +51,33 @@ accumulator slots no row states yet.
 
 ---
 
+## 2026-08-26 — feat: a declared function called with constants
+
+The last third of the `CallExpression` gap. `function double(x) { return x * 2 }` followed by
+`double(3)` now folds to 6, as does the same function bound with `const`, one declared
+function called from inside another, and a lambda applied where it stands.
+
+A function is held in the environment and kept OUT of the substitution map, because the two
+are different things. A constant is inlined at its use sites; a function is called at them.
+Storing one where the other belongs would put a lambda in an expression's place, so the
+wrapper that distinguishes them is a type and not a convention.
+
+Two bugs came out of getting it working. Body folding was running with an empty environment,
+so a constant subexpression could never see a declared function — `function f() { return 42 }
+$.x === f()` folded nowhere. Passing the environment down needed the scope tracking
+substitution already had, and then one more correction: applying it to the statement LIST
+hid a scope's own declarations along with the nested ones, because `shadowedIn` cannot tell
+the two apart from inside. It is applied one statement at a time now, which is the only
+reading under which a scope's declarations are visible to its own statements.
+
+And substitution was replacing an identifier in CALLEE position. `const g = 3; g(1)` is a
+TypeError in JavaScript, and inlining the 3 left `3(1)` in the tree — not a program, and
+nothing a later phase could report usefully. A callee names a function the way the left of a
+write names a place, so both are now the same rule: an identifier that NAMES something is
+never replaced by a value.
+
+---
+
 ## 2026-08-26 — feat: a constant date, and the named conversions
 
 The two node types the evaluator had no case for. `CallExpression` covers `String`, `Number`,
