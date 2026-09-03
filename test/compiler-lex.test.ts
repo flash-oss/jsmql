@@ -138,8 +138,8 @@ describe("compiler/lex — one decoder for every quoted form", () => {
       ["t", "\t"],
       ["r", "\r"],
       ["\\", "\\"],
-      ["x", "x"],
-      ["0", "0"],
+      ["q", "q"],
+      ["0", "\0"],
     ]) {
       const str = lex(`"a\\${esc}b"`)[0];
       const tpl = lex(`\`a\\${esc}b\``)[1];
@@ -148,6 +148,31 @@ describe("compiler/lex — one decoder for every quoted form", () => {
       expect(str.text, `\\${esc}`).toBe(`a${want}b`);
       expect(tpl.text, `\\${esc}`).toBe(str.text);
     }
+  });
+});
+
+describe("compiler/lex — the JavaScript escape set and number spelling", () => {
+  it("decodes every JavaScript escape, in a string and in a template alike", () => {
+    for (const [esc, want] of [
+      ["\\x41", "A"],
+      ["\\u0041", "A"],
+      ["\\u{1F600}", "\u{1F600}"],
+      ["\\0", "\0"],
+      ["\\b\\f\\v", "\b\f\v"],
+      ["\\q", "q"],
+    ]) {
+      expect(lex(`"${esc}"`)[0].text, esc).toBe(want);
+      expect(lex(`\`${esc}\``)[1].text, esc).toBe(want);
+    }
+  });
+
+  it("reads a `.` after integer digits as part of the number, as JavaScript does", () => {
+    // `1.e3` is 1000; `1.foo` is a SyntaxError. Reading the dot as an access gave
+    // `1.e3` the meaning "field e3 of 1".
+    expect(lex("1.e3").map((t) => t.type)).toEqual(["Number", "EOF"]);
+    expect(lex("1.e3")[0].text).toBe("1.e3");
+    expect(lex("1.5").map((t) => t.type)).toEqual(["Number", "EOF"]);
+    expect(lex("$.a.b").map((t) => t.type)).toEqual(["DollarDot", "Ident", "Dot", "Ident", "EOF"]);
   });
 });
 

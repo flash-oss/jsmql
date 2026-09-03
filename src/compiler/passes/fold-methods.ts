@@ -205,6 +205,9 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
  * `Number("nope")` and `parseInt("4.9")` are errors there and quiet answers in
  * JavaScript. Folding either would answer where the program does not run.
  */
+/** The one numeric spelling `$toDouble` / `$toInt` parse: no padding, no hex, no separators. */
+const PLAIN_DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
+
 export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
   const [a] = values;
@@ -224,13 +227,16 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
       if (typeof a === "number") return ok(a);
       if (typeof a === "boolean") return ok(a ? 1 : 0);
       if (typeof a !== "string") return NO;
-      const n = Number(a.trim());
-      // Unparseable is a server error, and so is the empty string.
-      return a.trim() !== "" && Number.isFinite(n) ? ok(n) : NO;
+      // Only a PLAIN decimal spelling: `$toDouble` refuses " 12 " ("Failed to
+      // parse number") and "0x10" ("Illegal hexadecimal input"), both of which
+      // JavaScript's `Number` accepts. A fold must agree with the server.
+      if (!PLAIN_DECIMAL.test(a)) return NO;
+      const n = Number(a);
+      return Number.isFinite(n) ? ok(n) : NO;
     }
     case "parseInt": {
-      if (typeof a !== "string") return NO;
-      const n = Number(a.trim());
+      if (typeof a !== "string" || !PLAIN_DECIMAL.test(a)) return NO;
+      const n = Number(a);
       // `$toInt` refuses a fractional string outright — it does not truncate the
       // way JavaScript's `parseInt` does.
       return Number.isInteger(n) ? ok(n) : NO;

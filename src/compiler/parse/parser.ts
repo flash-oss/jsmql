@@ -47,9 +47,13 @@ import {
   mixingRefused,
   NEVER_A_WRITE_TARGET,
   PREFIX,
+  SPELLING,
   STATEMENT_PREFIX,
   WORDS,
 } from "./tables.ts";
+
+/** How a message names a production: its spelling, never its key. */
+const spelled = (rule: ProductionKey | null): string => (rule === null ? "" : (SPELLING.get(rule) ?? rule));
 
 /** A `0x` lexeme of exactly this many digits is an ObjectId, not an integer. */
 const OBJECT_ID_DIGITS = 24;
@@ -224,6 +228,10 @@ class Parser {
    */
   private dollarName(dollar: Token): Token {
     const name = this.c.expect("Ident");
+    // `$ abs(1)` is not JavaScript: the sigil and its name are one identifier.
+    if (name.pos !== dollar.end) {
+      throw new ParseError(`Expected a name directly after '$', with no space — write '$${name.text}'`, name.pos);
+    }
     return { ...dollar, text: "$" + name.text, end: name.end };
   }
 
@@ -281,9 +289,9 @@ class Parser {
     const stmts: PipelineStmt[] = [];
     let sawSemi = false;
     for (;;) {
-      while (this.c.eat("Semi")) {
-        /* an empty statement is not an error */
-      }
+      // An empty statement is not an error, and a `;` anywhere — leading included —
+      // is the token that says pipeline.
+      while (this.c.eat("Semi")) sawSemi = true;
       if (this.c.is(terminator)) {
         if (terminator === "RBrace") this.c.next();
         break;
@@ -395,7 +403,9 @@ class Parser {
    */
   private writeAhead(): boolean {
     if (STATEMENT_PREFIX.has(this.c.type)) return true;
-    if (this.c.is("LParen")) return this.parenWriteAhead();
+    // `($.a = 1)` is a write inside the parentheses; `($.a) = 1` is a write whose
+    // TARGET is parenthesised — legal JavaScript, and a different lookahead.
+    if (this.c.is("LParen")) return this.parenWriteAhead() || this.startsAWrite();
     return this.startsAWrite();
   }
 
@@ -432,7 +442,9 @@ class Parser {
     if (this.c.is("Delete")) {
       const kw = this.c.next();
       const target = this.pratt(1);
-      this.requireWriteTarget(target, kw.pos);
+      // `delete a?.b` is legal JavaScript, unlike `a?.b = 1` — so only the
+      // "is it a place at all" half of the check applies here.
+      this.requirePlace(target, kw.pos, "delete");
       return [{ type: "DeleteStmt", target: target.expr, pos: kw.pos }];
     }
     // `++$.a` and `$.a++` mean the same write; the row says `prefixOrPostfix`.
@@ -445,7 +457,7 @@ class Parser {
     // The token's own text IS the spelling — `=`, `+=`, `++` — so no table maps
     // a token type back to the operator it was lexed from.
     const spelling = op.text as AssignOp;
-    this.requireWriteTarget(target, op.pos);
+    this.requireWriteTarget(target, op.pos, spelling);
     // `$.a = $.b = 1` — every target in the chain takes the SAME value, so the
     // chain is one write per target and not a nested assignment expression.
     if (spelling === "=") {
@@ -453,7 +465,7 @@ class Parser {
       let value = this.pratt(1);
       while (this.c.is("Eq")) {
         const eq = this.c.next();
-        this.requireWriteTarget(value, eq.pos);
+        this.requireWriteTarget(value, eq.pos, "=");
         targets.push(value.expr);
         value = this.pratt(1);
       }
@@ -503,12 +515,37 @@ class Parser {
   }
 
   /**
-   * The rule that built the target says whether it can BE one. `a?.b = 1` is a
-   * JavaScript SyntaxError, and the `optionalMemberAccess` row states it with
-   * `neverAWriteTarget`; this reads the row rather than testing `.optional`, so
-   * the next rule to say so needs no branch here.
+   * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
+   * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not — JavaScript
+   * refuses them, and so did the shipped compiler.
    */
-  private requireWriteTarget(target: Parsed, pos: number): void {
+  private requirePlace(target: Parsed, pos: number, op: string): void {
+    const t = target.expr.type;
+    const isPlace =
+      t === "FieldRef" ||
+      t === "Ident" ||
+      t === "MemberAccess" ||
+      t === "IndexAccess" ||
+      t === "CollectionRef" ||
+      t === "DatabaseRef" ||
+      t === "ClusterRef";
+    if (isPlace) return;
+    const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
+    throw new ParseError(
+      `Cannot apply '${op}' to ${what} — only a field, a binding, '$', '$$' or a collection can be written`,
+      pos,
+    );
+  }
+
+  /**
+   * A write target must be a place, and the rule that built it must allow a
+   * write. `a?.b = 1` is a JavaScript SyntaxError — wherever the `?.` sits in the
+   * chain — and the `optionalMemberAccess` row states it with `neverAWriteTarget`;
+   * this reads the row rather than testing `.optional`, so the next rule to say
+   * so needs no branch here.
+   */
+  private requireWriteTarget(target: Parsed, pos: number, op: string): void {
+    this.requirePlace(target, pos, op);
     if (target.rule === null) return;
     const refusal = NEVER_A_WRITE_TARGET.get(target.rule);
     if (refusal === undefined) return;
@@ -533,7 +570,7 @@ class Parser {
       // JavaScript forbids the pair outright, at any precedence.
       if (mixingRefused(rule, left.rule, "left")) {
         throw new ParseError(
-          `'${this.c.peek().text}' cannot follow '${left.rule}' without parentheses — JavaScript rejects the combination`,
+          `'${this.c.peek().text}' cannot be combined with '${spelled(left.rule)}' without parentheses — JavaScript rejects it`,
           this.c.peek().pos,
         );
       }
@@ -574,7 +611,7 @@ class Parser {
       const right = this.pratt(nextMin);
       if (mixingRefused(rule, right.rule, "right")) {
         throw new ParseError(
-          `'${op.text}' cannot be combined with '${right.rule}' without parentheses — JavaScript rejects it`,
+          `'${op.text}' cannot be combined with '${spelled(right.rule)}' without parentheses — JavaScript rejects it`,
           op.pos,
         );
       }
@@ -591,7 +628,7 @@ class Parser {
       // A prefix operator's operand stands to its RIGHT.
       if (mixingRefused(rule, argument.rule, "right")) {
         throw new ParseError(
-          `'${op.text}' cannot be combined with '${argument.rule}' without parentheses — JavaScript rejects it`,
+          `'${op.text}' cannot be combined with '${spelled(argument.rule)}' without parentheses — JavaScript rejects it`,
           op.pos,
         );
       }
@@ -610,7 +647,11 @@ class Parser {
     for (;;) {
       const rule = INFIX.get(this.c.type);
       if (rule === undefined || rule.prec !== MAX_PRECEDENCE || rule.fixity !== "postfix") return out;
-      out = this.tail(out.expr, this.c.next());
+      // Once a `?.` appears the whole chain is an OPTIONAL CHAIN in JavaScript, so
+      // the rule it reports stays through every later link: `a?.b.c = 1` is as
+      // much a SyntaxError as `a?.b = 1`.
+      const next = this.tail(out.expr, this.c.next());
+      out = out.rule === "optionalMemberAccess" ? { expr: next.expr, rule: out.rule } : next;
     }
   }
 
@@ -942,6 +983,11 @@ class Parser {
     // reserved word is a legal key but not a legal shorthand: `({ in })` and
     // `({ null })` are SyntaxErrors, and only `undefined` is an identifier there.
     if (key.kind === "static" && !this.c.is("Colon")) {
+      if (t.type === "Dollar") {
+        // `{ $abs }` is legal JavaScript shorthand for an identifier `$abs`, but
+        // `$abs` names an operator here and has no value to stand for.
+        throw new ParseError(`Expected ':' after '${key.name}' — write '${key.name}: <value>'`, this.c.peek().pos);
+      }
       if (t.type !== "Ident" && t.type !== "Undefined") {
         throw new ParseError(
           `Expected ':' after '${key.name}' — a reserved word cannot be a shorthand property. Write '${key.name}: <value>'`,

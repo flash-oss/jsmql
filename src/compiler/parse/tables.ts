@@ -49,7 +49,7 @@ type Row = {
   fixity?: Rule["fixity"];
   noMixWith?: readonly string[];
   leftOperandNot?: readonly string[];
-  neverAWriteTarget?: string;
+  neverAWriteTarget?: { instead: string };
   word?: string;
   where?: readonly string[];
   becomes?: unknown;
@@ -178,6 +178,18 @@ export const NEVER_A_WRITE_TARGET: ReadonlyMap<ProductionKey, { spelling: string
     .filter(([, r]) => r.neverAWriteTarget !== undefined)
     .map(([name, r]) => [
       name,
-      { spelling: (r as { spelling?: string }).spelling ?? name, hint: r.neverAWriteTarget as string },
+      {
+        spelling: (r as { spelling?: string }).spelling ?? name,
+        hint: (r.neverAWriteTarget as { instead: string }).instead,
+      },
     ]),
+);
+
+/**
+ * Production key → its `spelling`, for a message. A key like `negation` or
+ * `logicalOr` is a descriptive name nobody types; a refusal names the operator
+ * the way the developer wrote it (`'-'`, `'||'`).
+ */
+export const SPELLING: ReadonlyMap<ProductionKey, string> = new Map(
+  rows.map(([name, r]) => [name, (r as { spelling?: string }).spelling ?? name]),
 );

@@ -172,7 +172,7 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * rather than matched by name in the pass, which is how the pass stays free of
    * a list that would have to grow with the language.
    */
-  mutatesArgument?: number;
+  mutatesArgumentAt?: number;
   returns: Returns;
   where: W;
   only?: readonly Only[];
@@ -374,10 +374,11 @@ const mongo = <
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
 
 /**
- * The units every date operator's `unit` key accepts. MEASURED: `"days"` and
- * `"Day"` are both refused ("unknown time unit value"), so the list is exact and
- * case-sensitive. One constant, because five rows spell it and one stale copy
- * would refuse a unit the server takes, or accept one it does not.
+ * The units a DATE operator's `unit` key accepts. MEASURED: `"days"` and `"Day"`
+ * are both refused ("unknown time unit value"), so the list is exact and
+ * case-sensitive. One constant for every row that spells it, so a stale copy
+ * cannot refuse a unit the server takes or accept one it does not. The window
+ * operators take a NARROWER set — see `WINDOW_TIME_UNIT`.
  */
 const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
 
@@ -387,6 +388,14 @@ const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", 
  * `"funday"` is refused ("cannot be recognized as a day"). A row that listed the
  * seven long names alone refused valid MQL, which is the dangerous direction.
  */
+/**
+ * The units a WINDOW operator's `unit` accepts — `$derivative` and `$integral`.
+ * MEASURED: `unit: "month"` → "unit must be 'week' or smaller". A different set
+ * from `TIME_UNIT`, so it has a different name; one constant for the two rows
+ * that gave the nine-unit list a meaning the server refuses.
+ */
+const WINDOW_TIME_UNIT = ["week", "day", "hour", "minute", "second", "millisecond"] as const;
+
 const WEEKDAY = [
   "monday",
   "tuesday",
@@ -1296,7 +1305,7 @@ export const NAMES = {
         required: ["input", "regex"],
         optional: ["options"],
         closed: true,
-        charSets: { options: "imxs" },
+        charSets: { options: "imxsu" },
         positional: ["input", "regex", "options"],
       },
     },
@@ -1319,7 +1328,7 @@ export const NAMES = {
         required: ["input", "regex"],
         optional: ["options"],
         closed: true,
-        charSets: { options: "imxs" },
+        charSets: { options: "imxsu" },
         positional: ["input", "regex", "options"],
       },
     },
@@ -1342,7 +1351,7 @@ export const NAMES = {
         required: ["input", "regex"],
         optional: ["options"],
         closed: true,
-        charSets: { options: "imxs" },
+        charSets: { options: "imxsu" },
         positional: ["input", "regex", "options"],
       },
     },
@@ -2312,7 +2321,7 @@ export const NAMES = {
         required: ["date"],
         optional: ["timezone", "iso8601"],
         closed: true,
-        keyTypes: { date: "date", timezone: "string" },
+        keyTypes: { date: "date", timezone: "string", iso8601: "bool" },
         positional: ["date", "timezone", "iso8601"],
       },
     },
@@ -2360,7 +2369,7 @@ export const NAMES = {
         closed: true,
         enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
         caseInsensitiveKeys: ["startOfWeek"],
-        keyTypes: { date: "date", binSize: "number", timezone: "string" },
+        keyTypes: { date: "date", binSize: "int-or-long", timezone: "string" },
         positional: ["date", "unit", "binSize", "timezone", "startOfWeek"],
       },
     },
@@ -2621,7 +2630,7 @@ export const NAMES = {
     shape: {
       object: {
         required: ["input", "to"],
-        optional: ["onError", "onNull"],
+        optional: ["onError", "onNull", "format", "byteOrder"],
         closed: true,
         enums: {
           to: [
@@ -2645,6 +2654,7 @@ export const NAMES = {
             "decimal",
             "minKey",
             "maxKey",
+            "undefined",
           ],
         },
         positional: ["input", "to", "onError", "onNull"],
@@ -2989,7 +2999,7 @@ export const NAMES = {
     where: ["value"],
     minVersion: "8.3",
     shape: {
-      object: { required: [], optional: ["input", "algorithm"], closed: true, positional: ["input", "algorithm"] },
+      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
     },
     filter: unsupported("'$hash' is not valid in filter position — see its 'where'."),
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
@@ -3007,7 +3017,7 @@ export const NAMES = {
     where: ["value"],
     minVersion: "8.3",
     shape: {
-      object: { required: [], optional: ["input", "algorithm"], closed: true, positional: ["input", "algorithm"] },
+      object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
     },
     filter: unsupported("'$hexHash' is not valid in filter position — see its 'where'."),
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
@@ -3402,7 +3412,7 @@ export const NAMES = {
         required: ["input"],
         optional: ["unit"],
         closed: true,
-        enums: { unit: TIME_UNIT },
+        enums: { unit: WINDOW_TIME_UNIT },
         positional: ["input", "unit"],
       },
     },
@@ -3463,7 +3473,7 @@ export const NAMES = {
         required: ["input"],
         optional: ["unit"],
         closed: true,
-        enums: { unit: TIME_UNIT },
+        enums: { unit: WINDOW_TIME_UNIT },
         positional: ["input", "unit"],
       },
     },
@@ -4670,10 +4680,12 @@ export const NAMES = {
     params: { value: ["value"], stream: ["value", "value"] },
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, and no argument is the natural order',
       },
       stream: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys; a stream has no natural order, so a key is required',
       },
     },
     returns: { array: "array", stream: "stream" },
@@ -4695,10 +4707,12 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); no argument is the natural order',
       },
       stream: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"` or `["k", "j"]` names the keys, ascending; `{ k: -1 }` is refused here (lodash reads an object as a matcher); a stream has no natural order, so a key is required',
       },
     },
     returns: { array: "array", stream: "stream" },
@@ -4718,10 +4732,12 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"`, `("k", "desc")`, `(["k"], ["desc"])` or `{ k: -1 }` — keys with directions; at least one key is required',
       },
       stream: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"`, `("k", "desc")`, `(["k"], ["desc"])` or `{ k: -1 }` — keys with directions; at least one key is required',
       },
     },
     returns: { array: "array", stream: "stream" },
@@ -5055,7 +5071,8 @@ export const NAMES = {
     params: { statement: ["value"], stream: ["value", "value"] },
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+        sortSpec:
+          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order — as a statement, writing the field back',
       },
     },
     returns: "unknown",
@@ -8040,7 +8057,7 @@ export const NAMES = {
     iterateeSlots: {
       stream: {
         arrowOnly:
-          "the callback is a block of pipeline stages, `(o) => { $stage(…); … }`, and nothing else stands in for it",
+          "a block of pipeline stages, `(o) => { $stage(…); … }`, or a stage-array literal `[{ $stage: … }]`; no shorthand stands in for either",
       },
     },
     returns: "stream",
@@ -8074,7 +8091,7 @@ export const NAMES = {
     doc: "'Object.assign(target, ...sources)' — emits $mergeObjects. At statement position it writes the target.",
     call: true,
     on: "Object",
-    mutatesArgument: 0,
+    mutatesArgumentAt: 0,
     returns: "object",
     where: ["value", "statement"],
     filter: viaFallback,

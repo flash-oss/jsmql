@@ -168,6 +168,13 @@ receiver chain is rooted in a context reference to pick the stream family, and
 never reads the call's own position for it — `$ = { k: $$.map({ a: 1 }) }` and
 `$$ = $$.map({ a: 1 })` rewrite the same shorthand the same way.
 
+One consequence for stage links: a chained stage on a context-rooted chain is a
+stage WHEREVER the chain stands, so its body layout is consulted even when the
+chain's top is a value to its parent — `$.o = $$$.orders.filter(p).$group({ …,
+s: $sum($.x) })` puts `$sum` at `group`, exactly as `$group({ … });` does. And a
+callee whose row says `blockBody: "stages"` takes them as an array too:
+`$$.aggregate([$match(…)])` puts each element at `statement`.
+
 ## The three answers that are not positions
 
 `edge` also returns three things `Position` does not name:

@@ -126,8 +126,16 @@ export function foldNewDate(args: readonly unknown[]): Evaluation {
   return ok(new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms)));
 }
 
-/** `Date.UTC(…)` — the same parts, answered as a number of milliseconds. */
+/**
+ * `Date.UTC(…)` — the same parts, answered as a number of milliseconds.
+ *
+ * ONE number is a YEAR here, where `new Date(n)` reads it as milliseconds:
+ * `Date.UTC(2020)` is 1577836800000 in JavaScript and `$toLong($dateFromParts
+ * { year: 2020 })` in the shipped compiler. Routed through the parts form so
+ * the two spellings cannot disagree.
+ */
 export function foldDateUTC(args: readonly unknown[]): Evaluation {
-  const date = foldNewDate(args);
+  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 1] : args;
+  const date = foldNewDate(parts);
   return date.ok ? ok((date.value as Date).getTime()) : NO;
 }

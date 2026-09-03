@@ -156,10 +156,15 @@ describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod
       const rows = await coll.aggregate([wrap.window(doc), { $project: { _id: 0, r: 1 } }]).toArray();
       return rows.map((d) => d.r);
     };
+    // `$addToSet` is a SET: its element order is unspecified (SR2), so the two
+    // forms are compared as sets. Every other accumulator here is ordered.
+    const asSet = (v: unknown): unknown =>
+      Array.isArray(v) ? v.map((row) => [...(row as unknown[])].map((e) => JSON.stringify(e)).sort()) : v;
     for (const name of ["$sum", "$avg", "$min", "$max", "$first", "$last", "$push", "$addToSet"]) {
       const bare = await value({ [name]: ["$n", "$m"] });
       const shielded = await value({ [name]: { $let: { vars: {}, in: ["$n", "$m"] } } });
-      expect(shielded, name).toEqual(bare);
+      if (name === "$addToSet") expect(asSet(shielded), name).toEqual(asSet(bare));
+      else expect(shielded, name).toEqual(bare);
     }
   });
 });

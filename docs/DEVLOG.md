@@ -10,6 +10,62 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-27 — fix(compiler): the after-audit of the phase 1–4 hardening — fifteen more, and five registry rows the server contradicts
+
+Three auditors re-read the hardening commit. The first confirmed all sixteen hazards closed, with a
+probe per hazard. The second hunted for what the rewrite had made wrong and found fifteen items; the
+third reviewed the registry data changes against the developer's laws and the server, and found five
+more rows the server contradicts. Everything measured is fixed here.
+
+**Silent wrong output.** `Date.UTC(2020)` folded to 2020 — one number is a YEAR there, where
+`new Date(n)` reads milliseconds; JavaScript answers 1577836800000 and so does the shipped
+`$toLong($dateFromParts{year:2020})`. `Number(" 12 ")` and `Number("0x10")` folded where `$toDouble`
+says "Failed to parse number" and "Illegal hexadecimal input": a fold accepts only the plain decimal
+spelling the server parses. A constant that evaluates to `-0` threw ("no MongoDB literal"); it is a
+value the server computes (`$ceil: -0.5`) but one the driver would send as a double where the same
+arithmetic gives an int, so it keeps its runtime binding — an error only for `NaN` and `Infinity`,
+which no expression yields. The one escape decoder knew `n t r` and turned `"\x41"` into "x41" (the
+shipped compiler does the same); it decodes the JavaScript set now — `b f v 0`, `\xHH`, `\uHHHH`,
+`\u{…}`. `.aggregate([$match(…)])` put its stages at `value`: a callee whose row says
+`blockBody: "stages"` takes them as an array too. And a chained stage at the top of a context-rooted
+chain in a value slot — `$.o = $$$.orders.filter(p).$group({…})` — never reached its body layout,
+because the layout was consulted only where a stage may stand; a stage link on a stream is a stage
+wherever the chain lands.
+
+**The strict-subset rule, both directions.** `$.a?.b.c = 1` was accepted: the rule the parser reports
+for a chain was that of its LAST link, so a `?.` two links back was forgotten — an optional chain is
+one expression in JavaScript, and the rule now stays with it. `$.a + 1 = 2`, `1 = 2`, `"x" = 1` and
+`f() = 1` were accepted: a write target must be a PLACE (a field, a binding, `$`, `$$`, a collection,
+or an access on one) and is refused otherwise, as the shipped compiler did. `$ abs(1)` was accepted:
+the sigil and its name are one identifier, so a space between them is refused. The other way:
+`($.a) = 1` was refused (the write lookahead on `(` asked only whether a write sat INSIDE the
+parentheses), and `delete $.a?.b` was refused although it is legal — the write-target rule applies to
+assignment and the increments, not to `delete`, and the row's comment said so wrongly. A leading `;`
+did not count as "a `;`" (the token that says pipeline); `1.e3` lexed as "field e3 of 1" — a `.` after
+integer digits always belongs to the number, as in JavaScript, so `1.foo` is the SyntaxError it is.
+Mixing refusals named a production by its KEY (`'negation'`); they name it by its `spelling` (`'-x'`)
+— the rows have that field for exactly this.
+
+**Registry rows the server contradicts.** `$derivative` and `$integral` stated the nine date units
+where the server accepts week and smaller ("unit must be 'week' or smaller") — the `TIME_UNIT`
+hoist had given six rows one list when two had a narrower domain, so a second constant,
+`WINDOW_TIME_UNIT`, states the narrower set. `$dateTrunc.binSize` must be an integer (1.5 → "requires
+'binSize' to be a 64-bit integer"); `$dateToParts.iso8601` a bool. `$regexMatch`/`$regexFind`/
+`$regexFindAll` accept the `u` option; `$convert` accepts `to: "undefined"`, `format` and `byteOrder`;
+`$hash`/`$hexHash` require both `input` and `algorithm` ("Missing 'algorithm' parameter"). Each was
+refusing valid MQL or emitting invalid MQL, and the shipped compiler's own table has the same defects.
+
+**Laws.** The `sortSpec` text was one generic sentence pasted on seven family entries, and the
+shipped compiler contradicted it on six of them (`sortBy` refuses an object; a stream `toSorted`
+needs a key; `orderBy` needs an argument) — a stated fact must be true, so each entry now states its
+own row's accepted spellings. `aggregate` also takes a stage-array literal, which its `arrowOnly` text
+denied. `neverAWriteTarget` held prose under a flag-shaped name; it is `{ instead }`.
+`mutatesArgument: 0` read as "no" under a boolean-shaped name; it is `mutatesArgumentAt`. The fold's
+"read before declaration" check counted a lambda's own parameter as a read of a later declaration and
+kept a binding it could have folded; it walks with the binders now.
+
+---
+
 ## 2026-08-27 — fix(compiler): phases 1–4 hardened against fourteen silent-wrong-output hazards
 
 An extensibility review of the new compiler's first four phases — before phase 5 is built on them —

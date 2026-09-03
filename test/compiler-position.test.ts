@@ -109,6 +109,23 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(census("{ $match: { a: 1 } };")).toContain("filter ObjectLiteral");
   });
 
+  it("reads the array form of a stages-taking callee as statements", () => {
+    // `$$.aggregate([$match(…)])` — the row says the callback is a block of
+    // stages, and an array of them is the same list.
+    expect(positionOfNode("$$.aggregate([$match($.x > 1)]);", "$match(…)")).toBe("statement");
+  });
+
+  it("lays out a chained stage link wherever its context-rooted chain stands", () => {
+    // The chain's top link is a value to its parent, but `$group` on a stream is a
+    // stage: its body must reach the group slot, or `$sum($.x, $.y)` inside it
+    // is checked as a two-operand expression and emitted as one.
+    expect(positionOfNode("$.o = $$$.orders.filter(x => x.a).$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe(
+      "group",
+    );
+    expect(positionOfNode("$ = { a: $$.$group({_id: null, s: $sum($.x)}) };", "$sum(…)")).toBe("group");
+    expect(positionOfNode("$.o = $$$.orders.$match($.a > 1);", "BinaryExpr")).toBe("filter");
+  });
+
   it("consults a layout only where a stage may stand", () => {
     // `$count` is a stage AND an accumulator. Inside `$group` its arguments are an
     // operator's, and the stage layout must not claim them.

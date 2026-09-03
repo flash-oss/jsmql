@@ -433,3 +433,44 @@ describe("compiler/parse — one statement loop", () => {
     expect(at("({ $ }) => { $.a = 1; return $.b }")).toBe("({ $ }) => { $.a = 1; ".length);
   });
 });
+
+describe("compiler/parse — a write target is a place, and an optional chain is one expression", () => {
+  it("refuses an optional chain anywhere in the target, not only at its end", () => {
+    // `a?.b.c = 1` is as much a SyntaxError as `a?.b = 1` (node --check); the
+    // rule that built the chain must stay with it through every later link.
+    for (const src of ["$.a?.b.c = 1;", "$.a?.b[0] = 1;", "$.a?.b.c++;", "$.a?.b.c += 1;", "$.a = $.b?.c.d = 1;"]) {
+      expect(() => parse(src), src).toThrow(/cannot be assigned to/);
+    }
+  });
+
+  it("lets `delete` reach through an optional chain, which JavaScript allows", () => {
+    expect(() => parse("delete $.a?.b;")).not.toThrow();
+  });
+
+  it("refuses a target that is not a place", () => {
+    for (const src of ["$.a + 1 = 2;", "1 = 2;", '"x" = 1;', "$.a = 1 = 2;", "++$.a + 1;", "f() = 1;"]) {
+      expect(() => parse(src), src).toThrow(/Cannot apply|cannot be assigned/);
+    }
+  });
+
+  it("accepts a parenthesised target", () => {
+    expect(() => parse("($.a) = 1;")).not.toThrow();
+  });
+
+  it("refuses a space between `$` and its name", () => {
+    // `$ abs(1)` is two identifiers to JavaScript.
+    expect(() => parseExpression("$ abs(1)")).toThrow(/directly after '\$'/);
+    expect(() => parse("$$.$ group({_id: null});")).toThrow(/directly after '\$'/);
+  });
+
+  it("counts a leading `;` as the pipeline token", () => {
+    expect(parse("; $.a > 1").type).toBe("Pipeline");
+  });
+
+  it("names an operator by its spelling in a mixing refusal, never by its key", () => {
+    // The negation row's spelling is `-x`; its key, `negation`, must never reach the user.
+    expect(() => parseExpression("-2 ** 2")).toThrow(/'-x'/);
+    expect(() => parseExpression("-2 ** 2")).not.toThrow(/negation/);
+    expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/'\|\|'/);
+  });
+});

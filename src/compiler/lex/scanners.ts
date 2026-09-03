@@ -70,8 +70,11 @@ export function scanNumber(src: string, start: number): Scan {
   let i = digits(src, start, isDigit);
   let fraction = false;
   let exponent = false;
-  // Only a digit after the dot makes a fraction, so `0.name` stays a member access.
-  if (src[i] === "." && isDigit(src[i + 1])) {
+  // A `.` after the integer digits always belongs to the number, as in JavaScript:
+  // `1.e3` is 1000 and `1.foo` is a SyntaxError, so a member access on a bare
+  // integer needs the second dot (`1..toString()`). Reading the dot as an access
+  // gave `1.e3` the meaning "field e3 of 1".
+  if (src[i] === ".") {
     fraction = true;
     i = digits(src, i + 1, isDigit);
   }
@@ -91,20 +94,38 @@ export function scanNumber(src: string, start: number): Scan {
   return { token: spanned("Number", src.slice(start, i).replace(/_/g, ""), start, i), next: i };
 }
 
-const ESCAPES: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r" };
+const ESCAPES: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r", b: "\b", f: "\f", v: "\v", 0: "\0" };
 
 /**
  * ONE escape sequence, at the backslash `src[i]`: the character it stands for,
- * and the index just past it. A letter with no entry stands for itself, so
+ * and the index just past it. The JavaScript set: the named escapes above,
+ * `\xHH`, `\uHHHH` and `\u{H…}`; any other character stands for itself, so
  * `\\` is a backslash and `\"` a quote.
  *
  * The single decoder for every quoted form. A string and a template used to
  * decode separately, and the template copy dropped the backslash and KEPT the
- * letter — `\`a\nb\`` read as "anb". One decoder, one answer.
+ * letter — `\`a\nb\`` read as "anb"; and both read `"\x41"` as "x41". One
+ * decoder, one answer.
  */
 export function decodeEscape(src: string, i: number): { text: string; next: number } {
   const esc = src[i + 1];
-  return { text: esc === undefined ? "" : (ESCAPES[esc] ?? esc), next: i + 2 };
+  if (esc === undefined) return { text: "", next: i + 2 };
+  if (esc === "x" && isHex(src[i + 2]) && isHex(src[i + 3])) {
+    return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 4), 16)), next: i + 4 };
+  }
+  if (esc === "u") {
+    if (src[i + 2] === "{") {
+      const close = src.indexOf("}", i + 3);
+      const hex = close === -1 ? "" : src.slice(i + 3, close);
+      if (hex.length > 0 && [...hex].every((c) => isHex(c))) {
+        const point = parseInt(hex, 16);
+        if (point <= 0x10ffff) return { text: String.fromCodePoint(point), next: close + 1 };
+      }
+    } else if ([2, 3, 4, 5].every((k) => isHex(src[i + k]))) {
+      return { text: String.fromCharCode(parseInt(src.slice(i + 2, i + 6), 16)), next: i + 6 };
+    }
+  }
+  return { text: ESCAPES[esc] ?? esc, next: i + 2 };
 }
 
 /** A quoted string. `text` is the DECODED value, so the span is given explicitly. */

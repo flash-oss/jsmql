@@ -90,9 +90,9 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
       if (readSoFar.has(stmt.name)) excluded.add(stmt.name);
     }
-    for (const node of everyNode(stmt as Any)) {
-      if (node.type === "Ident" && typeof node.name === "string") readSoFar.add(node.name);
-    }
+    // A name BOUND inside the statement — a lambda's parameter — is not a read of
+    // the outer name: `$.items.some(k => k > 1); const k = 5` folds `k`.
+    for (const name of freeNamesIn(stmt as Any)) readSoFar.add(name);
   }
 
   for (const stmt of stmts) {
@@ -130,6 +130,24 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
     }
   }
   return excluded;
+}
+
+/** Every bare name a statement reads that no binder inside it introduces. */
+function freeNamesIn(stmt: Any): ReadonlySet<string> {
+  const out = new Set<string>();
+  const step = (node: object, key: string, here: ReadonlySet<string>): ReadonlySet<string> => {
+    const names = bindsFor(node, key);
+    if (names.length === 0) return here;
+    const next = new Set(here);
+    for (const n of names) next.add(n);
+    return next;
+  };
+  mapTreeIn(stmt as object, new Set<string>() as ReadonlySet<string>, step, (node, bound) => {
+    const n = node as Any;
+    if (n.type === "Ident" && typeof n.name === "string" && !bound.has(n.name)) out.add(n.name);
+    return node;
+  });
+  return out;
 }
 
 /** Every node of a statement with the position it stands in, the statement itself at STATEMENT. */

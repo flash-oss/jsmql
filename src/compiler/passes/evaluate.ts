@@ -91,7 +91,12 @@ function nameIfUnspellable(value: unknown): string | null {
 /** Every value leaves through here, so one check covers every rule. */
 function spellable(value: unknown): Evaluation {
   const name = nameIfUnspellable(value);
-  return name === null ? ok(value) : unspellable(name);
+  if (name === null) return ok(value);
+  // `-0` is a legal value the server computes (`$ceil: -0.5` → -0) but not one
+  // a fold may WRITE: the driver sends a double where the same arithmetic gives
+  // MongoDB an int 0. So it stays a runtime binding — not an error, unlike NaN
+  // and Infinity, which no MongoDB expression yields.
+  return name === "-0" ? NOT_CONSTANT : unspellable(name);
 }
 
 /**

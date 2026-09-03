@@ -151,7 +151,7 @@ export function namespaceNames(): ReadonlySet<string> {
  * binding passed there is no longer the constant it was declared as.
  */
 export function mutatedArgumentOf(name: string): number | undefined {
-  return (row(name) as { mutatesArgument?: number } | undefined)?.mutatesArgument;
+  return (row(name) as { mutatesArgumentAt?: number } | undefined)?.mutatesArgumentAt;
 }
 
 /**

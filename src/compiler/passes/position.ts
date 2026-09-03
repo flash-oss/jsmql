@@ -12,8 +12,8 @@
 
 import type { Position } from "../../registry/vocabulary.ts";
 import type { BodyPath, BodySlot } from "../rows.ts";
-import { bodySlotAt, isStageName } from "../rows.ts";
-import { chainBase, isContextRef, namedRow, namesSomething, staticKey } from "./naming.ts";
+import { blockBodyOf, bodySlotAt, isStageName } from "../rows.ts";
+import { chainBase, isContextRef, namedRow, namesSomething, readsAContextRef, staticKey } from "./naming.ts";
 
 /**
  * Where a node stands: one of the seven positions, or one of the three answers
@@ -83,15 +83,23 @@ export function edge(node: object, key: string, here: Where): Where {
   if (n.type === "ArrayLiteral" && key === "elements" && here.at === "statement") return STATEMENT;
 
   // A stage's argument is its BODY — `$match($.a > 1)` and `$$.$match($.a > 1)`
-  // alike; the chained spelling is a MethodCall and names the same row. Only where
-  // a stage may stand: `$count` is also an accumulator, and inside `$group` its
-  // arguments are an operator's, not a body.
-  if ((n.type === "OperatorCall" || n.type === "MethodCall") && key === "args" && stageMayStand(here)) {
-    const stage = namedRow(n);
-    if (stage !== null && isStageName(stage)) {
-      const slot = bodySlotAt(stage, []);
-      if (slot !== undefined) return reached(stage, [], slot, (n.args as readonly unknown[] | undefined)?.[0]);
+  // alike; the chained spelling is a MethodCall and names the same row. Where a
+  // stage may stand, OR as a link of a chain rooted in a context reference: the
+  // link `$$$.orders.filter(p).$group({…})` is a stage wherever the chain lands,
+  // because its receiver is a stream. Not otherwise: `$count` is also an
+  // accumulator, and inside `$group` its arguments are an operator's, not a body.
+  if ((n.type === "OperatorCall" || n.type === "MethodCall") && key === "args") {
+    const onStream = n.type === "MethodCall" && readsAContextRef(n.object as object);
+    if (stageMayStand(here) || onStream) {
+      const stage = namedRow(n);
+      if (stage !== null && isStageName(stage)) {
+        const slot = bodySlotAt(stage, []);
+        if (slot !== undefined) return reached(stage, [], slot, (n.args as readonly unknown[] | undefined)?.[0]);
+      }
     }
+    // A callee whose row takes a block of STAGES takes them as an array too:
+    // `$$.aggregate([$match(…)])` — each element is a statement.
+    if (n.type === "MethodCall" && typeof n.name === "string" && blockBodyOf(n.name) === "stages") return STATEMENT;
   }
   // `{ $match: { … } }` — raw MQL pasted where a stage may stand. Its one entry's
   // value is the body.

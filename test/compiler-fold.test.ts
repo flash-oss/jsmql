@@ -434,3 +434,37 @@ describe("compiler/passes/fold — a declared function called with constants", (
     expect(useSite("function f(x) { return x * 2 } $.a = $.items.map(f => f(1));")).toContain("CallExpression");
   });
 });
+
+describe("compiler/passes/fold — the folds the server contradicted", () => {
+  it("reads one number in Date.UTC as a YEAR, as JavaScript and $dateFromParts do", () => {
+    // `Date.UTC(2020)` is 1577836800000; the shipped compiler emits
+    // `$toLong($dateFromParts{year:2020})` and mongod agrees. It folded to 2020.
+    const r = evaluate(parseExpression("Date.UTC(2020)"), new Map());
+    expect(r).toEqual({ ok: true, value: Date.UTC(2020, 0) });
+  });
+
+  it("refuses to fold a numeric string the server refuses to parse", () => {
+    // `$toDouble(" 12 ")` → "Failed to parse number"; `$toInt("0x10")` → "Illegal
+    // hexadecimal input". JavaScript accepts both, so the fold must not.
+    for (const src of ['Number(" 12 ")', 'Number("0x10")', 'parseInt("0x10")', 'parseFloat("1_000")']) {
+      expect(evaluate(parseExpression(src), new Map()).ok, src).toBe(false);
+    }
+    expect(evaluate(parseExpression('Number("12.5")'), new Map())).toEqual({ ok: true, value: 12.5 });
+  });
+
+  it("keeps a constant that evaluates to -0 as a runtime binding rather than throwing", () => {
+    // -0 is a value the server computes (`$ceil: -0.5`), but one the driver would
+    // send as a double where the same arithmetic gives an int 0 — so it is not
+    // written, and not an error either.
+    expect(() => desugar(parse("const x = 0 * -7; $.y === x"))).not.toThrow();
+    expect(JSON.stringify(desugar(parse("const x = 0 * -7; $.y === x")))).toContain("LetDecl");
+    expect(() => desugar(parse("const x = 1 / 0; $.y === x"))).toThrow(/Infinity/);
+  });
+
+  it("does not read a lambda parameter as a use of a later declaration", () => {
+    // `k` inside the lambda is the lambda's own; the later `const k` is read only
+    // by the second statement, and folds.
+    const out = JSON.stringify(desugar(parse("$match($.items.some(k => k > 1)); const k = 5; $match($.y === k);")));
+    expect(out).not.toContain("LetDecl");
+  });
+});

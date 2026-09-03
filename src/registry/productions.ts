@@ -95,12 +95,13 @@ export type ProductionSpec<
    */
   leftOperandNot?: L;
   /**
-   * The node this rule builds can never be the left of `=` or the operand of
-   * `delete`, and this is what to write instead. `a?.b = 1` is a JavaScript
-   * SyntaxError, so the parser refuses it from the row — the message is
-   * "'<spelling>' cannot be assigned to — JavaScript rejects it. <this text>".
+   * The node this rule builds can never be the left of `=`, `+=`, `++` or `--`,
+   * and what to write instead. `a?.b = 1` is a JavaScript SyntaxError (an
+   * optional chain anywhere in the target, not only at its end), so the parser
+   * refuses it from the row — the message is "'<spelling>' cannot be assigned to
+   * — JavaScript rejects it. <instead>". Not `delete`: `delete a?.b` is legal.
    */
-  neverAWriteTarget?: string;
+  neverAWriteTarget?: { instead: string };
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc, C>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown, C>;
   /** A link in a `$$ = $$…` chain. */
@@ -614,7 +615,7 @@ export const PRODUCTIONS = {
     precedence: 14,
     associativity: "left",
     fixity: "postfix",
-    neverAWriteTarget: "Drop the '?.' to write the field",
+    neverAWriteTarget: { instead: "Drop the '?.' to write the field" },
     on: "any",
     returns: "unknown",
     where: ["value"],

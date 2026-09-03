@@ -28,7 +28,7 @@ const familiesOf = (row: Row): readonly string[] =>
   row.on === undefined || row.on === "any" ? [] : Array.isArray(row.on) ? row.on : [row.on as string];
 
 describe("registry — every callback-taking name states its slot layout", () => {
-  it("states iterateeSlots for every family in `on`, as a layout or as arrowOnly", () => {
+  it("states iterateeSlots for every family in `on`: a layout, arrowOnly, or sortSpec", () => {
     // A row with `params` takes a callback. Without a layout the desugar pass
     // cannot tell `$.o.mapValues("name")` (refused — a two-parameter arrow only)
     // from `$.rows.uniqBy("id")` (a property-path shorthand), and phase 5 receives
