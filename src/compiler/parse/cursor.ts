@@ -81,15 +81,16 @@ export class Cursor {
   }
 
   /**
-   * Is the next token a reserved word that may still be used as a NAME?
-   * keywords.ts measures this per word: `$.typeof` and `$in(…)` work, `$.delete`
-   * does not.
+   * Is the next token a reserved word standing where a NAME is expected?
+   *
+   * Every keyword qualifies: JavaScript lets any IdentifierName follow `.` or
+   * precede `:` in an object literal, so `{ null: 1 }` and `$let({ in: … })` are
+   * names here. The lexer has already made the ones after an introducer plain
+   * `Ident`s; this catches the rest — an object key, chiefly.
    */
   isNameLike(): boolean {
-    const row = (KEYWORDS as Record<string, { token: TokenName; usableAsFieldName: boolean } | undefined>)[
-      this.peek().text
-    ];
-    return row !== undefined && row.usableAsFieldName && row.token === this.peek().type;
+    const row = (KEYWORDS as Record<string, { token: TokenName } | undefined>)[this.peek().text];
+    return row !== undefined && row.token === this.peek().type;
   }
 
   expect(type: TokenName): Token {

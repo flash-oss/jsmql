@@ -19,7 +19,7 @@ type Any = { type: string } & Record<string, unknown>;
 
 /** How a node reads in a census line, distinctly enough to assert on. */
 function label(n: Any): string {
-  if (n.type === "OperatorCall") return `${n.name}(…)`;
+  if (n.type === "OperatorCall" || n.type === "MethodCall") return `${n.name}(…)`;
   if (n.type === "KeyValueEntry") return `${(n.key as { name?: string })?.name ?? "[computed]"}:`;
   return n.type;
 }
@@ -97,6 +97,30 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     expect(positionOfNode("$project({one: [$.a, $.b]});", "ArrayLiteral")).toBe("value");
   });
 
+  it("lays out a stage body by the NAME the node carries, in every spelling", () => {
+    // Three spellings of one stage — a call, a chained link, a raw document —
+    // name the same row and read the same layout. The chained spelling used to
+    // bypass it: `$$.$group({…, s: $sum($.x, $.y)})` was checked as a two-operand
+    // expression (legal) and emitted the document mongod refuses.
+    expect(positionOfNode("$$ = $$.$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe("group");
+    expect(positionOfNode("$$ = $$.$match($.a > 1);", "BinaryExpr")).toBe("filter");
+    // The raw document holds two object literals: the stage document itself, at
+    // statement, and its body, at filter.
+    expect(census("{ $match: { a: 1 } };")).toContain("filter ObjectLiteral");
+  });
+
+  it("consults a layout only where a stage may stand", () => {
+    // `$count` is a stage AND an accumulator. Inside `$group` its arguments are an
+    // operator's, and the stage layout must not claim them.
+    expect(positionOfNode("$group({_id: null, n: $count()});", "$count(…)")).toBe("group");
+  });
+
+  it("positions a body that is not an object, under a layout that names keys", () => {
+    // `$merge`'s layout names `whenMatched`, so its body is `deeper` — but a string
+    // has nothing to descend into, and takes the body's own position.
+    expect(positionOfNode('$merge("out");', "StringLiteral")).toBe("value");
+  });
+
   it("resolves a computed key through the wildcard alone", () => {
     // `{ [k]: … }` cannot be known to be the key a row names, so a literal entry
     // can never claim it — but `$group`'s `"*": "group"` covers any key at all.
@@ -104,6 +128,35 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
     // $lookup names `pipeline` literally, so a computed key falls back to the
     // body's own default rather than being read as a sub-pipeline.
     expect(positionOfNode('let k = 1; $lookup({from: "t", [k]: [$.a]});', "ArrayLiteral")).toBe("value");
+  });
+});
+
+describe("compiler/passes/position — what is named, and what is a stream", () => {
+  it("puts the callee of a call at target, never at value", () => {
+    // Folding `f` away in `f(1)` gives `3(1)`; the fold and this pass share the
+    // one predicate (naming.ts) that says a callee names rather than values.
+    expect(positionOfNode("f($.a);", "Ident")).toBe("target");
+  });
+
+  it("reads a chain by its BASE, through an index as well as a member", () => {
+    // `$$$["archive"]` and `$$$.archive` are one collection; a reader that walked
+    // through `.` but not `[…]` gave the two different documents.
+    expect(positionOfNode('$$$["archive"].find(o => o.id === 1);', "IndexAccess")).toBe("stream");
+    // The chain's top link stands where its parent put it — an argument of `push`
+    // is a value — while the links below it are streams and `$$$` is a scope.
+    const lines = census("$$.push($$$.other.filter(x => x.a));");
+    expect(lines).toContain("stream MemberAccess");
+    expect(lines).toContain("value DatabaseRef");
+    expect(lines).toContain("value filter(…)");
+  });
+
+  it("puts the top link of `$$ = <chain>` at stream, so a chained stage reads its layout", () => {
+    const lines = census("$$ = $$.filter(d => d.x).map(d => d.y);");
+    expect(lines.filter((l) => l.startsWith("stream "))).toEqual([
+      "stream CollectionRef",
+      "stream filter(…)",
+      "stream map(…)",
+    ]);
   });
 });
 
@@ -127,20 +180,24 @@ describe("compiler/passes/position — the root position is the caller's fact", 
 });
 
 describe("compiler/rows — the body-layout resolver", () => {
-  it("says `deeper` until the path is a leaf", () => {
-    expect(bodySlotAt("$setWindowFields", [])).toEqual({ deeper: true });
-    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ deeper: true });
-    expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({ at: "window" });
-    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({ at: "value" });
+  it("says `deeper` until the path is a leaf, and the position at every depth", () => {
+    // Both facts at once: the position a leaf here would hold, and whether an
+    // object here must keep descending. `$merge("out")` needs the first with the
+    // second true — a string body under a layout that names `whenMatched` has no
+    // keys to descend into, and used to stay unpositioned.
+    expect(bodySlotAt("$setWindowFields", [])).toEqual({ at: "value", deeper: true });
+    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ at: "value", deeper: true });
+    expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({ at: "window", deeper: false });
+    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({ at: "value", deeper: false });
     // $match names no key, so its body is a leaf at once and everything in the
     // query document below it is query too.
-    expect(bodySlotAt("$match", [])).toEqual({ at: "filter" });
+    expect(bodySlotAt("$match", [])).toEqual({ at: "filter", deeper: false });
   });
 
   it("prefers a literal key over a `*` of the same depth", () => {
-    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value" });
-    expect(bodySlotAt("$group", ["total"])).toEqual({ at: "group" });
-    expect(bodySlotAt("$group", [null])).toEqual({ at: "group" });
+    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value", deeper: false });
+    expect(bodySlotAt("$group", ["total"])).toEqual({ at: "group", deeper: false });
+    expect(bodySlotAt("$group", [null])).toEqual({ at: "group", deeper: false });
   });
 
   it("answers nothing for a name that is not a stage", () => {

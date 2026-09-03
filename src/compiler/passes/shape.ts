@@ -10,35 +10,12 @@
 
 import type { Program } from "../../registry/ast.ts";
 import { lists } from "../rows.ts";
+import { namedRow, readsAContextRef } from "./naming.ts";
 
 /** The two documents a program can be. */
 export type Shape = "filter" | "pipeline";
 
 type Any = { type: string } & Record<string, unknown>;
-
-/**
- * The row a node names, or null when it names none.
- *
- * `$.items.sort()` names `sort`, `$match(…)` names `$match`, `assert(…)` names
- * `assert`, and `{ $match: … }` names `$match` through its single key — that
- * last one is raw MQL pasted in, which the language accepts as itself.
- */
-function namedRow(node: Any): string | null {
-  if (node.type === "MethodCall" || node.type === "OperatorCall") {
-    return typeof node.name === "string" ? node.name : null;
-  }
-  if (node.type === "CallExpression") {
-    const callee = node.callee as { type?: string; name?: string } | undefined;
-    return callee?.type === "Ident" && typeof callee.name === "string" ? callee.name : null;
-  }
-  if (node.type === "ObjectLiteral") {
-    const entries = node.entries as readonly Any[] | undefined;
-    if (entries?.length !== 1) return null;
-    const key = entries[0].key as { kind?: string; name?: string } | undefined;
-    return key?.kind === "static" && typeof key.name === "string" ? key.name : null;
-  }
-  return null;
-}
 
 /**
  * Is this node a statement rather than a value?
@@ -61,23 +38,6 @@ function statementShaped(node: Any): boolean {
   // `Pipeline` node, which the first clause above has already answered.
   if (lists(name, "value")) return false;
   return lists(name, "statement") || lists(name, "stream");
-}
-
-/**
- * Does this chain read from a context reference?
- *
- * `$$.take(10)` and `$$.$sort({ a: -1 }).take(3)` are stages however they end,
- * because what they read is the stream. Answered by walking down to the base —
- * the three references are three node types precisely so that a reader can ask
- * this without checking a level number.
- */
-function readsAContextRef(node: Any): boolean {
-  let cursor: Any | undefined = node;
-  while (cursor !== undefined && (cursor.type === "MethodCall" || cursor.type === "MemberAccess")) {
-    cursor = cursor.object as Any | undefined;
-  }
-  const base = cursor?.type;
-  return base === "CollectionRef" || base === "DatabaseRef" || base === "ClusterRef";
 }
 
 /**

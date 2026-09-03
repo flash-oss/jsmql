@@ -8,6 +8,14 @@
 //
 // Like tokens.ts, this file holds NO MQL. What a keyword MEANS is the production
 // it heads, and that lives in productions.ts.
+//
+// Every reserved word is also a legal NAME: JavaScript allows any IdentifierName
+// after `.` and before `:` in an object literal, and a MongoDB field may be named
+// anything. So `$.delete`, `{ null: 1 }` and `$in(…)` all compile — the lexer
+// reads the word as an `Ident` after an introducer (see `introducesName` in
+// tokens.ts) and the parser accepts any keyword token where a key is expected.
+// The one place a reserved word is NOT a name is the shorthand `{ in }`, which
+// JavaScript refuses; only `undefined` is an identifier there.
 
 import type { TokenName } from "./vocabulary.ts";
 
@@ -22,19 +30,6 @@ export type KeywordSpec = {
   doc: string;
   /** The token type the lexer promotes this word to. */
   token: TokenName;
-  /**
-   * Whether the word still works as a field name after `$.`. MEASURED, not
-   * assumed, and the answers do not follow a rule:
-   *
-   *   $.return  $.typeof  $.let  $.const  $.in  $.new   → all compile
-   *   $.delete  $.true    $.false  $.null  $.undefined  → all rejected
-   *
-   * `typeof` works and `delete` does not, which no principle explains — a
-   * MongoDB field may be named anything, so the six that work are right and
-   * `$.delete` is a bug. Recorded here as fact so the inconsistency is visible
-   * rather than discovered.
-   */
-  usableAsFieldName: boolean;
 };
 
 export type KeywordEntry = KeywordSpec & { kind: "keyword" };
@@ -42,36 +37,27 @@ export type KeywordEntry = KeywordSpec & { kind: "keyword" };
 const keyword = (e: KeywordSpec): KeywordEntry => ({ ...e, kind: "keyword" });
 
 export const KEYWORDS = {
-  return: keyword({ doc: "Yields a block's value.", token: "Return", usableAsFieldName: true }),
+  return: keyword({ doc: "Yields a block's value.", token: "Return" }),
 
-  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const", usableAsFieldName: true }),
+  const: keyword({ doc: "Binds a name that cannot be reassigned.", token: "Const" }),
 
-  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let", usableAsFieldName: true }),
+  let: keyword({ doc: "Binds a name that can be reassigned.", token: "Let" }),
 
-  in: keyword({ doc: "Tests membership of a value in an array.", token: "In", usableAsFieldName: true }),
+  in: keyword({ doc: "Tests membership of a value in an array.", token: "In" }),
 
-  new: keyword({ doc: "Marks a constructor call.", token: "New", usableAsFieldName: true }),
+  new: keyword({ doc: "Marks a constructor call.", token: "New" }),
 
-  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof", usableAsFieldName: true }),
+  typeof: keyword({ doc: "Gives the type name of a value.", token: "Typeof" }),
 
-  delete: keyword({
-    doc: "Removes a field from the document.",
-    token: "Delete",
-    // The odd one out among the six non-literal keywords. See usableAsFieldName.
-    usableAsFieldName: false,
-  }),
+  delete: keyword({ doc: "Removes a field from the document.", token: "Delete" }),
 
-  true: keyword({ doc: "The boolean true.", token: "True", usableAsFieldName: false }),
+  true: keyword({ doc: "The boolean true.", token: "True" }),
 
-  false: keyword({ doc: "The boolean false.", token: "False", usableAsFieldName: false }),
+  false: keyword({ doc: "The boolean false.", token: "False" }),
 
-  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null", usableAsFieldName: false }),
+  null: keyword({ doc: "An explicit null. Distinct from a missing field.", token: "Null" }),
 
-  undefined: keyword({
-    doc: "Absence. Compared with `===` it becomes an existence test.",
-    token: "Undefined",
-    usableAsFieldName: false,
-  }),
+  undefined: keyword({ doc: "Absence. Compared with `===` it becomes an existence test.", token: "Undefined" }),
 };
 
 export type KeywordKey = keyof typeof KEYWORDS;

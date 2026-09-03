@@ -423,11 +423,26 @@ export type SlotForm = "propertyPath" | "matchesObject" | "matchesPropertyPair" 
 export type IterateeSlots =
   | Readonly<Record<number, readonly SlotForm[]>>
   /**
-   * No slot on this receiver stands in for an arrow, and why. Spelled out rather
-   * than left as an empty layout: an omission and a decision look alike, and this
-   * is the half that a rewrite pass must not guess at.
+   * ONLY an arrow is accepted on this receiver, and why — every other spelling
+   * is refused. Spelled out rather than left as an empty layout: an omission and
+   * a decision look alike, and this is the half that a rewrite pass must not
+   * guess at.
    */
-  | { arrowOnly: string };
+  | { arrowOnly: string }
+  /**
+   * The non-arrow spellings here are a SORT SPECIFICATION, not an iteratee:
+   *   $.a.toSorted("k")          means an ORDER, `{ k: 1 }` — not `x => x.k`
+   *   $.a.toSorted({ k: -1 })    the same, descending
+   *   $.a.toSorted()             the natural order
+   * Accepted, read by mql-sort.ts, and never rewritten to a callback. A different
+   * fact from `arrowOnly` (those spellings are refused) and from a layout (those
+   * spellings MEAN an arrow), so it has its own name.
+   */
+  | { sortSpec: string };
+
+/** Is this an actual slot layout — the one variant a rewrite pass may read slots from? */
+export const isSlotLayout = (l: IterateeSlots): l is Readonly<Record<number, readonly SlotForm[]>> =>
+  !("arrowOnly" in l) && !("sortSpec" in l);
 
 /** An object-shaped body: operators in object style, and every stage. */
 export type BodyRule = {

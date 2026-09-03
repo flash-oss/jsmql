@@ -26,8 +26,11 @@ export type Rule = {
   prec: number;
   assoc: "left" | "right" | "none";
   fixity: "prefix" | "infix" | "postfix" | "ternary" | "prefixOrPostfix";
-  /** Levels this may not sit beside unparenthesised, because JavaScript forbids it. */
+  /** Levels this may not sit beside unparenthesised on EITHER side. See the row field. */
   noMixWith: readonly ProductionKey[];
+  /** Levels the LEFT operand may not be, unparenthesised. See the row field. */
+  leftOperandNot: readonly ProductionKey[];
+  /** The node this rule builds cannot be the left of `=` or the operand of `delete`. */
   neverAWriteTarget: boolean;
 };
 
@@ -45,8 +48,11 @@ type Row = {
   associativity?: "left" | "right" | "none";
   fixity?: Rule["fixity"];
   noMixWith?: readonly string[];
-  neverAWriteTarget?: true;
+  leftOperandNot?: readonly string[];
+  neverAWriteTarget?: string;
   word?: string;
+  where?: readonly string[];
+  becomes?: unknown;
 };
 
 const rows = Object.entries(PRODUCTIONS) as [ProductionKey, Row][];
@@ -67,7 +73,8 @@ function build(want: (f: Rule["fixity"]) => boolean): Map<TokenName, Rule> {
         assoc,
         fixity: row.fixity,
         noMixWith: (row.noMixWith ?? []) as readonly ProductionKey[],
-        neverAWriteTarget: row.neverAWriteTarget === true,
+        leftOperandNot: (row.leftOperandNot ?? []) as readonly ProductionKey[],
+        neverAWriteTarget: row.neverAWriteTarget !== undefined,
       });
       continue;
     }
@@ -82,7 +89,8 @@ function build(want: (f: Rule["fixity"]) => boolean): Map<TokenName, Rule> {
       ...seen,
       rules: [...seen.rules, name],
       noMixWith: [...seen.noMixWith, ...((row.noMixWith ?? []) as readonly ProductionKey[])],
-      neverAWriteTarget: seen.neverAWriteTarget || row.neverAWriteTarget === true,
+      leftOperandNot: [...seen.leftOperandNot, ...((row.leftOperandNot ?? []) as readonly ProductionKey[])],
+      neverAWriteTarget: seen.neverAWriteTarget || row.neverAWriteTarget !== undefined,
     });
   }
   return out;
@@ -109,12 +117,67 @@ export const WORDS: ReadonlyMap<string, ProductionKey> = new Map(
 export const MAX_PRECEDENCE: number = rows.reduce((m, [, r]) => Math.max(m, r.precedence ?? 0), 0);
 
 /**
- * Whether two levels may appear together without parentheses.
+ * Whether `inner` may stand as the given operand of `outer` without parentheses.
  *
- * JavaScript refuses `a ?? b || c` and `typeof a ** b` at ANY precedence, and a
- * number cannot say so — which is why nine such forms were accepted before the
- * rows stated it.
+ * JavaScript refuses `a ?? b || c` on either side and `-a ** 2` on the left only,
+ * at ANY precedence — a number cannot say so, which is why nine such forms were
+ * accepted before the rows stated it. The side matters: `2 ** -1` is valid.
  */
-export function mixingRefused(outer: Rule, inner: ProductionKey): boolean {
-  return outer.noMixWith.includes(inner);
+export function mixingRefused(outer: Rule, inner: string | null, side: "left" | "right"): boolean {
+  if (inner === null) return false;
+  if (outer.noMixWith.includes(inner as ProductionKey)) return true;
+  return side === "left" && outer.leftOperandNot.includes(inner as ProductionKey);
 }
+
+/**
+ * The token types that OPEN a write and nothing else: `delete`, `++`, `--`.
+ *
+ * Derived from the rows whose only position is `statement` and whose trigger is
+ * a prefix — the writes a `;`-statement, an array element and a parenthesised
+ * group all have to recognise, and used to recognise with four hand-written
+ * copies of the same three names.
+ */
+export const STATEMENT_PREFIX: ReadonlySet<TokenName> = new Set(
+  rows
+    .filter(([, r]) => {
+      const statementOnly = r.where !== undefined && r.where.length === 1 && r.where[0] === "statement";
+      const prefixed = r.fixity === "prefix" || r.fixity === "prefixOrPostfix";
+      return statementOnly && (prefixed || r.becomes === "DeleteStmt");
+    })
+    .map(([, r]) => lexemeToType(r.tokens[0]))
+    .filter((t): t is TokenName => t !== null),
+);
+
+/** Is this lexeme an OPERATOR token — `=`, `++` — rather than a bracket or a name? */
+function isOperatorLexeme(lexeme: string): boolean {
+  const tok = (TOKENS as Record<string, { role?: string } | undefined>)[lexeme];
+  return tok?.role === "operator";
+}
+
+/**
+ * The token types that turn an expression into a write when they FOLLOW it:
+ * `=`, `+=`, `++`, … — the OPERATOR tokens of every row that builds an
+ * `AssignExpr`. Only the operators: those rows also consume `$.`, `(` and `=>`
+ * on the way, and a `(` after an expression is a call, not a write.
+ */
+export const ASSIGN_TRIGGERS: ReadonlySet<TokenName> = new Set(
+  rows
+    .filter(([, r]) => r.becomes === "AssignExpr")
+    .flatMap(([, r]) => r.tokens.filter(isOperatorLexeme).map(lexemeToType))
+    .filter((t): t is TokenName => t !== null),
+);
+
+/**
+ * Production → its spelling, for every rule whose node can never be the left of
+ * `=` or the operand of `delete`. Read by the parser's write check, so the
+ * `optionalMemberAccess` row's `neverAWriteTarget` is enforced by the row it is
+ * written on rather than by a hand-coded `.optional` test.
+ */
+export const NEVER_A_WRITE_TARGET: ReadonlyMap<ProductionKey, { spelling: string; hint: string }> = new Map(
+  rows
+    .filter(([, r]) => r.neverAWriteTarget !== undefined)
+    .map(([name, r]) => [
+      name,
+      { spelling: (r as { spelling?: string }).spelling ?? name, hint: r.neverAWriteTarget as string },
+    ]),
+);

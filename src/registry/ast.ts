@@ -24,38 +24,48 @@
 // operators, spelled exactly as the source spells them
 // ═════════════════════════════════════════════════════════════════════════════
 
-export type BinaryOp =
-  | "??"
-  | "||"
-  | "&&"
-  | "|"
-  | "^"
-  | "&"
-  | "==="
-  | "!=="
-  | "=="
-  | "!="
-  | ">"
-  | ">="
-  | "<"
-  | "<="
-  | "in"
-  | "+"
-  | "-"
-  | "*"
-  | "/"
-  | "%"
-  | "**";
+/**
+ * `as const` lists with the types derived, like the static name-sets below, so
+ * the parser test can hold "every operator a row consumes is one of these" as
+ * runtime data. A type-level version was vacuous — `becomes` is not threaded
+ * through a const generic, so a conditional on it matched nothing.
+ */
+export const BINARY_OPS = [
+  "??",
+  "||",
+  "&&",
+  "|",
+  "^",
+  "&",
+  "===",
+  "!==",
+  "==",
+  "!=",
+  ">",
+  ">=",
+  "<",
+  "<=",
+  "in",
+  "+",
+  "-",
+  "*",
+  "/",
+  "%",
+  "**",
+] as const;
+export type BinaryOp = (typeof BINARY_OPS)[number];
 
 /** `typeof` is here rather than in its own node: it is a prefix operator. */
-export type UnaryOp = "!" | "-" | "~" | "typeof";
+export const UNARY_OPS = ["!", "-", "~", "typeof"] as const;
+export type UnaryOp = (typeof UNARY_OPS)[number];
 
 /**
  * Every spelling that writes to its target. The compound and the increment forms
  * are kept AS WRITTEN so the parser stays free of meaning; the desugar phase
  * rewrites them to `=` over a `BinaryExpr`.
  */
-export type AssignOp = "=" | "+=" | "-=" | "*=" | "/=" | "++" | "--";
+export const ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"] as const;
+export type AssignOp = (typeof ASSIGN_OPS)[number];
 
 // ═════════════════════════════════════════════════════════════════════════════
 // pieces that are not expressions on their own
@@ -152,11 +162,12 @@ export type Expr =
   /** `new X(…)`. The callee is an `Ident`; which constructor it is comes later. */
   | { type: "NewExpression"; callee: Expr; args: readonly CallArg[]; pos: number }
   /**
-   * The `$op(…)` escape hatch. `style` records how the source wrote the
-   * arguments, because a positional call maps onto the key order the operator's
-   * row states and an object call does not.
+   * The `$op(…)` escape hatch. How the arguments were written is not recorded:
+   * one argument is the operator's body by the SHAPE its row states, and a
+   * parser guess (`style: "object"` for any lone object literal) was wrong for
+   * every one-operand operator whose operand happens to be a document.
    */
-  | { type: "OperatorCall"; name: string; style: "positional" | "object"; args: readonly CallArg[]; pos: number }
+  | { type: "OperatorCall"; name: string; args: readonly CallArg[]; pos: number }
 
   // ── operators ─────────────────────────────────────────────────────────────
   | { type: "UnaryExpr"; op: UnaryOp; argument: Expr; pos: number }

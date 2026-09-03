@@ -9,9 +9,10 @@
 //   const k = "name"; $.items.map(k)   folds to   $.items.map("name")
 //                                    desugars to  $.items.map(x => x.name)
 //
-// Not every value has a literal spelling. A Date does not, so the fold pass
-// inlines the constant EXPRESSION for those instead — see `asLiteral` returning
-// null, and `fold.ts` for what it does about it.
+// Not every value has a literal spelling. A Date does not, so a declaration
+// holding one KEEPS ITS BINDING and is read at run time — see `asLiteral`
+// returning null, and `fold.ts` for why inlining the source expression instead
+// would carry its free names to every use site.
 
 import type { Expr } from "../../registry/ast.ts";
 // A leaf with no dependencies of its own — see its header for why jsmql mints

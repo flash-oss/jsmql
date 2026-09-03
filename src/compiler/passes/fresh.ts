@@ -11,6 +11,8 @@
 // mentions exactly what the rewrite splices into it. So the whole question is
 // answerable from the arguments in hand — no scope, no gensym counter, no state.
 
+import { introducedNames } from "./naming.ts";
+
 /** A node, a list of them, or a leaf. */
 type Slot = unknown;
 
@@ -30,13 +32,8 @@ export function namesIn(node: unknown, out: Set<string> = new Set()): Set<string
   }
   if (!isObj(node)) return out;
   if (node.type === "Ident" && typeof node.name === "string") out.add(node.name);
-  if (node.type === "Lambda" && Array.isArray(node.params)) {
-    for (const p of node.params) if (typeof p === "string") out.add(p);
-  }
-  // `LetDecl` / `FuncDecl` name a binding the body below them can reach.
-  if ((node.type === "LetDecl" || node.type === "FuncDecl") && typeof node.name === "string") {
-    out.add(node.name as string);
-  }
+  // A lambda's parameters, a declaration's name — see `introducedNames`.
+  for (const name of introducedNames(node)) out.add(name);
   for (const v of Object.values(node) as Slot[]) namesIn(v, out);
   return out;
 }

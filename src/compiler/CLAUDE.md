@@ -42,14 +42,20 @@ errors.ts      every message built from the registry's own text.
 
 lex/
   token.ts     the Token record and the source-position helpers.
-  lexer.ts     the longest-match loop over `TOKENS`, plus the four rules a table
-               cannot imply: maxRun, chooseBy, tracksDepth, resumesTemplateAtDepth.
+  lexer.ts     the longest-match loop over `TOKENS`, plus the five rules a table
+               cannot imply: maxRun, chooseBy, introducesName, tracksDepth,
+               resumesTemplateAtDepth.
   scanners.ts  number, string, template, regex, identifier. Algorithms, not tables:
                a table says which spelling makes which token, a scanner decides
                where a token ENDS.
 
-parse/         the Pratt loop driven by precedence / associativity / fixity.
-passes/        desugar (source → source), then position and shape (which
+parse/         the Pratt loop driven by precedence / associativity / fixity,
+               plus the mixing rules (noMixWith, leftOperandNot) and the one
+               NAME fact it reads: `blockBodyOf`, because only the parser holds a
+               callee and its `{ … }` body at the same time.
+passes/        naming.ts answers "which row does this node name", "what is the
+               chain's base" and "what does this node bind" ONCE for every pass;
+               desugar (source → source), then position and shape (which
                document the program becomes). See docs/specs/desugar-pass.md
                and docs/specs/position-pass.md.
 emit/          the lowerings, and the dispatcher that checks a row before running one.
@@ -59,7 +65,11 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
 
 - **No name is hard-coded.** If the compiler branches on a literal name (`"Math"`,
   `"$match"`, `".push"`), that fact belongs in a row instead. The one exception is
-  a token spelling inside a scanner, where the character IS the algorithm.
+  a token spelling inside a scanner, where the character IS the algorithm. The
+  same goes for a LIST of node types or of operator spellings: state it once, as
+  data the type checker can hold against the source of truth (`BINARY_OPS` in
+  ast.ts, `EVALUABLE_TYPES` + `NOT_ASKED_TYPES` in fold.ts), never as a hand copy
+  in a second file.
 - **Every rejection quotes the registry.** A message is either a row's own
   `unsupported(...)` text or built from a row's `args.sig`. No phase writes prose
   the registry could have carried.

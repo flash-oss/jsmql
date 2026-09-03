@@ -25,10 +25,15 @@
 //      collects those names, and they keep their runtime binding.
 
 import type { Expr, PipelineStmt, Program } from "../../registry/ast.ts";
+import type { NodeName } from "../../registry/vocabulary.ts";
 import { ParseError } from "../parse/cursor.ts";
+import { mutatedArgumentOf } from "../rows.ts";
 import { asLiteral } from "./literal.ts";
 import type { Constants } from "./evaluate.ts";
 import { asDeclaredFunction, evaluate } from "./evaluate.ts";
+import { bindsFor, namesSomething } from "./naming.ts";
+import type { Where } from "./position.ts";
+import { edge, STATEMENT } from "./position.ts";
 import { mapTree, mapTreeIn } from "./walk.ts";
 
 type Any = { type: string } & Record<string, unknown>;
@@ -95,43 +100,31 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
       if (declared.has(stmt.name)) excluded.add(stmt.name);
       declared.add(stmt.name);
     }
-    // A call that IS a statement mutates its receiver: `a.sort();` is the whole
-    // statement and nothing reads its result. The same call in value position
-    // answers with a new array and leaves the binding alone, so POSITION is the
-    // test — no list of method names has to be kept in step with the language.
-    if ((stmt as Any).type === "MethodCall") {
-      const receiver = rootName((stmt as Any).object);
-      if (receiver !== null) excluded.add(receiver);
-    }
-    // A nested statement list holds statements too.
-    for (const node of everyNode(stmt as Any)) {
-      const nested = node.type === "Pipeline" ? node.stmts : node.type === "ArrayLiteral" ? node.elements : null;
-      if (nested === null) continue;
-      for (const inner of (nested as readonly Any[]) ?? []) {
-        if (inner?.type !== "MethodCall") continue;
-        const receiver = rootName(inner.object);
-        if (receiver !== null) excluded.add(receiver);
-      }
-    }
-    for (const node of everyNode(stmt as Any)) {
+    // Walked WITH positions, because one of the tests below is about position:
+    // a call that IS a statement mutates its receiver — `a.sort();` is the whole
+    // statement and nothing reads its result — while the same call in value
+    // position answers with a new array and leaves the binding alone. Reading the
+    // node's shape instead of its position read `[xs.slice(1)]` in a value slot as
+    // a bracketed pipeline of mutations, and kept a constant it should have folded.
+    for (const [node, where] of everyNodeWithPosition(stmt as Any)) {
       // A write, however deep the path it writes through.
       if (node.type === "AssignExpr" || node.type === "DeleteStmt") {
         const name = rootName(node.target);
         if (name !== null) excluded.add(name);
       }
-      // A call on a binding, at any depth: `a.sort()` mutates and `Object.assign(a, …)`
-      // mutates, and neither wears an `=`. Every OTHER call on a binding produces a
-      // value and changes nothing — but telling those apart takes a list of method
-      // names that would then have to stay in step with the language, so a binding
-      // that is CALLED ON at all is simply left alone.
-      // `Object.assign(a, …)` mutates its first argument in place, wherever it stands.
-      if (node.type === "MethodCall" && node.name === "assign") {
-        const on = node.object as Any | undefined;
-        if (on?.type === "Ident" && on.name === "Object") {
-          for (const arg of (node.args as readonly unknown[]) ?? []) {
-            const name = rootName(arg);
-            if (name !== null) excluded.add(name);
-          }
+      if (node.type !== "MethodCall") continue;
+      if (where.at === "statement") {
+        const receiver = rootName(node.object);
+        if (receiver !== null) excluded.add(receiver);
+      }
+      // A call that writes one of its ARGUMENTS in place, wherever it stands —
+      // `Object.assign(a, …)`. Which argument is the row's fact, not a name matched
+      // here, so a second such name is a row and not a branch.
+      if (typeof node.name === "string") {
+        const index = mutatedArgumentOf(node.name);
+        if (index !== undefined) {
+          const name = rootName((node.args as readonly unknown[] | undefined)?.[index]);
+          if (name !== null) excluded.add(name);
         }
       }
     }
@@ -139,36 +132,23 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
   return excluded;
 }
 
+/** Every node of a statement with the position it stands in, the statement itself at STATEMENT. */
+function everyNodeWithPosition(stmt: Any): readonly (readonly [Any, Where])[] {
+  const out: (readonly [Any, Where])[] = [];
+  mapTreeIn(stmt as object, STATEMENT, edge, (node, where) => {
+    out.push([node as Any, where]);
+    return node;
+  });
+  return out;
+}
+
 // ── substitution ─────────────────────────────────────────────────────────────
 
 /** What travels down the tree while substituting. */
 type Scope = { shadowed: ReadonlySet<string>; naming: boolean };
 
-/**
- * Every name a node binds for the subtree under `key`.
- *
- * All of them, not the obvious two. A `Pipeline` binds every name declared
- * anywhere in it — `$$.aggregate(() => { const a = 2; … })` is a scope of its
- * own — and a block binds its declarations for the later declarations as well as
- * for the result. Missing either one lets an outer constant be pushed through an
- * inner declaration of the same name, which answers with the wrong value and
- * leaves the inner declaration standing, unread, one line above.
- */
-function shadowedIn(node: Any, key: string): readonly string[] {
-  if (node.type === "Lambda") return (node.params as readonly string[] | undefined) ?? [];
-  if (node.type === "ExprBlock") {
-    return ((node.decls as readonly Any[] | undefined) ?? []).map((d) => d.name as string);
-  }
-  // A nested statement list is a scope: a `;`-run, or a bracketed sub-pipeline.
-  if (node.type === "Pipeline" && key === "stmts") return declaredIn(node.stmts);
-  if (node.type === "ArrayLiteral" && key === "elements") return declaredIn(node.elements);
-  return [];
-}
-
-const declaredIn = (list: unknown): readonly string[] =>
-  ((list as readonly Any[] | undefined) ?? [])
-    .filter((s) => s?.type === "LetDecl" || s?.type === "FuncDecl")
-    .map((s) => s.name as string);
+/** Every name a node binds for the subtree under `key` — stated once, in naming.ts. */
+const shadowedIn = (node: Any, key: string): readonly string[] => bindsFor(node, key);
 
 /**
  * Replace every free reference to a folded name with the value it holds.
@@ -182,15 +162,8 @@ const declaredIn = (list: unknown): readonly string[] =>
 function substitute(program: Program, folded: ReadonlyMap<string, unknown>): Program {
   const start: Scope = { shadowed: new Set(), naming: false };
 
-  /**
-   * Two places an identifier NAMES something instead of valuing it: the left of a
-   * write, and the callee of a call. Replacing either with a value produces
-   * something that is not a program — `1 = 9`, or `3(1)`.
-   */
-  const namesSomething = (n: Any, key: string): boolean =>
-    ((n.type === "AssignExpr" || n.type === "DeleteStmt") && key === "target") ||
-    ((n.type === "CallExpression" || n.type === "NewExpression") && key === "callee");
-
+  // An identifier that NAMES something is never substituted — the same test
+  // position.ts uses to keep those slots out of value position. See naming.ts.
   const step = (node: object, key: string, here: Scope): Scope => {
     const n = node as Any;
     const naming = namesSomething(n, key);
@@ -273,7 +246,7 @@ const EMPTY: Constants = new Map();
  * raw MQL the developer wrote is emitted as written. Folding it would break the
  * property that a pasted pipeline round-trips.
  */
-const EVALUABLE: ReadonlySet<string> = new Set([
+const EVALUABLE_TYPES = [
   "UnaryExpr",
   "BinaryExpr",
   "TernaryExpr",
@@ -283,7 +256,43 @@ const EVALUABLE: ReadonlySet<string> = new Set([
   "MethodCall",
   "CallExpression",
   "NewExpression",
-]);
+] as const;
+/**
+ * The expression types deliberately NOT asked about, each for a stated reason: a
+ * literal is already the answer (and re-spelling it would rebuild the node every
+ * round, so the fixpoint would never settle); a reference, a lambda and a block
+ * are not values; `OperatorCall` is the escape hatch above. Together with
+ * `EVALUABLE_TYPES` this must cover every `Expr` type — the two lines below make a
+ * new node type a compile error here rather than a subexpression silently never
+ * folded.
+ */
+const NOT_ASKED_TYPES = [
+  "NumberLiteral",
+  "BigIntLiteral",
+  "StringLiteral",
+  "BooleanLiteral",
+  "NullLiteral",
+  "UndefinedLiteral",
+  "RegexLiteral",
+  "ObjectIdLiteral",
+  "ArrayLiteral",
+  "ObjectLiteral",
+  "FieldRef",
+  "CollectionRef",
+  "DatabaseRef",
+  "ClusterRef",
+  "Ident",
+  "OperatorCall",
+  "Lambda",
+  "ExprBlock",
+] as const;
+type ExprType = Extract<Expr, { type: string }>["type"];
+type Covered = (typeof EVALUABLE_TYPES)[number] | (typeof NOT_ASKED_TYPES)[number];
+const _everyExprIsDecided: [Exclude<ExprType, Covered>] extends [never] ? true : Exclude<ExprType, Covered> = true;
+const _onlyExprTypes: [Exclude<Covered, NodeName>] extends [never] ? true : Exclude<Covered, NodeName> = true;
+void _everyExprIsDecided;
+void _onlyExprTypes;
+const EVALUABLE: ReadonlySet<string> = new Set(EVALUABLE_TYPES);
 
 // ── the pass ─────────────────────────────────────────────────────────────────
 

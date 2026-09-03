@@ -61,14 +61,17 @@ export function isStageName(name: string): boolean {
 }
 
 /**
- * Where a path inside a stage's body stands.
+ * Where a path inside a stage's body stands, and whether a longer key still
+ * claims something below it.
  *
- * `{ deeper: true }` is not an answer but an instruction: a longer key claims
- * something below this path, so the walk must descend one more step before the
- * row can answer. Without it `$setWindowFields`'s body would settle as a value
- * and its `output` keys would never reach the window position.
+ * BOTH facts, because a caller needs both: the position is what a leaf under
+ * this path holds, and `deeper` says an object under it must keep descending
+ * before the row can answer for its keys. Without the second, `$setWindowFields`'s
+ * body would settle as a value and its `output` keys would never reach the
+ * window position; without the first, `$merge("out")` — a body with no keys to
+ * descend into — would never reach any position at all.
  */
-export type BodySlot = { at: Position } | { deeper: true };
+export type BodySlot = { at: Position; deeper: boolean };
 
 /** A body path, one segment per key. `null` is a COMPUTED key — `{ [k]: … }`. */
 export type BodyPath = readonly (string | null)[];
@@ -100,16 +103,55 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
   const layout = bodyLayoutOf(stage);
   if (layout === undefined) return undefined;
   const keys = Object.keys(layout).map((key) => ({ key, seg: segmentsOf(key) }));
-  if (keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path))) {
-    return { deeper: true };
-  }
+  const deeper = keys.some(({ seg }) => seg.length > path.length && covers(seg.slice(0, path.length), path));
   let best: { key: string; seg: readonly string[] } | undefined;
   for (const cand of keys) {
     if (!covers(cand.seg, path)) continue;
     if (best === undefined || cand.seg.length > best.seg.length) best = cand;
     else if (cand.seg.length === best.seg.length && wildcards(cand.seg) < wildcards(best.seg)) best = cand;
   }
-  return best === undefined ? undefined : { at: layout[best.key] };
+  // Every stage row states the `""` key, so a covering key always exists.
+  return best === undefined ? undefined : { at: layout[best.key], deeper };
+}
+
+/**
+ * What a `{ … }` callback body on this name MEANS: pipeline STAGES for the one
+ * kind of row that says so, JavaScript for every other. Undefined when the name
+ * has no row — and a nameless callee's block is JavaScript too.
+ */
+export function blockBodyOf(name: string): "javascript" | "stages" {
+  return (row(name) as { blockBody?: "javascript" | "stages" } | undefined)?.blockBody ?? "javascript";
+}
+
+/**
+ * Is `name` CALLED — `filter(…)` — rather than read — `length`?
+ *
+ * The one fact that separates `"abc".length` from `"abc".length()`. A name with
+ * no row is left to its caller: this function refuses only what a row refuses.
+ */
+export function isCallable(name: string): boolean {
+  return row(name)?.call !== false;
+}
+
+/**
+ * Every name that is a static NAMESPACE — `Math`, `Object`, `Date` — read off the
+ * rows that say `provides`, so a new namespace is a row and never a list here.
+ */
+export function namespaceNames(): ReadonlySet<string> {
+  const out = new Set<string>();
+  for (const [name, r] of Object.entries(ROWS) as [string, { kind?: string; provides?: unknown }][]) {
+    if ((r?.kind === "root" || r?.kind === "global") && r.provides !== undefined) out.add(name);
+  }
+  return out;
+}
+
+/**
+ * The index of the argument this name MUTATES in place, or undefined when it
+ * mutates none. `Object.assign(target, …)` writes its first argument, so a
+ * binding passed there is no longer the constant it was declared as.
+ */
+export function mutatedArgumentOf(name: string): number | undefined {
+  return (row(name) as { mutatesArgument?: number } | undefined)?.mutatesArgument;
 }
 
 /**
@@ -168,9 +210,28 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
   const direct = (cell as { args?: ArgCount }).args;
   if (direct !== undefined) return direct;
   const perFamily = (cell as { perFamily?: Record<string, { args?: ArgCount }> }).perFamily;
-  if (perFamily === undefined) return undefined;
-  if (family !== undefined && perFamily[family]?.args !== undefined) return perFamily[family].args;
-  return undefined;
+  if (perFamily !== undefined) {
+    if (family !== undefined && perFamily[family]?.args !== undefined) return perFamily[family].args;
+    return undefined;
+  }
+  // A cell that dispatches on the ARGUMENT shape accepts what any of its rows
+  // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
+  // by the count no row states rather than accepted because no single rule was
+  // found — which is what an undefined answer means to `acceptsArgumentCount`.
+  const byArgs = (cell as { byArgs?: readonly { args?: ArgCount }[] }).byArgs;
+  if (byArgs === undefined) return undefined;
+  const allowed = new Set<number>();
+  let atLeast: number | undefined;
+  for (const branch of byArgs) {
+    const a = branch.args;
+    if (a === undefined) return undefined; // a branch with no rule accepts anything
+    if (a.none === true) allowed.add(0);
+    if (a.exact !== undefined) allowed.add(a.exact);
+    for (const n of a.allowed ?? []) allowed.add(n);
+    if (a.atLeast !== undefined) atLeast = atLeast === undefined ? a.atLeast : Math.min(atLeast, a.atLeast);
+  }
+  if (atLeast !== undefined) return { atLeast: Math.min(atLeast, ...allowed) };
+  return { allowed: [...allowed].sort((x, y) => x - y) };
 }
 
 /**

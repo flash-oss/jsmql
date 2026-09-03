@@ -45,9 +45,19 @@ describe("compiler/lex — parity with the lexer it replaces", () => {
     expect(inputs.length).toBeGreaterThan(2000);
   });
 
+  /**
+   * Where the new lexer is RIGHT and the old one wrong: a reserved word after an
+   * introducer is a name. The old lexer emitted the keyword token (`In`, `Let`,
+   * `Const`) and left the parser to re-read it; the new one emits `Ident`, and
+   * the parser never sees a keyword where a name belongs. `node --check`
+   * confirms every one of these is legal JavaScript.
+   */
+  const KEYWORD_AS_NAME = /(\$|\$\.|\.)(in|let|const|new|typeof|return|delete)\b/;
+
   it("produces an identical token stream for every input the suite uses", () => {
     const differences: string[] = [];
     for (const src of inputs) {
+      if (KEYWORD_AS_NAME.test(src)) continue;
       let a: [string, string][] | null = null;
       let b: [string, string][] | null = null;
       let aThrew = false;
@@ -116,6 +126,64 @@ describe("compiler/lex — the four rules a longest-match table cannot imply", (
 
   it("handles a template nested inside an interpolation", () => {
     expect(lex("`outer ${`inner ${$.x}`}`").filter((t) => t.type === "TemplateEnd")).toHaveLength(2);
+  });
+});
+
+describe("compiler/lex — one decoder for every quoted form", () => {
+  it("decodes the same escape identically in a string and in a template", () => {
+    // The template used to drop the backslash and KEEP the letter, so `\n` read
+    // as "n" — valid MQL, wrong string, and nothing reported it.
+    for (const [esc, want] of [
+      ["n", "\n"],
+      ["t", "\t"],
+      ["r", "\r"],
+      ["\\", "\\"],
+      ["x", "x"],
+      ["0", "0"],
+    ]) {
+      const str = lex(`"a\\${esc}b"`)[0];
+      const tpl = lex(`\`a\\${esc}b\``)[1];
+      expect(str.type).toBe("String");
+      expect(tpl.type).toBe("TemplateChars");
+      expect(str.text, `\\${esc}`).toBe(`a${want}b`);
+      expect(tpl.text, `\\${esc}`).toBe(str.text);
+    }
+  });
+});
+
+describe("compiler/lex — a reserved word after an introducer is a name", () => {
+  const types = (src: string): string[] => lex(src).map((t) => t.type);
+
+  it("reads a keyword as Ident after `.`, `?.`, `$.` and `$`", () => {
+    // The rows state `introducesName`; the lexer never lists the words.
+    expect(types("$.typeof")).toEqual(["DollarDot", "Ident", "EOF"]);
+    expect(types("x.delete")).toEqual(["Ident", "Dot", "Ident", "EOF"]);
+    expect(types("x?.null")).toEqual(["Ident", "QuestDot", "Ident", "EOF"]);
+    expect(types("$in(1)")).toEqual(["Dollar", "Ident", "LParen", "Number", "RParen", "EOF"]);
+  });
+
+  it("keeps the same word an operator everywhere else", () => {
+    expect(types("a in b")).toEqual(["Ident", "In", "Ident", "EOF"]);
+    expect(types("typeof a")).toEqual(["Typeof", "Ident", "EOF"]);
+    // A key position is not an introducer: the PARSER accepts the keyword there.
+    expect(types("{ in: 1 }")).toEqual(["LBrace", "In", "Colon", "Number", "RBrace", "EOF"]);
+  });
+
+  it("lets a field named after a keyword be divided, not read as a regex", () => {
+    // `$.typeof / 2` used to mis-lex the `/` as an unterminated regex, because the
+    // keyword token was not in ENDS_A_VALUE and could not be — as an OPERATOR it
+    // really does not end a value. As a name it is an Ident, and an Ident does.
+    expect(types("$.typeof / 2")).toEqual(["DollarDot", "Ident", "Slash", "Number", "EOF"]);
+    expect(types("$.a / 2")).toEqual(["DollarDot", "Ident", "Slash", "Number", "EOF"]);
+    expect(types("/ab/")).toEqual(["RegexLiteral", "EOF"]);
+  });
+
+  it("states introducesName on exactly the four rows the language has", () => {
+    const stated = Object.entries(TOKENS)
+      .filter(([, row]) => "introducesName" in row && row.introducesName === true)
+      .map(([spelling]) => spelling)
+      .sort();
+    expect(stated).toEqual(["$", "$.", ".", "?."]);
   });
 });
 

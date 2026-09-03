@@ -10,6 +10,80 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-08-27 — fix(compiler): phases 1–4 hardened against fourteen silent-wrong-output hazards
+
+An extensibility review of the new compiler's first four phases — before phase 5 is built on them —
+found fourteen places where output was silently wrong and seventeen where adding one construct needed
+edits in two or more files. A dispatcher built on a position pass that sends `$$.$group({…})`'s body to
+`value` would have inherited the `$sum` unary-accumulator bug the registry had already fixed; so the
+hazards were closed first. Every fix follows one rule: the fact is stated once, where the type checker
+or a test can hold it against its source of truth.
+
+**Lexer.** The template literal had a second, weaker copy of the string escape decoder — it dropped
+the backslash and kept the letter, so `` `a\nb` `` read as "anb", valid MQL and the wrong string. One
+`decodeEscape` serves both now. And a reserved word after `.`, `?.`, `$.` or `$` is a NAME: the four
+token rows state `introducesName`, the lexer emits `Ident` there, and `$.typeof / 2` divides instead of
+mis-lexing an unterminated regex — a keyword read as an operator never ends a value, and one read as a
+name has already become an Ident, so `ENDS_A_VALUE` lists no keyword at all. The `usableAsFieldName`
+field in keywords.ts recorded a shipped-compiler bug as language law (`$.delete` refused, `$.typeof`
+accepted, "which no principle explains"); ECMAScript allows any IdentifierName after `.` and before `:`,
+`node --check` confirms `a.delete` and `({ null: 1 })`, and a MongoDB field may be named anything. The
+field is gone, every keyword is a legal key and field name, and the raw `$let` document —
+`{ $let: { vars: {…}, in: "$$x" } }`, unparseable by the shipped compiler — parses. The one place a
+reserved word is NOT a name, the shorthand `({ in })`, is a JavaScript SyntaxError and is refused as one;
+only `undefined` is an identifier there.
+
+**Parser.** The `**` mixing rule was symmetric and JavaScript's is one-sided: `-2 ** 2` is a
+SyntaxError, `2 ** -1` is not. Refusing the valid half broke the strict-subset rule in the other
+direction, so `exponentiation` states `leftOperandNot` and `??` keeps the symmetric `noMixWith` — two
+rules, two names. Three hand-maintained token→operator maps are gone: the token's own text IS the
+operator, `BINARY_OPS` / `UNARY_OPS` / `ASSIGN_OPS` in ast.ts are `as const` data with the types derived,
+and a parse test holds "every operator a row consumes is one the AST can hold" (a type-level version
+was vacuous — `becomes` is not threaded through a const generic, so the conditional saw `NodeName` and
+matched nothing; the audit was made to fail before it was trusted, and did not). The four copies of
+"is a write starting here" read `STATEMENT_PREFIX` and `ASSIGN_TRIGGERS`, derived from the rows. Three
+statement loops became one `block()`, and the entry block took on the top level's `;` rule — the two
+had diverged, so `({ $ }) => { $.a > 1; }` was a filter from the arrow and a pipeline from the string.
+`neverAWriteTarget` is READ (it was declared and enforced by a hand-coded `.optional` test) and carries
+the hint the refusal ends with. A `{ … }` callback body with no `return` is pipeline stages only under
+a callee whose row says `blockBody: "stages"`; every other one is refused with the shipped wording,
+decided in the parser because only the parser holds the callee and the body together. The parser no
+longer guesses `style: "object"` on `$op({…})` — the row's `shape` says what one document operand is.
+
+**Passes.** `naming.ts` answers "which row does this node name", "what is this chain's base" and "what
+does this node bind" once, for every pass; shape.ts, position.ts, fold.ts and fresh.ts each carried a
+list of their own, and two already disagreed (`$$$["archive"].find(…)` was a filter to shape.ts and a
+pipeline through `.archive`). The position pass consults a stage's body layout for every spelling of the
+stage — the chained `$$.$group(…)` bypassed it — and only where a stage may stand, so `$count()` inside
+`$group` keeps its accumulator arguments; `bodySlotAt` answers BOTH the position and whether to keep
+descending, so `$merge("out")` reaches a position; a stream is the chain rooted in a context reference,
+walked through every access node, and the desugar pass reads the receiver family off that chain rather
+than off the call's position (which resolved `$ = { k: $$.map({ a: 1 }) }` to the array family); the
+callee of a call is a `target`, shared with the fold's rule that never substitutes it. The evaluator
+refused `"abc".length()` — a CALL of a name whose row says `call: false` — and gated `String("a", "b")`
+on the row's count as a method call already was; its namespace set is read off the rows that
+`provides`; `argCountOf` reads a `byArgs` cell as the union of its branches, so `new Date(…×8)` is
+refused rather than accepted for want of a single rule. `Object.assign`'s in-place write is
+`mutatesArgument: 0` on its row, not a name matched in fold.ts. The fold's list of node types it asks
+about is held complete by a type: every `Expr` type is either asked or deliberately not, and a new
+node type fails `tsc` here instead of silently never folding. The desugar driver tells a cycle from a
+long chain by a tree fingerprint, not a round count (199 chained declarations hit the old limit).
+
+**Registry data.** Thirteen callback-taking rows stated no `iterateeSlots`; each now does, and the
+sort family needed a THIRD state to say it truthfully — `sortSpec`: `$.a.toSorted("k")` means the
+order `{ k: 1 }`, accepted and never rewritten, which is neither a layout (those spellings mean an
+arrow) nor `arrowOnly` (those are refused). `takeWhile` and `dropWhile` state `only: ["afterSort"]`,
+which no row had — the member was declared with an example and used nowhere. `$dateDiff`, `$dateTrunc`
+and `$dateFromParts` state what mongod measures: `unit` is an exact, case-sensitive list; `startOfWeek`
+takes the seven days and their three-letter forms case-insensitively (the seven-name list refused
+`"mon"` and `"Monday"`, which the server runs); `$dateFromParts` takes the ISO keys and exactly one of
+`year` / `isoWeekYear`. The unit list was spelled five times and is one constant. New audits hold each
+fact: `noMixWith` / `leftOperandNot` resolve (type-level), every `params` row states a layout per
+family, every `Only` member is used, `only` and `replacesDocument` sit on stage rows, and every fold
+`case` label is a callable row on its family (`test/compiler-fold-rows.test.ts`).
+
+---
+
 ## 2026-08-27 — feat(registry): every value-producing name states the type it returns, measured
 
 All 264 `mongo` rows carried no `returns`, so nothing in the new compiler could type an operator's

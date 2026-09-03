@@ -436,8 +436,6 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return ok(s.split(a, typeof b === "number" ? b : undefined));
     case "concat":
       return args.every((x) => typeof valueOf(x) === "string") ? ok(s + args.map(valueOf).join("")) : NO;
-    case "length":
-      return ok(points(s).length);
     default:
       return lodashString(s, name, args);
   }
@@ -594,7 +592,6 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     };
 
   switch (name) {
-    case "length":
     case "size":
       return ok(xs.length);
     case "map":

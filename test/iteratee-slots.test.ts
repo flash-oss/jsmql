@@ -10,7 +10,8 @@
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { NAMES } from "../src/registry/names.ts";
-import type { Family, SlotForm } from "../src/registry/vocabulary.ts";
+import type { Family, IterateeSlots, SlotForm } from "../src/registry/vocabulary.ts";
+import { isSlotLayout } from "../src/registry/vocabulary.ts";
 import { canon } from "./support/canon.ts";
 
 /** Each form, and the arrow that spells the same meaning. `null` = no arrow does. */
@@ -23,7 +24,7 @@ const SPELLINGS: Readonly<Record<SlotForm, readonly [string, string | null]>> = 
 };
 const EVERY_FORM = Object.keys(SPELLINGS) as SlotForm[];
 
-type Layout = Readonly<Record<number, readonly SlotForm[]>> | { arrowOnly: string };
+type Layout = IterateeSlots;
 type Row = { on?: Family | readonly Family[] | "any"; iterateeSlots?: Readonly<Partial<Record<Family, Layout>>> };
 
 const rows = (): [string, Row][] =>
@@ -70,7 +71,7 @@ describe("registry — every declared spelling compiles and means its arrow", ()
     const out: { name: string; family: Family; slot: number; form: SlotForm }[] = [];
     for (const [name, row] of rows()) {
       for (const [family, layout] of Object.entries(row.iterateeSlots as object) as [Family, Layout][]) {
-        if ("arrowOnly" in layout) continue;
+        if (!isSlotLayout(layout)) continue;
         for (const [slot, forms] of Object.entries(layout)) {
           for (const form of forms) out.push({ name, family, slot: Number(slot), form });
         }
@@ -126,7 +127,7 @@ describe("registry — a spelling a slot leaves out is refused", () => {
     const accepted: string[] = [];
     for (const [name, row] of rows()) {
       for (const [family, layout] of Object.entries(row.iterateeSlots as object) as [Family, Layout][]) {
-        if ("arrowOnly" in layout) continue;
+        if (!isSlotLayout(layout)) continue;
         for (const [slot, forms] of Object.entries(layout)) {
           for (const form of EVERY_FORM) {
             if ((forms as readonly SlotForm[]).includes(form)) continue;
@@ -142,6 +143,32 @@ describe("registry — a spelling a slot leaves out is refused", () => {
       }
     }
     expect(accepted).toEqual([]);
+  });
+
+  it("accepts a sort specification where the row says the argument is one", () => {
+    // `"k"` here is an ORDER, not `x => x.k`: the same spelling as a property-path
+    // shorthand with a different meaning, which is why it is its own state and
+    // not a slot form — a form is identified by its spelling.
+    // The one spelling every sort-taking row shares is the key string; which
+    // OTHER forms each takes (an object, an array of keys, no argument) is that
+    // row's arity and mql-sort.ts's business. A mutator is a statement, so it is
+    // tried where a statement stands.
+    const orders: string[] = [];
+    for (const [name, row] of rows()) {
+      for (const [family, layout] of Object.entries(row.iterateeSlots as object) as [Family, Layout][]) {
+        if (!("sortSpec" in layout)) continue;
+        const asStatement = !(row as { where?: readonly string[] }).where?.includes("value") && family === "array";
+        const { src, expr } = asStatement
+          ? { src: `$.items.${name}("k");`, expr: false }
+          : source(name, family, 0, '"k"');
+        try {
+          compile(src, expr);
+        } catch (e) {
+          orders.push(`${name} <${family}> refuses "k": ${(e as Error).message.slice(0, 60)}`);
+        }
+      }
+    }
+    expect(orders).toEqual([]);
   });
 
   it("refuses every spelling on a receiver declared arrow-only", () => {

@@ -79,9 +79,19 @@ $graphLookup:      { "": "value", restrictSearchWithMatch: "filter" }
 ```
 
 `bodySlotAt(stage, path)` in [rows.ts](../../src/compiler/rows.ts) resolves one
-path. It answers `{ deeper: true }` while a longer key still claims something
-below — without which `$setWindowFields`'s body would settle as a value and its
-`output` keys would never reach the window position.
+path to BOTH facts: the position a leaf here holds, and whether a longer key
+still claims something below (`deeper`). An object under a `deeper` path keeps
+descending; anything else takes the path's position at once. Without the first,
+`$merge("out")` — a string under a layout that names `whenMatched` — reached no
+position at all; without the second, `$setWindowFields`'s body would settle as a
+value and its `output` keys would never reach the window position.
+
+The layout is consulted for every spelling of a stage — the call `$group({…})`,
+the chained link `$$.$group({…})`, and the raw document `{ $group: {…} }` — because
+all three name the same row ([naming.ts](../../src/compiler/passes/naming.ts)
+answers "which row does this node name" once, for every pass). And only where a
+stage may stand: `$count` is a stage AND an accumulator, and inside `$group` its
+arguments are an operator's, not a body.
 
 The layout is **stated, never derived**, because the slots differ per stage and
 mongod refuses the wrong reading. Measured:
@@ -141,15 +151,46 @@ runs each of these documents — emitted by the registry itself — on a live mo
 and asserts the shielded form answers exactly what the bare form answers wherever
 the bare form runs. A fix may not change an answer to buy a shape.
 
-## The two answers that are not positions
+## A stream is a chain rooted in a context reference
 
-`edge` also returns two things `Position` does not name:
+`$$.filter(p)`, `$$$.orders.find(p)` and `$$$["archive"].find(p)` all read a
+stream, whatever their last link is and however the collection is spelled — the
+chain is walked to its BASE through every access node (`chainBase`). Every link
+below the top is a stream. The top link stands where its parent put it: as the
+right of `$$ = …` it is a stream too (the row says the right-hand side replaces
+the stream), while as the argument of `$$.push(…)` or the right of `$.o = …` it is
+a value that the sugar's own lowering hands to the stream lowering. `$$` itself is
+the stream it names; `$$$` and `$$$$` are scopes, never evaluated, and stand at
+`value`.
 
-- **`target`** — the left of `=`, or the operand of `delete`. Not evaluated: it
-  names a place to write. Calling it a value would let a rule meant for
-  expressions fire on the destination of a write.
+A receiver supplies a FAMILY, not a position: the desugar pass asks whether a
+receiver chain is rooted in a context reference to pick the stream family, and
+never reads the call's own position for it — `$ = { k: $$.map({ a: 1 }) }` and
+`$$ = $$.map({ a: 1 })` rewrite the same shorthand the same way.
+
+## The three answers that are not positions
+
+`edge` also returns three things `Position` does not name:
+
+- **`target`** — the left of `=`, the operand of `delete`, or the callee of a
+  call. Not evaluated: each names a place to write or a thing to call. Calling it
+  a value would let a rule meant for expressions fire on the destination of a
+  write, or fold `f` away in `f(1)` to give `3(1)`. The fold pass and this pass
+  share the one predicate that says so (`namesSomething` in naming.ts).
 - **`stageBody`** — part-way down a body path the stage's row still owns, with
   the stage and the path so far. A waypoint, not a place a name can be legal in.
+- **`stageEntry`** — the one entry of a raw stage document `{ $match: … }`,
+  whose value is the body. The same waypoint idea for the pasted-MQL spelling.
+
+## What a `{ … }` callback body means
+
+A block with no `return` is pipeline STAGES only under a callee whose row says
+`blockBody: "stages"`; under every other callee it is a JavaScript block that
+forgot its `return`, and is refused. That is decided in the PARSER, because only
+the parser holds the callee and the body at the same time: `args()` claims a
+stages block for a stages-taking owner, and `finish()` refuses whatever nobody
+claimed. Phase 4 therefore never has to ask whether a `Lambda.stages` it meets
+is legal — by the time it runs, every one is.
 
 ## What the pass does NOT decide
 

@@ -165,6 +165,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    *   $$ = $$.aggregate(o => { $sort({a:1}); });  → [{ "$sort": { "a": 1 } }]
    */
   blockBody?: "javascript" | "stages";
+  /**
+   * The index of the argument this name writes IN PLACE, when it does. The fold
+   * pass reads it: a binding handed to `Object.assign(target, …)` is no longer
+   * the constant it was declared as, wherever the call stands. Stated on the row
+   * rather than matched by name in the pass, which is how the pass stays free of
+   * a list that would have to grow with the language.
+   */
+  mutatesArgument?: number;
   returns: Returns;
   where: W;
   only?: readonly Only[];
@@ -364,6 +372,37 @@ const mongo = <
   e: MongoSpec<W, F, I>,
 ): MongoEntry<W, F, I> => ({ ...e, kind: "mongo" });
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
+
+/**
+ * The units every date operator's `unit` key accepts. MEASURED: `"days"` and
+ * `"Day"` are both refused ("unknown time unit value"), so the list is exact and
+ * case-sensitive. One constant, because five rows spell it and one stale copy
+ * would refuse a unit the server takes, or accept one it does not.
+ */
+const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
+
+/**
+ * The spellings `startOfWeek` accepts: the seven days and their three-letter
+ * forms, compared CASE-INSENSITIVELY — `"Monday"` and `"mon"` both run,
+ * `"funday"` is refused ("cannot be recognized as a day"). A row that listed the
+ * seven long names alone refused valid MQL, which is the dangerous direction.
+ */
+const WEEKDAY = [
+  "monday",
+  "tuesday",
+  "wednesday",
+  "thursday",
+  "friday",
+  "saturday",
+  "sunday",
+  "mon",
+  "tue",
+  "wed",
+  "thu",
+  "fri",
+  "sat",
+  "sun",
+] as const;
 
 export const NAMES = {
   $abs: mongo({
@@ -2115,7 +2154,7 @@ export const NAMES = {
         required: ["startDate", "unit", "amount"],
         optional: ["timezone"],
         closed: true,
-        enums: { unit: ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] },
+        enums: { unit: TIME_UNIT },
         keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
         positional: ["startDate", "unit", "amount", "timezone"],
       },
@@ -2139,6 +2178,9 @@ export const NAMES = {
         required: ["startDate", "endDate", "unit"],
         optional: ["startOfWeek", "timezone"],
         closed: true,
+        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
+        caseInsensitiveKeys: ["startOfWeek"],
+        keyTypes: { startDate: "date", endDate: "date", timezone: "string" },
         positional: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
       },
     },
@@ -2162,8 +2204,40 @@ export const NAMES = {
     shape: {
       object: {
         required: [],
-        optional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
+        optional: [
+          "year",
+          "isoWeekYear",
+          "month",
+          "isoWeek",
+          "day",
+          "isoDayOfWeek",
+          "hour",
+          "minute",
+          "second",
+          "millisecond",
+          "timezone",
+        ],
         closed: true,
+        // MEASURED: `{}` → "requires either 'year' or 'isoWeekYear'"; both →
+        // "does not allow mixing natural dates with ISO dates". The wider rule —
+        // no natural part beside an ISO anchor — has no BodyRule field and stays
+        // the server's to report.
+        exactlyOneOf: [["year", "isoWeekYear"]],
+        keyTypes: {
+          year: "int-or-long",
+          isoWeekYear: "int-or-long",
+          month: "int-or-long",
+          isoWeek: "int-or-long",
+          day: "int-or-long",
+          isoDayOfWeek: "int-or-long",
+          hour: "int-or-long",
+          minute: "int-or-long",
+          second: "int-or-long",
+          millisecond: "int-or-long",
+          timezone: "string",
+        },
+        // Positional stays the natural order — JSMQL's public commitment. The ISO
+        // keys are reached in object style only.
         positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
       },
     },
@@ -2214,7 +2288,7 @@ export const NAMES = {
         required: ["startDate", "unit", "amount"],
         optional: ["timezone"],
         closed: true,
-        enums: { unit: ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] },
+        enums: { unit: TIME_UNIT },
         keyTypes: { startDate: "date", amount: "int-or-long", timezone: "string" },
         positional: ["startDate", "unit", "amount", "timezone"],
       },
@@ -2284,10 +2358,8 @@ export const NAMES = {
         required: ["date", "unit"],
         optional: ["binSize", "timezone", "startOfWeek"],
         closed: true,
-        enums: {
-          unit: ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"],
-          startOfWeek: ["monday", "tuesday", "wednesday", "thursday", "friday", "saturday", "sunday"],
-        },
+        enums: { unit: TIME_UNIT, startOfWeek: WEEKDAY },
+        caseInsensitiveKeys: ["startOfWeek"],
         keyTypes: { date: "date", binSize: "number", timezone: "string" },
         positional: ["date", "unit", "binSize", "timezone", "startOfWeek"],
       },
@@ -3330,7 +3402,7 @@ export const NAMES = {
         required: ["input"],
         optional: ["unit"],
         closed: true,
-        enums: { unit: ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] },
+        enums: { unit: TIME_UNIT },
         positional: ["input", "unit"],
       },
     },
@@ -3391,7 +3463,7 @@ export const NAMES = {
         required: ["input"],
         optional: ["unit"],
         closed: true,
-        enums: { unit: ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] },
+        enums: { unit: TIME_UNIT },
         positional: ["input", "unit"],
       },
     },
@@ -4596,6 +4668,14 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     params: { value: ["value"], stream: ["value", "value"] },
+    iterateeSlots: {
+      array: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+      stream: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+    },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
@@ -4613,6 +4693,14 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     params: ["value"],
+    iterateeSlots: {
+      array: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+      stream: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+    },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
@@ -4628,6 +4716,14 @@ export const NAMES = {
     call: true,
     on: ["array", "stream"],
     params: ["value"],
+    iterateeSlots: {
+      array: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+      stream: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+    },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
@@ -4882,6 +4978,9 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["accumulator", "value", "index"],
+    iterateeSlots: {
+      array: { arrowOnly: "the callback takes (accumulator, value[, index]) and a shorthand cannot stand in for it" },
+    },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -4899,6 +4998,9 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["accumulator", "value", "index"],
+    iterateeSlots: {
+      array: { arrowOnly: "the callback takes (accumulator, value[, index]) and a shorthand cannot stand in for it" },
+    },
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -4951,6 +5053,11 @@ export const NAMES = {
     on: "array",
     immutableTwin: "toSorted",
     params: { statement: ["value"], stream: ["value", "value"] },
+    iterateeSlots: {
+      array: {
+        sortSpec: '`"k"` means the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order',
+      },
+    },
     returns: "unknown",
     where: ["stream", "statement"],
     filter: unsupported("'.sort()' writes a field; it is not a filter predicate."),
@@ -6233,6 +6340,9 @@ export const NAMES = {
     },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
+    // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
+    // order until a sort gives it one. An array in a value slot is already ordered.
+    only: ["afterSort"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
     stream: pending("src/stream-methods.ts"),
@@ -6255,6 +6365,9 @@ export const NAMES = {
     },
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
+    // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
+    // order until a sort gives it one. An array in a value slot is already ordered.
+    only: ["afterSort"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
     stream: pending("src/stream-methods.ts"),
@@ -6382,6 +6495,9 @@ export const NAMES = {
     call: true,
     on: "array",
     params: ["value"],
+    iterateeSlots: {
+      array: { arrowOnly: "the callback takes one parameter per zipped array and a shorthand cannot stand in for it" },
+    },
     paramsRepeat: true,
     returns: "array",
     where: ["value"],
@@ -6534,6 +6650,11 @@ export const NAMES = {
     call: true,
     on: "object",
     params: ["value", "key"],
+    iterateeSlots: {
+      object: {
+        arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
+      },
+    },
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -6551,6 +6672,11 @@ export const NAMES = {
     call: true,
     on: "object",
     params: ["value", "key"],
+    iterateeSlots: {
+      object: {
+        arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
+      },
+    },
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -6594,6 +6720,11 @@ export const NAMES = {
     call: true,
     on: "object",
     params: ["value", "key"],
+    iterateeSlots: {
+      object: {
+        arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
+      },
+    },
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -6609,6 +6740,11 @@ export const NAMES = {
     call: true,
     on: "object",
     params: ["value", "key"],
+    iterateeSlots: {
+      object: {
+        arrowOnly: "the callback takes (value, key) and a shorthand cannot stand in for a two-parameter arrow",
+      },
+    },
     returns: "object",
     where: ["value"],
     filter: viaFallback,
@@ -7901,6 +8037,12 @@ export const NAMES = {
     call: true,
     on: "stream",
     params: ["value", "index", "collection"],
+    iterateeSlots: {
+      stream: {
+        arrowOnly:
+          "the callback is a block of pipeline stages, `(o) => { $stage(…); … }`, and nothing else stands in for it",
+      },
+    },
     returns: "stream",
     where: ["stream"],
     blockBody: "stages",
@@ -7932,6 +8074,7 @@ export const NAMES = {
     doc: "'Object.assign(target, ...sources)' — emits $mergeObjects. At statement position it writes the target.",
     call: true,
     on: "Object",
+    mutatesArgument: 0,
     returns: "object",
     where: ["value", "statement"],
     filter: viaFallback,

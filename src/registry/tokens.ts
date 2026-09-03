@@ -58,6 +58,16 @@ export type TokenSpec<C extends string = never> = {
    * is made on the PRECEDING token, not on this one.
    */
   chooseBy?: { afterValue: TokenName; otherwise: TokenName };
+  /**
+   * The lexeme AFTER this one is a name, even when it spells a reserved word.
+   *
+   * `$.typeof`, `x.delete`, `$in(…)` and `a?.null` are all legal JavaScript, and
+   * a MongoDB field may be named anything — so after these four the lexer emits
+   * `Ident` and never promotes. Stated on the introducer, because it is the
+   * introducer that changes the reading: the very same word one token later is
+   * the operator again (`$.typeof in xs`).
+   */
+  introducesName?: true;
   /** This opener increments the depth counter a template interpolation reads. */
   tracksDepth?: true;
   /**
@@ -102,10 +112,10 @@ export const TOKENS = {
   ",": token({ doc: "The `,` token.", token: "Comma", role: "separator" }),
   ";": token({ doc: "The `;` token.", token: "Semi", role: "separator" }),
   ":": token({ doc: "The `:` token.", token: "Colon", role: "separator" }),
-  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder" }),
-  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder" }),
-  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference" }),
-  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference" }),
+  ".": token({ doc: "The `.` token.", token: "Dot", role: "binder", introducesName: true }),
+  "?.": token({ doc: "The `?.` token.", token: "QuestDot", role: "binder", introducesName: true }),
+  "$.": token({ doc: "The `$.` token.", token: "DollarDot", role: "reference", introducesName: true }),
+  $: token({ doc: "The `$` token.", token: "Dollar", role: "reference", introducesName: true }),
   $$: token({ doc: "The `$$` token.", token: "DoubleDollar", role: "reference" }),
   $$$: token({ doc: "The `$$$` token.", token: "TripleDollar", role: "reference" }),
   $$$$: token({
@@ -205,8 +215,13 @@ export type TokenKey = keyof typeof TOKENS;
  * same fact. Kept as one declaration rather than a flag per row, because the
  * backtick row covers two token types and only `TemplateEnd` ends a value.
  *
- *   `$.a / 2`   → Slash        the preceding token is a field reference
- *   `/ab/.test` → RegexLiteral nothing precedes it
+ *   `$.a / 2`      → Slash        the preceding token is a field reference
+ *   `/ab/.test`    → RegexLiteral nothing precedes it
+ *   `$.typeof / 2` → Slash        `typeof` after `$.` is an `Ident` (see
+ *                                 `introducesName`), and an Ident ends a value
+ *
+ * No keyword token is listed: a reserved word read as an OPERATOR never ends a
+ * value, and one read as a NAME has already become `Ident`.
  */
 export const ENDS_A_VALUE: readonly TokenName[] = [
   "Number",

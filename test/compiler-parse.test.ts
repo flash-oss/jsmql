@@ -10,6 +10,9 @@ import { jsmql } from "../src/index.ts";
 import { parse, parseEntry, parseExpression } from "../src/compiler/parse/parser.ts";
 import { INFIX, PREFIX } from "../src/compiler/parse/tables.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
+import { TOKENS } from "../src/registry/tokens.ts";
+import { KEYWORDS } from "../src/registry/keywords.ts";
+import { ASSIGN_OPS, BINARY_OPS, UNARY_OPS, type Program } from "../src/registry/ast.ts";
 
 function harvestInputs(): string[] {
   const found = new Set<string>();
@@ -64,8 +67,8 @@ describe("compiler/parse — the JavaScript forms the old parser wrongly accepte
     ["typeof $.a ** $.b", /without parentheses/],
     ["!$.a ** $.b", /without parentheses/],
     ["~$.a ** $.b", /without parentheses/],
-    ["$.a?.b = 1", /optional chain/],
-    ["$.a?.b += 1", /optional chain/],
+    ["$.a?.b = 1", /cannot be assigned to.*Drop the '\?\.'/],
+    ["$.a?.b += 1", /cannot be assigned to.*Drop the '\?\.'/],
   ];
   for (const [src, message] of refused) {
     it(`refuses ${src}`, () => {
@@ -294,5 +297,139 @@ describe("compiler/parse — a top-level `;` is kept, because it says PIPELINE",
       elements: { type: string }[];
     };
     expect(t.elements[0].type).toBe("FuncDecl");
+  });
+});
+
+describe("compiler/parse — the operators a row consumes are the operators the AST holds", () => {
+  /**
+   * The parser builds a BinaryExpr / UnaryExpr / AssignExpr from the token's own
+   * TEXT — no table maps a token type back to a spelling. So the one thing that
+   * must hold is that every operator lexeme such a row consumes is a member of
+   * the AST's operator set. A type-level version of this check was vacuous:
+   * `becomes` is not threaded through a const generic, so a conditional on it
+   * sees `NodeName` and matches nothing. Runtime data cannot collapse that way.
+   */
+  // An operator-role token anywhere in the row, or a keyword only as the row's
+  // TRIGGER (`in`, `typeof`): `foreignJoin` also consumes `const` and `let` on
+  // the way to its `=`, and neither is the operator it builds.
+  const operatorRole = (lexeme: string): boolean =>
+    (TOKENS as Record<string, { role?: string } | undefined>)[lexeme]?.role === "operator";
+  const consumedBy = (node: string): string[] =>
+    Object.values(PRODUCTIONS)
+      .filter((r) => r.becomes === node)
+      .flatMap((r) => {
+        const tokens = r.tokens as readonly string[];
+        return tokens.filter((t, i) => operatorRole(t) || (i === 0 && t in KEYWORDS));
+      });
+
+  it("holds every binary, unary and assignment operator", () => {
+    expect(consumedBy("BinaryExpr").filter((op) => !(BINARY_OPS as readonly string[]).includes(op))).toEqual([]);
+    expect(consumedBy("UnaryExpr").filter((op) => !(UNARY_OPS as readonly string[]).includes(op))).toEqual([]);
+    expect(consumedBy("AssignExpr").filter((op) => !(ASSIGN_OPS as readonly string[]).includes(op))).toEqual([]);
+  });
+
+  it("names no operator the rows never consume", () => {
+    // The other direction: a spelling in the AST with no row is unreachable.
+    const rows = new Set([...consumedBy("BinaryExpr"), ...consumedBy("UnaryExpr"), ...consumedBy("AssignExpr")]);
+    for (const op of [...BINARY_OPS, ...UNARY_OPS, ...ASSIGN_OPS]) expect(rows.has(op), op).toBe(true);
+  });
+});
+
+describe("compiler/parse — a reserved word is a legal name", () => {
+  it("accepts every keyword as an object key and after `$.`, driven off keywords.ts", () => {
+    // ECMAScript allows any IdentifierName after `.` and before `:`; a MongoDB
+    // field may be named anything. A new keyword is covered the day its row lands.
+    for (const word of Object.keys(KEYWORDS)) {
+      const entry = (parseExpression(`({ ${word}: 1 })`) as { entries: { key: { name?: string } }[] }).entries[0];
+      expect(entry.key.name, word).toBe(word);
+      expect((parseExpression(`$.${word}`) as { path: string }).path, word).toBe(word);
+    }
+    // The raw `$let` document, which the shipped compiler could not parse at all.
+    expect(() => parseExpression('{ $let: { vars: { x: 1 }, in: "$$x" } }')).not.toThrow();
+    expect(() => parseExpression('$let({ vars: { x: 1 }, in: "$$x" })')).not.toThrow();
+  });
+
+  it("refuses a keyword as a SHORTHAND property, which JavaScript refuses too", () => {
+    // `({ in })` is a SyntaxError (node --check); only `undefined` is an
+    // identifier reference and so a legal shorthand.
+    for (const word of Object.keys(KEYWORDS)) {
+      if (word === "undefined") continue;
+      expect(() => parseExpression(`({ ${word} })`), word).toThrow(/cannot be a shorthand property/);
+    }
+    expect(() => parseExpression("({ undefined })")).not.toThrow();
+  });
+
+  it("divides a field named after a keyword instead of reading a regex", () => {
+    const e = parseExpression("$.typeof / 2") as { type: string; op?: string };
+    expect(e.type).toBe("BinaryExpr");
+    expect(e.op).toBe("/");
+  });
+});
+
+describe("compiler/parse — the `**` restriction is one-sided, as JavaScript states it", () => {
+  it("refuses a unary on the LEFT and accepts one on the RIGHT", () => {
+    // node --check: `-2 ** 2` and `typeof a ** 2` are SyntaxErrors; `2 ** -1`
+    // and `2 ** typeof a` parse. A symmetric rule refused the valid half.
+    expect(() => parseExpression("-2 ** 2")).toThrow(/without parentheses/);
+    expect(() => parseExpression("typeof $.a ** 2")).toThrow(/without parentheses/);
+    expect(() => parseExpression("2 ** -1")).not.toThrow();
+    expect(() => parseExpression("2 ** typeof $.a")).not.toThrow();
+    expect(() => parseExpression("(-2) ** 2")).not.toThrow();
+  });
+
+  it("keeps `??` symmetric", () => {
+    expect(() => parseExpression("$.a ?? $.b || $.c")).toThrow(/without parentheses/);
+    expect(() => parseExpression("$.a || $.b ?? $.c")).toThrow(/without parentheses/);
+  });
+});
+
+describe("compiler/parse — a `{ … }` callback body is stages only where its row says so", () => {
+  it("accepts a stages block under the one name whose row says blockBody: 'stages'", () => {
+    expect(() => parse("$$.aggregate(o => { $match(o.a > 1) });")).not.toThrow();
+  });
+
+  it("refuses a block with no `return` under every other callee, with the rewrite hint", () => {
+    expect(() => parse("$.items.map(x => { $.a = 1 })")).toThrow(/must end with a `return <expr>`/);
+    expect(() => parse("$.v = $.items.filter(x => { x.a; });")).toThrow(/must end with a `return <expr>`/);
+    // A declared function is not a stages callee either.
+    expect(() => parse("const f = x => { $.a = 1 }; $.b = 1;")).toThrow(/must end with a `return <expr>`/);
+    expect(() => parse("f(x => { $.a = 1 })")).toThrow(/must end with a `return <expr>`/);
+  });
+
+  it("still takes a block WITH a return anywhere", () => {
+    expect(() => parse("$.items.map(x => { const y = x * 2; return y })")).not.toThrow();
+  });
+});
+
+describe("compiler/parse — one statement loop", () => {
+  /** The tree with positions erased, so two spellings at different columns compare equal. */
+  const shape = (p: Program): string => JSON.stringify(p, (k, v) => (k === "pos" ? 0 : v));
+
+  it("gives an entry block exactly the meaning of the same text at the top level", () => {
+    // The entry block and the top level used to have separate loops, and only
+    // the top-level one read a trailing `;` as "this is a pipeline".
+    for (const src of [
+      "$.a > 1",
+      "$.a > 1;",
+      "$.a = 1",
+      "$.a = 1;",
+      "let x = 1; $.a === x",
+      "$match($.a > 1); $.b = 2;",
+    ]) {
+      expect(shape(parseEntry(`({ $ }) => { ${src} }`).program), src).toBe(shape(parse(src)));
+    }
+  });
+
+  it("carries a real position on every entry-form refusal", () => {
+    const at = (src: string): number => {
+      try {
+        parseEntry(src);
+      } catch (e) {
+        return (e as { pos: number }).pos;
+      }
+      return -1;
+    };
+    expect(at("({ a }, { $ }, { b }) => 1")).toBe("({ a }, { $ }, ".length + 2);
+    expect(at("({ $ }) => { $.a = 1; return $.b }")).toBe("({ $ }) => { $.a = 1; ".length);
   });
 });

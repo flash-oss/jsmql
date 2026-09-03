@@ -112,7 +112,17 @@ outright while the first answers it, and the second cannot use an index either.
 Rewriting first leaves one shape to lower, so the divergence cannot arise.
 
 Which slots may be rewritten is stated by `iterateeSlots` on the row and is never
-read off the argument, because three other kinds of slot wear the same spellings:
+read off the argument, because three other kinds of slot wear the same spellings.
+The row states one of three things per receiver family, each a different fact
+with its own name: a **layout** (which slots take which spellings, all of them
+meaning an arrow), **`arrowOnly`** (only an arrow is accepted — `.mapValues` takes
+a two-parameter callback and refuses `"name"`), or **`sortSpec`** (the string,
+object and array spellings are an ORDER, read by mql-sort.ts, and are accepted
+without being rewritten — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`).
+Only a layout has slots for the rule to rewrite. The receiver's FAMILY is read
+off the chain — a chain rooted in `$$` or `$$$.<coll>` is the stream family
+wherever the call stands — never off the call's own position, which gave two
+answers for one link.
 
 | Spelling | As an iteratee | As something else |
 |---|---|---|
@@ -126,6 +136,17 @@ language — which callables may be passed bare is the row's call, in `asReferen
 
 The synthesised parameter cannot capture: it steps aside from any name the values
 spliced into the body mention. See `freshParam`.
+
+## The driver
+
+The rules run in order, then the fold, and the whole round repeats until a round
+changes nothing — identity is the test, because `mapTree` returns the same object
+when no rule fired. A round that produces a tree ALREADY SEEN (compared with
+positions erased) is a cycle: two rules undoing each other's work, which is a bug
+in the table and is reported as an internal error. There is no round limit that
+decides between the two: a chain of declarations where each needs the previous
+one folded and a rule run advances one link per round, and a developer may write
+as many links as they like.
 
 ## Order constraints
 

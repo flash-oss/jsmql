@@ -6,26 +6,27 @@
 // sugar recognised DURING lowering has to be recognised by every loop that
 // lowers, and a loop that does not know a form mis-lowers it silently.
 //
-// TWO PROPERTIES THE AUDITS PROVED NECESSARY.
+// TWO PROPERTIES OF THE PASS.
 //
-// 1. The rules run in a FIXED ORDER, because twelve pairs of them match the same
-//    input and reversing either turns a working query into an error:
-//      $ = { hi: $$.filter(t => t.x > 1) };
-//        facet first        → [{"$facet":{"hi":[{"$match":{"x":{"$gt":1}}}]}}]
-//        replace-root first → "'$$' (current collection) is statement-only"
+// 1. The rules run in a FIXED ORDER. The write normalisations come first, because
+//    every rule after them assumes `op` is `=`; the field-path fold comes before
+//    the mutators, because a mutator's target is a path. Where two rules cannot
+//    match one input, the order is declaration order and nothing more.
 //
 // 2. The pass REPEATS until nothing changes, because a rewrite can produce more
-//    sugar:
-//      $$ = $$.reduce((a, d) => d.ok ? a.concat(d.items) : a, [])
-//        → $$ = $$.filter(d => d.ok); $ = $.items;     still two sugars
-//          → $match($.ok); $replaceWith($.items);      now none
+//    sugar, and folding runs between the rounds:
+//      const k = "name"; $.items.map(k)
+//        → $.items.map("name")        the constant is inlined
+//          → $.items.map(x => x.name)   the shorthand becomes an arrow
 //
 // See docs/specs/desugar-pass.md for the form-by-form rules and the full order.
 
-import type { AssignOp, BinaryOp, Expr, Program } from "../../registry/ast.ts";
+import { type AssignOp, type BinaryOp, type Expr, type Program, ASSIGN_OPS } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
 import { arrayLiteralOrderOf, immutableTwinOf, isFieldProperty, iterateeSlotsOf, receiverFamily } from "../rows.ts";
 import { freshParam } from "./fresh.ts";
+import { readsAContextRef } from "./naming.ts";
+import { isSlotLayout } from "../../registry/vocabulary.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
 import { fold } from "./fold.ts";
@@ -45,19 +46,31 @@ export type Rule = {
 };
 
 /**
- * How many rounds before we give up.
- *
- * Set generously, because a round is not always one rewrite: a chain of
- * declarations where each needs the previous one folded AND a rule run on the
- * result advances one link per round, and there is no bound on how long a
- * developer may make that chain. 24 was not enough for 23 of them.
+ * A backstop on rounds, far above anything a program reaches. It is NOT how the
+ * pass tells a fixpoint from a cycle — that is the tree hash below: a round that
+ * produces a tree already seen is a cycle, whatever its number. A fixed round
+ * limit was the wrong test, because a chain of declarations where each needs the
+ * previous one folded AND a rule run advances one link per round, and a developer
+ * may write as many links as they like.
  */
-const MAX_ROUNDS = 200;
+const MAX_ROUNDS = 100_000;
+
+/** The tree as text with positions erased, so two rounds that differ only in `pos` compare equal. */
+const fingerprint = (program: Program): string => JSON.stringify(program, (k, v) => (k === "pos" ? 0 : v));
 
 // ── the rules, in the order they are tried ───────────────────────────────────
 
-/** `+=` `-=` `*=` `/=` → `=` over the matching binary operator. */
-const COMPOUND: Readonly<Record<string, BinaryOp>> = { "+=": "+", "-=": "-", "*=": "*", "/=": "/" };
+/**
+ * `+=` `-=` `*=` `/=` → `=` over the matching binary operator.
+ *
+ * DERIVED from the AST's own list of assignment spellings: every compound
+ * operator is a binary operator followed by `=`, so the table is the list minus
+ * `=` itself and the two increments. A hand-written copy here was the third table
+ * of assignment spellings, and adding `%=` would have needed all three.
+ */
+const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
+  ASSIGN_OPS.filter((op) => op.length > 1 && op.endsWith("=")).map((op) => [op, op.slice(0, -1) as BinaryOp]),
+);
 
 /**
  * A write whose target cannot take one. Checked BEFORE the rewrite, or a tailored
@@ -81,15 +94,16 @@ const compoundAssign: Rule = {
   apply: (node) => {
     const n = node as { type: string; op?: AssignOp; target?: object; value?: Expr; pos?: number };
     if (n.type !== "AssignExpr" || n.op === undefined) return node;
-    const binop = COMPOUND[n.op];
+    const binop = COMPOUND.get(n.op);
     if (binop === undefined) return node;
     refuseNonScalarTarget(n.target as object, n.op);
     return {
       type: "AssignExpr",
-      target: n.target,
+      target: { ...(n.target as object) },
       op: "=",
       // The target appears twice: once as the destination, once as the left
-      // operand. A FRESH copy, because a later phase compares nodes by identity.
+      // operand. A FRESH copy of each, so no node object sits in two slots —
+      // the walk in walk.ts compares by identity to know what changed.
       value: { type: "BinaryExpr", op: binop, left: n.target, right: n.value, pos: n.pos },
       pos: n.pos,
     } as object;
@@ -113,7 +127,7 @@ const incDec: Rule = {
     refuseNonScalarTarget(n.target as object, n.op);
     return {
       type: "AssignExpr",
-      target: n.target,
+      target: { ...(n.target as object) },
       op: "=",
       value: {
         type: "BinaryExpr",
@@ -367,11 +381,17 @@ const iterateeShorthand: Rule = {
 
     const recv = n.object as { type?: string; name?: string } | undefined;
     const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
-    const family = receiverFamily(named, where.at === "stream", n.name);
+    // A receiver supplies a FAMILY, and a chain rooted in a context reference is
+    // the stream family wherever the call stands — as a `$facet` branch, as the
+    // argument of `$$.push(…)`, as the right of `$.o = …`. Reading the call's own
+    // position instead resolved every one of those to the array family.
+    const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
     if (family === undefined) return node;
 
     const layout = iterateeSlotsOf(n.name, family);
-    if (layout === undefined || "arrowOnly" in layout) return node;
+    // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and a sort
+    // specification is read as an order rather than rewritten to a callback.
+    if (layout === undefined || !isSlotLayout(layout)) return node;
 
     const args = n.args as readonly object[];
     const next = [...args];
@@ -440,6 +460,7 @@ export type RootWhere = Where;
  */
 export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): DesugarResult {
   let current: Program = program;
+  const seen = new Set<string>([fingerprint(program)]);
   for (let round = 1; round <= MAX_ROUNDS; round++) {
     let next = current;
     for (const rule of RULES) next = mapTreeIn(next, root, edge, rule.apply);
@@ -450,16 +471,18 @@ export function desugarVerbose(program: Program, root: RootWhere = STATEMENT): D
     //   const k = "name"; $.items.map(k)   →   map("name")   →   map(x => x.name)
     next = fold(next);
     if (next === current) return { program: current, rounds: round };
+    // A tree seen in an earlier round means two rules are undoing each other's
+    // work — a bug in the table, never a fact about the source.
+    const print = fingerprint(next);
+    if (seen.has(print)) {
+      throw new Error(
+        `jsmql internal error (please report): the desugar pass cycled after ${round} rounds — two rules are rewriting each other's output.`,
+      );
+    }
+    seen.add(print);
     current = next;
   }
-  // Two causes reach here and they want different words. Either two rules undo
-  // each other — a bug in the table — or the program chains more rewrites than
-  // the limit allows, which is a fact about the source. Neither is the reader's
-  // fault, so the message names both rather than guessing.
-  throw new Error(
-    `jsmql internal error (please report): the desugar pass did not settle after ${MAX_ROUNDS} rounds. ` +
-      "Either two rules are rewriting each other's output, or this program chains more rewrites than that.",
-  );
+  throw new Error(`jsmql internal error (please report): the desugar pass did not settle after ${MAX_ROUNDS} rounds.`);
 }
 
 export function desugar(program: Program, root: RootWhere = STATEMENT): Program {

@@ -24,7 +24,7 @@ import {
   foldNamespaceConstant,
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
-import { acceptsArgumentCount } from "../rows.ts";
+import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
 
 /** What is known so far: a name bound to a constant, or to a declared function. */
 export type Constants = ReadonlyMap<string, unknown>;
@@ -489,8 +489,12 @@ type Any = { type: string } & Record<string, unknown>;
 
 // ── the walk ─────────────────────────────────────────────────────────────────
 
-/** The static namespaces a call can be made on. A bare name, never a value. */
-const NAMESPACES: ReadonlySet<string> = new Set(["Math", "Object", "Number", "Date", "Array", "String", "Boolean"]);
+/**
+ * The static namespaces a call can be made on — `Math`, `Object`, `Date` — read
+ * off the rows that say `provides`. A bare name, never a value; and never a list
+ * here, so a new namespace is a row and folds on the day it lands.
+ */
+const NAMESPACES: ReadonlySet<string> = namespaceNames();
 
 /**
  * One argument, ready for a fold rule: a value, or a callable made from a lambda.
@@ -552,6 +556,9 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
     receiverValue = receiver.value;
   }
   const family = onNamespace ? (receiverNode.name as Family) : familyOfValue(receiverValue);
+  // `"abc".length()` is a CALL of a name the row says is READ, and no fold may
+  // answer it — the row's `call: false` is the one fact that separates the two.
+  if (!isCallable(name)) return NOT_CONSTANT;
   if (!acceptsArgumentCount(name, argNodes.length, family)) return NOT_CONSTANT;
 
   const args: Arg[] = [];
@@ -755,6 +762,9 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       // A binding that holds a VALUE is not callable, and shadows the global name.
       if (env.has(callee.name as string)) return NOT_CONSTANT;
       // `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")` — a named conversion.
+      // Gated by the row's count like a method call: `String("a", "b")` must reach
+      // the error it deserves rather than fold to "a".
+      if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
       return applyCall(node.args as readonly Expr[], env, depth, (args) => foldNamedCall(callee.name as string, args));
     }
 
@@ -762,6 +772,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       const callee = node.callee as unknown as Any;
       if (callee.type !== "Ident" || typeof callee.name !== "string") return NOT_CONSTANT;
       if (env.has(callee.name as string)) return NOT_CONSTANT;
+      if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
       return applyCall(node.args as readonly Expr[], env, depth, (args) =>
         foldConstructor(callee.name as string, args),
       );

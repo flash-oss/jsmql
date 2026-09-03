@@ -32,6 +32,10 @@ export type ProductionSpec<
   A extends readonly string[] = readonly never[],
   /** The owners this rule's one `composedInto` cell names. See Cell's `C`. */
   C extends readonly string[] = readonly never[],
+  /** The rules `noMixWith` names, threaded so the audit reads the literal. */
+  M extends readonly string[] = readonly never[],
+  /** The rules `leftOperandNot` names, likewise. */
+  L extends readonly string[] = readonly never[],
 > = {
   doc: string;
   /**
@@ -77,24 +81,26 @@ export type ProductionSpec<
    */
   word?: string;
   /**
-   * Rules this one may NOT combine with unparenthesised, because JAVASCRIPT
-   * forbids the mix. A precedence number always permits a mix, so the cascade
-   * cannot state this and every such pair went unnoticed. Measured with
-   * `node --check`:
-   *   a ?? b || c    → SyntaxError: Unexpected token '||'
-   *   typeof a ** b  → SyntaxError: Unparenthesized unary expression can't
-   *                    appear on the left-hand side of '**'
-   * JSMQL accepts every expression of valid JavaScript syntax and no others, so
-   * a pair listed here must be a parse error.
+   * Levels this may not sit beside unparenthesised on EITHER side, because
+   * JavaScript refuses the pair: `a ?? b || c` and `a || b ?? c` are both
+   * SyntaxErrors. Symmetric — see `leftOperandNot` for the one-sided rule.
    */
-  noMixWith?: readonly string[];
+  noMixWith?: M;
   /**
-   * true when this construct may not appear on the left of `=`, `++` or `--`.
-   * JavaScript refuses `a?.b = 1` outright, so an optional chain is never a
-   * write target. Stated because the write rules live on the ASSIGNMENT rows and
-   * cannot see which operand shapes reached them.
+   * Levels the LEFT operand may not be, unparenthesised. One-sided, because that
+   * is what JavaScript states for `**`: `-a ** 2` and `typeof a ** 2` are
+   * SyntaxErrors, while `2 ** -1` and `2 ** typeof a` parse (node --check). A
+   * symmetric `noMixWith` here refused the valid right-hand forms — the strict-
+   * subset rule broken in the other direction.
    */
-  neverAWriteTarget?: true;
+  leftOperandNot?: L;
+  /**
+   * The node this rule builds can never be the left of `=` or the operand of
+   * `delete`, and this is what to write instead. `a?.b = 1` is a JavaScript
+   * SyntaxError, so the parser refuses it from the row — the message is
+   * "'<spelling>' cannot be assigned to — JavaScript rejects it. <this text>".
+   */
+  neverAWriteTarget?: string;
   filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc, C>;
   expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown, C>;
   /** A link in a `$$ = $$…` chain. */
@@ -109,7 +115,9 @@ export type ProductionEntry<
   O extends On,
   A extends readonly string[] = readonly never[],
   C extends readonly string[] = readonly never[],
-> = ProductionSpec<T, W, O, A, C> & { kind: "production" };
+  M extends readonly string[] = readonly never[],
+  L extends readonly string[] = readonly never[],
+> = ProductionSpec<T, W, O, A, C, M, L> & { kind: "production" };
 
 // Every generic defaults to the EMPTY type, never to its constraint — a rule with no
 // `after` would otherwise widen `A` to `readonly string[]` and the audit below would
@@ -120,9 +128,11 @@ const production = <
   const O extends On,
   const A extends readonly string[] = readonly never[],
   const C extends readonly string[] = readonly never[],
+  const M extends readonly string[] = readonly never[],
+  const L extends readonly string[] = readonly never[],
 >(
-  e: ProductionSpec<T, W, O, A, C>,
-): ProductionEntry<T, W, O, A, C> => ({ ...e, kind: "production" });
+  e: ProductionSpec<T, W, O, A, C, M, L>,
+): ProductionEntry<T, W, O, A, C, M, L> => ({ ...e, kind: "production" });
 
 export const PRODUCTIONS = {
   conditional: production({
@@ -491,7 +501,7 @@ export const PRODUCTIONS = {
     precedence: 12,
     associativity: "right",
     fixity: "infix",
-    noMixWith: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
+    leftOperandNot: ["logicalNot", "bitwiseNot", "typeCheck", "negation"],
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -604,7 +614,7 @@ export const PRODUCTIONS = {
     precedence: 14,
     associativity: "left",
     fixity: "postfix",
-    neverAWriteTarget: true,
+    neverAWriteTarget: "Drop the '?.' to write the field",
     on: "any",
     returns: "unknown",
     where: ["value"],
@@ -1364,3 +1374,12 @@ const _composedIntoResolves: [DanglingComposedInto] extends [never] ? true : Dan
 
 void _afterResolves;
 void _composedIntoResolves;
+
+/** Every `noMixWith` and `leftOperandNot` entry must be a rule in this same file. */
+type DanglingNoMixWith = Exclude<Mentioned<"noMixWith">, ProductionKey>;
+const _noMixWithResolves: [DanglingNoMixWith] extends [never] ? true : DanglingNoMixWith = true;
+type DanglingLeftOperandNot = Exclude<Mentioned<"leftOperandNot">, ProductionKey>;
+const _leftOperandNotResolves: [DanglingLeftOperandNot] extends [never] ? true : DanglingLeftOperandNot = true;
+
+void _noMixWithResolves;
+void _leftOperandNotResolves;

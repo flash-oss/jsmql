@@ -93,6 +93,20 @@ export function scanNumber(src: string, start: number): Scan {
 
 const ESCAPES: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r" };
 
+/**
+ * ONE escape sequence, at the backslash `src[i]`: the character it stands for,
+ * and the index just past it. A letter with no entry stands for itself, so
+ * `\\` is a backslash and `\"` a quote.
+ *
+ * The single decoder for every quoted form. A string and a template used to
+ * decode separately, and the template copy dropped the backslash and KEPT the
+ * letter — `\`a\nb\`` read as "anb". One decoder, one answer.
+ */
+export function decodeEscape(src: string, i: number): { text: string; next: number } {
+  const esc = src[i + 1];
+  return { text: esc === undefined ? "" : (ESCAPES[esc] ?? esc), next: i + 2 };
+}
+
 /** A quoted string. `text` is the DECODED value, so the span is given explicitly. */
 export function scanString(src: string, start: number): Scan {
   const quote = src[start];
@@ -100,9 +114,9 @@ export function scanString(src: string, start: number): Scan {
   let out = "";
   while (i < src.length && src[i] !== quote) {
     if (src[i] === "\\") {
-      const esc = src[i + 1];
-      out += esc === undefined ? "" : (ESCAPES[esc] ?? esc);
-      i += 2;
+      const esc = decodeEscape(src, i);
+      out += esc.text;
+      i = esc.next;
       continue;
     }
     out += src[i];

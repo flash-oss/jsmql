@@ -5,10 +5,11 @@
 // the punctuator order is DERIVED from the key lengths, and the promotion is the
 // keywords table. Adding a token becomes a row, never a branch.
 //
-// Four decisions a longest-match table cannot imply are stated on the rows that
+// Five decisions a longest-match table cannot imply are stated on the rows that
 // own them, and read below:
 //   maxRun                  `$$$$$` must fail, not match `$$$$` then `$`
 //   chooseBy                `/` is division after a value, a regex otherwise
+//   introducesName          after `.`, `?.`, `$.` and `$` a reserved word is a NAME
 //   tracksDepth             `{` counts depth so a template knows its own `}`
 //   resumesTemplateAtDepth  that `}` emits NO token and resumes the template
 
@@ -17,9 +18,10 @@ import { KEYWORDS } from "../../registry/keywords.ts";
 import type { TokenName } from "../../registry/vocabulary.ts";
 import { type Token, token } from "./token.ts";
 import {
-  isIdentPart,
+  decodeEscape,
   isIdentStart,
   LexError,
+  type RegexScan,
   scanIdent,
   scanNumber,
   scanRegex,
@@ -28,6 +30,10 @@ import {
 } from "./scanners.ts";
 
 // ── the tables, built once from the registry ─────────────────────────────────
+
+/** The one spelling that opens and closes a template, and its two types. */
+const TEMPLATE_DELIMITER = "`";
+const TEMPLATE_EXPR_OPEN = "${";
 
 type Punct = {
   spelling: string;
@@ -41,17 +47,45 @@ type Punct = {
 /**
  * Every fixed spelling, LONGEST FIRST. The order is the key length, so `===`
  * cannot be shadowed by `==` and no row has to be placed by hand.
+ *
+ * A row that names two token types must also say how to choose between them,
+ * and that is checked HERE, at load, rather than on the first source that
+ * happens to contain the spelling.
  */
 const PUNCTUATORS: readonly Punct[] = Object.entries(TOKENS)
   .filter(([, row]) => row.variable !== true)
-  .map(([spelling, row]) => ({
-    spelling,
-    type: Array.isArray(row.token) ? null : (row.token as TokenName),
-    chooseBy: "chooseBy" in row && row.chooseBy !== undefined ? row.chooseBy : null,
-    tracksDepth: "tracksDepth" in row && row.tracksDepth === true,
-    resumesTemplateAtDepth: "resumesTemplateAtDepth" in row && row.resumesTemplateAtDepth === true,
-  }))
+  .map(([spelling, row]) => {
+    const punct: Punct = {
+      spelling,
+      type: Array.isArray(row.token) ? null : (row.token as TokenName),
+      chooseBy: "chooseBy" in row && row.chooseBy !== undefined ? row.chooseBy : null,
+      tracksDepth: "tracksDepth" in row && row.tracksDepth === true,
+      resumesTemplateAtDepth: "resumesTemplateAtDepth" in row && row.resumesTemplateAtDepth === true,
+    };
+    // The backtick is the one two-typed row decided by its OWN position, not by
+    // the preceding token; it is scanned by the template branch and never here.
+    if (punct.type === null && punct.chooseBy === null && spelling !== TEMPLATE_DELIMITER) {
+      throw new Error(`tokens.ts: '${spelling}' names two token types and no chooseBy rule to pick one`);
+    }
+    return punct;
+  })
   .sort((a, b) => b.spelling.length - a.spelling.length);
+
+/**
+ * The scanner each `chooseBy.otherwise` type names. A table, so a third
+ * position-classified spelling states its scanner here instead of being read
+ * as a regex because that was the only branch.
+ */
+const OTHERWISE_SCANNERS: Readonly<Partial<Record<TokenName, (src: string, i: number) => RegexScan>>> = {
+  RegexLiteral: scanRegex,
+};
+
+/** The token types after which a reserved word is read as a plain name. */
+const INTRODUCES_NAME: ReadonlySet<TokenName> = new Set(
+  Object.values(TOKENS)
+    .filter((row) => "introducesName" in row && row.introducesName === true)
+    .flatMap((row) => (Array.isArray(row.token) ? row.token : [row.token]) as TokenName[]),
+);
 
 /**
  * A cap on a repeated character, from the row that states it. The key IS the
@@ -69,10 +103,6 @@ const RESERVED: ReadonlyMap<string, TokenName> = new Map(
 );
 
 const VALUE_END: ReadonlySet<TokenName> = new Set(ENDS_A_VALUE);
-
-/** The one spelling that opens and closes a template, and its two types. */
-const TEMPLATE_DELIMITER = "`";
-const TEMPLATE_EXPR_OPEN = "${";
 
 // ── the driver ───────────────────────────────────────────────────────────────
 
@@ -111,8 +141,9 @@ export function lex(src: string): Token[] {
         return j + 2;
       }
       if (ch === "\\") {
-        text += src[j + 1] ?? "";
-        j += 2;
+        const esc = decodeEscape(src, j);
+        text += esc.text;
+        j = esc.next;
         continue;
       }
       text += ch;
@@ -126,10 +157,12 @@ export function lex(src: string): Token[] {
     const start = i;
     const ch = src[i];
 
-    // A name, or a reserved word promoted to its own type.
+    // A name, or a reserved word promoted to its own type — unless the token
+    // before it says the word is a NAME here: `$.typeof`, `x.delete`, `$in(…)`.
     if (isIdentStart(ch)) {
       const scan = scanIdent(src, i);
-      const reserved = RESERVED.get(scan.token.text);
+      const asName = last !== null && INTRODUCES_NAME.has(last);
+      const reserved = asName ? undefined : RESERVED.get(scan.token.text);
       push(reserved === undefined ? scan.token : token(reserved, scan.token.text, start));
       i = scan.next;
       continue;
@@ -171,7 +204,11 @@ export function lex(src: string): Token[] {
     if (hit.chooseBy !== null) {
       const afterValue = last !== null && VALUE_END.has(last);
       if (!afterValue) {
-        const scan = scanRegex(src, i);
+        const scanner = OTHERWISE_SCANNERS[hit.chooseBy.otherwise];
+        if (scanner === undefined) {
+          throw new LexError(`'${hit.spelling}' chooses '${hit.chooseBy.otherwise}', which has no scanner`, start);
+        }
+        const scan = scanner(src, i);
         push({ ...scan.token, flags: scan.flags });
         i = scan.next;
         continue;
@@ -192,7 +229,10 @@ export function lex(src: string): Token[] {
       continue;
     }
 
-    if (hit.type === null) throw new LexError(`'${hit.spelling}' needs a chooseBy rule to be lexable`, start);
+    // `type === null` is impossible here: a two-typed row either has `chooseBy`
+    // (handled above) or is the backtick (handled by the template branch), and
+    // PUNCTUATORS refused every other shape at load.
+    if (hit.type === null) throw new LexError(`'${hit.spelling}' has no single token type`, start);
     push(token(hit.type, hit.spelling, i));
     if (hit.tracksDepth) braceDepth++;
     else if (hit.resumesTemplateAtDepth) braceDepth--;

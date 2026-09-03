@@ -59,21 +59,14 @@ const CELL_OF: Readonly<Record<Position, string>> = {
 /**
  * The position a `Where` names, or null when it names none.
  *
- * `target` and `stageBody` are waypoints, not positions: nothing is evaluated on
- * the left of `=`, and the inside of a stage body is on the way to a position
- * rather than one itself.
+ * `target`, `stageBody` and `stageEntry` are waypoints, not positions: nothing
+ * is evaluated on the left of `=`, and the inside of a stage body is on the way
+ * to a position rather than one itself. Answered from `CELL_OF`, so every
+ * position the registry has is a position here — a hand-written switch listed
+ * three and silently dropped the four phase 4 added later.
  */
 export function positionOf(where: Where): Position | null {
-  switch (where.at) {
-    case "value":
-      return "value";
-    case "stream":
-      return "stream";
-    case "statement":
-      return "statement";
-    default:
-      return null;
-  }
+  return where.at in CELL_OF ? (where.at as Position) : null;
 }
 
 /** What the row says. Five of the six need no lowering to be final. */
