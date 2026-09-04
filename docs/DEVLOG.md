@@ -10,6 +10,20 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the measurement fan-out's findings — a `.some` receiver is a path, a remainder may be negative, and the third reading is stated
+
+Eight agents measured one query-cell family each against a JavaScript oracle on a live mongod, and a skeptic tried to refute each proposal. Two refutations named defects the implementation already avoids — a missing prefix exclusion, and a leaf exclusion dropped from the loose-null cell — both re-checked here against the refuters' own documents. Three findings were real.
+
+**A `.some` receiver is a path like any other.** `$.a.items.some(i => i.q > 2)` selected `a: [{ items: [{ q: 3 }] }]`, where JavaScript throws reading `a.items` and so selects nothing. The cell emitted `$elemMatch` keyed on the path with no prefix exclusions; it goes through `queryOwnValue` now, like every other cell.
+
+**The third reading is a stated fact, not a sniff.** `queryOwnValue` decided whether a test is read element-wise by looking for an `$exists` key inside it — a guess about a test's meaning from its spelling. `ValueReading` gains `ofTheField`, and `FIELD_VALUE` names the reading `$exists` and `$elemMatch` share: the test asks about the FIELD, so no leaf exclusion, and a prefix array is still absent.
+
+**A remainder may be negative.** `$.a % 3 === -1` required a non-negative remainder to take its query form, so it fell to `$expr`, where the server refuses `$mod` on a non-numeric field. It is `{ a: { $mod: [3, -1], $not: { $type: "array" } } }` now — measured exactly JavaScript, and an index scan.
+
+Two road divergences are tracked rather than unnoticed. An array at a path PREFIX reads as ABSENT on the query road, which is JavaScript's answer, and MAPS over the array on the expression road, which is MongoDB's reading of `"$a.q"` — and a value IS a MongoDB path, since HR1 round-trips the two spellings. `$.a.q == null` and `$.a.q === undefined` carry that reason in `test/compiler-query-expr-agreement.test.ts`.
+
+---
+
 ## 2026-09-04 — feat(compiler): a JavaScript spelling reads the field's own value — the filter target stops matching array elements
 
 The developer's ruling, asked as code and answered as code: `typeof $.a === "number"` must not select a document whose `a` is `[1, 2]`, and neither must `$.a === 1` — *"if we use JS SYNTAX (not API, but syntax) we should expect JS behaviour. If it was MQL escape hatch — then leave it be. Just make sure indexes are used."*

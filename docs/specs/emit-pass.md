@@ -157,9 +157,12 @@ and `queryOwnValue` turns them into MQL:
 
 An array at a path PREFIX is the ABSENT case, because that is what JavaScript
 reads there: `$.a.b === 1` adds `a: { $not: { $type: "array" } }`, and
-`$.a.b !== 1` offers `{ a: { $type: "array" } }` as an alternative instead.
-`$exists` is the one test the server reads of the field and not of an element,
-so it takes no exclusion.
+`$.a.b !== 1` offers `{ a: { $type: "array" } }` as an alternative instead. A
+third reading, `FIELD_VALUE`, is for a test the server reads of the FIELD rather
+than of an element — `$exists`, and the `$elemMatch` a `.some` becomes: neither
+can be satisfied by an element, so neither takes a leaf exclusion, and a prefix
+array is still absent (`$.a.items.some(…)` where `a` is an array selects
+nothing, as `.some` throws there).
 
 `!p` is the COMPLEMENT of p's own clause — `{ $nor: [<p>] }` — whenever p has a
 clause with no `$expr` inside. That is not a size choice: `$expr` orders across

@@ -79,6 +79,11 @@ const AGREE: readonly string[] = [
 /** Sources the language DOCUMENTS as selecting different documents, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   {
+    src: "$.a.q == null",
+    why: 'An array at a path PREFIX. The query road reads it as an absent field, which is JavaScript\'s answer (`({a:[{q:1}]}).a.q` is `undefined`, so `== null` is true). The expression road keeps MongoDB\'s path semantics, where `"$a.q"` MAPS over the array and gives `[1]`, so the comparison is false. A value IS a MongoDB path — HR1 round-trips `$.a.q` with `"$a.q"` — so the two roads read the same source two ways here, and the query road is the one JavaScript agrees with.',
+  },
+  { src: "$.a.q === undefined", why: "The same prefix array, through the presence spelling." },
+  {
     src: "$.a > 1",
     why: "Ordered comparison is type-bracketed in the query language and element-wise on an array; the expression form orders across BSON types and compares the whole array (divergences 1 and 3).",
   },

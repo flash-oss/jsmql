@@ -23,8 +23,8 @@ const URI = "mongodb://127.0.0.1:27017";
 
 /** One document per shape a field can take: a scalar, every kind of array, absent, null, the wrong type. */
 const DOCS = [
-  { _id: 1, a: 1, s: "abyz", tags: ["vip", "x"], n: { v: 1 }, g: [{ r: { s: 1 } }] },
-  { _id: 2, a: 2, s: "zz", tags: "vip", n: { v: 2 }, g: [{ r: [{ s: 1 }] }] },
+  { _id: 1, a: 1, s: "abyz", tags: ["vip", "x"], n: { v: 1 }, g: [{ r: { s: 1 } }], h: { g: [{ r: { s: 1 } }] } },
+  { _id: 2, a: 2, s: "zz", tags: "vip", n: { v: 2 }, g: [{ r: [{ s: 1 }] }], h: [{ g: [{ r: { s: 1 } }] }] },
   { _id: 3, a: [1, 2], s: ["abyz"], tags: "a vip user", n: [{ v: 1 }], g: [{ r: { s: [1] } }] },
   { _id: 4, a: [1], s: 5, tags: [], n: [{ v: [1] }], g: [{ r: { s: 2 } }, { r: { s: 1 } }] },
   { _id: 5, a: [], s: null, tags: ["VIP"], n: { v: [1] }, g: [] },
@@ -74,6 +74,8 @@ const AGREE: readonly string[] = [
   // a path INSIDE an element body takes the rule again, prefix and all
   "$.g.some(i => i.r.s === 1)",
   "$.g.some(i => i.r.s !== 1)",
+  // a `.some` receiver is a path too: an array at its PREFIX is absent, where `.some` throws
+  "$.h.g.some(i => i.r.s === 1)",
   "$.a === 1 && $.n.v === 1",
   "$.a === 1 || $.a === 2",
   // `!p` is the COMPLEMENT of p's clause, so a tautology stays one

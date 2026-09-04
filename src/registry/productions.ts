@@ -19,7 +19,7 @@
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, inCode, pending, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
-import { NOT_OWN_VALUE, OWN_VALUE, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { FIELD_VALUE, NOT_OWN_VALUE, OWN_VALUE, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -196,7 +196,9 @@ function presenceTest(input: FilterIn): string | null {
 /** `x % d === m` either way round, with integer `d` and `m`: the path and the pair, or null. */
 function moduloTest(input: FilterIn): { path: string; divisor: number; remainder: number } | null {
   const [l, r] = input.args;
-  const isNat = (e: Expr) => e.type === "NumberLiteral" && Number.isInteger(e.value) && e.value >= 0;
+  // The remainder may be negative: `$.a % 3 === -1` is `{ $mod: [3, -1] }`, which
+  // the server takes and JavaScript agrees with.
+  const isNat = (e: Expr) => e.type === "NumberLiteral" && Number.isInteger(e.value);
   const asMod = (e: Expr, other: Expr) => {
     if (e.type !== "BinaryExpr" || e.op !== "%" || !isNat(other)) return null;
     const path = input.pathOf(e.left);
@@ -221,7 +223,7 @@ function nullTest(input: FilterIn): string | null {
  * positive form takes it as an alternative and the negated form excludes it.
  */
 const presenceQuery = (path: string, negated: boolean): QueryDoc =>
-  queryOwnValue(path, { $exists: negated }, { whenAbsent: !negated, whenArray: negated });
+  queryOwnValue(path, { $exists: negated }, { ...FIELD_VALUE, whenAbsent: !negated, whenArray: negated });
 
 /** `.length` compared with a natural number is a LENGTH, which no query form expresses. */
 function comparesALength(input: FilterIn): boolean {

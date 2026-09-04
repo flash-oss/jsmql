@@ -58,6 +58,7 @@ import {
   accumulated,
   because,
   escapeForRegex,
+  FIELD_VALUE,
   objectBody,
   OWN_VALUE,
   queryOwnValue,
@@ -5404,7 +5405,10 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         if (path === null) return null;
         const q = elementQuery(args[0]);
-        return q === null ? null : { [path]: { $elemMatch: q } };
+        // `$elemMatch` asks about the FIELD — is it an array with a matching
+        // element — so it takes no leaf exclusion, and a PREFIX array is still
+        // absent, where JavaScript's `.some` throws and selects nothing.
+        return q === null ? null : queryOwnValue(path, { $elemMatch: q }, FIELD_VALUE);
       },
     },
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),

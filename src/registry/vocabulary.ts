@@ -60,12 +60,22 @@ export type ValueReading = {
   whenAbsent: boolean;
   /** Does the answer hold when the value IS an array? `!==` holds — no array is `===` a scalar. */
   whenArray: boolean;
+  /**
+   * The test asks about the FIELD, not about an element: `$exists` answers
+   * whether the field is there, and `$elemMatch` asks whether it is an array
+   * with a matching element. Neither takes a leaf exclusion, because neither can
+   * be satisfied by an element the way `$eq` can. A PREFIX array is excluded all
+   * the same — JavaScript reads that as absent.
+   */
+  ofTheField?: true;
 };
 
 /** Both readings false: the ordinary positive comparison. */
 export const OWN_VALUE: ValueReading = { whenAbsent: false, whenArray: false };
 /** Both true: the ordinary negated comparison, which every absent field and every array satisfies. */
 export const NOT_OWN_VALUE: ValueReading = { whenAbsent: true, whenArray: true };
+/** A test about the field itself — `$elemMatch`, `$exists` — which holds for neither nothing nor an array of its own accord. */
+export const FIELD_VALUE: ValueReading = { whenAbsent: false, whenArray: false, ofTheField: true };
 
 /** Every proper prefix of a dotted path — the segments MongoDB would traverse. */
 const prefixesOf = (path: string): readonly string[] => {
@@ -88,10 +98,7 @@ export const escapeForRegex = (needle: string): string => needle.replace(/[.*+?^
  */
 export function queryOwnValue(path: string, test: Readonly<Record<string, unknown>>, reading: ValueReading): QueryDoc {
   const prefixes = prefixesOf(path);
-  // `$exists` is the one query test the server reads of the FIELD and not of an
-  // element, so an array value already answers it correctly and it needs no
-  // exclusion and no alternative.
-  const elementWise = !("$exists" in test);
+  const elementWise = reading.ofTheField !== true;
   // A test that carries its own `$not` cannot take a second one in the same
   // document, so there the exclusion becomes a sibling clause — and none at all
   // when the test already IS the exclusion.
