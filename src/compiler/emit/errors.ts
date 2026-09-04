@@ -254,3 +254,10 @@ export const multiKeyStage = (index: number, keys: number, pos: number): Codegen
     `Element ${index} of pipeline must be a single-key stage object (e.g. \`{ $match: ... }\`), but found an object with ${keys} keys.`,
     pos,
   );
+
+/** A query-only operator written inside a `.some(…)` body, where the server refuses it. */
+export const queryOnlyInsideElement = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' applies to the top-level document only — the server refuses it inside an array element test. Move it out of the '.some(…)' body: '$.items.some(…) && ${name}(…)'.`,
+    pos,
+  );

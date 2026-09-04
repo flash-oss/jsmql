@@ -21,7 +21,7 @@ import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import { ObjectId } from "../../objectid.ts";
-import { consult } from "./consult.ts";
+import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
@@ -155,6 +155,12 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
       node.pos,
       [],
     );
+  // A query-only operator applies to the top-level document: inside an `$elemMatch`
+  // body the server refuses it ("can only be applied to the top-level document"), and
+  // it has no value form to fall back to.
+  if (!listedIn(name, "value") && env.site.boundaries.some((b) => b.stage === "$elemMatch")) {
+    throw E.queryOnlyInsideElement(name, node.pos);
+  }
   if (verdict.kind !== "lower" && verdict.kind !== "perFamily") return null;
   const receiver: Receiver = recv === null ? { kind: "none" } : { kind: "opaque", lowered: null };
   const sel = select(verdict, receiver, shapeOf(args), args.length);
@@ -216,8 +222,9 @@ function extractIncludesChain(node: Expr, env: Env): { path: string; values: unk
 export function pathOfIn(e: Expr, env: Env): string | null {
   // Inside an `$elemMatch` body the outer document is out of reach: `$.min` has no
   // query path there, so a body that reads it takes the `$expr` road.
-  const insideElement = env.site.boundaries.some((b) => b.stage === "$elemMatch");
-  if (e.type === "FieldRef") return e.path === "" || insideElement ? null : e.path;
+  const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
+  const innermost = elements.length === 0 ? null : elements[elements.length - 1];
+  if (e.type === "FieldRef") return e.path === "" || innermost !== null ? null : e.path;
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;
     if (
@@ -225,7 +232,10 @@ export function pathOfIn(e: Expr, env: Env): string | null {
       env.scope.has(e.object.name) &&
       env.lookup(e.object.name, e.object.pos).ref.kind === "document"
     ) {
-      return e.name;
+      // Only the INNERMOST element's fields are paths here: an outer `.some`'s
+      // parameter read inside a nested one has no query form (`$elemMatch` sees
+      // its own element only), so the body takes the `$expr` road.
+      return innermost !== null && innermost.element === e.object.name ? e.name : null;
     }
     const base = pathOfIn(e.object, env);
     return base === null ? null : `${base}.${e.name}`;

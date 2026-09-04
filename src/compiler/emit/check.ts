@@ -247,6 +247,25 @@ export function checkSlots(name: string, args: Arity, operands: readonly Expr[])
   if (args.elementType !== undefined) {
     for (const e of operands) checkType(name, "", e, args.elementType);
   }
+  for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
+    const e = operands[Number(i)];
+    const n = e === undefined ? null : numberOf(e);
+    if (n !== null && (n < lo || n > hi)) {
+      throw new CodegenError(
+        `'${name}' argument ${Number(i) + 1} must be a number from ${lo} to ${hi} — got ${n}.`,
+        e!.pos,
+      );
+    }
+  }
+  for (const i of args.nonZero ?? []) {
+    const e = operands[i];
+    if (e !== undefined && numberOf(e) === 0) {
+      throw new CodegenError(
+        `'${name}' cannot divide by zero — the server refuses a zero divisor, and JavaScript's NaN has no MongoDB value.`,
+        e.pos,
+      );
+    }
+  }
   for (const i of args.constant ?? []) {
     const e = operands[i];
     if (e !== undefined && !evaluate(e, new Map()).ok) {

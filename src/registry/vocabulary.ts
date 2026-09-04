@@ -399,6 +399,18 @@ export type Arity = {
   /** Per-slot literal type, checked only when the slot is a literal. */
   slotType?: Readonly<Record<number, ArgType>>;
   /**
+   * Slots whose literal must fall in a closed numeric range — `$sampleRate` takes
+   * a rate in [0, 1]; the server refuses 2 ("must be in [0, 1]"). Checked only on
+   * a literal number.
+   */
+  slotRange?: Readonly<Record<number, readonly [number, number]>>;
+  /**
+   * Slots that refuse a literal zero — a divisor: `$divide($.a, 0)` and
+   * `$.a % 0` are refused by the server ("divisor cannot be 0"), and JavaScript's
+   * NaN answer has no MongoDB value.
+   */
+  nonZero?: readonly number[];
+  /**
    * Slots that refuse a literal `null` — the server errors rather than answering
    * null. A per-ROW fact, measured: `$size: null` and `$strLenCP: null` are
    * refused ("must be an array" / "requires a string argument"), while
@@ -641,8 +653,14 @@ export const BSON_TYPE_ALIASES: readonly string[] = [
   "number",
 ];
 
-/** JavaScript's `typeof` spelling → the BSON alias. `typeof` says "boolean"; MongoDB says "bool". */
-export const JS_TYPEOF_TO_BSON: Readonly<Record<string, string>> = { boolean: "bool" };
+/**
+ * JavaScript's `typeof` spelling → the BSON alias. `typeof` says "boolean";
+ * MongoDB says "bool". `typeof x === "undefined"` is ABSENCE in JavaScript, and
+ * `$type` answers "missing" for an absent field — never the deprecated BSON
+ * `undefined` type, which the query `$type: "undefined"` would test (measured:
+ * it matched none of six documents without the field).
+ */
+export const JS_TYPEOF_TO_BSON: Readonly<Record<string, string>> = { boolean: "bool", undefined: "missing" };
 
 /**
  * An umbrella alias → the concrete types the aggregation `$type` EXPRESSION can
@@ -658,7 +676,7 @@ export const TYPE_GROUPS: Readonly<Record<string, readonly string[]>> = {
 /** The alias a `typeof x === "<spelling>"` test names, or null when the query language has none. */
 export function typeAliasOf(spelling: string): string | null {
   const alias = JS_TYPEOF_TO_BSON[spelling] ?? spelling;
-  return BSON_TYPE_ALIASES.includes(alias) ? alias : null;
+  return alias === "missing" || BSON_TYPE_ALIASES.includes(alias) ? alias : null;
 }
 
 export type ExprIn = {

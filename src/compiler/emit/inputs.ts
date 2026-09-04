@@ -110,7 +110,7 @@ export function filterInputs(
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== 1) return null;
       // The element is the root inside `$elemMatch`: the parameter stands for the document.
       const bodyEnv = argEnv
-        .element()
+        .element(cb.params[0])
         .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },

@@ -500,7 +500,7 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number" },
+      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$divide' is not valid in a $group output position — see its 'where'."),
@@ -579,7 +579,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$log10' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$log10' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -596,7 +596,7 @@ export const NAMES = {
     shape: "array",
     filter: pending("src/match-translation.ts"),
     expr: {
-      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number" },
+      args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$mod' is not valid in a $group output position — see its 'where'."),
@@ -892,7 +892,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$atan2' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "y, x", exact: 2, slotType: { 0: "number" }, elementType: "number" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -3132,7 +3132,7 @@ export const NAMES = {
     // The server requires a constant here, and a query document holds values: the slot is stated
     // `constant`, so an expression is refused before this cell runs.
     filter: {
-      args: { sig: "rate", exact: 1, constant: [0] },
+      args: { sig: "rate", exact: 1, constant: [0], slotType: { 0: "number" }, slotRange: { 0: [0, 1] } },
       emit: ({ name, args, constant }) => ({ [name]: constant(args[0])?.value }),
     },
     expr: unsupported(
@@ -3786,7 +3786,7 @@ export const NAMES = {
       "'$changeStream' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$changeStream(…);') or a chain link ('$$.$changeStream(…)').",
     ),
     expr: unsupported(
-      "'$changeStream' is a pipeline stage, not an expression — MongoDB has no '$changeStream' expression operator, so '{ $changeStream: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStream(…);') or as a chain link ('$$.$changeStream(…)').",
+      "'$changeStream' is a pipeline stage, not an expression — MongoDB has no '$changeStream' expression operator, so '{ $changeStream: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStream(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$changeStream' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$changeStream' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3828,7 +3828,7 @@ export const NAMES = {
       "'$collStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$collStats(…);') or a chain link ('$$.$collStats(…)').",
     ),
     expr: unsupported(
-      "'$collStats' is a pipeline stage, not an expression — MongoDB has no '$collStats' expression operator, so '{ $collStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$collStats(…);') or as a chain link ('$$.$collStats(…)').",
+      "'$collStats' is a pipeline stage, not an expression — MongoDB has no '$collStats' expression operator, so '{ $collStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$collStats(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$collStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$collStats' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3848,7 +3848,7 @@ export const NAMES = {
       "'$currentOp' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$currentOp(…);') or a chain link ('$$.$currentOp(…)').",
     ),
     expr: unsupported(
-      "'$currentOp' is a pipeline stage, not an expression — MongoDB has no '$currentOp' expression operator, so '{ $currentOp: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$currentOp(…);') or as a chain link ('$$.$currentOp(…)').",
+      "'$currentOp' is a pipeline stage, not an expression — MongoDB has no '$currentOp' expression operator, so '{ $currentOp: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$currentOp(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$currentOp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$currentOp' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3887,7 +3887,7 @@ export const NAMES = {
       "'$documents' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$documents(…);') or a chain link ('$$.$documents(…)').",
     ),
     expr: unsupported(
-      "'$documents' is a pipeline stage, not an expression — MongoDB has no '$documents' expression operator, so '{ $documents: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$documents(…);') or as a chain link ('$$.$documents(…)').",
+      "'$documents' is a pipeline stage, not an expression — MongoDB has no '$documents' expression operator, so '{ $documents: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$documents(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$documents' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3946,7 +3946,7 @@ export const NAMES = {
       "'$geoNear' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$geoNear(…);') or a chain link ('$$.$geoNear(…)').",
     ),
     expr: unsupported(
-      "'$geoNear' is a pipeline stage, not an expression — MongoDB has no '$geoNear' expression operator, so '{ $geoNear: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$geoNear(…);') or as a chain link ('$$.$geoNear(…)').",
+      "'$geoNear' is a pipeline stage, not an expression — MongoDB has no '$geoNear' expression operator, so '{ $geoNear: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$geoNear(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$geoNear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$geoNear' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4005,7 +4005,7 @@ export const NAMES = {
       "'$indexStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$indexStats(…);') or a chain link ('$$.$indexStats(…)').",
     ),
     expr: unsupported(
-      "'$indexStats' is a pipeline stage, not an expression — MongoDB has no '$indexStats' expression operator, so '{ $indexStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$indexStats(…);') or as a chain link ('$$.$indexStats(…)').",
+      "'$indexStats' is a pipeline stage, not an expression — MongoDB has no '$indexStats' expression operator, so '{ $indexStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$indexStats(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$indexStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexStats' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4044,7 +4044,7 @@ export const NAMES = {
       "'$listLocalSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listLocalSessions(…);') or a chain link ('$$.$listLocalSessions(…)').",
     ),
     expr: unsupported(
-      "'$listLocalSessions' is a pipeline stage, not an expression — MongoDB has no '$listLocalSessions' expression operator, so '{ $listLocalSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listLocalSessions(…);') or as a chain link ('$$.$listLocalSessions(…)').",
+      "'$listLocalSessions' is a pipeline stage, not an expression — MongoDB has no '$listLocalSessions' expression operator, so '{ $listLocalSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listLocalSessions(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$listLocalSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4064,7 +4064,7 @@ export const NAMES = {
       "'$listSampledQueries' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSampledQueries(…);') or a chain link ('$$.$listSampledQueries(…)').",
     ),
     expr: unsupported(
-      "'$listSampledQueries' is a pipeline stage, not an expression — MongoDB has no '$listSampledQueries' expression operator, so '{ $listSampledQueries: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSampledQueries(…);') or as a chain link ('$$.$listSampledQueries(…)').",
+      "'$listSampledQueries' is a pipeline stage, not an expression — MongoDB has no '$listSampledQueries' expression operator, so '{ $listSampledQueries: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSampledQueries(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$listSampledQueries' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSampledQueries' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4084,7 +4084,7 @@ export const NAMES = {
       "'$listSearchIndexes' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSearchIndexes(…);') or a chain link ('$$.$listSearchIndexes(…)').",
     ),
     expr: unsupported(
-      "'$listSearchIndexes' is a pipeline stage, not an expression — MongoDB has no '$listSearchIndexes' expression operator, so '{ $listSearchIndexes: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSearchIndexes(…);') or as a chain link ('$$.$listSearchIndexes(…)').",
+      "'$listSearchIndexes' is a pipeline stage, not an expression — MongoDB has no '$listSearchIndexes' expression operator, so '{ $listSearchIndexes: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSearchIndexes(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$listSearchIndexes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSearchIndexes' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4104,7 +4104,7 @@ export const NAMES = {
       "'$listSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSessions(…);') or a chain link ('$$.$listSessions(…)').",
     ),
     expr: unsupported(
-      "'$listSessions' is a pipeline stage, not an expression — MongoDB has no '$listSessions' expression operator, so '{ $listSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSessions(…);') or as a chain link ('$$.$listSessions(…)').",
+      "'$listSessions' is a pipeline stage, not an expression — MongoDB has no '$listSessions' expression operator, so '{ $listSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSessions(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$listSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSessions' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4203,7 +4203,7 @@ export const NAMES = {
       "'$planCacheStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$planCacheStats(…);') or a chain link ('$$.$planCacheStats(…)').",
     ),
     expr: unsupported(
-      "'$planCacheStats' is a pipeline stage, not an expression — MongoDB has no '$planCacheStats' expression operator, so '{ $planCacheStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$planCacheStats(…);') or as a chain link ('$$.$planCacheStats(…)').",
+      "'$planCacheStats' is a pipeline stage, not an expression — MongoDB has no '$planCacheStats' expression operator, so '{ $planCacheStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$planCacheStats(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$planCacheStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4243,7 +4243,7 @@ export const NAMES = {
       "'$rankFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$rankFusion(…);') or a chain link ('$$.$rankFusion(…)').",
     ),
     expr: unsupported(
-      "'$rankFusion' is a pipeline stage, not an expression — MongoDB has no '$rankFusion' expression operator, so '{ $rankFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$rankFusion(…);') or as a chain link ('$$.$rankFusion(…)').",
+      "'$rankFusion' is a pipeline stage, not an expression — MongoDB has no '$rankFusion' expression operator, so '{ $rankFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$rankFusion(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$rankFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rankFusion' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4343,7 +4343,7 @@ export const NAMES = {
       "'$scoreFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$scoreFusion(…);') or a chain link ('$$.$scoreFusion(…)').",
     ),
     expr: unsupported(
-      "'$scoreFusion' is a pipeline stage, not an expression — MongoDB has no '$scoreFusion' expression operator, so '{ $scoreFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$scoreFusion(…);') or as a chain link ('$$.$scoreFusion(…)').",
+      "'$scoreFusion' is a pipeline stage, not an expression — MongoDB has no '$scoreFusion' expression operator, so '{ $scoreFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$scoreFusion(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$scoreFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$scoreFusion' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4363,7 +4363,7 @@ export const NAMES = {
       "'$search' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$search(…);') or a chain link ('$$.$search(…)').",
     ),
     expr: unsupported(
-      "'$search' is a pipeline stage, not an expression — MongoDB has no '$search' expression operator, so '{ $search: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$search(…);') or as a chain link ('$$.$search(…)').",
+      "'$search' is a pipeline stage, not an expression — MongoDB has no '$search' expression operator, so '{ $search: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$search(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$search' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$search' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4383,7 +4383,7 @@ export const NAMES = {
       "'$searchMeta' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$searchMeta(…);') or a chain link ('$$.$searchMeta(…)').",
     ),
     expr: unsupported(
-      "'$searchMeta' is a pipeline stage, not an expression — MongoDB has no '$searchMeta' expression operator, so '{ $searchMeta: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$searchMeta(…);') or as a chain link ('$$.$searchMeta(…)').",
+      "'$searchMeta' is a pipeline stage, not an expression — MongoDB has no '$searchMeta' expression operator, so '{ $searchMeta: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$searchMeta(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$searchMeta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$searchMeta' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -4442,7 +4442,7 @@ export const NAMES = {
       "'$shardedDataDistribution' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$shardedDataDistribution(…);') or a chain link ('$$.$shardedDataDistribution(…)').",
     ),
     expr: unsupported(
-      "'$shardedDataDistribution' is a pipeline stage, not an expression — MongoDB has no '$shardedDataDistribution' expression operator, so '{ $shardedDataDistribution: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$shardedDataDistribution(…);') or as a chain link ('$$.$shardedDataDistribution(…)').",
+      "'$shardedDataDistribution' is a pipeline stage, not an expression — MongoDB has no '$shardedDataDistribution' expression operator, so '{ $shardedDataDistribution: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$shardedDataDistribution(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$shardedDataDistribution' is not valid in a $group output position — see its 'where'."),
     window: unsupported(
@@ -4580,7 +4580,7 @@ export const NAMES = {
       "'$vectorSearch' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$vectorSearch(…);') or a chain link ('$$.$vectorSearch(…)').",
     ),
     expr: unsupported(
-      "'$vectorSearch' is a pipeline stage, not an expression — MongoDB has no '$vectorSearch' expression operator, so '{ $vectorSearch: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$vectorSearch(…);') or as a chain link ('$$.$vectorSearch(…)').",
+      "'$vectorSearch' is a pipeline stage, not an expression — MongoDB has no '$vectorSearch' expression operator, so '{ $vectorSearch: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$vectorSearch(…);'). It produces the pipeline's source documents, so it stands first and never as a chain link.",
     ),
     group: unsupported("'$vectorSearch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$vectorSearch' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -5049,7 +5049,9 @@ export const NAMES = {
     immutableTwin: "toReversed",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.reverse()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.reverse()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.reverse(…);'.",
+    ),
     expr: unsupported(
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
@@ -5495,7 +5497,9 @@ export const NAMES = {
     },
     returns: "unknown",
     where: ["stream", "statement"],
-    filter: unsupported("'.sort()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.sort()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.sort(…);'.",
+    ),
     expr: unsupported(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
@@ -5512,7 +5516,9 @@ export const NAMES = {
     immutableTwin: "toSpliced",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.splice()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.splice()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.splice(…);'.",
+    ),
     expr: unsupported(
       ".splice() mutates the array in JavaScript. In expression position, use '.toSpliced(start, deleteCount, ...items)' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
@@ -5529,7 +5535,9 @@ export const NAMES = {
     asArrayLiteral: "receiver, then arguments",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.push()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.push()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.push(…);'.",
+    ),
     expr: unsupported(
       ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
@@ -5545,7 +5553,9 @@ export const NAMES = {
     on: "array",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.pop()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.pop()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.pop(…);'.",
+    ),
     expr: unsupported(
       ".pop() mutates the array in JavaScript. In expression position, use '.at(-1)' to read the last element or '.slice(0, -1)' for everything-but-last — or call it at statement position (top-level on a '$.<field>' receiver) to drop the last element.",
     ),
@@ -5561,7 +5571,9 @@ export const NAMES = {
     on: "array",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.shift()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.shift()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.shift(…);'.",
+    ),
     expr: unsupported(
       ".shift() mutates the array in JavaScript. In expression position, use '.at(0)' to read the first element or '.slice(1)' for everything-but-first — or call it at statement position (top-level on a '$.<field>' receiver) to drop the first element.",
     ),
@@ -5578,7 +5590,9 @@ export const NAMES = {
     asArrayLiteral: "arguments, then receiver",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.unshift()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.unshift()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.unshift(…);'.",
+    ),
     expr: unsupported(
       ".unshift() mutates the array in JavaScript. In expression position, use '.concat()' with the new items first or spread '[...newItems, ...arr]' — or call it at statement position (top-level on a '$.<field>' receiver) to prepend in place.",
     ),
@@ -5594,7 +5608,9 @@ export const NAMES = {
     on: "array",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.fill()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.fill()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.fill(…);'.",
+    ),
     expr: unsupported(
       ".fill() mutates the array in JavaScript. In expression position there is no direct immutable replacement (build from a $range or pass a pre-filled array as a parameter) — or call it at statement position (top-level on a '$.<field>' receiver) to fill the field in place.",
     ),
@@ -5610,7 +5626,9 @@ export const NAMES = {
     on: "array",
     returns: "unknown",
     where: ["statement"],
-    filter: unsupported("'.copyWithin()' writes a field; it is not a filter predicate."),
+    filter: unsupported(
+      "'.copyWithin()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.copyWithin(…);'.",
+    ),
     expr: unsupported(
       ".copyWithin() mutates the array in JavaScript; jsmql expressions are immutable. Call it at statement position (top-level on a '$.<field>' receiver) to copy-within the field in place, or compose '.slice()' calls with '$concatArrays' for an inline expression.",
     ),
@@ -7829,7 +7847,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     onlyInside: { value: ["$switch"] },
-    filter: viaFallback,
+    filter: unsupported(
+      "'$case' is a branch of '$switch' and has no meaning on its own — write '$switch({ branches: [{ case: <test>, then: <value> }], default: <value> })'.",
+    ),
     expr: pending("src/operator-validation.ts"),
     group: unsupported(
       "'$case' is only valid inside $switch, and only in an aggregation expression — never in a $group slot.",
@@ -8319,7 +8339,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'collStats()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'collStats()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$.collStats(…);'.",
+    ),
     expr: unsupported("'collStats()' is a source stage, not a value."),
     stream: unsupported("'collStats()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8334,7 +8356,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'indexStats()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'indexStats()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$.indexStats(…);'.",
+    ),
     expr: unsupported("'indexStats()' is a source stage, not a value."),
     stream: unsupported("'indexStats()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8349,7 +8373,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'listSearchIndexes()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'listSearchIndexes()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$.listSearchIndexes(…);'.",
+    ),
     expr: unsupported("'listSearchIndexes()' is a source stage, not a value."),
     stream: unsupported("'listSearchIndexes()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8364,7 +8390,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'planCacheStats()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'planCacheStats()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$.planCacheStats(…);'.",
+    ),
     expr: unsupported("'planCacheStats()' is a source stage, not a value."),
     stream: unsupported("'planCacheStats()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8379,7 +8407,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'currentOp()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'currentOp()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$$$.currentOp(…);'.",
+    ),
     expr: unsupported("'currentOp()' is a source stage, not a value."),
     stream: unsupported("'currentOp()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8394,7 +8424,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'listLocalSessions()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'listLocalSessions()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$$$.listLocalSessions(…);'.",
+    ),
     expr: unsupported("'listLocalSessions()' is a source stage, not a value."),
     stream: unsupported("'listLocalSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8409,7 +8441,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'listSampledQueries()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'listSampledQueries()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$$$.listSampledQueries(…);'.",
+    ),
     expr: unsupported("'listSampledQueries()' is a source stage, not a value."),
     stream: unsupported("'listSampledQueries()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8424,7 +8458,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'listSessions()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'listSessions()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$$$.listSessions(…);'.",
+    ),
     expr: unsupported("'listSessions()' is a source stage, not a value."),
     stream: unsupported("'listSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
     statement: pending("src/system-stage-translation.ts"),
@@ -8439,7 +8475,9 @@ export const NAMES = {
     returns: "stream",
     where: ["statement"],
     only: ["stageFirst"],
-    filter: unsupported("'shardedDataDistribution()' is a source stage, not a filter predicate."),
+    filter: unsupported(
+      "'shardedDataDistribution()' is a source stage, not a filter predicate. Run it as the pipeline's first statement: '$$$$.shardedDataDistribution(…);'.",
+    ),
     expr: unsupported("'shardedDataDistribution()' is a source stage, not a value."),
     stream: unsupported(
       "'shardedDataDistribution()' must be the pipeline's first stage, so it cannot be a chain link.",

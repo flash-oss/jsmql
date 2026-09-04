@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the filter target's query-cell review — `typeof … "undefined"` is absence, `$sampleRate` takes a rate, a zero divisor is refused, and a nested `.some` reads its own element
+
+The third after-audit of the filter target reviewed every query cell against a running `mongod` and found six defects; all six are fixed here, each as a stated registry fact or a rule stated once in the emit phase.
+
+- **`typeof $.a === "undefined"` tested the deprecated BSON `undefined` type.** `{ a: { $type: "undefined" } }` matched none of six documents without `a`, and the negation matched all sixteen. JavaScript's `typeof` answers `"undefined"` for ABSENCE, so the spelling map (`JS_TYPEOF_TO_BSON`) now states `undefined → missing`: the query form is `{ a: { $exists: false } }` / `{ $exists: true }`, the expression form compares `$type` with `"missing"`. Measured: `[3]` and `[1,2,4,5]` over the probe collection. The shipped compiler has the same defect.
+- **`$sampleRate` emitted any constant.** The server takes a number in `[0, 1]`; `$sampleRate(2)` and `$sampleRate("0.5")` were emitted and refused at run time (HR3). The `Arity` vocabulary gains `slotRange` (a closed numeric range for a literal slot), and the row states `slotType: { 0: "number" }, slotRange: { 0: [0, 1] }`. Also `$sampleRate` inside a `.some(…)` body: the server refuses it inside `$elemMatch` ("can only be applied to the top-level document"), and a query-only row has no value form to fall back to, so the leaf refuses it with the way out (`$.items.some(…) && $sampleRate(…)`).
+- **A zero divisor reached the server.** `$.a % 0 === 1` became `{ a: { $mod: [0, 1] } }` ("divisor cannot be 0"). `Arity` gains `nonZero` (slots a literal zero is refused in); the `remainder`, `division`, `$mod` and `$divide` rows state `nonZero: [1]`, and the check words the refusal by the operator the developer wrote (`'%'`, never the registry key — `production()` now spells every production by its token). The `$not`-form divergence of `%` (`{ $not: { $mod } }` also selects a missing, null or non-numeric field) is documented as divergence 6.
+- **A nested `.some` read an OUTER element's field as the INNER element's.** `$.a.some(i => i.b.some(j => i.c === 1))` became `{ a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } } }` and selected the wrong document (measured). The `$elemMatch` boundary now records which parameter is its element, and `pathOfIn` answers a path only for the INNERMOST element's fields; an outer parameter's field takes the `$expr` road (the value form of `some`, pending today).
+- **`$log10` and `$atan2` refused in filter position** with a text that named their `where` — every other value row falls back to `$expr`. Both are `filter: viaFallback` now.
+- **Refusal texts.** Seventeen first-only stage rows offered a chain-link spelling (`$$.$currentOp(…)`) the compiler refuses — the text now says the stage produces the pipeline's source documents and stands first. Nine system-stage rows and nine mutator rows refused with no alternative; they now name the statement spelling. `$case` fell back to `$expr` with a name the server does not know as an expression; its filter cell is a refusal that spells `$switch`.
+
+Gates: filter 168 accepted / 0 unclassified, expr 146 / 0. Suite: 60 files, 4754 passed. Specs: `match-query-translation.md` (divergence 6, the `typeof` and `$sampleRate` bullets), `emit-pass.md` (the query-cell paragraph).
+
+---
+
 ## 2026-09-04 — fix(compiler): the filter hunter's findings — a nested query operator, dead constant branches, and the `.length` and `%` rules stated once
 
 A hunter probed the filter target with 224 predicates on mongod: 161 byte-identical to the

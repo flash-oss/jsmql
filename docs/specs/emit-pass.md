@@ -124,12 +124,18 @@ means alone.
 A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
 and friends (the type test, the presence test, the modulo test, the null test, a
 field against a constant — in that order), `includes`/`startsWith`/`endsWith`/
-`match`/`some` carry theirs, `$sampleRate` states its one slot `constant`. Each
-answers null where the operands are not a path and a constant, and null is the
-`FilterOut` contract for "wrap my value form". `FilterIn` hands a cell `pathOf`
-(a `.length` is never a path segment; inside a `.some` callback the element is
-the root), `constant` (a value the query language compares as written — never an
-array, a regex or a bigint), `query`, `nativeQuery` and `elementQuery`. The
+`match`/`some` carry theirs, `$sampleRate` states its one slot `constant`, a
+`number`, in the range `[0, 1]`. Each answers null where the operands are not a
+path and a constant, and null is the `FilterOut` contract for "wrap my value
+form". A row with no value form (a query-only operator) has nothing to wrap, so
+inside an `$elemMatch` boundary — where the server refuses it — the leaf throws a
+worded refusal before the cell runs. `FilterIn` hands a cell `pathOf` (a `.length`
+is never a path segment; inside a `.some` callback the INNERMOST element is the
+root, and only its fields are paths — an outer callback's parameter read inside
+a nested one has no query form and takes the `$expr` road; the `$elemMatch`
+boundary records which parameter is its element), `constant` (a value the query
+language compares as written — never an array, a regex or a bigint), `query`,
+`nativeQuery` and `elementQuery`. The
 predicate alias tables (`typeof` spellings, the numeric group) are registry data
 in `vocabulary.ts`, read by both the query and the expression cells.
 

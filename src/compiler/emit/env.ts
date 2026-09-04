@@ -26,8 +26,12 @@ import { Scope, scratchSlot } from "./names.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
 
-/** A sub-pipeline entered on the way here: the stage whose body it is, and the path to it. */
-export type Boundary = { readonly stage: string; readonly path: BodyPath };
+/**
+ * A boundary crossed on the way here: a sub-pipeline (the stage whose body it
+ * is, and the path to it), or an `$elemMatch` body, which names the parameter
+ * that is the ELEMENT there — the only name whose fields are query paths inside.
+ */
+export type Boundary = { readonly stage: string; readonly path: BodyPath; readonly element?: string };
 
 /** Where a node stands. Every field required — see the header. */
 export type Site = {
@@ -168,8 +172,11 @@ export class Env {
    * Into an `$elemMatch` body: the element is the root there, and the outer
    * document has NO query path — a body that reads it has no native form.
    */
-  element(): Env {
-    const site: Site = { ...this.site, boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [] }] };
+  element(param: string): Env {
+    const site: Site = {
+      ...this.site,
+      boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param }],
+    };
     return new Env(this.scope, site, this.chain);
   }
 

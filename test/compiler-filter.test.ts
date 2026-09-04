@@ -33,6 +33,9 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a === null")).toEqual({ a: { $type: "null" } });
     expect(filter("$.a !== null")).toEqual({ a: { $not: { $type: "null" } } });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
+    // `typeof x === "undefined"` is absence, never the deprecated BSON `undefined` type
+    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $exists: false } });
+    expect(filter('typeof $.a !== "undefined"')).toEqual({ a: { $exists: true } });
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
     expect(filter('typeof $.a === "boolean"')).toEqual({ a: { $type: "bool" } });
@@ -101,12 +104,23 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(() => filter("$.items.some(i => i.q > $.min)")).toThrow(PendingLowering);
     // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
     expect(() => filter("$.items.some(i => i.q > 2 && $.flag === true)")).toThrow(PendingLowering);
+    // and an OUTER element's fields are not the inner element's
+    expect(() => filter("$.a.some(i => i.b.some(j => i.c === 1))")).toThrow(PendingLowering);
+    expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
+      a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
+    });
     expect(() => filter("$.s.startsWith($.prefix)")).toThrow(PendingLowering);
   });
 
   it("lowers a query-only operator to its query form and refuses a non-constant", () => {
     expect(filter("$.a === 1 && $sampleRate(0.5)")).toEqual({ a: 1, $sampleRate: 0.5 });
     expect(() => filter("$sampleRate($.r)")).toThrow(/must be a compile-time constant/);
+    expect(() => filter("$sampleRate(2)")).toThrow(/from 0 to 1/);
+    expect(() => filter('$sampleRate("0.5")')).toThrow(/expects a number/);
+    expect(() => filter("$.items.some(i => $sampleRate(0.5))")).toThrow(/top-level document only/);
+    expect(() => filter("$.a % 0 === 1")).toThrow(/divide by zero/);
+    expect(() => filter("$divide($.a, 0) > 1")).toThrow(/divide by zero/);
+    expect(filter("$log10($.a) > 1")).toEqual({ $expr: { $gt: [{ $log10: "$a" }, 1] } });
   });
 
   it("passes a raw query document through, values lowered", () => {

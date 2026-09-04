@@ -751,14 +751,19 @@ function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, args: re
 
 // ── operators ────────────────────────────────────────────────────────────────
 
+/** A production as the developer wrote it: the operator token, never the registry key. */
+const spelledProduction = (node: Expr, key: string): string =>
+  node.type === "BinaryExpr" || node.type === "UnaryExpr" ? node.op : node.type === "TernaryExpr" ? "?:" : key;
+
 /** A production's own renderer, run over `operands`. */
 function production(node: Expr, key: string, operands: readonly Expr[], env: Env): unknown {
   const sel = select(consult(key, positionIn(env)), { kind: "none" }, { kind: "multiple" }, operands.length);
+  const spelled = spelledProduction(node, key);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
-    throw E.refusalFor(sel, `'${key}'`, "", positionIn(env), node.pos, []);
+    throw E.refusalFor(sel, `'${spelled}'`, "", positionIn(env), node.pos, []);
   }
-  checkSlots(key, sel.rule.args, operands);
+  checkSlots(spelled, sel.rule.args, operands);
   return sel.rule.emit(exprInputs(key, null, operands, [], env, node, READ));
 }
 

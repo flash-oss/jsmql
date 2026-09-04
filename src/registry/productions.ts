@@ -200,7 +200,9 @@ function moduloTest(input: FilterIn): { path: string; divisor: number; remainder
   const asMod = (e: Expr, other: Expr) => {
     if (e.type !== "BinaryExpr" || e.op !== "%" || !isNat(other)) return null;
     const path = input.pathOf(e.left);
-    if (path === null || e.right.type !== "NumberLiteral" || !Number.isInteger(e.right.value)) return null;
+    // A zero divisor never reaches a query cell: the `remainder` row's `nonZero` refuses it first.
+    if (path === null || e.right.type !== "NumberLiteral" || !Number.isInteger(e.right.value) || e.right.value === 0)
+      return null;
     return { path, divisor: e.right.value, remainder: (other as { value: number }).value };
   };
   return asMod(l, r) ?? asMod(r, l);
@@ -227,7 +229,11 @@ function comparesALength(input: FilterIn): boolean {
  */
 function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
   const typed = typeTest(input);
-  if (typed !== null) return { [typed.path]: negated ? { $not: { $type: typed.alias } } : { $type: typed.alias } };
+  if (typed !== null) {
+    // `typeof x === "undefined"` is a presence test: the query language spells absence `$exists`.
+    if (typed.alias === "missing") return { [typed.path]: { $exists: negated } };
+    return { [typed.path]: negated ? { $not: { $type: typed.alias } } : { $type: typed.alias } };
+  }
   const present = presenceTest(input);
   if (present !== null) return { [present]: { $exists: negated } };
   if (comparesALength(input)) return null;
@@ -629,7 +635,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, nonZero: [1] },
       emit: ({ args, value }) => ({ $divide: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'/' produces a value, not a stage."),
@@ -649,7 +655,7 @@ export const PRODUCTIONS = {
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: {
-      args: { sig: "left, right", exact: 2 },
+      args: { sig: "left, right", exact: 2, nonZero: [1] },
       emit: ({ args, value }) => ({ $mod: [value(args[0]), value(args[1])] }),
     },
     stream: unsupported("'%' produces a value, not a stage."),
