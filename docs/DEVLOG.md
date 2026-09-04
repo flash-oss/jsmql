@@ -20,6 +20,8 @@ Eight agents measured one query-cell family each against a JavaScript oracle on 
 
 **A remainder may be negative.** `$.a % 3 === -1` required a non-negative remainder to take its query form, so it fell to `$expr`, where the server refuses `$mod` on a non-numeric field. It is `{ a: { $mod: [3, -1], $not: { $type: "array" } } }` now — measured exactly JavaScript, and an index scan.
 
+A negated `.some` joins the throw family in the oracle's divergence table: JavaScript throws twice over on `!$.g.some(i => i.r.s === 1)` — `.some` on a document with no `g`, and `i.r.s` on an element with no `r` — and so selects nothing, where this language reads a path as a path and answers that no element matches, so the negation holds. The positive spelling agrees.
+
 Two road divergences are tracked rather than unnoticed. An array at a path PREFIX reads as ABSENT on the query road, which is JavaScript's answer, and MAPS over the array on the expression road, which is MongoDB's reading of `"$a.q"` — and a value IS a MongoDB path, since HR1 round-trips the two spellings. `$.a.q == null` and `$.a.q === undefined` carry that reason in `test/compiler-query-expr-agreement.test.ts`.
 
 ---

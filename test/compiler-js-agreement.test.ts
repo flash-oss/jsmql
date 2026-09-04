@@ -87,6 +87,10 @@ const AGREE: readonly string[] = [
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   {
+    src: "!($.g.some(i => i.r.s === 1))",
+    why: "The THROW family, at its widest. JavaScript throws both ways here — `.some` on a document that has no `g`, and `i.r.s` on an element that has no `r` — so it selects nothing at all. This language reads a path as a path: no element has `r.s` equal to 1, so the negation holds. The positive spelling agrees with JavaScript, because neither answer selects those documents.",
+  },
+  {
     src: '!($.tags.includes("vip"))',
     why: "The THROW family again, and only the negation shows it: JavaScript's `.includes` throws on a number, a null and a missing field, so it selects none of them, where the complement of the positive clause selects all three. The positive spelling agrees, because neither reading of `.includes` matches those values.",
   },
