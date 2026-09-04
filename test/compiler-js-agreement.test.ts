@@ -23,12 +23,12 @@ const URI = "mongodb://127.0.0.1:27017";
 
 /** One document per shape a field can take: a scalar, every kind of array, absent, null, the wrong type. */
 const DOCS = [
-  { _id: 1, a: 1, s: "abyz", tags: ["vip", "x"], n: { v: 1 } },
-  { _id: 2, a: 2, s: "zz", tags: "vip", n: { v: 2 } },
-  { _id: 3, a: [1, 2], s: ["abyz"], tags: "a vip user", n: [{ v: 1 }] },
-  { _id: 4, a: [1], s: 5, tags: [], n: [{ v: [1] }] },
-  { _id: 5, a: [], s: null, tags: ["VIP"], n: { v: [1] } },
-  { _id: 6, a: null, tags: [["vip"]], n: { v: null } },
+  { _id: 1, a: 1, s: "abyz", tags: ["vip", "x"], n: { v: 1 }, g: [{ r: { s: 1 } }] },
+  { _id: 2, a: 2, s: "zz", tags: "vip", n: { v: 2 }, g: [{ r: [{ s: 1 }] }] },
+  { _id: 3, a: [1, 2], s: ["abyz"], tags: "a vip user", n: [{ v: 1 }], g: [{ r: { s: [1] } }] },
+  { _id: 4, a: [1], s: 5, tags: [], n: [{ v: [1] }], g: [{ r: { s: 2 } }, { r: { s: 1 } }] },
+  { _id: 5, a: [], s: null, tags: ["VIP"], n: { v: [1] }, g: [] },
+  { _id: 6, a: null, tags: [["vip"]], n: { v: null }, g: { r: { s: 1 } } },
   { _id: 7, a: [null], s: "AB", tags: ["a", "b"], n: {} },
   { _id: 8, a: "1", s: "ab", tags: "ab", n: { v: "1" } },
   { _id: 9, a: true, s: "", tags: 5, n: 5 },
@@ -71,6 +71,9 @@ const AGREE: readonly string[] = [
   "$.s.match(/b/)",
   '$.s.startsWith("a") && $.s.endsWith("z")',
   "$.n.some(i => i.v === 1)",
+  // a path INSIDE an element body takes the rule again, prefix and all
+  "$.g.some(i => i.r.s === 1)",
+  "$.g.some(i => i.r.s !== 1)",
   "$.a === 1 && $.n.v === 1",
   "$.a === 1 || $.a === 2",
 ];
