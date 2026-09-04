@@ -76,10 +76,18 @@ const AGREE: readonly string[] = [
   "$.g.some(i => i.r.s !== 1)",
   "$.a === 1 && $.n.v === 1",
   "$.a === 1 || $.a === 2",
+  // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
+  "!($.a === 1)",
+  "!($.a === null)",
+  "$.a > 1 || !($.a > 1)",
 ];
 
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
+  {
+    src: '!($.tags.includes("vip"))',
+    why: "The THROW family again, and only the negation shows it: JavaScript's `.includes` throws on a number, a null and a missing field, so it selects none of them, where the complement of the positive clause selects all three. The positive spelling agrees, because neither reading of `.includes` matches those values.",
+  },
   {
     src: "$.a >= 1",
     why: 'JavaScript COERCES under a relational operator: `[1] >= 1` is true, `"1" >= 1` is true, `true >= 1` is true. The query language brackets by type instead, and this language does not model the coercion — the same decision that leaves NaN unsupported.',

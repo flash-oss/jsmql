@@ -161,6 +161,14 @@ reads there: `$.a.b === 1` adds `a: { $not: { $type: "array" } }`, and
 `$exists` is the one test the server reads of the field and not of an element,
 so it takes no exclusion.
 
+`!p` is the COMPLEMENT of p's own clause — `{ $nor: [<p>] }` — whenever p has a
+clause with no `$expr` inside. That is not a size choice: `$expr` orders across
+BSON types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and for
+`v: "x"`, where JavaScript answers true for both, and `$.v > 1 || !($.v > 1)`
+stopped being a tautology. Measured, it is one again. A predicate with an `$expr`
+inside keeps the truth road, whose own `$not` over one expression is already
+JavaScript's answer.
+
 Two measured facts hold the shape in place. The exclusion costs no index: `{ a: {
 $eq: 1, $not: { $type: "array" } } }` plans an IXSCAN over the bounds `[1, 1]`,
 exactly as `{ a: 1 }` does — while a `$not` wrapped around the whole positive

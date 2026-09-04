@@ -62,7 +62,6 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a > $.b")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
     expect(filter("$abs($.a) === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
-    expect(filter("!($.a > 1)")).toEqual({ $expr: { $not: { $gt: ["$a", 1] } } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     expect(filter("$.a in [1, 2]")).toEqual({ $expr: { $in: ["$a", [1, 2]] } });
     expect(filter('typeof $.a === "function"')).toEqual({ $expr: { $eq: [{ $type: "$a" }, "function"] } });
@@ -93,6 +92,18 @@ describe("compiler/emit/filter — && and ||", () => {
       x: { $eq: 1, $not: { $type: "array" } },
       $or: [{ y: { $eq: 2, $not: { $type: "array" } } }, { z: { $eq: 3, $not: { $type: "array" } } }],
     });
+  });
+
+  // `!p` is the complement of p's own clause. `$expr` orders across BSON types, so
+  // `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]`, where JavaScript says true.
+  it("complements a native clause under !, and keeps the truth road otherwise", () => {
+    expect(filter("!($.a > 1)")).toEqual({ $nor: [{ a: { $gt: 1, $not: { $type: "array" } } }] });
+    expect(filter("!($.a === 1 && $.b === 2)")).toEqual({
+      $nor: [{ a: { $eq: 1, $not: { $type: "array" } }, b: { $eq: 2, $not: { $type: "array" } } }],
+    });
+    // no native form inside: the truth road's own `$not` is already JavaScript's answer
+    expect(filter("!$.a")).toEqual({ $expr: { $not: TRUTHY("$a") } });
+    expect(filter("!($.a > $.b)")).toEqual({ $expr: { $not: { $gt: ["$a", "$b"] } } });
   });
 
   it("lowers || per branch — a leaf's meaning never depends on its sibling", () => {

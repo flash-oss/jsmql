@@ -64,6 +64,18 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     if (left === null || right === null) return null;
     return mergeAnd(left, right);
   }
+  if (node.type === "UnaryExpr" && node.op === "!") {
+    // `!p` is the COMPLEMENT of p's own clause, and the query language says it
+    // exactly where an expression does not: `$expr` orders across BSON types, so
+    // `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and for `v: "x"`,
+    // where JavaScript answers true for both. Only a clause with no `$expr`
+    // inside is complemented; anything else keeps the truth road below, whose
+    // `$not` over one expression is already JavaScript's answer.
+    const inner = translate(node.argument, childEnv(env, node, "argument"), true);
+    if (inner !== null && Object.keys(inner).length > 0 && !isAlwaysTrue(inner) && !isAlwaysFalse(inner)) {
+      return { $nor: [inner] };
+    }
+  }
   if (node.type === "BinaryExpr" && node.op === "||") {
     // Each branch on its own: a leaf's query form never depends on its sibling.
     const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));

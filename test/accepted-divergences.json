@@ -6400,6 +6400,14 @@
       "was": "{\"s\":{\"$in\":[\"a\",\"b\"]}}",
       "now": "{\"s\":{\"$in\":[\"a\",\"b\"],\"$not\":{\"$type\":\"array\"}}}",
       "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000!($.a > 0)": {
+      "entry": "filter",
+      "src": "!($.a > 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$not\":{\"$gt\":[\"$a\",0]}}}",
+      "now": "{\"$nor\":[{\"a\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: `!p` is the COMPLEMENT of p's own query clause. The shipped `$expr` negation orders across BSON types, so `{ $not: { $gt: [\"$a\", 0] } }` is false for `a: [0, 20]` and for a string, where JavaScript answers true for both — measured, and `p || !p` stopped being a tautology. `$nor` over the native clause restores it. Only a clause with no `$expr` inside is complemented; anything else keeps the truth road."
     }
   }
 }
