@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — fix(compiler): one road for both spellings of a stage, and eight more body facts measured
+
+The differential harness's own report drove this: every row where the shipped compiler REFUSED and the new one accepted was a shape the server refuses too.
+
+**A chained stage on another collection emitted a bare stage.** `$$$.orders.$match({ a: 1 });` gave `[{ "$match": { "a": 1 } }]` — a filter on the WRONG collection, silently. The chain's last link is a name the registry knows, so the join road fell through to it. A chain rooted in a database is now the pending join road, as a chain rooted in the stream is the pending stream road.
+
+**The call and the raw document are ONE road.** `{ $unwind: "items" }` skipped every check the call form runs, so it emitted a path with no `$` — invalid on every deployment. HR1's round-trip promise is not a promise to emit what no server accepts, and `src/CLAUDE.md` already draws that line: a literal-gated validator may refuse a shape that is universally invalid. The raw form now takes the same slot and body checks; only its body position comes from a different step.
+
+**Eight more facts, each measured before it was stated.**
+
+- A root replacement has to BE a document: `{ $replaceWith: 5 }`, a string, an array and `null` are all refused ("'replacement document' must evaluate to an object"), and a field path is accepted because only the run can tell. Refused now for a literal and for a name whose measured return type proves the kind — `$ = $abs($.a);` included. `$replaceRoot`'s `newRoot` key carries the same fact.
+- A `$sort` direction is 1 or -1 and nothing else. The new `everyValueIn` states a rule about a body's VALUES rather than its keys, because the keys are the developer's own field names.
+- An `$unwind` path carries its own `$`. The new `fieldPath` type is the mirror of `fieldName`: one names a field to write, the other a field to read, and the server insists on the `$` for the second.
+- Fourteen stage bodies are read by the server before any document, so a field path there is refused — measured one stage at a time, and NOT stated for `$unwind`, `$sortByCount` or `$redact`, whose bodies are expressions. A bulk rule would have refused three shapes that work.
+- Twelve object-only bodies refuse a scalar: `$addFields(5)` emitted `{ "$addFields": 5 }`, which the server refuses.
+- A `$`-led string is a runtime path everywhere except a CONSTANT-only slot, where the server reads it as itself: `{ $bucketAuto: { granularity: "$g" } }` answers "granularity must be one of: R5, R10, …".
+
+The `--entry pipeline` gate is fully classified: 1777 rows accepted with a reason, 910 skipped as verified pendings, nothing unclassified. `expr` and `filter` still hold at zero. The suite runs every pipeline it asserts against a live mongod, with one stated allowance — a sort by text score needs a text index, which is the deployment's limit and not the shape's.
+
+---
+
 ## 2026-09-05 — feat(compiler): eleven stage bodies stated from the server's own answers, and two facts the vocabulary could not hold
 
 A measurement fan-out ran every key of every join, write, group and window stage against mongod and reported what the server enforces, key by key, with the refusal verbatim. Eleven stage rows now state their body instead of pointing at `pending`: `$bucket`, `$bucketAuto`, `$collStats`, `$currentOp`, `$graphLookup`, `$listLocalSessions`, `$listSessions`, `$lookup`, `$planCacheStats`, `$unionWith`, `$unwind`. The pending ratchet fell from 419 to 408, which is the only way that number is allowed to move.

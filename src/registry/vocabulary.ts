@@ -163,6 +163,13 @@ export type ArgType =
    * cannot say it, and every stage that names an output field needs it.
    */
   | "fieldName"
+  /**
+   * The mirror of `fieldName`: a field PATH the stage READS, which the server
+   * insists carries its own `$`. Measured: `{ $unwind: "items" }` answers "path
+   * option to $unwind stage should be prefixed with a '$'", and so does the
+   * `path` key of its object form.
+   */
+  | "fieldPath"
   | "int"
   | "int-or-long"
   | "number-or-date"
@@ -652,6 +659,15 @@ export type BodyRule = {
    * 'pipeline' when 'from' is empty").
    */
   atLeastOneOf?: readonly (readonly string[])[];
+  /**
+   * Every VALUE of the body must be one of these literals — a rule about the
+   * values rather than the keys, because the keys are the developer's own field
+   * names. Measured on `$sort`: a direction is 1 or -1 and nothing else
+   * ("$sort key ordering must be 1 (for ascending) or -1 (for descending)", and
+   * a string answers "Illegal key in $sort specification"). A value that is not a
+   * literal passes, as does a document — `{ $meta: "textScore" }` is a real sort key.
+   */
+  everyValueIn?: readonly (string | number)[];
   /**
    * The key order a POSITIONAL call maps onto, for an object-shaped operator:
    *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }

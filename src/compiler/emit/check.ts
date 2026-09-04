@@ -78,6 +78,7 @@ function matches(lit: Lit, expected: ArgType): boolean {
     case "object":
       return lit.kind === expected;
     case "fieldName":
+    case "fieldPath":
       // Handled before the literal gate — see `checkType`.
       return false;
     case "date":
@@ -93,6 +94,7 @@ const EXPECTS: Record<ArgType, string> = {
   "number-or-date": "expects a number or a date",
   string: "expects a string",
   fieldName: "expects the NAME of a field to write — a non-empty string with no '$' prefix and no dot",
+  fieldPath: "expects the PATH of a field to read, carrying its own '$'",
   bool: "expects a boolean",
   array: "expects an array",
   object: "expects a document",
@@ -112,6 +114,16 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   // A field NAME is the one slot where a `$`-led string is the ERROR rather than a
   // runtime value, so it is read from the source and not through the literal gate:
   // `{ $count: "$n" }` is refused by the server, and so is a dotted or empty name.
+  if (expected === "fieldPath") {
+    if (e.type !== "StringLiteral") return;
+    if (!e.value.startsWith("$") || e.value.startsWith("$$") || e.value === "$") {
+      throw new CodegenError(
+        `'${name}'${slot ? ` ${slot}` : ""} reads a field PATH, and the server insists it carries its own '$': write '$${e.value.replace(/^\$+/, "")}'.`,
+        e.pos,
+      );
+    }
+    return;
+  }
   if (expected === "fieldName") {
     if (e.type !== "StringLiteral") {
       const other = literal(e);
@@ -262,10 +274,32 @@ export function checkBody(
       }
     }
   }
+  const allowed = rule.everyValueIn ?? [];
+  for (const k of rule.everyValueIn === undefined ? [] : present) {
+    const v = valueOf(k);
+    if (v === undefined) continue;
+    const lit = literal(v);
+    // A document is a value in its own right — `{ $meta: "textScore" }` is a real
+    // sort key — and anything the gate cannot read is the runtime's business.
+    if (lit === null || lit.kind === "object") continue;
+    const held =
+      lit.kind === "number" ? numberOf(v) : lit.kind === "string" && v.type === "StringLiteral" ? v.value : null;
+    if (held === null || !allowed.includes(held)) {
+      throw new CodegenError(
+        `'${name}' takes ${allowed.map((one) => JSON.stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : JSON.stringify(held)}.`,
+        v.pos,
+      );
+    }
+  }
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
   for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
     const v = valueOf(k);
-    if (v !== undefined) checkEnum(name, k, v, allowed, caseInsensitive.has(k));
+    // A `$`-led string in a CONSTANT key is read by the server as itself, so the
+    // closed set applies to it there — measured, `{ $bucketAuto: { granularity:
+    // "$g" } }` answers "granularity must be one of: R5, R10, …".
+    if (v !== undefined) {
+      checkEnum(name, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+    }
   }
   for (const [k, set] of Object.entries(rule.charSets ?? {})) {
     const v = valueOf(k);
@@ -322,6 +356,12 @@ export function checkSlots(
     // A slot that takes more than one shape: the literal must match one of them,
     // and the message names them all.
     const types = t as readonly ArgType[];
+    // A type with a message of its own answers for itself, so the reason names the
+    // one shape the value nearly was: `$unwind("items")` is a path missing its '$'.
+    if (e.type === "StringLiteral" && types.includes("fieldPath")) {
+      checkType(name, "", e, "fieldPath");
+      continue;
+    }
     const lit = literal(e);
     if (lit === null || types.some((one) => matches(lit, one))) continue;
     throw new CodegenError(

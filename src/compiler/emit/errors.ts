@@ -299,6 +299,18 @@ export const multiKeyStageDocument = (name: string, keys: number, pos: number): 
     pos,
   );
 
+/**
+ * `$ = 5` — a root replacement whose value cannot BE a document. Measured: the
+ * server refuses `{ $replaceWith: 5 }`, `"x"`, `[1, 2]` and `null` alike
+ * ("'replacement document' must evaluate to an object"), and accepts a field path
+ * because only the run can tell what it holds.
+ */
+export const rootMustBeDocument = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$ = …' replaces the document, so the value has to BE a document — ${noun} is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').`,
+    pos,
+  );
+
 /** `delete $` — the root is not a field, and a pipeline that drops the document has no shape. */
 export const cannotDeleteRoot = (pos: number): CodegenError =>
   new CodegenError(

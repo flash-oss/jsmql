@@ -4119,8 +4119,14 @@ export const NAMES = {
     ),
     group: unsupported("'$addFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$addFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$addFields' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4146,11 +4152,11 @@ export const NAMES = {
     group: unsupported("'$bucket' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucket' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$bucket' is not valid in an update document — see its 'where'."),
@@ -4181,11 +4187,11 @@ export const NAMES = {
     group: unsupported("'$bucketAuto' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$bucketAuto' is not valid in an update document — see its 'where'."),
@@ -4382,11 +4388,11 @@ export const NAMES = {
     group: unsupported("'$facet' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$facet' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$facet' is not valid in an update document — see its 'where'."),
@@ -4452,11 +4458,11 @@ export const NAMES = {
     group: unsupported("'$graphLookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$graphLookup' is not valid in an update document — see its 'where'."),
@@ -4478,11 +4484,11 @@ export const NAMES = {
     group: unsupported("'$group' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$group' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$group' is not valid in an update document — see its 'where'."),
@@ -4679,11 +4685,11 @@ export const NAMES = {
     group: unsupported("'$lookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lookup' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$lookup' is not valid in an update document — see its 'where'."),
@@ -4723,8 +4729,14 @@ export const NAMES = {
     ),
     group: unsupported("'$merge' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$merge' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$merge' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4743,8 +4755,14 @@ export const NAMES = {
     ),
     group: unsupported("'$out' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$out' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$out' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4795,8 +4813,14 @@ export const NAMES = {
     ),
     group: unsupported("'$project' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$project' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$project' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4844,7 +4868,15 @@ export const NAMES = {
     where: ["stream", "statement"],
     replacesDocument: true,
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["newRoot"],
+      optional: [],
+      closed: true,
+      // Measured: `{ newRoot: 5 }` is refused ("'replacement document' must
+      // evaluate to an object"), a path is accepted because only the run can tell
+      // what it holds, and an unknown key is refused by name.
+      keyTypes: { newRoot: "object" },
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4855,8 +4887,14 @@ export const NAMES = {
     ),
     group: unsupported("'$replaceRoot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceRoot' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$replaceRoot' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4876,8 +4914,14 @@ export const NAMES = {
     ),
     group: unsupported("'$replaceWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$replaceWith' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4896,11 +4940,11 @@ export const NAMES = {
     group: unsupported("'$sample' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sample' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "object" }, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$sample' is not valid in an update document — see its 'where'."),
@@ -4981,8 +5025,14 @@ export const NAMES = {
     ),
     group: unsupported("'$set' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$set' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: pending("src/index.ts"),
   }),
 
@@ -5000,8 +5050,14 @@ export const NAMES = {
     ),
     group: unsupported("'$setWindowFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setWindowFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$setWindowFields' is not valid in an update document — see its 'where'."),
   }),
 
@@ -5068,7 +5124,14 @@ export const NAMES = {
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
     where: ["stream", "statement", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: [],
+      // The keys are the developer's own field names, so nothing is closed here;
+      // what the server fixes is every VALUE.
+      closed: false,
+      everyValueIn: [1, -1],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5079,8 +5142,14 @@ export const NAMES = {
     ),
     group: unsupported("'$sort' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sort' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: pending("src/operator-validation.ts"),
   }),
 
@@ -5149,8 +5218,14 @@ export const NAMES = {
     ),
     group: unsupported("'$unset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: pending("src/index.ts"),
   }),
 
@@ -5161,7 +5236,7 @@ export const NAMES = {
       required: ["path"],
       optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
       closed: true,
-      keyTypes: { path: "string", includeArrayIndex: "string", preserveNullAndEmptyArrays: "bool" },
+      keyTypes: { path: "fieldPath", includeArrayIndex: "fieldName", preserveNullAndEmptyArrays: "bool" },
       constantKeys: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
     },
     bodyPositions: { "": "value" },
@@ -5175,11 +5250,11 @@ export const NAMES = {
     group: unsupported("'$unwind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unwind' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "string" } },
+      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "string" } },
+      args: { sig: "body", exact: 1, slotType: { 0: ["fieldPath", "object"] } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$unwind' is not valid in an update document — see its 'where'."),

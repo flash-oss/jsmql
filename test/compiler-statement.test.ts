@@ -15,6 +15,15 @@ import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
 import { PendingLowering } from "../src/compiler/emit/errors.ts";
 
+/**
+ * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
+ * the reason. A sort by text score needs a text index and a `$text` query to
+ * produce the score; the shape itself is what the stage's row states.
+ */
+const NEEDS_MORE_THAN_A_SERVER: Readonly<Record<string, string>> = {
+  '$sort({ s: $meta("textScore") });': "a text score exists only under a $text query against a text index",
+};
+
 /** Every source the unit cases below assert, so the server sees all of them too. */
 const RUNS: string[] = [];
 const compiled = (src: string): unknown[] => {
@@ -74,6 +83,14 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled("delete $.a, $.b = 1;")).toEqual([{ $unset: "a" }, { $set: { b: 1 } }]);
     expect(compiled("$ = { x: $.a };")).toEqual([{ $replaceWith: { x: "$a" } }]);
     expect(compiled("$ = $.sub;")).toEqual([{ $replaceWith: "$sub" }]);
+    // A root replacement has to BE a document. The server refuses every other
+    // value ("'replacement document' must evaluate to an object"), and a literal
+    // — or a name whose measured return type says so — is known at compile time.
+    expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
+    expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
+    expect(() => pipeline("$ = [1, 2];")).toThrow(/an array is not one/);
+    expect(() => pipeline("$ = null;")).toThrow(/null is not one/);
+    expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
 
   it("places a stage a value needed ahead of the statement that needed it", () => {
@@ -172,6 +189,36 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
     expect(() => pipeline("$unionWith($.c);")).toThrow(/compile-time constant/);
   });
 
+  it("refuses a body the server reads before any document, where the source made it a value", () => {
+    // Measured, one stage at a time: the server refuses a field path as the body of
+    // each of these ("the $sort key specification must be an object", …), and takes
+    // one for `$unwind` and `$sortByCount`, whose bodies ARE expressions.
+    expect(compiled("$unwind($.p);")).toEqual([{ $unwind: "$p" }]);
+    for (const src of [
+      "$sort($.spec);",
+      "$group($.g);",
+      "$project($.p);",
+      "$set($.s);",
+      "$out($.c);",
+      "$lookup($.l);",
+      "$sample($.n);",
+      "$facet($.f);",
+    ]) {
+      expect(() => pipeline(src), src).toThrow(/must be a compile-time constant/);
+    }
+  });
+
+  it("takes the sort directions the server takes, and the path form of an unwind", () => {
+    expect(compiled("$sort({ a: 1, b: -1 });")).toEqual([{ $sort: { a: 1, b: -1 } }]);
+    expect(compiled('$sort({ s: $meta("textScore") });')).toEqual([{ $sort: { s: { $meta: "textScore" } } }]);
+    expect(() => pipeline('$sort({ a: "desc" });')).toThrow(/takes 1 or -1 for every key/);
+    expect(() => pipeline("$sort({ a: 0 });")).toThrow(/takes 1 or -1 for every key/);
+    // An unwind reads a PATH, and the server insists it carries its own `$`.
+    expect(compiled('$unwind("$items");')).toEqual([{ $unwind: "$items" }]);
+    expect(() => pipeline('$unwind("items");')).toThrow(/carries its own '\$'/);
+    expect(() => pipeline('$unwind({ path: "items" });')).toThrow(/carries its own '\$'/);
+  });
+
   it("checks a key's literal value against the closed set the server keeps", () => {
     expect(compiled("$bucket({ groupBy: $.a, boundaries: [0, 10, 30] });")).toEqual([
       { $bucket: { groupBy: "$a", boundaries: [0, 10, 30] } },
@@ -232,10 +279,29 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(compiled("$facet({ a: [$limit(1)] });")).toEqual([{ $facet: { a: [{ $limit: 1 }] } }]);
   });
 
+  it("refuses a body no deployment accepts, in both spellings of a stage", () => {
+    // The call and the raw document are ONE road: a shape the server refuses
+    // everywhere is not a round-trip, whichever way it was written.
+    expect(() => pipeline("$addFields(5);")).toThrow(/expects a document/);
+    expect(() => pipeline("$replaceWith(5);")).toThrow(/expects a document/);
+    expect(() => pipeline("$replaceRoot({ newRoot: 5 });")).toThrow(/newRoot expects a document/);
+    expect(() => pipeline("$replaceRoot({ bogus: 1 });")).toThrow(/has no parameter 'bogus'/);
+    expect(() => pipeline('{ $unwind: "items" };')).toThrow(/carries its own '\$'/);
+    expect(() => pipeline('{ $sort: { a: "desc" } };')).toThrow(/takes 1 or -1 for every key/);
+    // A `$`-led string is a runtime path everywhere but a constant-only slot,
+    // where the server reads it as itself.
+    expect(() => pipeline('$bucketAuto({ groupBy: $.x, buckets: 2, granularity: "$g" });')).toThrow(
+      /must be one of: R5/,
+    );
+  });
+
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
     expect(() => pipeline("$$ = $$.filter(d => d.x);")).toThrow(PendingLowering);
     expect(() => pipeline("$$.filter(d => d.x).take(2);")).toThrow(PendingLowering);
     expect(() => pipeline("$.r = $$$.orders.find(o => o.id === $._id);")).toThrow(PendingLowering);
+    // A chain's last LINK is a name the registry knows, so without this the join
+    // road would emit a bare stage — a filter on the wrong collection.
+    expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(PendingLowering);
     expect(() => pipeline("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toThrow(PendingLowering);
     expect(() => pipeline("let x = $.a * 2; $.b = x;")).toThrow(PendingLowering);
   });
@@ -280,6 +346,7 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
     const environment = /database or cluster-level aggregation|2d or 2dsphere index/;
     const refused: string[] = [];
     for (const src of RUNS) {
+      if (src in NEEDS_MORE_THAN_A_SERVER) continue;
       try {
         await coll.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
       } catch (e) {
@@ -289,5 +356,7 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
       }
     }
     expect(refused, `the server refused ${refused.length} of ${RUNS.length}:\n${refused.join("\n")}`).toEqual([]);
+    // The allowance has teeth only while each entry is actually asserted somewhere.
+    for (const src of Object.keys(NEEDS_MORE_THAN_A_SERVER)) expect(RUNS, src).toContain(src);
   });
 });

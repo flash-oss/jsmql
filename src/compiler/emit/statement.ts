@@ -23,6 +23,7 @@ import * as E from "./errors.ts";
 import { childEnv, stageInputs } from "./inputs.ts";
 import { lowerFilter, lowerNativeFilter } from "./filter.ts";
 import { lowerValue } from "./lower.ts";
+import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
 import { select } from "./select.ts";
 import { FILTER } from "../passes/position.ts";
@@ -227,6 +228,16 @@ const replacesWhole = (v: unknown): boolean =>
   Object.getPrototypeOf(v) === Object.prototype &&
   Object.keys(v).every((k) => !k.startsWith("$"));
 
+/** A provable kind as the noun a message uses for it. */
+const KIND_NOUN: Readonly<Record<string, string>> = {
+  number: "a number",
+  string: "a string",
+  bool: "a boolean",
+  array: "an array",
+  date: "a date",
+  null: "null",
+};
+
 /** Is one path the other, or a step inside it? `a` and `a.b` touch; `a` and `ab` do not. */
 const touches = (x: string, y: string): boolean =>
   x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
@@ -280,6 +291,12 @@ function writeStages(uf: UpdateFilter, env: Env): Stage[] {
     const value = readIn(op.value, childEnv(inner, op, "value"));
     // The root is not a field: replacing it is its own stage, and nothing groups with it.
     if (path === "") {
+      // `null` is not a kind the registry can prove, and the server refuses it here.
+      if (op.value.type === "NullLiteral" || op.value.type === "UndefinedLiteral") {
+        throw E.rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
+      }
+      const kind = kindOf(op.value, inner);
+      if (kind !== "unknown" && kind !== "object") throw E.rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
       out.push({ $replaceWith: value });
       continue;
@@ -323,24 +340,41 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   // A chain rooted in a context reference is a STREAM of documents, and a
   // statement made of one is the stream road — not built here yet.
   const base = chainBase(node) as { type: string };
-  if (base.type === "CollectionRef" && node.type === "MethodCall") {
-    throw E.pendingStatement("a stream chain as a statement ('$$.filter(…);')", node.pos);
+  if (node.type === "MethodCall") {
+    // A chain rooted in a context reference is a STREAM of documents, and a
+    // statement made of one is the stream road. A chain rooted in a DATABASE is a
+    // read from another collection, which is the join road. Neither is built here
+    // yet, and without this the chain's last LINK would be found in the registry
+    // and emitted as a bare stage — measured: `$$$.orders.$match({ a: 1 });` gave
+    // `[{ "$match": { "a": 1 } }]`, a filter on the wrong collection.
+    if (base.type === "CollectionRef") {
+      throw E.pendingStatement("a stream chain as a statement ('$$.filter(…);')", node.pos);
+    }
+    if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
+      throw E.pendingStatement("a read from another collection ('$$$.<coll>.find(…)')", node.pos);
+    }
   }
   const name = namedRow(node);
   if (name === null) throw E.notAStatement(node.pos);
 
-  // The raw document form. Its one entry's value is the body, in the position
-  // the row states for it — phase 4 has already worked that out.
+  // The raw document form. Its one entry's value is the body, in the position the
+  // row states for it — phase 4 has already worked that out. It is the SAME road
+  // as the call: the body takes every check the row states, because
+  // `{ $unwind: "items" }` is invalid on every deployment and HR1's round-trip
+  // promise is not a promise to emit what no server accepts.
+  let bodyEnv: Env | null = null;
+  let args: readonly Expr[];
   if (node.type === "ObjectLiteral") {
     if (!isStageName(name)) throw E.notAStage(name, everyName().filter(isStageName), node.pos);
     const entries = childEnv(env, node, "entries");
     if (node.entries.length !== 1) throw E.multiKeyStageDocument(name, node.entries.length, node.pos);
     const entry = node.entries[0];
     if (entry.type !== "KeyValueEntry" || staticKey(entry) === null) throw E.notAStatement(node.pos);
-    return place(name, { [name]: readIn(entry.value, childEnv(entries, entry, "value")) }, env, first, node.pos);
+    bodyEnv = childEnv(entries, entry, "value");
+    args = [entry.value];
+  } else {
+    args = "args" in node ? (node.args as readonly Expr[]) : [];
   }
-
-  const args = "args" in node ? (node.args as readonly Expr[]) : [];
   const verdict = consult(name, "statement");
   const sel = select(verdict, { kind: "none" }, { kind: "multiple" }, args.length);
   if (sel.kind !== "rule") {
@@ -356,7 +390,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
     checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
   }
-  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
+  const stages =
+    bodyEnv === null
+      ? (sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[])
+      : [{ [name]: readIn(args[0], bodyEnv) }];
   // A cell answers with the stages its name means; where they may STAND is the
   // row's other fact, and it is applied to each of them.
   return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
