@@ -1,8 +1,8 @@
-# The emit phase — the value target
+# The emit phase — the value and filter targets
 
 The fifth phase of `src/compiler/`: a settled tree to its MQL. This spec owns
-the VALUE target (`jsmql.expr`), the modules under `src/compiler/emit/`, and
-the acceptance gate. The registry states what the language has; this phase
+the VALUE target (`jsmql.expr`), the FILTER target (`jsmql.filter`, a `$match`
+body), the modules under `src/compiler/emit/`, and the acceptance gate. The registry states what the language has; this phase
 says how a document is built, and only where a row cannot — see
 `src/compiler/CLAUDE.md` for that boundary.
 
@@ -93,6 +93,45 @@ A JavaScript spelling checks missing, null, `false`, `""`, `0`; the `$op(...)`
 escape hatch keeps MongoDB's rules; NaN is not checked. `mode.ts` is the one
 minter of `Truth`, and `mql.ts` builds every slot that reads one. The table in
 [docs/LANG_RULES.md](../LANG_RULES.md) states the rule for developers.
+
+## The filter target
+
+`lowerFilter(node, env)` in `emit/filter.ts` turns a predicate into a QUERY
+document — the language an index reads — and falls back to `{ $expr: <truth> }`
+exactly where a row states no native form. The rules the shipped translator
+established hold (see [match-query-translation.md](match-query-translation.md)
+for the query semantics and the documented divergences from the expression
+form), with one change the developer ruled:
+
+```js
+$.a > 1 && $.b <= 2                    // → {"a":{"$gt":1},"b":{"$lte":2}}
+$.a >= 1 && $.a <= 9                   // → {"$and":[{"a":{"$gte":1}},{"a":{"$lte":9}}]}   colliding keys into one $and
+$.a === 1 && $.q * $.p > 100           // → {"a":1,"$expr":{"$gt":[{"$multiply":["$q","$p"]},100]}}
+$.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"$gt":[…]}}]}     PER BRANCH (the ruling)
+$.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
+$.tags.includes("a") && $.tags.includes("b")  // → {"tags":{"$all":["a","b"]}}
+$.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+{ status: "a", x: $gt($.y) }           // → {"status":"a","x":{"$gt":"$y"}}     a raw document: keys as written, a one-operand $op is the query operator
+$abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
+```
+
+The shipped compiler wrapped the whole `||` in `$expr` as soon as one branch
+needed it, and `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+`tags: ["red", "blue"]` where `{ tags: "red" }` does — the left leaf's answer
+changed with its sibling. Per branch, each branch means what the same predicate
+means alone.
+
+A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
+and friends (the type test, the presence test, the modulo test, the null test, a
+field against a constant — in that order), `includes`/`startsWith`/`endsWith`/
+`match`/`some` carry theirs, `$sampleRate` states its one slot `constant`. Each
+answers null where the operands are not a path and a constant, and null is the
+`FilterOut` contract for "wrap my value form". `FilterIn` hands a cell `pathOf`
+(a `.length` is never a path segment; inside a `.some` callback the element is
+the root), `constant` (a value the query language compares as written — never an
+array, a regex or a bigint), `query`, `nativeQuery` and `elementQuery`. The
+predicate alias tables (`typeof` spellings, the numeric group) are registry data
+in `vocabulary.ts`, read by both the query and the expression cells.
 
 ## What has no value
 

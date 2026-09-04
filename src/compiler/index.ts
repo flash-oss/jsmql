@@ -11,12 +11,22 @@
 import { parseExpression } from "./parse/parser.ts";
 import { fold } from "./passes/fold.ts";
 import { desugar } from "./passes/desugar.ts";
-import { VALUE } from "./passes/position.ts";
+import { FILTER, VALUE } from "./passes/position.ts";
 import { Env } from "./emit/env.ts";
 import { lowerValue } from "./emit/lower.ts";
+import { lowerFilter } from "./emit/filter.ts";
 
 /** A bare aggregation expression: `$.qty * $.price` → `{ $multiply: ["$qty", "$price"] }`. */
 export function expr(source: string): unknown {
   const program = desugar(fold(parseExpression(source)), VALUE);
   return lowerValue(program as Parameters<typeof lowerValue>[0], Env.root(program, "value"));
+}
+
+/**
+ * A query document for `find(filter)`: `$.age > 18` → `{ age: { $gt: 18 } }`. A predicate
+ * with no native form becomes `{ $expr: … }`; a raw `{ … }` document is the developer's own.
+ */
+export function filter(source: string): Record<string, unknown> {
+  const program = desugar(fold(parseExpression(source)), FILTER);
+  return lowerFilter(program as Parameters<typeof lowerFilter>[0], Env.root(program, "filter"));
 }

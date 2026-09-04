@@ -92,6 +92,12 @@ export function kindOf(node: Expr, env: Env): Known {
     case "OperatorCall":
       return resolveReturns(returnsOf(node.name), "unknown", null);
     case "CallExpression":
+      // An applied arrow `((x) => x > 1)(5)` is its body — the body's kind is provable
+      // wherever it does not hang on a parameter.
+      if (node.callee.type === "Lambda" && node.callee.body !== undefined) return kindOf(node.callee.body, env);
+      return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
+        ? resolveReturns(returnsOf(node.callee.name), "unknown", null)
+        : "unknown";
     case "NewExpression":
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
         ? resolveReturns(returnsOf(node.callee.name), "unknown", null)

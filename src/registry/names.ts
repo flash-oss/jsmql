@@ -450,7 +450,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$abs' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$abs' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$abs' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -465,7 +465,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$add' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "number-or-date", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -483,7 +483,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$ceil' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$ceil' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ceil' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -498,7 +498,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$divide' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -516,7 +516,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$exp' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$exp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$exp' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -531,7 +531,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$floor' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$floor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$floor' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -546,7 +546,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$ln' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$ln' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ln' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -561,7 +561,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$log' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "number, base", exact: 2, slotType: { 0: "number" }, elementType: "number" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -612,7 +612,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$multiply' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "number", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -630,7 +630,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$pow' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "base, exponent", exact: 2, slotType: { 0: "number" }, elementType: "number" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -648,7 +648,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "flex",
-    filter: unsupported("'$round' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -667,7 +667,7 @@ export const NAMES = {
     where: ["value"],
     minVersion: "8.1",
     shape: "single",
-    filter: unsupported("'$sigmoid' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sigmoid' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -682,7 +682,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$sqrt' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sqrt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sqrt' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -697,7 +697,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$subtract' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "minuend, subtrahend", exact: 2, slotType: { 0: "number-or-date" }, elementType: "number-or-date" },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -715,7 +715,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "flex",
-    filter: unsupported("'$trunc' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -733,7 +733,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$bitAnd' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -751,7 +751,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$bitNot' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } }, emit: single },
     group: unsupported("'$bitNot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitNot' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -766,7 +766,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$bitOr' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -784,7 +784,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$bitXor' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -802,7 +802,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$sin' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sin' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -817,7 +817,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$cos' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$cos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cos' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -832,7 +832,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$tan' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$tan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tan' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -847,7 +847,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$asin' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$asin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asin' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -862,7 +862,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$acos' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$acos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acos' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -877,7 +877,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$atan' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$atan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -910,7 +910,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$sinh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sinh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -925,7 +925,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$cosh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$cosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cosh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -940,7 +940,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$tanh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$tanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tanh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -955,7 +955,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$asinh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$asinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asinh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -970,7 +970,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$acosh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$acosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acosh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -985,7 +985,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$atanh' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$atanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atanh' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1000,7 +1000,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$degreesToRadians' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$degreesToRadians' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1015,7 +1015,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$radiansToDegrees' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$radiansToDegrees' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1030,7 +1030,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$cmp' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$cmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cmp' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1206,7 +1206,7 @@ export const NAMES = {
     shape: {
       object: { required: ["if", "then", "else"], optional: [], closed: true, positional: ["if", "then", "else"] },
     },
-    filter: unsupported("'$cond' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$cond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cond' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1221,7 +1221,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$ifNull' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "expr, replacement[, …]", atLeast: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1241,7 +1241,7 @@ export const NAMES = {
     shape: {
       object: { required: ["branches"], optional: ["default"], closed: true, positional: ["branches", "default"] },
     },
-    filter: unsupported("'$switch' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$switch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$switch' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1256,7 +1256,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$concat' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1274,7 +1274,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$indexOfBytes' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1292,7 +1292,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$indexOfCP' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1310,7 +1310,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
-    filter: unsupported("'$ltrim' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$ltrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ltrim' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1325,7 +1325,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
-    filter: unsupported("'$rtrim' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$rtrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rtrim' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1340,7 +1340,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: { object: { required: ["input"], optional: ["chars"], closed: true, positional: ["input", "chars"] } },
-    filter: unsupported("'$trim' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$trim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trim' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1363,7 +1363,7 @@ export const NAMES = {
         positional: ["input", "regex", "options"],
       },
     },
-    filter: unsupported("'$regexFind' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexFind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFind' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1386,7 +1386,7 @@ export const NAMES = {
         positional: ["input", "regex", "options"],
       },
     },
-    filter: unsupported("'$regexFindAll' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexFindAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFindAll' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1409,7 +1409,7 @@ export const NAMES = {
         positional: ["input", "regex", "options"],
       },
     },
-    filter: unsupported("'$regexMatch' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexMatch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexMatch' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1431,7 +1431,7 @@ export const NAMES = {
         positional: ["input", "find", "replacement"],
       },
     },
-    filter: unsupported("'$replaceAll' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceAll' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1453,7 +1453,7 @@ export const NAMES = {
         positional: ["input", "find", "replacement"],
       },
     },
-    filter: unsupported("'$replaceOne' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceOne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceOne' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1468,7 +1468,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$split' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, delimiter", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1486,7 +1486,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$strLenBytes' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$strLenBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1501,7 +1501,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$strLenCP' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$strLenCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1516,7 +1516,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$strcasecmp' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$strcasecmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1531,7 +1531,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$substr' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, start, length", exact: 3 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1549,7 +1549,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$substrBytes' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, byteIndex, byteCount", exact: 3 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1567,7 +1567,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$substrCP' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "string, cpIndex, cpCount", exact: 3 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1585,7 +1585,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toLower' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toLower' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLower' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1600,7 +1600,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toUpper' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toUpper' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUpper' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1617,7 +1617,7 @@ export const NAMES = {
     shape: {
       object: { required: [], optional: ["input", "substring"], closed: true, positional: ["input", "substring"] },
     },
-    filter: unsupported("'$encStrContains' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrContains' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrContains' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1632,7 +1632,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "suffix"], closed: true, positional: ["input", "suffix"] } },
-    filter: unsupported("'$encStrEndsWith' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrEndsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrEndsWith' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1647,7 +1647,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "string"], closed: true, positional: ["input", "string"] } },
-    filter: unsupported("'$encStrNormalizedEq' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrNormalizedEq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrNormalizedEq' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1662,7 +1662,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: { object: { required: [], optional: ["input", "prefix"], closed: true, positional: ["input", "prefix"] } },
-    filter: unsupported("'$encStrStartsWith' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrStartsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrStartsWith' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1677,7 +1677,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$arrayElemAt' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$arrayElemAt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1692,7 +1692,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$arrayToObject' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$arrayToObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1708,7 +1708,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
-    filter: unsupported("'$concatArrays' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1735,7 +1735,7 @@ export const NAMES = {
         positional: ["input", "as", "cond", "limit"],
       },
     },
-    filter: unsupported("'$filter' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$filter' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$filter' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1750,7 +1750,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value", "group", "window"],
     shape: "single",
-    filter: unsupported("'$first' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -1765,7 +1765,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
-    filter: unsupported("'$firstN' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -1798,7 +1798,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$indexOfArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "array, value[, start[, end]]", allowed: [2, 3, 4] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1816,7 +1816,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$isArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$isArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1831,7 +1831,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value", "group", "window"],
     shape: "single",
-    filter: unsupported("'$last' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -1846,7 +1846,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
-    filter: unsupported("'$lastN' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -1862,7 +1862,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: { object: { required: ["input", "in"], optional: ["as"], closed: true, positional: ["input", "as", "in"] } },
-    filter: unsupported("'$map' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$map' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$map' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1877,7 +1877,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
-    filter: unsupported("'$maxN' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -1892,7 +1892,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     shape: { object: { required: ["input", "n"], optional: [], closed: true, positional: ["input", "n"] } },
-    filter: unsupported("'$minN' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
@@ -1907,7 +1907,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$objectToArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "object" } }, emit: single },
     group: unsupported("'$objectToArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1922,7 +1922,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$range' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "start, end[, step]", allowed: [2, 3] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1949,7 +1949,7 @@ export const NAMES = {
         positional: ["input", "initialValue", "in"],
       },
     },
-    filter: unsupported("'$reduce' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$reduce' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reduce' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1964,7 +1964,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$reverseArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" } }, emit: single },
     group: unsupported("'$reverseArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1995,7 +1995,7 @@ export const NAMES = {
     where: ["value", "updateDoc"],
     onlyInside: { updateDoc: ["$push"] },
     shape: "array",
-    filter: unsupported("'$slice' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "array, [position, ]count", allowed: [2, 3] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -2013,7 +2013,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: { object: { required: ["input", "sortBy"], optional: [], closed: true, positional: ["input", "sortBy"] } },
-    filter: unsupported("'$sortArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$sortArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sortArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2035,7 +2035,7 @@ export const NAMES = {
         positional: ["inputs", "useLongestLength", "defaults"],
       },
     },
-    filter: unsupported("'$zip' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$zip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$zip' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2050,7 +2050,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$allElementsTrue' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$allElementsTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2065,7 +2065,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$anyElementTrue' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$anyElementTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2080,7 +2080,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$setDifference' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setDifference' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setDifference' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2095,7 +2095,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$setEquals' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "set1, set2[, …]", atLeast: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -2113,7 +2113,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$setIntersection' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -2131,7 +2131,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "array",
-    filter: unsupported("'$setIsSubset' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setIsSubset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2146,7 +2146,7 @@ export const NAMES = {
     returns: "array",
     where: ["value", "group", "window"],
     shape: "array",
-    filter: unsupported("'$setUnion' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -2164,7 +2164,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: { object: { required: ["field"], optional: ["input"], closed: true, positional: ["field", "input"] } },
-    filter: unsupported("'$getField' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$getField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$getField' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2180,7 +2180,7 @@ export const NAMES = {
     where: ["value", "group"],
     spreadAlternative: "use object spread ({ ...a, ...b }) or Object.assign(...docs)",
     shape: "flex",
-    filter: unsupported("'$mergeObjects' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1, elementType: "object" },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -2205,7 +2205,7 @@ export const NAMES = {
         positional: ["field", "input", "value"],
       },
     },
-    filter: unsupported("'$setField' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$setField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setField' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2220,7 +2220,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     shape: { object: { required: ["field", "input"], optional: [], closed: true, positional: ["field", "input"] } },
-    filter: unsupported("'$unsetField' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$unsetField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unsetField' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2244,7 +2244,7 @@ export const NAMES = {
         positional: ["startDate", "unit", "amount", "timezone"],
       },
     },
-    filter: unsupported("'$dateAdd' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateAdd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateAdd' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2269,7 +2269,7 @@ export const NAMES = {
         positional: ["startDate", "endDate", "unit", "startOfWeek", "timezone"],
       },
     },
-    filter: unsupported("'$dateDiff' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "startDate, endDate, unit, startOfWeek, timezone", allowed: [1, 2, 3, 4, 5] },
       emit: objectBody,
@@ -2326,7 +2326,7 @@ export const NAMES = {
         positional: ["year", "month", "day", "hour", "minute", "second", "millisecond", "timezone"],
       },
     },
-    filter: unsupported("'$dateFromParts' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "year, month, day, hour, minute, second, millisecond, timezone", allowed: [1, 2, 3, 4, 5, 6, 7, 8] },
       emit: objectBody,
@@ -2351,7 +2351,7 @@ export const NAMES = {
         positional: ["dateString", "format", "timezone", "onError", "onNull"],
       },
     },
-    filter: unsupported("'$dateFromString' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "dateString, format, timezone, onError, onNull", allowed: [1, 2, 3, 4, 5] },
       emit: objectBody,
@@ -2378,7 +2378,7 @@ export const NAMES = {
         positional: ["startDate", "unit", "amount", "timezone"],
       },
     },
-    filter: unsupported("'$dateSubtract' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateSubtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateSubtract' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2401,7 +2401,7 @@ export const NAMES = {
         positional: ["date", "timezone", "iso8601"],
       },
     },
-    filter: unsupported("'$dateToParts' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "date, timezone, iso8601", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$dateToParts' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToParts' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2424,7 +2424,7 @@ export const NAMES = {
         positional: ["date", "format", "timezone", "onNull"],
       },
     },
-    filter: unsupported("'$dateToString' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "date, format, timezone, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateToString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToString' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2449,7 +2449,7 @@ export const NAMES = {
         positional: ["date", "unit", "binSize", "timezone", "startOfWeek"],
       },
     },
-    filter: unsupported("'$dateTrunc' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "date, unit, binSize, timezone, startOfWeek", allowed: [1, 2, 3, 4, 5] }, emit: objectBody },
     group: unsupported("'$dateTrunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateTrunc' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2464,7 +2464,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$dayOfMonth' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfMonth' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2479,7 +2479,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$dayOfWeek' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2494,7 +2494,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$dayOfYear' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2509,7 +2509,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$hour' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$hour' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hour' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2524,7 +2524,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$isoDayOfWeek' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoDayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2539,7 +2539,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$isoWeek' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2554,7 +2554,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$isoWeekYear' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoWeekYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2569,7 +2569,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$millisecond' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$millisecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$millisecond' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2584,7 +2584,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$minute' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$minute' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$minute' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2599,7 +2599,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$month' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$month' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$month' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2614,7 +2614,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$second' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$second' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$second' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2629,7 +2629,7 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toDate' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDate' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2644,7 +2644,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$week' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$week' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$week' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2659,7 +2659,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$year' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$year' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$year' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2674,7 +2674,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$tsIncrement' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
     group: unsupported("'$tsIncrement' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2689,7 +2689,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$tsSecond' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
     group: unsupported("'$tsSecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2736,7 +2736,7 @@ export const NAMES = {
         positional: ["input", "to", "onError", "onNull"],
       },
     },
-    filter: unsupported("'$convert' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, to, onError, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$convert' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$convert' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2751,7 +2751,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$isNumber' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$isNumber' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isNumber' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2766,7 +2766,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toArray' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2781,7 +2781,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toBool' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toBool' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toBool' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2796,7 +2796,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toDecimal' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDecimal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2811,7 +2811,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toDouble' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDouble' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDouble' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2826,7 +2826,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toInt' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toInt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toInt' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2841,7 +2841,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toLong' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toLong' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLong' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2856,7 +2856,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toObject' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObject' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2871,7 +2871,7 @@ export const NAMES = {
     returns: "objectId",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toObjectId' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2886,7 +2886,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toString' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toString' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2901,7 +2901,7 @@ export const NAMES = {
     returns: "binData",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toUUID' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toUUID' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUUID' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2931,7 +2931,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "verbatim",
-    filter: unsupported("'$literal' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$literal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2949,7 +2949,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
-    filter: unsupported("'$let' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$let' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$let' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2971,7 +2971,9 @@ export const NAMES = {
         positional: ["init", "initArgs", "accumulate", "accumulateArgs", "merge", "finalize", "lang"],
       },
     },
-    filter: unsupported("'$accumulator' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$accumulator is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$accumulator is a '$group'-only accumulator — MongoDB has no expression or window form for it. Use $group({ _id: ..., <key>: $accumulator({ init, accumulate, accumulateArgs, merge, lang }) }).",
     ),
@@ -3002,7 +3004,7 @@ export const NAMES = {
         positional: ["body", "args", "lang"],
       },
     },
-    filter: unsupported("'$function' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$function' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$function' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3017,7 +3019,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$binarySize' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$binarySize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$binarySize' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3032,7 +3034,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$bsonSize' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$bsonSize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3047,7 +3049,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$meta' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$meta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$meta' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3062,7 +3064,7 @@ export const NAMES = {
     returns: "objectId",
     where: ["value"],
     shape: "none",
-    filter: unsupported("'$createObjectId' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$createObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$createObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3080,7 +3082,7 @@ export const NAMES = {
     shape: {
       object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
     },
-    filter: unsupported("'$hash' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hash' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3098,7 +3100,7 @@ export const NAMES = {
     shape: {
       object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] },
     },
-    filter: unsupported("'$hexHash' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hexHash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hexHash' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3127,7 +3129,12 @@ export const NAMES = {
     category: "miscellaneous",
     where: ["filter"],
     shape: "single",
-    filter: pending("src/match-translation.ts"),
+    // The server requires a constant here, and a query document holds values: the slot is stated
+    // `constant`, so an expression is refused before this cell runs.
+    filter: {
+      args: { sig: "rate", exact: 1, constant: [0] },
+      emit: ({ name, args, constant }) => ({ [name]: constant(args[0])?.value }),
+    },
     expr: unsupported(
       "$sampleRate is a query operator — it only works as a '$match' condition, and MongoDB has no expression form for it. Write it as a predicate: '$match($sampleRate(<value>))' or '$match($.field > 1 && $sampleRate(<value>))'.",
     ),
@@ -3144,7 +3151,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     shape: "single",
-    filter: unsupported("'$toHashedIndexKey' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toHashedIndexKey' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -3159,7 +3166,9 @@ export const NAMES = {
     returns: "array",
     where: ["group", "window", "updateDoc"],
     shape: "single",
-    filter: unsupported("'$addToSet' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$addToSet is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$addToSet is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3176,7 +3185,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
-    filter: unsupported("'$avg' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3200,7 +3209,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$count' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$count' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$count(…);') or a chain link ('$$.$count(…)').",
+    ),
     expr: unsupported(
       "'$count' is a pipeline stage, not an expression — MongoDB has no '$count' expression operator, so '{ $count: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$count(…);') or as a chain link ('$$.$count(…)'). As an accumulator it counts a group: $group({ _id: ..., n: $count() }) or a window's documents.",
     ),
@@ -3218,7 +3229,7 @@ export const NAMES = {
     where: ["value", "group", "window", "updateDoc"],
     spreadAlternative: "use the JS form Math.max(...arr)",
     shape: "flex",
-    filter: unsupported("'$max' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3244,7 +3255,7 @@ export const NAMES = {
         positional: ["input", "method"],
       },
     },
-    filter: unsupported("'$median' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
@@ -3260,7 +3271,7 @@ export const NAMES = {
     where: ["value", "group", "window", "updateDoc"],
     spreadAlternative: "use the JS form Math.min(...arr)",
     shape: "flex",
-    filter: unsupported("'$min' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3286,7 +3297,7 @@ export const NAMES = {
         positional: ["input", "p", "method"],
       },
     },
-    filter: unsupported("'$percentile' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     group: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
@@ -3301,7 +3312,9 @@ export const NAMES = {
     returns: "array",
     where: ["group", "window", "updateDoc"],
     shape: "single",
-    filter: unsupported("'$push' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$push is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$push is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3318,7 +3331,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
-    filter: unsupported("'$stdDevPop' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3336,7 +3349,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
-    filter: unsupported("'$stdDevSamp' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3354,7 +3367,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     shape: "flex",
-    filter: unsupported("'$sum' is not valid in filter position — see its 'where'."),
+    filter: viaFallback,
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3372,7 +3385,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["group", "window"],
     shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
-    filter: unsupported("'$bottom' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$bottom is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$bottom is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $bottom(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3396,7 +3411,9 @@ export const NAMES = {
         positional: ["output", "sortBy", "n"],
       },
     },
-    filter: unsupported("'$bottomN' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$bottomN is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$bottomN is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $bottomN(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3413,7 +3430,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["group", "window"],
     shape: { object: { required: ["output", "sortBy"], optional: [], closed: true, positional: ["output", "sortBy"] } },
-    filter: unsupported("'$top' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$top is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$top is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $top(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3437,7 +3456,9 @@ export const NAMES = {
         positional: ["output", "sortBy", "n"],
       },
     },
-    filter: unsupported("'$topN' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$topN is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+    ),
     expr: unsupported(
       "$topN is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $topN(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
@@ -3454,7 +3475,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "array",
-    filter: unsupported("'$covariancePop' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$covariancePop is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covariancePop(...) } }).",
+    ),
     expr: unsupported(
       "$covariancePop is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covariancePop(...) } }) to compute it per-document over a window.",
     ),
@@ -3474,7 +3497,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "array",
-    filter: unsupported("'$covarianceSamp' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$covarianceSamp is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covarianceSamp(...) } }).",
+    ),
     expr: unsupported(
       "$covarianceSamp is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $covarianceSamp(...) } }) to compute it per-document over a window.",
     ),
@@ -3494,7 +3519,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported("'$denseRank' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$denseRank is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $denseRank(...) } }).",
+    ),
     expr: unsupported(
       "$denseRank is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $denseRank(...) } }) to compute it per-document over a window.",
     ),
@@ -3519,7 +3546,9 @@ export const NAMES = {
         positional: ["input", "unit"],
       },
     },
-    filter: unsupported("'$derivative' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$derivative is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $derivative(...) } }).",
+    ),
     expr: unsupported(
       "$derivative is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $derivative(...) } }) to compute it per-document over a window.",
     ),
@@ -3536,7 +3565,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported("'$documentNumber' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$documentNumber is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $documentNumber(...) } }).",
+    ),
     expr: unsupported(
       "$documentNumber is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $documentNumber(...) } }) to compute it per-document over a window.",
     ),
@@ -3561,7 +3592,9 @@ export const NAMES = {
         positional: ["input", "N", "alpha"],
       },
     },
-    filter: unsupported("'$expMovingAvg' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$expMovingAvg is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $expMovingAvg(...) } }).",
+    ),
     expr: unsupported(
       "$expMovingAvg is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $expMovingAvg(...) } }) to compute it per-document over a window.",
     ),
@@ -3586,7 +3619,9 @@ export const NAMES = {
         positional: ["input", "unit"],
       },
     },
-    filter: unsupported("'$integral' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$integral is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $integral(...) } }).",
+    ),
     expr: unsupported(
       "$integral is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $integral(...) } }) to compute it per-document over a window.",
     ),
@@ -3603,7 +3638,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "single",
-    filter: unsupported("'$linearFill' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$linearFill is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } }).",
+    ),
     expr: unsupported(
       "$linearFill is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $linearFill(...) } }) to compute it per-document over a window.",
     ),
@@ -3620,7 +3657,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["window"],
     shape: "single",
-    filter: unsupported("'$locf' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$locf is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } }).",
+    ),
     expr: unsupported(
       "$locf is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $locf(...) } }) to compute it per-document over a window.",
     ),
@@ -3637,7 +3676,9 @@ export const NAMES = {
     returns: "number",
     where: ["window"],
     shape: "none",
-    filter: unsupported("'$rank' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$rank is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }).",
+    ),
     expr: unsupported(
       "$rank is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }) to compute it per-document over a window.",
     ),
@@ -3661,7 +3702,9 @@ export const NAMES = {
         positional: ["output", "by", "default"],
       },
     },
-    filter: unsupported("'$shift' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "$shift is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $shift(...) } }).",
+    ),
     expr: unsupported(
       "$shift is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $shift(...) } }) to compute it per-document over a window.",
     ),
@@ -3679,7 +3722,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$addFields' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$addFields' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$addFields(…);') or a chain link ('$$.$addFields(…)').",
+    ),
     expr: unsupported(
       "'$addFields' is a pipeline stage, not an expression — MongoDB has no '$addFields' expression operator, so '{ $addFields: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$addFields(…);') or as a chain link ('$$.$addFields(…)'). For the value-position equivalent, use '$mergeObjects(…)'.",
     ),
@@ -3697,7 +3742,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    filter: unsupported("'$bucket' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$bucket' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$bucket(…);') or a chain link ('$$.$bucket(…)').",
+    ),
     expr: unsupported(
       "'$bucket' is a pipeline stage, not an expression — MongoDB has no '$bucket' expression operator, so '{ $bucket: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucket(…);') or as a chain link ('$$.$bucket(…)').",
     ),
@@ -3715,7 +3762,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
-    filter: unsupported("'$bucketAuto' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$bucketAuto' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$bucketAuto(…);') or a chain link ('$$.$bucketAuto(…)').",
+    ),
     expr: unsupported(
       "'$bucketAuto' is a pipeline stage, not an expression — MongoDB has no '$bucketAuto' expression operator, so '{ $bucketAuto: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucketAuto(…);') or as a chain link ('$$.$bucketAuto(…)').",
     ),
@@ -3733,7 +3782,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$changeStream' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$changeStream' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$changeStream(…);') or a chain link ('$$.$changeStream(…)').",
+    ),
     expr: unsupported(
       "'$changeStream' is a pipeline stage, not an expression — MongoDB has no '$changeStream' expression operator, so '{ $changeStream: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStream(…);') or as a chain link ('$$.$changeStream(…)').",
     ),
@@ -3751,7 +3802,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported("'$changeStreamSplitLargeEvent' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$changeStreamSplitLargeEvent' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$changeStreamSplitLargeEvent(…);') or a chain link ('$$.$changeStreamSplitLargeEvent(…)').",
+    ),
     expr: unsupported(
       "'$changeStreamSplitLargeEvent' is a pipeline stage, not an expression — MongoDB has no '$changeStreamSplitLargeEvent' expression operator, so '{ $changeStreamSplitLargeEvent: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStreamSplitLargeEvent(…);') or as a chain link ('$$.$changeStreamSplitLargeEvent(…)').",
     ),
@@ -3771,7 +3824,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$collStats' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$collStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$collStats(…);') or a chain link ('$$.$collStats(…)').",
+    ),
     expr: unsupported(
       "'$collStats' is a pipeline stage, not an expression — MongoDB has no '$collStats' expression operator, so '{ $collStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$collStats(…);') or as a chain link ('$$.$collStats(…)').",
     ),
@@ -3789,7 +3844,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$currentOp' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$currentOp' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$currentOp(…);') or a chain link ('$$.$currentOp(…)').",
+    ),
     expr: unsupported(
       "'$currentOp' is a pipeline stage, not an expression — MongoDB has no '$currentOp' expression operator, so '{ $currentOp: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$currentOp(…);') or as a chain link ('$$.$currentOp(…)').",
     ),
@@ -3806,7 +3863,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$densify' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$densify' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$densify(…);') or a chain link ('$$.$densify(…)').",
+    ),
     expr: unsupported(
       "'$densify' is a pipeline stage, not an expression — MongoDB has no '$densify' expression operator, so '{ $densify: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$densify(…);') or as a chain link ('$$.$densify(…)').",
     ),
@@ -3824,7 +3883,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported("'$documents' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$documents' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$documents(…);') or a chain link ('$$.$documents(…)').",
+    ),
     expr: unsupported(
       "'$documents' is a pipeline stage, not an expression — MongoDB has no '$documents' expression operator, so '{ $documents: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$documents(…);') or as a chain link ('$$.$documents(…)').",
     ),
@@ -3842,7 +3903,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$facet' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$facet' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$facet(…);') or a chain link ('$$.$facet(…)').",
+    ),
     expr: unsupported(
       "'$facet' is a pipeline stage, not an expression — MongoDB has no '$facet' expression operator, so '{ $facet: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$facet(…);') or as a chain link ('$$.$facet(…)').",
     ),
@@ -3859,7 +3922,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$fill' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$fill' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$fill(…);') or a chain link ('$$.$fill(…)').",
+    ),
     expr: unsupported(
       "'$fill' is a pipeline stage, not an expression — MongoDB has no '$fill' expression operator, so '{ $fill: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$fill(…);') or as a chain link ('$$.$fill(…)').",
     ),
@@ -3877,7 +3942,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", query: "filter" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$geoNear' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$geoNear' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$geoNear(…);') or a chain link ('$$.$geoNear(…)').",
+    ),
     expr: unsupported(
       "'$geoNear' is a pipeline stage, not an expression — MongoDB has no '$geoNear' expression operator, so '{ $geoNear: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$geoNear(…);') or as a chain link ('$$.$geoNear(…)').",
     ),
@@ -3894,7 +3961,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
-    filter: unsupported("'$graphLookup' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$graphLookup' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$graphLookup(…);') or a chain link ('$$.$graphLookup(…)').",
+    ),
     expr: unsupported(
       "'$graphLookup' is a pipeline stage, not an expression — MongoDB has no '$graphLookup' expression operator, so '{ $graphLookup: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$graphLookup(…);') or as a chain link ('$$.$graphLookup(…)').",
     ),
@@ -3912,7 +3981,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
-    filter: unsupported("'$group' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$group' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$group(…);') or a chain link ('$$.$group(…)').",
+    ),
     expr: unsupported(
       "'$group' is a pipeline stage, not an expression — MongoDB has no '$group' expression operator, so '{ $group: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$group(…);') or as a chain link ('$$.$group(…)').",
     ),
@@ -3930,7 +4001,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$indexStats' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$indexStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$indexStats(…);') or a chain link ('$$.$indexStats(…)').",
+    ),
     expr: unsupported(
       "'$indexStats' is a pipeline stage, not an expression — MongoDB has no '$indexStats' expression operator, so '{ $indexStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$indexStats(…);') or as a chain link ('$$.$indexStats(…)').",
     ),
@@ -3947,7 +4020,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$limit' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$limit' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$limit(…);') or a chain link ('$$.$limit(…)').",
+    ),
     expr: unsupported(
       "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a chain link ('$$.$limit(…)'). For the value-position equivalent, use '$slice(…)'.",
     ),
@@ -3965,7 +4040,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$listLocalSessions' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$listLocalSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listLocalSessions(…);') or a chain link ('$$.$listLocalSessions(…)').",
+    ),
     expr: unsupported(
       "'$listLocalSessions' is a pipeline stage, not an expression — MongoDB has no '$listLocalSessions' expression operator, so '{ $listLocalSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listLocalSessions(…);') or as a chain link ('$$.$listLocalSessions(…)').",
     ),
@@ -3983,7 +4060,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$listSampledQueries' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$listSampledQueries' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSampledQueries(…);') or a chain link ('$$.$listSampledQueries(…)').",
+    ),
     expr: unsupported(
       "'$listSampledQueries' is a pipeline stage, not an expression — MongoDB has no '$listSampledQueries' expression operator, so '{ $listSampledQueries: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSampledQueries(…);') or as a chain link ('$$.$listSampledQueries(…)').",
     ),
@@ -4001,7 +4080,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$listSearchIndexes' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$listSearchIndexes' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSearchIndexes(…);') or a chain link ('$$.$listSearchIndexes(…)').",
+    ),
     expr: unsupported(
       "'$listSearchIndexes' is a pipeline stage, not an expression — MongoDB has no '$listSearchIndexes' expression operator, so '{ $listSearchIndexes: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSearchIndexes(…);') or as a chain link ('$$.$listSearchIndexes(…)').",
     ),
@@ -4019,7 +4100,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$listSessions' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$listSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$listSessions(…);') or a chain link ('$$.$listSessions(…)').",
+    ),
     expr: unsupported(
       "'$listSessions' is a pipeline stage, not an expression — MongoDB has no '$listSessions' expression operator, so '{ $listSessions: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSessions(…);') or as a chain link ('$$.$listSessions(…)').",
     ),
@@ -4037,7 +4120,9 @@ export const NAMES = {
     bodyPositions: { "": "value", pipeline: "statement" },
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
-    filter: unsupported("'$lookup' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$lookup' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$lookup(…);') or a chain link ('$$.$lookup(…)').",
+    ),
     expr: unsupported(
       "'$lookup' is a pipeline stage, not an expression — MongoDB has no '$lookup' expression operator, so '{ $lookup: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$lookup(…);') or as a chain link ('$$.$lookup(…)').",
     ),
@@ -4054,7 +4139,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
-    filter: unsupported("'$match' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$match' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$match(…);') or a chain link ('$$.$match(…)').",
+    ),
     expr: unsupported(
       "'$match' is a pipeline stage, not an expression — MongoDB has no '$match' expression operator, so '{ $match: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$match(…);') or as a chain link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.",
     ),
@@ -4072,7 +4159,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", whenMatched: "statement" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported("'$merge' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$merge' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$merge(…);') or a chain link ('$$.$merge(…)').",
+    ),
     expr: unsupported(
       "'$merge' is a pipeline stage, not an expression — MongoDB has no '$merge' expression operator, so '{ $merge: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$merge(…);') or as a chain link ('$$.$merge(…)').",
     ),
@@ -4090,7 +4179,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
-    filter: unsupported("'$out' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$out' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$out(…);') or a chain link ('$$.$out(…)').",
+    ),
     expr: unsupported(
       "'$out' is a pipeline stage, not an expression — MongoDB has no '$out' expression operator, so '{ $out: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$out(…);') or as a chain link ('$$.$out(…)').",
     ),
@@ -4108,7 +4199,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$planCacheStats' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$planCacheStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$planCacheStats(…);') or a chain link ('$$.$planCacheStats(…)').",
+    ),
     expr: unsupported(
       "'$planCacheStats' is a pipeline stage, not an expression — MongoDB has no '$planCacheStats' expression operator, so '{ $planCacheStats: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$planCacheStats(…);') or as a chain link ('$$.$planCacheStats(…)').",
     ),
@@ -4126,7 +4219,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$project' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$project' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$project(…);') or a chain link ('$$.$project(…)').",
+    ),
     expr: unsupported(
       "'$project' is a pipeline stage, not an expression — MongoDB has no '$project' expression operator, so '{ $project: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$project(…);') or as a chain link ('$$.$project(…)'). For the value-position equivalent, use '$getField(…)'.",
     ),
@@ -4144,7 +4239,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
-    filter: unsupported("'$rankFusion' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$rankFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$rankFusion(…);') or a chain link ('$$.$rankFusion(…)').",
+    ),
     expr: unsupported(
       "'$rankFusion' is a pipeline stage, not an expression — MongoDB has no '$rankFusion' expression operator, so '{ $rankFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$rankFusion(…);') or as a chain link ('$$.$rankFusion(…)').",
     ),
@@ -4161,7 +4258,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$redact' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$redact' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$redact(…);') or a chain link ('$$.$redact(…)').",
+    ),
     expr: unsupported(
       "'$redact' is a pipeline stage, not an expression — MongoDB has no '$redact' expression operator, so '{ $redact: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$redact(…);') or as a chain link ('$$.$redact(…)'). For the value-position equivalent, use '$filter(…)'.",
     ),
@@ -4180,7 +4279,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$replaceRoot' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$replaceRoot' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$replaceRoot(…);') or a chain link ('$$.$replaceRoot(…)').",
+    ),
     expr: unsupported(
       "'$replaceRoot' is a pipeline stage, not an expression — MongoDB has no '$replaceRoot' expression operator, so '{ $replaceRoot: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceRoot(…);') or as a chain link ('$$.$replaceRoot(…)').",
     ),
@@ -4199,7 +4300,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$replaceWith' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$replaceWith' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$replaceWith(…);') or a chain link ('$$.$replaceWith(…)').",
+    ),
     expr: unsupported(
       "'$replaceWith' is a pipeline stage, not an expression — MongoDB has no '$replaceWith' expression operator, so '{ $replaceWith: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceWith(…);') or as a chain link ('$$.$replaceWith(…)').",
     ),
@@ -4216,7 +4319,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$sample' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$sample' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$sample(…);') or a chain link ('$$.$sample(…)').",
+    ),
     expr: unsupported(
       "'$sample' is a pipeline stage, not an expression — MongoDB has no '$sample' expression operator, so '{ $sample: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$sample(…);') or as a chain link ('$$.$sample(…)').",
     ),
@@ -4234,7 +4339,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
-    filter: unsupported("'$scoreFusion' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$scoreFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$scoreFusion(…);') or a chain link ('$$.$scoreFusion(…)').",
+    ),
     expr: unsupported(
       "'$scoreFusion' is a pipeline stage, not an expression — MongoDB has no '$scoreFusion' expression operator, so '{ $scoreFusion: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$scoreFusion(…);') or as a chain link ('$$.$scoreFusion(…)').",
     ),
@@ -4252,7 +4359,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$search' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$search' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$search(…);') or a chain link ('$$.$search(…)').",
+    ),
     expr: unsupported(
       "'$search' is a pipeline stage, not an expression — MongoDB has no '$search' expression operator, so '{ $search: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$search(…);') or as a chain link ('$$.$search(…)').",
     ),
@@ -4270,7 +4379,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$searchMeta' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$searchMeta' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$searchMeta(…);') or a chain link ('$$.$searchMeta(…)').",
+    ),
     expr: unsupported(
       "'$searchMeta' is a pipeline stage, not an expression — MongoDB has no '$searchMeta' expression operator, so '{ $searchMeta: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$searchMeta(…);') or as a chain link ('$$.$searchMeta(…)').",
     ),
@@ -4288,7 +4399,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$set' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$set' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$set(…);') or a chain link ('$$.$set(…)').",
+    ),
     expr: unsupported(
       "'$set' is a pipeline stage, not an expression — MongoDB has no '$set' expression operator, so '{ $set: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$set(…);') or as a chain link ('$$.$set(…)'). For the value-position equivalent, use '$mergeObjects(…)'.",
     ),
@@ -4305,7 +4418,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
-    filter: unsupported("'$setWindowFields' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$setWindowFields' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$setWindowFields(…);') or a chain link ('$$.$setWindowFields(…)').",
+    ),
     expr: unsupported(
       "'$setWindowFields' is a pipeline stage, not an expression — MongoDB has no '$setWindowFields' expression operator, so '{ $setWindowFields: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$setWindowFields(…);') or as a chain link ('$$.$setWindowFields(…)').",
     ),
@@ -4323,7 +4438,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$shardedDataDistribution' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$shardedDataDistribution' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$shardedDataDistribution(…);') or a chain link ('$$.$shardedDataDistribution(…)').",
+    ),
     expr: unsupported(
       "'$shardedDataDistribution' is a pipeline stage, not an expression — MongoDB has no '$shardedDataDistribution' expression operator, so '{ $shardedDataDistribution: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$shardedDataDistribution(…);') or as a chain link ('$$.$shardedDataDistribution(…)').",
     ),
@@ -4342,7 +4459,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$skip' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$skip' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$skip(…);') or a chain link ('$$.$skip(…)').",
+    ),
     expr: unsupported(
       "'$skip' is a pipeline stage, not an expression — MongoDB has no '$skip' expression operator, so '{ $skip: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$skip(…);') or as a chain link ('$$.$skip(…)'). For the value-position equivalent, use '$slice(…)'.",
     ),
@@ -4360,7 +4479,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$sort' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$sort' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$sort(…);') or a chain link ('$$.$sort(…)').",
+    ),
     expr: unsupported(
       "'$sort' is a pipeline stage, not an expression — MongoDB has no '$sort' expression operator, so '{ $sort: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$sort(…);') or as a chain link ('$$.$sort(…)'). For the value-position equivalent, use '$sortArray(…)'.",
     ),
@@ -4377,7 +4498,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$sortByCount' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$sortByCount' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$sortByCount(…);') or a chain link ('$$.$sortByCount(…)').",
+    ),
     expr: unsupported(
       "'$sortByCount' is a pipeline stage, not an expression — MongoDB has no '$sortByCount' expression operator, so '{ $sortByCount: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$sortByCount(…);') or as a chain link ('$$.$sortByCount(…)').",
     ),
@@ -4394,7 +4517,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
-    filter: unsupported("'$unionWith' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$unionWith' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$unionWith(…);') or a chain link ('$$.$unionWith(…)').",
+    ),
     expr: unsupported(
       "'$unionWith' is a pipeline stage, not an expression — MongoDB has no '$unionWith' expression operator, so '{ $unionWith: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$unionWith(…);') or as a chain link ('$$.$unionWith(…)'). For the value-position equivalent, use '$concatArrays(…)'.",
     ),
@@ -4412,7 +4537,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$unset' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$unset' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$unset(…);') or a chain link ('$$.$unset(…)').",
+    ),
     expr: unsupported(
       "'$unset' is a pipeline stage, not an expression — MongoDB has no '$unset' expression operator, so '{ $unset: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$unset(…);') or as a chain link ('$$.$unset(…)'). For the value-position equivalent, use '$unsetField(…)'.",
     ),
@@ -4429,7 +4556,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: [],
-    filter: unsupported("'$unwind' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$unwind' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$unwind(…);') or a chain link ('$$.$unwind(…)').",
+    ),
     expr: unsupported(
       "'$unwind' is a pipeline stage, not an expression — MongoDB has no '$unwind' expression operator, so '{ $unwind: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$unwind(…);') or as a chain link ('$$.$unwind(…)').",
     ),
@@ -4447,7 +4576,9 @@ export const NAMES = {
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
-    filter: unsupported("'$vectorSearch' is not valid in filter position — see its 'where'."),
+    filter: unsupported(
+      "'$vectorSearch' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$vectorSearch(…);') or a chain link ('$$.$vectorSearch(…)').",
+    ),
     expr: unsupported(
       "'$vectorSearch' is a pipeline stage, not an expression — MongoDB has no '$vectorSearch' expression operator, so '{ $vectorSearch: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$vectorSearch(…);') or as a chain link ('$$.$vectorSearch(…)').",
     ),
@@ -4630,7 +4761,18 @@ export const NAMES = {
     on: "string",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
+    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        const body = needle.value.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
+        return { [path]: new RegExp(`^${body}`) };
+      },
+    },
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.startsWith()' is not a statement — see its 'where'."),
@@ -4646,7 +4788,18 @@ export const NAMES = {
     on: "string",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    // An anchored regex — indexable, and unlike `$indexOfCP` it does not abort on a
+    // non-string value. A literal needle only: a runtime one cannot be baked into a pattern.
+    filter: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        const needle = args[0];
+        if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
+        const body = needle.value.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
+        return { [path]: new RegExp(`${body}$`) };
+      },
+    },
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
     stream: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.endsWith()' is not a statement — see its 'where'."),
@@ -4692,7 +4845,17 @@ export const NAMES = {
     on: "string",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    // A field against a regex LITERAL → a live RegExp the driver sends as a BSON regex, which
+    // is what an index reads. A string pattern or a computed regex keeps the expression fallback.
+    filter: {
+      args: { sig: "regexp", exact: 1 },
+      emit: ({ recv, args, pathOf }) => {
+        const path = recv === null ? null : pathOf(recv);
+        const re = args[0];
+        if (path === null || re.type !== "RegexLiteral") return null;
+        return { [path]: new RegExp(re.pattern, re.flags) };
+      },
+    },
     expr: pending("src/methods/", { sig: "regex", exact: 1 }),
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.match()' is not a statement — see its 'where'."),
@@ -4794,7 +4957,40 @@ export const NAMES = {
     on: ["array", "string"],
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    // Two query forms. `$.tags.includes("x")` → { tags: "x" }: MongoDB's "equals, or is an
+    // array containing" — what `.includes` means on an array, and indexed. On a STRING field
+    // the query form is equality where the expression form is a substring test; a receiver
+    // jsmql can prove is a string never reaches this cell. `["a","b"].includes($.s)` →
+    // { s: { $in: […] } }. Anything else keeps the expression fallback.
+    filter: {
+      args: { sig: "searchElement", exact: 1 },
+      emit: ({ recv, args, pathOf, constant }) => {
+        if (recv === null) return null;
+        const path = pathOf(recv);
+        if (path !== null) {
+          const c = constant(args[0]);
+          return c === null ? null : { [path]: c.value };
+        }
+        if (recv.type !== "ArrayLiteral") return null;
+        const target = pathOf(args[0]);
+        if (target === null) return null;
+        const values: unknown[] = [];
+        for (const el of recv.elements) {
+          const c =
+            el.type === "SpreadElement" ||
+            el.type === "LetDecl" ||
+            el.type === "FuncDecl" ||
+            el.type === "AssignExpr" ||
+            el.type === "DeleteStmt" ||
+            el.type === "UpdateFilter"
+              ? null
+              : constant(el);
+          if (c === null) return null;
+          values.push(c.value);
+        }
+        return { [target]: { $in: values } };
+      },
+    },
     expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
     stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.includes()' is not a statement — see its 'where'."),
@@ -5177,7 +5373,17 @@ export const NAMES = {
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    // `$.items.some(i => i.q > 2)` → { items: { $elemMatch: { q: { $gt: 2 } } } } — when the
+    // whole body has a native form against the element as root. Otherwise the expression form.
+    filter: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, pathOf, elementQuery }) => {
+        const path = recv === null ? null : pathOf(recv);
+        if (path === null) return null;
+        const q = elementQuery(args[0]);
+        return q === null ? null : { [path]: { $elemMatch: q } };
+      },
+    },
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
     stream: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.some()' is not a statement — see its 'where'."),
@@ -7623,9 +7829,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     onlyInside: { value: ["$switch"] },
-    filter: unsupported(
-      "'$case' is only valid inside $switch, and only in an aggregation expression — never in a filter.",
-    ),
+    filter: viaFallback,
     expr: pending("src/operator-validation.ts"),
     group: unsupported(
       "'$case' is only valid inside $switch, and only in an aggregation expression — never in a $group slot.",

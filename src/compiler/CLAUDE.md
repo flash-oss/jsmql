@@ -37,7 +37,7 @@ produce a document, it calls a function here.
 ## Layout
 
 ```
-index.ts       source → MQL. The only public entry: `expr(source)` today.
+index.ts       source → MQL. The public entries: `expr(source)`, `filter(source)`.
 objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
 
 lex/
@@ -79,6 +79,8 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
   errors.ts    every message the phase can produce, worded once.
   lower.ts     the value and truth readings over every node type. See
                docs/specs/emit-pass.md.
+  filter.ts    the query reading: a predicate to a query document, the `&&`
+               merge, the per-branch `$or`, the `$expr` residual.
 ```
 
 ## Conventions

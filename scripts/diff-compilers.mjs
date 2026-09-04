@@ -356,7 +356,10 @@ for (const src of CORPUS) {
     // The shipped `expr` answers a statement program with a PIPELINE (an array): that
     // source is the statement slice whatever its spelling — a lone `$match(…)` included.
     const refIsPipeline = a.ok && a.value.startsWith("[");
-    if (b.skipped === true || (curPath !== null && entry === "expr" && (refIsPipeline || isStatementShaped(src)))) {
+    // The new compiler's entries are VALUE and FILTER targets; a statement program is the
+    // statement slice's, whichever entry it reached.
+    const valueOrFilter = entry === "expr" || entry === "filter";
+    if (b.skipped === true || (curPath !== null && valueOrFilter && (refIsPipeline || isStatementShaped(src)))) {
       skipped.push({ key: keyOf(entry, src), entry, src, why: b.skipped === true ? "pending" : "statement-shaped" });
       continue;
     }

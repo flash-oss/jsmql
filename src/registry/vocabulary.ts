@@ -579,15 +579,87 @@ export type FilterIn = {
   args: readonly Expr[];
   /** This entry's `shape.positional` key order, empty when it has none. */
   keys: readonly string[];
-  /** The field path an expression names ("a.b.c"), or null when it is not a plain path. */
+  /**
+   * The field path an expression names ("a.b.c"), or null when it is not a plain
+   * path — an index, a call, `.length`, a computed key. Inside a `.some` callback
+   * the element parameter is the root, so `i.q` is the path "q".
+   */
   pathOf: (e: Expr) => string | null;
-  /** A compile-time value, boxed so that a constant `null` is not read as "not constant". */
+  /**
+   * A compile-time value the QUERY language compares as written: a number, a
+   * string, a boolean, null, a Date, an ObjectId. Boxed so that a constant `null`
+   * is not "not constant". Null for anything else — an array (the server would
+   * match array elements), a regex, a bigint, a document, an expression.
+   */
   constant: (e: Expr) => { value: unknown } | null;
   /** A predicate as a query document, `$expr` fallback included. Always answers. */
   query: (e: Expr) => QueryDoc;
   /** The same, only when it has a NATIVE (indexable) form. Null otherwise. */
   nativeQuery: (e: Expr) => QueryDoc | null;
+  /**
+   * A one-parameter callback's body as the query an `$elemMatch` evaluates
+   * against each ELEMENT — the parameter is the root there — or null when any
+   * part of it has no native form.
+   */
+  elementQuery: (cb: Expr) => QueryDoc | null;
 };
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE PREDICATE VOCABULARY — the facts the query and the expression cells share
+// ═════════════════════════════════════════════════════════════════════════════
+
+/**
+ * The BSON type aliases MongoDB's `$type` QUERY operator accepts. A `typeof`
+ * comparison against any other spelling (`"function"`, `"bigint"`) has no query
+ * form and keeps the expression fallback, so no query the server refuses is
+ * emitted. `"number"` is here because the query form takes it as the umbrella
+ * for int/long/double/decimal — while the aggregation `$type` expression never
+ * RETURNS it; `TYPE_GROUPS` is how the expression cell absorbs that.
+ */
+export const BSON_TYPE_ALIASES: readonly string[] = [
+  "double",
+  "string",
+  "object",
+  "array",
+  "binData",
+  "undefined",
+  "objectId",
+  "bool",
+  "date",
+  "null",
+  "regex",
+  "dbPointer",
+  "javascript",
+  "symbol",
+  "javascriptWithScope",
+  "int",
+  "timestamp",
+  "long",
+  "decimal",
+  "minKey",
+  "maxKey",
+  "number",
+];
+
+/** JavaScript's `typeof` spelling → the BSON alias. `typeof` says "boolean"; MongoDB says "bool". */
+export const JS_TYPEOF_TO_BSON: Readonly<Record<string, string>> = { boolean: "bool" };
+
+/**
+ * An umbrella alias → the concrete types the aggregation `$type` EXPRESSION can
+ * return for it. The query form takes the umbrella; the expression form compares
+ * against what `$type` answers, and it answers "int" or "double", never "number".
+ * Comparing against the umbrella is how `typeof $.a === "number"` was once false
+ * for every document.
+ */
+export const TYPE_GROUPS: Readonly<Record<string, readonly string[]>> = {
+  number: ["double", "int", "long", "decimal"],
+};
+
+/** The alias a `typeof x === "<spelling>"` test names, or null when the query language has none. */
+export function typeAliasOf(spelling: string): string | null {
+  const alias = JS_TYPEOF_TO_BSON[spelling] ?? spelling;
+  return BSON_TYPE_ALIASES.includes(alias) ? alias : null;
+}
 
 export type ExprIn = {
   /** This entry's own key. See FilterIn.name. */

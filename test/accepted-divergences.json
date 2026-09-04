@@ -1,5 +1,9 @@
 {
-  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
+  "reference": {
+    "commit": "46afc8d",
+    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
+    "dirty": false
+  },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -4576,6 +4580,1158 @@
       "was": "$accumulator is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $accumulator(...) }) to compute it per-group, or $setWindowFields(.",
       "now": "$accumulator is a '$group'-only accumulator — MongoDB has no expression or window form for it. Use $group({ _id: ..., <key>: $accumulator({ init, accumulate, accumulateArgs, merge, lang }) }).",
       "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });": {
+      "entry": "filter",
+      "src": "$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$.r = $$$.orders.filter(o => { const t = o.total; });": {
+      "entry": "filter",
+      "src": "$.r = $$$.orders.filter(o => { const t = o.total; });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$gt($.x)": {
+      "entry": "filter",
+      "src": "$gt($.x)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$gt\":\"$x\"}}",
+      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 1",
+      "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
+    },
+    "filter\u0000$eq(5)": {
+      "entry": "filter",
+      "src": "$eq(5)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$eq\":5}}",
+      "now": "$eq(expr1, expr2) requires exactly 2 arguments, got 1",
+      "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
+    },
+    "filter\u0000$lte($.score)": {
+      "entry": "filter",
+      "src": "$lte($.score)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$lte\":\"$score\"}}",
+      "now": "$lte(expr1, expr2) requires exactly 2 arguments, got 1",
+      "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
+    },
+    "filter\u0000({ $setUnion: $.x })": {
+      "entry": "filter",
+      "src": "({ $setUnion: $.x })",
+      "kind": "now-accepted",
+      "was": "$setUnion operates on a list of operands — pass two or more ($setUnion(a, b)) or a single array ($setUnion([a, b])).",
+      "now": "{\"$setUnion\":\"$x\"}",
+      "reason": "shippedBug (classification): a raw document whose top-level key is a list operator with a scalar; both compilers now refuse it — this row predates the check."
+    },
+    "filter\u0000({ $add: 5 })": {
+      "entry": "filter",
+      "src": "({ $add: 5 })",
+      "kind": "now-accepted",
+      "was": "$add operates on a list of operands — pass two or more ($add(a, b)) or a single array ($add([a, b])).",
+      "now": "{\"$add\":5}",
+      "reason": "shippedBug (classification): a raw document whose top-level key is a list operator with a scalar; both compilers now refuse it — this row predates the check."
+    },
+    "filter\u0000$gt($.a)": {
+      "entry": "filter",
+      "src": "$gt($.a)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$gt\":\"$a\"}}",
+      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 1",
+      "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
+    },
+    "filter\u0000$gt($.a, $.b, $.c)": {
+      "entry": "filter",
+      "src": "$gt($.a, $.b, $.c)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$gt\":[\"$a\",\"$b\",\"$c\"]}}",
+      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 3",
+      "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
+    },
+    "filter\u0000$dateDiff({ startDate: $.a, endDate: $.b, unit: \"day\", startOfWeek: \"funday\" })": {
+      "entry": "filter",
+      "src": "$dateDiff({ startDate: $.a, endDate: $.b, unit: \"day\", startOfWeek: \"funday\" })",
+      "kind": "message",
+      "was": "'$dateDiff' startOfWeek must be a weekday (monday, tuesday, wednesday, thursday, friday, saturday, sunday) — got 'funday'. Did you mean 'sunday'?",
+      "now": "'$dateDiff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun — got 'funday'. Did you mean 'sunday'?",
+      "reason": "message: one wording for every closed set, from the row's enum; the weekday list now also names the three-letter forms the server accepts."
+    },
+    "filter\u0000$convert({ input: $.s, to: \"intt\" })": {
+      "entry": "filter",
+      "src": "$convert({ input: $.s, to: \"intt\" })",
+      "kind": "message",
+      "was": "'$convert' to must be one of: double, string, object, array, binData, objectId, bool, date, null, regex, dbPointer, javascript, symbol, javascriptWithScope, int, timestamp, long, decimal, minKey, maxKey — got 'intt'. Did",
+      "now": "'$convert' to must be one of: double, string, object, array, binData, objectId, bool, date, null, regex, dbPointer, javascript, symbol, javascriptWithScope, int, timestamp, long, decimal, minKey, maxKey, undefined — got ",
+      "reason": "message: one wording for every closed set, from the row's enum; the weekday list now also names the three-letter forms the server accepts."
+    },
+    "filter\u0000$regexMatch({ input: $.s, regex: \"a\", options: \"gi\" })": {
+      "entry": "filter",
+      "src": "$regexMatch({ input: $.s, regex: \"a\", options: \"gi\" })",
+      "kind": "message",
+      "was": "'$regexMatch' options has an invalid regex flag 'g'. MongoDB allows only i, m, x, s — a JavaScript 'g' or 'y' flag is not supported.",
+      "now": "'$regexMatch' options has an invalid flag 'g'. MongoDB allows only i, m, x, s, u — a JavaScript 'g' or 'y' flag is not supported.",
+      "reason": "shippedBug: the server accepts the 'u' regex option (measured); the row states imxsu and the message lists it."
+    },
+    "filter\u00002 ** 3 ** 2": {
+      "entry": "filter",
+      "src": "2 ** 3 ** 2",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$pow\":[2,{\"$pow\":[3,2]}]},null]},null]},{\"$ne\":[{\"$pow\":[2,{\"$pow\":[3,2]}]},false]},{\"$ne\":[{\"$pow\":[2,{\"$pow\":[3,2]}]},\"\"]},{\"$ne\":[{\"$pow\":[2,{\"$pow\":[3,2]}]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[512,null]},null]},{\"$ne\":[512,false]},{\"$ne\":[512,\"\"]},{\"$ne\":[512,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.a ? $.b : $.c": {
+      "entry": "filter",
+      "src": "$.a ? $.b : $.c",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$a\",null]},null]},{\"$ne\":[\"$a\",false]},{\"$ne\":[\"$a\",\"\"]},{\"$ne\":[\"$a\",0]}]},\"then\":\"$b\",\"else\":\"$c\"}},null]},null]},{\"$ne\":[{\"$cond\":{\"if",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$a\",null]},null]},{\"$ne\":[\"$a\",false]},{\"$ne\":[\"$a\",\"\"]},{\"$ne\":[\"$a\",0]}]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$b\",null]},null]},{\"$ne\":[\"$b\",false]},{\"$ne\":[\"$b\",\"",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$.age >= 18 ? 'adult' : 'minor'": {
+      "entry": "filter",
+      "src": "$.age >= 18 ? 'adult' : 'minor'",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$gte\":[\"$age\",18]},\"then\":\"adult\",\"else\":\"minor\"}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$gte\":[\"$age\",18]},\"then\":\"adult\",\"else\":\"minor\"}},false]},{\"$ne\":[{\"$cond\"",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$gte\":[\"$age\",18]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"adult\",null]},null]},{\"$ne\":[\"adult\",false]},{\"$ne\":[\"adult\",\"\"]},{\"$ne\":[\"adult\",0]}]},\"else\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"minor\",null]}",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$.name ? \"yes\" : \"no\"": {
+      "entry": "filter",
+      "src": "$.name ? \"yes\" : \"no\"",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$name\",null]},null]},{\"$ne\":[\"$name\",false]},{\"$ne\":[\"$name\",\"\"]},{\"$ne\":[\"$name\",0]}]},\"then\":\"yes\",\"else\":\"no\"}},null]},null]},{\"$ne\":[",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$name\",null]},null]},{\"$ne\":[\"$name\",false]},{\"$ne\":[\"$name\",\"\"]},{\"$ne\":[\"$name\",0]}]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"yes\",null]},null]},{\"$ne\":[\"yes\",false]},",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$.a ? 'x' : $.b ? 'y' : 'z'": {
+      "entry": "filter",
+      "src": "$.a ? 'x' : $.b ? 'y' : 'z'",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$a\",null]},null]},{\"$ne\":[\"$a\",false]},{\"$ne\":[\"$a\",\"\"]},{\"$ne\":[\"$a\",0]}]},\"then\":\"x\",\"else\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$a\",null]},null]},{\"$ne\":[\"$a\",false]},{\"$ne\":[\"$a\",\"\"]},{\"$ne\":[\"$a\",0]}]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"x\",null]},null]},{\"$ne\":[\"x\",false]},{\"$ne\":[\"x\",\"\"]}",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$.a > 0 || $.b > 0 || $.c > 0": {
+      "entry": "filter",
+      "src": "$.a > 0 || $.b > 0 || $.c > 0",
+      "kind": "output",
+      "was": "{\"$or\":[{\"$or\":[{\"a\":{\"$gt\":0}},{\"b\":{\"$gt\":0}}]},{\"c\":{\"$gt\":0}}]}",
+      "now": "{\"$or\":[{\"a\":{\"$gt\":0}},{\"b\":{\"$gt\":0}},{\"c\":{\"$gt\":0}}]}",
+      "reason": "intended: a left-nested `||` chain lowers as one flat $or; the shipped nested one $or in another — the same documents."
+    },
+    "filter\u0000$.items.0": {
+      "entry": "filter",
+      "src": "$.items.0",
+      "kind": "message",
+      "was": "Expected property name after '.' at position 8",
+      "now": "Expected a name but got '0' at position 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000[1,2,3,4,5].slice(1, 3)": {
+      "entry": "filter",
+      "src": "[1,2,3,4,5].slice(1, 3)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[[1,2,3,4,5],1,2]},null]},null]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],1,2]},false]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],1,2]},\"\"]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],1,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[2,3],null]},null]},{\"$ne\":[[2,3],false]},{\"$ne\":[[2,3],\"\"]},{\"$ne\":[[2,3],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3,4,5].slice(-2)": {
+      "entry": "filter",
+      "src": "[1,2,3,4,5].slice(-2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[[1,2,3,4,5],-2]},null]},null]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],-2]},false]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],-2]},\"\"]},{\"$ne\":[{\"$slice\":[[1,2,3,4,5],-2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[4,5],null]},null]},{\"$ne\":[[4,5],false]},{\"$ne\":[[4,5],\"\"]},{\"$ne\":[[4,5],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3,4,5].slice(0, -1)": {
+      "entry": "filter",
+      "src": "[1,2,3,4,5].slice(0, -1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3,4,5]},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3,4],null]},null]},{\"$ne\":[[1,2,3,4],false]},{\"$ne\":[[1,2,3,4],\"\"]},{\"$ne\":[[1,2,3,4],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3,4,5].slice(1, -1)": {
+      "entry": "filter",
+      "src": "[1,2,3,4,5].slice(1, -1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3,4,5]},\"in\":{\"$let\":{\"vars\":{\"jsmqlK\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]},\"jsmqlF\":{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}},\"in\":{\"$co",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[2,3,4],null]},null]},{\"$ne\":[[2,3,4],false]},{\"$ne\":[[2,3,4],\"\"]},{\"$ne\":[[2,3,4],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Boolean + 5": {
+      "entry": "filter",
+      "src": "Boolean + 5",
+      "kind": "message",
+      "was": "'Boolean' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.filter(Boolean)). To coerce a single value, write Boolean(value).",
+      "now": "'Boolean' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.map(Boolean)). To apply it to one value, write Boolean(value).",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000new Date(\"not-a-date\")": {
+      "entry": "filter",
+      "src": "new Date(\"not-a-date\")",
+      "kind": "message",
+      "was": "new Date(\"not-a-date\") — \"not-a-date\" is not a valid date string. Use an ISO 8601 date like \"2026-01-01\" or \"2026-01-01T00:00:00.000Z\".",
+      "now": "new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date(\"2026-01-01\") or new Date(0).",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "filter\u0000new Date(1, 2, 3, 4, 5, 6, 7, 8)": {
+      "entry": "filter",
+      "src": "new Date(1, 2, 3, 4, 5, 6, 7, 8)",
+      "kind": "message",
+      "was": "'new Date(year, month, day, hour, minute, second, ms)' takes at most 7 arguments, got 8 at position 0",
+      "now": "Date(year, month, day, hour, minute, second, ms) requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000Date.UTC(2024, 1, 15)": {
+      "entry": "filter",
+      "src": "Date.UTC(2024, 1, 15)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}},null]},null]},{\"$ne\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1705276800000,null]},null]},{\"$ne\":[1705276800000,false]},{\"$ne\":[1705276800000,\"\"]},{\"$ne\":[1705276800000,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Date.UTC(1970)": {
+      "entry": "filter",
+      "src": "Date.UTC(1970)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":1970,\"timezone\":\"UTC\"}}},null]},null]},{\"$ne\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":1970,\"timezone\":\"UTC\"}}},false]},{\"$ne\":[{\"$toLong\":{\"$dateFr",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[0,null]},null]},{\"$ne\":[0,false]},{\"$ne\":[0,\"\"]},{\"$ne\":[0,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.items.map(x => { const a = 1; })": {
+      "entry": "filter",
+      "src": "$.items.map(x => { const a = 1; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 32, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "now": "A block body must end with a `return <expr>` statement at position 32, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000[1, 2].map(a => a)": {
+      "entry": "filter",
+      "src": "[1, 2].map(a => a)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":[1,2],\"as\":\"a\",\"in\":\"$$a\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":[1,2],\"as\":\"a\",\"in\":\"$$a\"}},false]},{\"$ne\":[{\"$map\":{\"input\":[1,2],\"as\":\"a\",\"in\":\"$$a\"}},\"\"]},{\"$n",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2],null]},null]},{\"$ne\":[[1,2],false]},{\"$ne\":[[1,2],\"\"]},{\"$ne\":[[1,2],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1, 2].join(\",\")": {
+      "entry": "filter",
+      "src": "[1, 2].join(\",\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2],\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then\":{\"$toString\":\"$$this\"},\"else\":{\"$concat\":[\"$$value\",\",\",{\"$toString\":\"$$this\"}]}}}}},nul",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"1,2\",null]},null]},{\"$ne\":[\"1,2\",false]},{\"$ne\":[\"1,2\",\"\"]},{\"$ne\":[\"1,2\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.r = $$$.orders.sortBy((o) => { $limit(2); });": {
+      "entry": "filter",
+      "src": "$.r = $$$.orders.sortBy((o) => { $limit(2); });",
+      "kind": "message",
+      "was": "Unexpected stage call at position 33: a `=> { $stage(...); ... }` block is a sub-pipeline, but '.sortBy(...)' doesn't take one. Pipeline stages belong to `.aggregate(pipeline)` alone; every other callback's block body is",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$.r = $$$.orders.aggregat((o) => { $limit(2); });": {
+      "entry": "filter",
+      "src": "$.r = $$$.orders.aggregat((o) => { $limit(2); });",
+      "kind": "message",
+      "was": "Unexpected stage call at position 35: a `=> { $stage(...); ... }` block is a sub-pipeline, but '.aggregat(...)' doesn't take one. Did you mean '.aggregate'? Pipeline stages belong to `.aggregate(pipeline)` alone; every o",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$.items.map((d) => { const a = d.v; })": {
+      "entry": "filter",
+      "src": "$.items.map((d) => { const a = d.v; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 36, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "now": "A block body must end with a `return <expr>` statement at position 36, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.items.map((d) => { d.v; })": {
+      "entry": "filter",
+      "src": "$.items.map((d) => { d.v; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 21, got an identifier 'd'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expr",
+      "now": "A block body must end with a `return <expr>` statement at position 26, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.items.map(x => { k: x })": {
+      "entry": "filter",
+      "src": "$.items.map(x => { k: x })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 19, got an identifier 'k'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expr",
+      "now": "A block body must end with a `return <expr>` statement at position 19, got an identifier 'k'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expr",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$toBool($.x) ? 1 : 2": {
+      "entry": "filter",
+      "src": "$toBool($.x) ? 1 : 2",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$toBool\":\"$x\"},\"then\":1,\"else\":2}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$toBool\":\"$x\"},\"then\":1,\"else\":2}},false]},{\"$ne\":[{\"$cond\":{\"if\":{\"$toBool\":\"$x\"},\"then\":1",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$toBool\":\"$x\"},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1,null]},null]},{\"$ne\":[1,false]},{\"$ne\":[1,\"\"]},{\"$ne\":[1,0]}]},\"else\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[2,null]},null]},{\"$ne\":[2,false]},{\"$ne\":[",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$.s.trim().unzipWith((a, b) => a)": {
+      "entry": "filter",
+      "src": "$.s.trim().unzipWith((a, b) => a)",
+      "kind": "message",
+      "was": "'.unzipWith(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.unzipWith(...)' on an array value instead.",
+      "now": ".unzipWith(fn) isn't supported — its iteratee's argument count depends on the array's length at runtime. Write '.unzip().map(group => …)' instead, where 'group' is one unzipped column.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.s.trim().forEach(x => x)": {
+      "entry": "filter",
+      "src": "$.s.trim().forEach(x => x)",
+      "kind": "message",
+      "was": "'.forEach(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.forEach(...)' on an array value instead.",
+      "now": ".forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000\"-\".repeat(5)": {
+      "entry": "filter",
+      "src": "\"-\".repeat(5)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$range\":[0,5]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"-\"]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input\":{\"$range\":[0,5]},\"initialValue\":\"\",\"in\":{\"$concat\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"-----\",null]},null]},{\"$ne\":[\"-----\",false]},{\"$ne\":[\"-----\",\"\"]},{\"$ne\":[\"-----\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Array.from($.iter)": {
+      "entry": "filter",
+      "src": "Array.from($.iter)",
+      "kind": "message",
+      "was": "Array.from() only supports the {length: n} form: Array.from({length: n}, (_, i) => …). For other inputs use $op($range, …) or .map().",
+      "now": "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00001.5n": {
+      "entry": "filter",
+      "src": "1.5n",
+      "kind": "message",
+      "was": "Invalid BigInt literal at position 0: 'n' suffix requires an integer (no fraction or exponent)",
+      "now": "Invalid BigInt literal: the 'n' suffix requires an integer at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00001e2n": {
+      "entry": "filter",
+      "src": "1e2n",
+      "kind": "message",
+      "was": "Invalid BigInt literal at position 0: 'n' suffix requires an integer (no fraction or exponent)",
+      "now": "Invalid BigInt literal: the 'n' suffix requires an integer at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000((x) => x + 1)(5)": {
+      "entry": "filter",
+      "src": "((x) => x + 1)(5)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$add\":[\"$$x\",1]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$add\":[\"$$x\",1]}}},false]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$add\":[\"$$x\",",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[6,null]},null]},{\"$ne\":[6,false]},{\"$ne\":[6,\"\"]},{\"$ne\":[6,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.name.frobulate()": {
+      "entry": "filter",
+      "src": "$.name.frobulate()",
+      "kind": "message",
+      "was": "Unknown method '.frobulate()'.",
+      "now": "Unknown method '.frobulate()' at position 6.",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000$.name.toLowerCse()": {
+      "entry": "filter",
+      "src": "$.name.toLowerCse()",
+      "kind": "message",
+      "was": "Unknown method '.toLowerCse()'. Did you mean '.toLowerCase()'?",
+      "now": "Unknown method '.toLowerCse()' at position 6. Did you mean '.toLowerCase()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000$.items.fliter(x => x)": {
+      "entry": "filter",
+      "src": "$.items.fliter(x => x)",
+      "kind": "message",
+      "was": "Unknown method '.fliter()'. Did you mean '.filter()'?",
+      "now": "Unknown method '.fliter()' at position 7. Did you mean '.filter()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000$.name.substing(1)": {
+      "entry": "filter",
+      "src": "$.name.substing(1)",
+      "kind": "message",
+      "was": "Unknown method '.substing()'. Did you mean '.substring()'?",
+      "now": "Unknown method '.substing()' at position 6. Did you mean '.substring()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000Math.flor($.x)": {
+      "entry": "filter",
+      "src": "Math.flor($.x)",
+      "kind": "message",
+      "was": "Unknown Math member 'flor' at position 5. Did you mean 'Math.floor'? See docs/LANGUAGE.md for the full list of supported Math methods and constants.",
+      "now": "Unknown method 'Math.flor()' at position 4. Did you mean 'Math.floor'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000Number.isItneger($.x)": {
+      "entry": "filter",
+      "src": "Number.isItneger($.x)",
+      "kind": "message",
+      "was": "Unknown Number static method 'isItneger' at position 7. Did you mean 'Number.isInteger'? Supported: Number.isInteger, Number.isNaN, Number.isFinite.",
+      "now": "Unknown method 'Number.isItneger()' at position 6. Did you mean 'Number.isInteger'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000Object.keyz($.o)": {
+      "entry": "filter",
+      "src": "Object.keyz($.o)",
+      "kind": "message",
+      "was": "Unknown Object method 'keyz' at position 7. Did you mean 'Object.keys'? Supported: keys, values, entries, assign, fromEntries, groupBy.",
+      "now": "Unknown method 'Object.keyz()' at position 6. Did you mean 'Object.keys'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "filter\u0000$.s.trim() = 1": {
+      "entry": "filter",
+      "src": "$.s.trim() = 1",
+      "kind": "message",
+      "was": "Cannot assign to a method-call result ('.trim()') at position 11 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '=' at position 11",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u000042 = 1": {
+      "entry": "filter",
+      "src": "42 = 1",
+      "kind": "message",
+      "was": "Cannot assign to a literal value at position 3 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000\"hello\".slice(1, 3)": {
+      "entry": "filter",
+      "src": "\"hello\".slice(1, 3)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"hello\",1,2]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,2]},false]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,2]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"el\",null]},null]},{\"$ne\":[\"el\",false]},{\"$ne\":[\"el\",\"\"]},{\"$ne\":[\"el\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"hello\".slice(2)": {
+      "entry": "filter",
+      "src": "\"hello\".slice(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"hello\",2,3]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},false]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"llo\",null]},null]},{\"$ne\":[\"llo\",false]},{\"$ne\":[\"llo\",\"\"]},{\"$ne\":[\"llo\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"hello\".slice(-3)": {
+      "entry": "filter",
+      "src": "\"hello\".slice(-3)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"hello\",2,3]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},false]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"hello\",2,3]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"llo\",null]},null]},{\"$ne\":[\"llo\",false]},{\"$ne\":[\"llo\",\"\"]},{\"$ne\":[\"llo\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"hello\".slice(1, -1)": {
+      "entry": "filter",
+      "src": "\"hello\".slice(1, -1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"hello\",1,3]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,3]},false]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,3]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"hello\",1,3]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"ell\",null]},null]},{\"$ne\":[\"ell\",false]},{\"$ne\":[\"ell\",\"\"]},{\"$ne\":[\"ell\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.a &&": {
+      "entry": "filter",
+      "src": "$.a &&",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected end of input at position 6",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.a ? $.b": {
+      "entry": "filter",
+      "src": "$.a ? $.b",
+      "kind": "message",
+      "was": "Expected ':' in ternary expression at position 9",
+      "now": "Expected ':' but got end of input at position 9",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000Object.fromEntries([[\"a\", 1], [\"b\", 2]])": {
+      "entry": "filter",
+      "src": "Object.fromEntries([[\"a\", 1], [\"b\", 2]])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":[[\"a\",1],[\"b\",2]]},null]},null]},{\"$ne\":[{\"$arrayToObject\":[[\"a\",1],[\"b\",2]]},false]},{\"$ne\":[{\"$arrayToObject\":[[\"a\",1],[\"b\",2]]},\"\"]},{\"$ne\":[{\"$arrayToObject\":[[",
+      "now": "{\"a\":1,\"b\":2}",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000({...$.user?.profile, name: 'x'})": {
+      "entry": "filter",
+      "src": "({...$.user?.profile, name: 'x'})",
+      "kind": "now-rejected",
+      "was": "{\"$mergeObjects\":[\"$user.profile\",{\"name\":\"x\"}]}",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "shippedBug: a spread in a filter's raw document emitted a top-level {$mergeObjects:[…]}, which is not a query document the server accepts; the spread is refused as it is in an operator body."
+    },
+    "filter\u0000[1, 2].concat([3, 4])": {
+      "entry": "filter",
+      "src": "[1, 2].concat([3, 4])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[[1,2],[3,4]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[[1,2],[3,4]]},false]},{\"$ne\":[{\"$concatArrays\":[[1,2],[3,4]]},\"\"]},{\"$ne\":[{\"$concatArrays\":[[1,2],[3,4]]},0]}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3,4],null]},null]},{\"$ne\":[[1,2,3,4],false]},{\"$ne\":[[1,2,3,4],\"\"]},{\"$ne\":[[1,2,3,4],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u00001_": {
+      "entry": "filter",
+      "src": "1_",
+      "kind": "message",
+      "was": "Numeric separator '_' must be between two digits (at position 1)",
+      "now": "Numeric separator '_' must be between two digits at position 1",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00001__0": {
+      "entry": "filter",
+      "src": "1__0",
+      "kind": "message",
+      "was": "Numeric separator '_' must be between two digits (at position 1)",
+      "now": "Numeric separator '_' must be between two digits at position 1",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u000010 /* skip */ / 2": {
+      "entry": "filter",
+      "src": "10 /* skip */ / 2",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$divide\":[10,2]},null]},null]},{\"$ne\":[{\"$divide\":[10,2]},false]},{\"$ne\":[{\"$divide\":[10,2]},\"\"]},{\"$ne\":[{\"$divide\":[10,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[5,null]},null]},{\"$ne\":[5,false]},{\"$ne\":[5,\"\"]},{\"$ne\":[5,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.a /* unclosed": {
+      "entry": "filter",
+      "src": "$.a /* unclosed",
+      "kind": "message",
+      "was": "Unclosed block comment starting at position 4",
+      "now": "Unterminated block comment at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$min()": {
+      "entry": "filter",
+      "src": "$min()",
+      "kind": "message",
+      "was": "Operator $min expects at least 1 argument",
+      "now": "$min(operands) requires at least 1 argument, got 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$accumulator({ init: \"function() {}\", accumulate: \"function() {}\", merge: \"function() {}\", lang: \"js\" })": {
+      "entry": "filter",
+      "src": "$accumulator({ init: \"function() {}\", accumulate: \"function() {}\", merge: \"function() {}\", lang: \"js\" })",
+      "kind": "message",
+      "was": "$accumulator is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $accumulator(...) }) to compute it per-group, or $setWindowFields(.",
+      "now": "$accumulator is an accumulator operator, not a filter predicate — use it inside '$group' field-value slots or '$setWindowFields' output slots.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$median($.scores, \"approximate\")": {
+      "entry": "filter",
+      "src": "$median($.scores, \"approximate\")",
+      "kind": "now-accepted",
+      "was": "$median is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $median(...) }) to compute it per-group, or $setWindowFields(...) for th",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$median\":{\"input\":\"$scores\",\"method\":\"approximate\"}},null]},null]},{\"$ne\":[{\"$median\":{\"input\":\"$scores\",\"method\":\"approximate\"}},false]},{\"$ne\":[{\"$median\":{\"input\":\"$scores\",\"met",
+      "reason": "shippedBug: $median is an aggregation expression since MongoDB 7.0 (measured), so as a predicate it takes the $expr fallback."
+    },
+    "filter\u0000$encStrContains($.encField, \"secret\")": {
+      "entry": "filter",
+      "src": "$encStrContains($.encField, \"secret\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$encStrContains\":{\"input\":\"$encField\",\"substring\":\"secret\"}},null]},null]},{\"$ne\":[{\"$encStrContains\":{\"input\":\"$encField\",\"substring\":\"secret\"}},false]},{\"$ne\":[{\"$encStrContains\"",
+      "now": "{\"$expr\":{\"$encStrContains\":{\"input\":\"$encField\",\"substring\":\"secret\"}}}",
+      "reason": "intended: the operator's row states `returns: \"bool\"` (measured on mongod), so the filter's $expr takes it as it is; the shipped wrapped it in the truthiness check."
+    },
+    "filter\u0000$encStrStartsWith({ input: $.encField, prefix: \"abc\" })": {
+      "entry": "filter",
+      "src": "$encStrStartsWith({ input: $.encField, prefix: \"abc\" })",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$encStrStartsWith\":{\"input\":\"$encField\",\"prefix\":\"abc\"}},null]},null]},{\"$ne\":[{\"$encStrStartsWith\":{\"input\":\"$encField\",\"prefix\":\"abc\"}},false]},{\"$ne\":[{\"$encStrStartsWith\":{\"inp",
+      "now": "{\"$expr\":{\"$encStrStartsWith\":{\"input\":\"$encField\",\"prefix\":\"abc\"}}}",
+      "reason": "intended: the operator's row states `returns: \"bool\"` (measured on mongod), so the filter's $expr takes it as it is; the shipped wrapped it in the truthiness check."
+    },
+    "filter\u0000$encStrEndsWith($.encField, \"xyz\")": {
+      "entry": "filter",
+      "src": "$encStrEndsWith($.encField, \"xyz\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$encStrEndsWith\":{\"input\":\"$encField\",\"suffix\":\"xyz\"}},null]},null]},{\"$ne\":[{\"$encStrEndsWith\":{\"input\":\"$encField\",\"suffix\":\"xyz\"}},false]},{\"$ne\":[{\"$encStrEndsWith\":{\"input\":\"$",
+      "now": "{\"$expr\":{\"$encStrEndsWith\":{\"input\":\"$encField\",\"suffix\":\"xyz\"}}}",
+      "reason": "intended: the operator's row states `returns: \"bool\"` (measured on mongod), so the filter's $expr takes it as it is; the shipped wrapped it in the truthiness check."
+    },
+    "filter\u0000$encStrNormalizedEq($.encField, \"compare\")": {
+      "entry": "filter",
+      "src": "$encStrNormalizedEq($.encField, \"compare\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$encStrNormalizedEq\":{\"input\":\"$encField\",\"string\":\"compare\"}},null]},null]},{\"$ne\":[{\"$encStrNormalizedEq\":{\"input\":\"$encField\",\"string\":\"compare\"}},false]},{\"$ne\":[{\"$encStrNorma",
+      "now": "{\"$expr\":{\"$encStrNormalizedEq\":{\"input\":\"$encField\",\"string\":\"compare\"}}}",
+      "reason": "intended: the operator's row states `returns: \"bool\"` (measured on mongod), so the filter's $expr takes it as it is; the shipped wrapped it in the truthiness check."
+    },
+    "filter\u0000$rank()": {
+      "entry": "filter",
+      "src": "$rank()",
+      "kind": "message",
+      "was": "$rank is a window operator — only valid inside '$setWindowFields' output slots. Use $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }) to compute it per-document over a window.",
+      "now": "$rank is a window operator, not a filter predicate — use it inside '$setWindowFields' output slots: $setWindowFields({ partitionBy: ..., sortBy: ..., output: { <key>: $rank(...) } }).",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$$foo": {
+      "entry": "filter",
+      "src": "$$foo",
+      "kind": "message",
+      "was": "Expected '.<name>' or '[<expr>]' after '$$' at position 0",
+      "now": "Unexpected token 'foo' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000Math.max(1, 2,)": {
+      "entry": "filter",
+      "src": "Math.max(1, 2,)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$max\":[1,2]},null]},null]},{\"$ne\":[{\"$max\":[1,2]},false]},{\"$ne\":[{\"$max\":[1,2]},\"\"]},{\"$ne\":[{\"$max\":[1,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[2,null]},null]},{\"$ne\":[2,false]},{\"$ne\":[2,\"\"]},{\"$ne\":[2,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Math.max(1, 2)": {
+      "entry": "filter",
+      "src": "Math.max(1, 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$max\":[1,2]},null]},null]},{\"$ne\":[{\"$max\":[1,2]},false]},{\"$ne\":[{\"$max\":[1,2]},\"\"]},{\"$ne\":[{\"$max\":[1,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[2,null]},null]},{\"$ne\":[2,false]},{\"$ne\":[2,\"\"]},{\"$ne\":[2,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Number($.x, $.y)": {
+      "entry": "filter",
+      "src": "Number($.x, $.y)",
+      "kind": "message",
+      "was": "Type cast 'Number()' takes exactly 1 argument at position 0",
+      "now": "'Number(x)' takes exactly one value.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000Date.UTC(2020, 1,)": {
+      "entry": "filter",
+      "src": "Date.UTC(2020, 1,)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}},null]},null]},{\"$ne\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}},false]},{\"$ne\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1577836800000,null]},null]},{\"$ne\":[1577836800000,false]},{\"$ne\":[1577836800000,\"\"]},{\"$ne\":[1577836800000,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000Date.UTC(2020, 1)": {
+      "entry": "filter",
+      "src": "Date.UTC(2020, 1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}},null]},null]},{\"$ne\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}},false]},{\"$ne\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1577836800000,null]},null]},{\"$ne\":[1577836800000,false]},{\"$ne\":[1577836800000,\"\"]},{\"$ne\":[1577836800000,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$._id === ObjectId(\"507f1f77bcf86cd79943901\")": {
+      "entry": "filter",
+      "src": "$._id === ObjectId(\"507f1f77bcf86cd79943901\")",
+      "kind": "message",
+      "was": "ObjectId(\"507f1f77bcf86cd79943901\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, got 23 characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "filter\u0000$._id === ObjectId(\"zzzf1f77bcf86cd799439011\")": {
+      "entry": "filter",
+      "src": "$._id === ObjectId(\"zzzf1f77bcf86cd799439011\")",
+      "kind": "message",
+      "was": "ObjectId(\"zzzf1f77bcf86cd799439011\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, it contains non-hexadecimal characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "filter\u0000$._id === ObjectId(\"nothex\")": {
+      "entry": "filter",
+      "src": "$._id === ObjectId(\"nothex\")",
+      "kind": "message",
+      "was": "ObjectId(\"nothex\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, got 6 characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "filter\u00000x000000000000000000000001": {
+      "entry": "filter",
+      "src": "0x000000000000000000000001",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000{ _id: 0x123456781234567812345678 }": {
+      "entry": "filter",
+      "src": "{ _id: 0x123456781234567812345678 }",
+      "kind": "message",
+      "was": "ObjectId 123456781234567812345678 looks like a typo: its embedded timestamp decodes to 1979-09-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 123456781234567812345678 looks like a typo: its embedded timestamp decodes to 1979-09-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00000x000000000000000000000000": {
+      "entry": "filter",
+      "src": "0x000000000000000000000000",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000000 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000000 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00000x49ffffffffffffffffffffff": {
+      "entry": "filter",
+      "src": "0x49ffffffffffffffffffffff",
+      "kind": "message",
+      "was": "ObjectId 49ffffffffffffffffffffff looks like a typo: its embedded timestamp decodes to 2009-05-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 49ffffffffffffffffffffff looks like a typo: its embedded timestamp decodes to 2009-05-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$._id === 0x000000000000000000000001": {
+      "entry": "filter",
+      "src": "$._id === 0x000000000000000000000001",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000((_) => 1)(2)": {
+      "entry": "filter",
+      "src": "((_) => 1)(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"v_\":2},\"in\":1}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"v_\":2},\"in\":1}},false]},{\"$ne\":[{\"$let\":{\"vars\":{\"v_\":2},\"in\":1}},\"\"]},{\"$ne\":[{\"$let\":{\"vars\":{\"v_\":2},\"in\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1,null]},null]},{\"$ne\":[1,false]},{\"$ne\":[1,\"\"]},{\"$ne\":[1,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };": {
+      "entry": "filter",
+      "src": "$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };",
+      "kind": "message",
+      "was": "Reusable functions must be declared at the top level of a pipeline, not inside an arrow body. Move `const g = (…) => …` out of the `=> { … }` block.",
+      "now": "Unexpected token '=' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000((x) => x * 2)(5)": {
+      "entry": "filter",
+      "src": "((x) => x * 2)(5)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}},false]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$mu",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[10,null]},null]},{\"$ne\":[10,false]},{\"$ne\":[10,\"\"]},{\"$ne\":[10,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000(function (x) { return x * 2 })(5)": {
+      "entry": "filter",
+      "src": "(function (x) { return x * 2 })(5)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}},false]},{\"$ne\":[{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$mu",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[10,null]},null]},{\"$ne\":[10,false]},{\"$ne\":[10,\"\"]},{\"$ne\":[10,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000function* f(x) { return x } $ = { a: f($.n) }": {
+      "entry": "filter",
+      "src": "function* f(x) { return x } $ = { a: f($.n) }",
+      "kind": "message",
+      "was": "jsmql does not support generator functions (`function*`). Use a plain `function (…) { return … }` or an arrow.",
+      "now": "Expected '(' but got '*' at position 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000[1, let x = 5]": {
+      "entry": "filter",
+      "src": "[1, let x = 5]",
+      "kind": "message",
+      "was": "`let` is a pipeline statement, not a value, and is only valid as a pipeline-array element. If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+      "now": "`let` is a statement, not a value. It is only valid at the top level or as a pipeline-array element.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000let = 5;": {
+      "entry": "filter",
+      "src": "let = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got '='",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000let x 5;": {
+      "entry": "filter",
+      "src": "let x 5;",
+      "kind": "message",
+      "was": "Expected '=' after `let x` at position 6, got '5'. `let` requires an initialiser — write `let x = <expr>`.",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000let x = ; $match($.a > 0)": {
+      "entry": "filter",
+      "src": "let x = ; $match($.a > 0)",
+      "kind": "message",
+      "was": "Unexpected token ';' at position 8",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000let in = 5;": {
+      "entry": "filter",
+      "src": "let in = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got 'in'",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000let $foo = 5;": {
+      "entry": "filter",
+      "src": "let $foo = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got '$'",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000const = 5;": {
+      "entry": "filter",
+      "src": "const = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `const` at position 6, got '='",
+      "now": "Unexpected token 'const' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000const x 5;": {
+      "entry": "filter",
+      "src": "const x 5;",
+      "kind": "message",
+      "was": "Expected '=' after `const x` at position 8, got '5'. `const` requires an initialiser — write `const x = <expr>`.",
+      "now": "Unexpected token 'const' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });": {
+      "entry": "filter",
+      "src": "$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });": {
+      "entry": "filter",
+      "src": "$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });": {
+      "entry": "filter",
+      "src": "$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000[1, 2].head().round()": {
+      "entry": "filter",
+      "src": "[1, 2].head().round()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$round\":[{\"$first\":[[1,2]]},0]},null]},null]},{\"$ne\":[{\"$round\":[{\"$first\":[[1,2]]},0]},false]},{\"$ne\":[{\"$round\":[{\"$first\":[[1,2]]},0]},\"\"]},{\"$ne\":[{\"$round\":[{\"$first\":[[1,2]]}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[1,null]},null]},{\"$ne\":[1,false]},{\"$ne\":[1,\"\"]},{\"$ne\":[1,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[[1, 2], [3]].head().toReversed()": {
+      "entry": "filter",
+      "src": "[[1, 2], [3]].head().toReversed()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reverseArray\":{\"$first\":[[[1,2],[3]]]}},null]},null]},{\"$ne\":[{\"$reverseArray\":{\"$first\":[[[1,2],[3]]]}},false]},{\"$ne\":[{\"$reverseArray\":{\"$first\":[[[1,2],[3]]]}},\"\"]},{\"$ne\":[{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[2,1],null]},null]},{\"$ne\":[[2,1],false]},{\"$ne\":[[2,1],\"\"]},{\"$ne\":[[2,1],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[{ $macth: $.age > 18 }]": {
+      "entry": "filter",
+      "src": "[{ $macth: $.age > 18 }]",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter, but received a Pipeline array (`[{ $stage: ... }, ...]`). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "now": "Element 0 of pipeline: '$macth' is not a known aggregation stage. Did you mean '$match'?",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000[$prject({ name: 1 })]": {
+      "entry": "filter",
+      "src": "[$prject({ name: 1 })]",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter, but received a Pipeline array (`[{ $stage: ... }, ...]`). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "now": "Element 0 of pipeline: '$prject' is not a known aggregation stage. Did you mean '$project'?",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000[{ $match: { age: 1 }, $sort: { age: 1 } }]": {
+      "entry": "filter",
+      "src": "[{ $match: { age: 1 }, $sort: { age: 1 } }]",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter, but received a Pipeline array (`[{ $stage: ... }, ...]`). Call jsmql.pipeline() or jsmql() for Pipeline output.",
+      "now": "Element 0 of pipeline must be a single-key stage object (e.g. `{ $match: ... }`), but found an object with 2 keys.",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };": {
+      "entry": "filter",
+      "src": "$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "Unexpected token '=' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\"": {
+      "entry": "filter",
+      "src": "$.stock >= $.reorderPoint ? \"ok\" : $.stock > 0 ? \"low\" : \"out-of-stock\"",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$gte\":[\"$stock\",\"$reorderPoint\"]},\"then\":\"ok\",\"else\":{\"$cond\":{\"if\":{\"$gt\":[\"$stock\",0]},\"then\":\"low\",\"else\":\"out-of-stock\"}}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$gte\":[\"$stock\",\"$reorderPoint\"]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"ok\",null]},null]},{\"$ne\":[\"ok\",false]},{\"$ne\":[\"ok\",\"\"]},{\"$ne\":[\"ok\",0]}]},\"else\":{\"$cond\":{\"if\":{\"$gt\":[\"$stock\",0]},\"the",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000\n$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price\n      ": {
+      "entry": "filter",
+      "src": "\n$.quantity > 1 && $.price >= 10 && $.category in [\"sale\", \"clearance\"]\n  ? $.price * 0.8\n  : $.price\n      ",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$and\":[{\"$gt\":[\"$quantity\",1]},{\"$gte\":[\"$price\",10]},{\"$in\":[\"$category\",[\"sale\",\"clearance\"]]}]},\"then\":{\"$multiply\":[\"$price\",0.8]},\"else\":\"$price\"}},null]},null]",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$and\":[{\"$gt\":[\"$quantity\",1]},{\"$gte\":[\"$price\",10]},{\"$in\":[\"$category\",[\"sale\",\"clearance\"]]}]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$multiply\":[\"$price\",0.8]},null]},null]},{\"$ne\":[{\"$multi",
+      "reason": "equivalent: a ternary read for truth pushes the truth into its branches (cond(test, truth(a), truth(b))) where the shipped wrapped the whole $cond; the same documents on every input."
+    },
+    "filter\u0000$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {\n          assert(o.total > 0, \"bad order\");\n          return { id: o._id, t: o.total };\n        });": {
+      "entry": "filter",
+      "src": "$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {\n          assert(o.total > 0, \"bad order\");\n          return { id: o._id, t: o.total };\n        });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "filter\u0000$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });": {
+      "entry": "filter",
+      "src": "$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, \"empty\"); return { id: d._id }; });": {
+      "entry": "filter",
+      "src": "$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, \"empty\"); return { id: d._id }; });",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$$ = $$.map(d => { const t = d.total; });": {
+      "entry": "filter",
+      "src": "$$ = $$.map(d => { const t = d.total; });",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00001 + $.x++": {
+      "entry": "filter",
+      "src": "1 + $.x++",
+      "kind": "message",
+      "was": "Cannot assign to a '+' expression at position 7 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '++' at position 7",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u00005 - -3": {
+      "entry": "filter",
+      "src": "5 - -3",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$subtract\":[5,-3]},null]},null]},{\"$ne\":[{\"$subtract\":[5,-3]},false]},{\"$ne\":[{\"$subtract\":[5,-3]},\"\"]},{\"$ne\":[{\"$subtract\":[5,-3]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[8,null]},null]},{\"$ne\":[8,false]},{\"$ne\":[8,\"\"]},{\"$ne\":[8,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.a += $.b += 1": {
+      "entry": "filter",
+      "src": "$.a += $.b += 1",
+      "kind": "message",
+      "was": "Compound assignment cannot be chained at position 7 — split into separate statements",
+      "now": "Unexpected token '+=' at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000$.a =": {
+      "entry": "filter",
+      "src": "$.a =",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000delete": {
+      "entry": "filter",
+      "src": "delete",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected token 'delete' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000($.a = 1) + 2": {
+      "entry": "filter",
+      "src": "($.a = 1) + 2",
+      "kind": "message",
+      "was": "Assignment is a statement, not a value. It is only valid at the top level or as a pipeline-array element.",
+      "now": "Expected ')' but got '=' at position 5",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000[1,2,3].take(2)": {
+      "entry": "filter",
+      "src": "[1,2,3].take(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[[1,2,3],2]},null]},null]},{\"$ne\":[{\"$slice\":[[1,2,3],2]},false]},{\"$ne\":[{\"$slice\":[[1,2,3],2]},\"\"]},{\"$ne\":[{\"$slice\":[[1,2,3],2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2],null]},null]},{\"$ne\":[[1,2],false]},{\"$ne\":[[1,2],\"\"]},{\"$ne\":[[1,2],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].drop(2)": {
+      "entry": "filter",
+      "src": "[1,2,3].drop(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3]},\"in\":{\"$slice\":[\"$$jsmqlArr\",2,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},null]},null]},{\"$ne\":[{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3]},\"in\":{\"$slice\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[3],null]},null]},{\"$ne\":[[3],false]},{\"$ne\":[[3],\"\"]},{\"$ne\":[[3],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].slice(1,2)": {
+      "entry": "filter",
+      "src": "[1,2,3].slice(1,2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[[1,2,3],1,1]},null]},null]},{\"$ne\":[{\"$slice\":[[1,2,3],1,1]},false]},{\"$ne\":[{\"$slice\":[[1,2,3],1,1]},\"\"]},{\"$ne\":[{\"$slice\":[[1,2,3],1,1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[2],null]},null]},{\"$ne\":[[2],false]},{\"$ne\":[[2],\"\"]},{\"$ne\":[[2],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].slice(-2)": {
+      "entry": "filter",
+      "src": "[1,2,3].slice(-2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$slice\":[[1,2,3],-2]},null]},null]},{\"$ne\":[{\"$slice\":[[1,2,3],-2]},false]},{\"$ne\":[{\"$slice\":[[1,2,3],-2]},\"\"]},{\"$ne\":[{\"$slice\":[[1,2,3],-2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[2,3],null]},null]},{\"$ne\":[[2,3],false]},{\"$ne\":[[2,3],\"\"]},{\"$ne\":[[2,3],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].map(x => x)": {
+      "entry": "filter",
+      "src": "[1,2,3].map(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},false]},{\"$ne\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},\"\"]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].sortBy('t')": {
+      "entry": "filter",
+      "src": "[1,2,3].sortBy('t')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].reduce((a,b) => a + b, 0)": {
+      "entry": "filter",
+      "src": "[1,2,3].reduce((a,b) => a + b, 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":0,\"in\":{\"$add\":[\"$$value\",\"$$this\"]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":0,\"in\":{\"$add\":[\"$$value\",\"$$this\"]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[6,null]},null]},{\"$ne\":[6,false]},{\"$ne\":[6,\"\"]},{\"$ne\":[6,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].includes(1)": {
+      "entry": "filter",
+      "src": "[1,2,3].includes(1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$in\":[1,[1,2,3]]}}",
+      "now": "{\"$expr\":true}",
+      "reason": "equivalent: the fold settles a constant predicate to its value, which the filter carries as `{ $expr: <value> }`; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].join(',')": {
+      "entry": "filter",
+      "src": "[1,2,3].join(',')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then\":{\"$toString\":\"$$this\"},\"else\":{\"$concat\":[\"$$value\",\",\",{\"$toString\":\"$$this\"}]}}}}},n",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"1,2,3\",null]},null]},{\"$ne\":[\"1,2,3\",false]},{\"$ne\":[\"1,2,3\",\"\"]},{\"$ne\":[\"1,2,3\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].at(-1)": {
+      "entry": "filter",
+      "src": "[1,2,3].at(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[[1,2,3],-1]},null]},null]},{\"$ne\":[{\"$arrayElemAt\":[[1,2,3],-1]},false]},{\"$ne\":[{\"$arrayElemAt\":[[1,2,3],-1]},\"\"]},{\"$ne\":[{\"$arrayElemAt\":[[1,2,3],-1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[3,null]},null]},{\"$ne\":[3,false]},{\"$ne\":[3,\"\"]},{\"$ne\":[3,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].concat([1])": {
+      "entry": "filter",
+      "src": "[1,2,3].concat([1])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[[1,2,3],[1]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[[1,2,3],[1]]},false]},{\"$ne\":[{\"$concatArrays\":[[1,2,3],[1]]},\"\"]},{\"$ne\":[{\"$concatArrays\":[[1,2,3],[1]]},0]}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3,1],null]},null]},{\"$ne\":[[1,2,3,1],false]},{\"$ne\":[[1,2,3,1],\"\"]},{\"$ne\":[[1,2,3,1],0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000[1,2,3].length": {
+      "entry": "filter",
+      "src": "[1,2,3].length",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$size\":[[1,2,3]]},null]},null]},{\"$ne\":[{\"$size\":[[1,2,3]]},false]},{\"$ne\":[{\"$size\":[[1,2,3]]},\"\"]},{\"$ne\":[{\"$size\":[[1,2,3]]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[3,null]},null]},{\"$ne\":[3,false]},{\"$ne\":[3,\"\"]},{\"$ne\":[3,0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".slice(1,2)": {
+      "entry": "filter",
+      "src": "\"abc\".slice(1,2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",1,1]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"b\",null]},null]},{\"$ne\":[\"b\",false]},{\"$ne\":[\"b\",\"\"]},{\"$ne\":[\"b\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".slice(-2)": {
+      "entry": "filter",
+      "src": "\"abc\".slice(-2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",1,2]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,2]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,2]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,2]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"bc\",null]},null]},{\"$ne\":[\"bc\",false]},{\"$ne\":[\"bc\",\"\"]},{\"$ne\":[\"bc\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".groupBy('t')": {
+      "entry": "filter",
+      "src": "\"abc\".groupBy('t')",
+      "kind": "message",
+      "was": "'.groupBy(...)' expects an array receiver, but the value before it returns a string. Call '.groupBy(...)' on an array value instead.",
+      "now": "'.groupBy()' is not available on a 'string' — it is defined on 'array', 'stream', 'Object'.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "filter\u0000\"abc\".trim()": {
+      "entry": "filter",
+      "src": "\"abc\".trim()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"abc\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"abc\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"abc\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"abc\"}},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"abc\",null]},null]},{\"$ne\":[\"abc\",false]},{\"$ne\":[\"abc\",\"\"]},{\"$ne\":[\"abc\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".toUpperCase()": {
+      "entry": "filter",
+      "src": "\"abc\".toUpperCase()",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toUpper\":\"abc\"},null]},null]},{\"$ne\":[{\"$toUpper\":\"abc\"},false]},{\"$ne\":[{\"$toUpper\":\"abc\"},\"\"]},{\"$ne\":[{\"$toUpper\":\"abc\"},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"ABC\",null]},null]},{\"$ne\":[\"ABC\",false]},{\"$ne\":[\"ABC\",\"\"]},{\"$ne\":[\"ABC\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".startsWith('a')": {
+      "entry": "filter",
+      "src": "\"abc\".startsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[{\"$indexOfCP\":[\"abc\",\"a\"]},0]}}",
+      "now": "{\"$expr\":true}",
+      "reason": "equivalent: the fold settles a constant predicate to its value, which the filter carries as `{ $expr: <value> }`; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".endsWith('a')": {
+      "entry": "filter",
+      "src": "\"abc\".endsWith('a')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}}",
+      "now": "{\"$expr\":false}",
+      "reason": "equivalent: the fold settles a constant predicate to its value, which the filter carries as `{ $expr: <value> }`; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".charAt(1)": {
+      "entry": "filter",
+      "src": "\"abc\".charAt(1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",1,1]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"b\",null]},null]},{\"$ne\":[\"b\",false]},{\"$ne\":[\"b\",\"\"]},{\"$ne\":[\"b\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".substring(1,2)": {
+      "entry": "filter",
+      "src": "\"abc\".substring(1,2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",1,1]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",1,1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"b\",null]},null]},{\"$ne\":[\"b\",false]},{\"$ne\":[\"b\",\"\"]},{\"$ne\":[\"b\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000\"abc\".at(-1)": {
+      "entry": "filter",
+      "src": "\"abc\".at(-1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",2,1]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"c\",null]},null]},{\"$ne\":[\"c\",false]},{\"$ne\":[\"c\",\"\"]},{\"$ne\":[\"c\",0]}]}}",
+      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
     }
   }
 }

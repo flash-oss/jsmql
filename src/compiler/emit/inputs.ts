@@ -7,7 +7,8 @@
 // type, and there is exactly one constructor, so a renderer cannot be handed a
 // record with a service missing.
 
-import type { Expr, ExprIn, Stage, Truth } from "../../registry/vocabulary.ts";
+import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, Truth } from "../../registry/vocabulary.ts";
+import { constantIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
 import { needsPipeline } from "./errors.ts";
 import type { Env } from "./env.ts";
@@ -72,5 +73,49 @@ export function exprInputs(
       return env.chain.hoist(stages, reads);
     },
     slot: () => env.chain.slot().path,
+  };
+}
+
+/** The two query readings, supplied by filter.ts. */
+export type QueryReader = {
+  lowerFilter: (node: Expr, env: Env) => QueryDoc;
+  lowerNativeFilter: (node: Expr, env: Env) => QueryDoc | null;
+};
+
+/**
+ * The record for a query cell: the receiver and arguments as SOURCE, the path
+ * and constant readers, and the two query readings — one that always answers
+ * (with `$expr`), one that answers only natively.
+ */
+export function filterInputs(
+  name: string,
+  recv: Expr | null,
+  args: readonly Expr[],
+  keys: readonly string[],
+  env: Env,
+  node: object,
+  read: QueryReader,
+): FilterIn {
+  const argEnv = childEnv(env, node, "args");
+  return {
+    name,
+    recv,
+    args,
+    keys,
+    pathOf: (e) => pathOfIn(e, env),
+    constant: constantIn,
+    query: (e) => read.lowerFilter(e, argEnv),
+    nativeQuery: (e) => read.lowerNativeFilter(e, argEnv),
+    elementQuery: (cb) => {
+      if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== 1) return null;
+      // The element is the root inside `$elemMatch`: the parameter stands for the document.
+      const bodyEnv = argEnv.bind(cb.params[0], {
+        ref: { kind: "document" },
+        type: "unknown",
+        mutable: false,
+        pos: cb.pos,
+      });
+      return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
+    },
   };
 }

@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): the emit phase's filter target — a predicate to a query document, and `||` per branch
+
+`filter(source)` in `src/compiler/index.ts` is the new `jsmql.filter`: a predicate to the query
+language wherever a row states a native form, `{ $expr: <truth> }` where none does. A filter
+auditor first measured the shipped filter over 60 predicates and a 15-document fixture on
+mongod: every shipped query document runs, and the per-branch `||` the developer ruled keeps
+each branch consistent with the same predicate alone (`{ a: 1 }` alone selects the array
+document `a: [1, 2, 3]`; inside the shipped all-`$expr` `||` it silently did not).
+
+```js
+$.a > 1 && $.b <= 2                    // → {"a":{"$gt":1},"b":{"$lte":2}}
+$.a >= 1 && $.a <= 9                   // → {"$and":[{"a":{"$gte":1}},{"a":{"$lte":9}}]}
+$.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"$gt":[{"$multiply":["$q","$p"]},100]}}]}
+$.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+$.tags.includes("a") && $.tags.includes("b")  // → {"tags":{"$all":["a","b"]}}
+$abs($.delta)                          // → {"$expr":<truth of $abs>}     a value operator is a predicate through its truth
+{ status: "a", x: $gt($.y) }           // → {"status":"a","x":{"$gt":"$y"}}  a raw document, the one-operand $op as the query operator
+```
+
+The query cells are ROW FACTS: the comparison productions carry `strictEqualityQuery` and
+friends (type test, presence test, modulo test, null test, then a field against a constant),
+`includes`/`startsWith`/`endsWith`/`match`/`some` carry theirs, `$sampleRate` states its slot
+`constant`. `FilterIn` hands a cell `pathOf`, `constant`, `query`, `nativeQuery` and
+`elementQuery`; a cell's null is the stated signal for "wrap my value form". The predicate
+alias tables (`typeof` spellings, the numeric group) are registry data now, read by both the
+query and the expression cells — the shipped predicate module is no longer imported. The 147
+MongoDB rows that produce a value fall back to `$expr` in filter position instead of refusing;
+the 80 stage, accumulator and window rows say what they are and where they belong.
+
+Two shipped bugs surfaced by the gate: `$gt($.x)` at the top of a filter became
+`{$expr:{$gt:"$x"}}`, which the server refuses; a spread in a filter's raw document became a
+top-level `{$mergeObjects:[…]}`. Both are refused now. The shipped spec's divergence #2
+(`$ne` "excludes missing-field documents") is wrong on the server and is rewritten from the
+measurement; #1 and #3 state that the array-element match holds on every comparison and that
+ordered comparison is type-bracketed. One question for the developer: `typeof $.a === "number"`
+selects an array of numbers as a query and not as an expression.
+
+```
+skipped   : 2215  (826 pending in the registry, 1389 statement-shaped: the statement slice)
+UNCLASSIFIED: 0
+```
+
+---
 ## 2026-09-04 — fix(compiler): the hunter's findings — HR2 operand lists, `$let` variables encoded on both sides, `Number` never folded
 
 A fourth auditor probed the value target with 440 sources the corpus does not have, judging

@@ -31,7 +31,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/differential-harness.md` | `npm run diff:compilers`: the reference-vs-working-tree comparison, the no-unclassified-divergence rule, and the corpus |
 | `specs/desugar-pass.md` | Sugar → explicit nodes before any lowering runs; the load-bearing precedence between overlapping forms |
 | `specs/position-pass.md` | The seven positions: where each one comes from, how a stage row lays out its body, and why an accumulator slot takes one operand |
-| `specs/emit-pass.md` | The emit phase's value target: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the acceptance gate |
+| `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the query cells and the per-branch `$or`, the acceptance gate |
 | `specs/grammar.md` | Formal grammar (EBNF) for the parser |
 | `specs/operator-registry.md` | Operator-shape registry: how it works, how to add/modify entries |
 | `specs/method-dispatch.md` | `.foo()` method-call dispatch, lambda scoping, regex/template/optional-chaining lexing |

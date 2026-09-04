@@ -18,7 +18,8 @@
 
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, inCode, pending, unsupported, viaFallback } from "./vocabulary.ts";
-import type { Cell, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, StageIn } from "./vocabulary.ts";
+import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
+import { typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -142,6 +143,125 @@ const production = <
   e: ProductionSpec<T, W, O, A, C, M, L>,
 ): ProductionEntry<T, W, O, A, C, M, L> => ({ ...e, kind: "production" });
 
+// ── the query cells the comparison productions share ─────────────────────────
+//
+// A query document compares a FIELD PATH with a CONSTANT. Each helper answers
+// null when the operands are not that pair, and the cell's null is the stated
+// signal for "wrap my value form in $expr" (see `FilterOut`).
+
+/** The path-and-constant pair a two-operand comparison holds, either way round, or null. */
+function pathAndConstant(input: FilterIn): { path: string; value: unknown; flipped: boolean } | null {
+  const [l, r] = input.args;
+  const lp = input.pathOf(l);
+  const rp = input.pathOf(r);
+  if (lp !== null && rp === null) {
+    const c = input.constant(r);
+    return c === null ? null : { path: lp, value: c.value, flipped: false };
+  }
+  if (rp !== null && lp === null) {
+    const c = input.constant(l);
+    return c === null ? null : { path: rp, value: c.value, flipped: true };
+  }
+  return null;
+}
+
+/** `typeof x === "s"` either way round: the operand's path and the BSON alias, or null. */
+function typeTest(input: FilterIn): { path: string; alias: string } | null {
+  const [l, r] = input.args;
+  const pick = (a: Expr, b: Expr) =>
+    a.type === "UnaryExpr" && a.op === "typeof" && b.type === "StringLiteral"
+      ? { operand: a.argument, spelling: b.value }
+      : null;
+  const t = pick(l, r) ?? pick(r, l);
+  if (t === null) return null;
+  const path = input.pathOf(t.operand);
+  const alias = typeAliasOf(t.spelling);
+  return path === null || alias === null ? null : { path, alias };
+}
+
+/** `x === undefined` either way round: the operand's path, or null. */
+function presenceTest(input: FilterIn): string | null {
+  const [l, r] = input.args;
+  const operand =
+    l.type === "UndefinedLiteral"
+      ? r.type === "UndefinedLiteral"
+        ? null
+        : r
+      : r.type === "UndefinedLiteral"
+        ? l
+        : null;
+  return operand === null ? null : input.pathOf(operand);
+}
+
+/** `x % d === m` either way round, with integer `d` and `m`: the path and the pair, or null. */
+function moduloTest(input: FilterIn): { path: string; divisor: number; remainder: number } | null {
+  const [l, r] = input.args;
+  const isNat = (e: Expr) => e.type === "NumberLiteral" && Number.isInteger(e.value) && e.value >= 0;
+  const asMod = (e: Expr, other: Expr) => {
+    if (e.type !== "BinaryExpr" || e.op !== "%" || !isNat(other)) return null;
+    const path = input.pathOf(e.left);
+    if (path === null || e.right.type !== "NumberLiteral" || !Number.isInteger(e.right.value)) return null;
+    return { path, divisor: e.right.value, remainder: (other as { value: number }).value };
+  };
+  return asMod(l, r) ?? asMod(r, l);
+}
+
+/** `x === null` either way round: the operand's path, or null. */
+function nullTest(input: FilterIn): string | null {
+  const [l, r] = input.args;
+  if (l.type === "NullLiteral") return r.type === "NullLiteral" ? null : input.pathOf(r);
+  return r.type === "NullLiteral" ? input.pathOf(l) : null;
+}
+
+/** `.length` compared with a natural number is a LENGTH, which no query form expresses. */
+function comparesALength(input: FilterIn): boolean {
+  const isLength = (e: Expr) => e.type === "MemberAccess" && e.name === "length";
+  const [l, r] = input.args;
+  return isLength(l) || isLength(r);
+}
+
+/**
+ * The strict equality cells. Tried in order: the type test, the presence test,
+ * the modulo test, the null test, then a field against a constant. A `.length`
+ * comparison has no query form (the server has `$size` for arrays only).
+ */
+function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
+  const typed = typeTest(input);
+  if (typed !== null) return { [typed.path]: negated ? { $not: { $type: typed.alias } } : { $type: typed.alias } };
+  const present = presenceTest(input);
+  if (present !== null) return { [present]: { $exists: negated } };
+  if (comparesALength(input)) return null;
+  const mod = moduloTest(input);
+  if (mod !== null) {
+    const test = { $mod: [mod.divisor, mod.remainder] };
+    return { [mod.path]: negated ? { $not: test } : test };
+  }
+  const nul = nullTest(input);
+  if (nul !== null) return { [nul]: negated ? { $not: { $type: "null" } } : { $type: "null" } };
+  const pc = pathAndConstant(input);
+  if (pc === null) return null;
+  return { [pc.path]: negated ? { $ne: pc.value } : pc.value };
+}
+
+/** `==`/`!=` against null only: `{ f: null }` matches null OR missing, the loose meaning. */
+function looseEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
+  const path = nullTest(input);
+  if (path === null) return null;
+  return { [path]: negated ? { $ne: null } : null };
+}
+
+const FLIPPED = { $gt: "$lt", $gte: "$lte", $lt: "$gt", $lte: "$gte" } as const;
+
+/** An ordered comparison of a field with a number, a string or a date; flipped when the field is on the right. */
+function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | null {
+  if (comparesALength(input)) return null;
+  const pc = pathAndConstant(input);
+  if (pc === null) return null;
+  const v = pc.value;
+  if (typeof v !== "number" && typeof v !== "string" && !(v instanceof Date)) return null;
+  return { [pc.path]: { [pc.flipped ? FLIPPED[op] : op]: v } };
+}
+
 export const PRODUCTIONS = {
   conditional: production({
     doc: "Chooses between two values on a condition.",
@@ -193,7 +313,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: inCode("src/compiler/emit/filter.ts"),
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'||' produces a value, not a stage."),
     statement: unsupported("'||' is not a statement — see its 'where'."),
@@ -210,7 +330,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: inCode("src/compiler/emit/filter.ts"),
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'&&' produces a value, not a stage."),
     statement: unsupported("'&&' is not a statement — see its 'where'."),
@@ -281,7 +401,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, false) },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $eq: [value(args[0]), value(args[1])] }),
@@ -301,7 +421,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => strictEqualityQuery(input, true) },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $ne: [value(args[0]), value(args[1])] }),
@@ -321,7 +441,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, false) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'==' produces a value, not a stage."),
     statement: unsupported("'==' is not a statement — see its 'where'."),
@@ -338,7 +458,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => looseEqualityQuery(input, true) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'!=' produces a value, not a stage."),
     statement: unsupported("'!=' is not a statement — see its 'where'."),
@@ -355,7 +475,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gt") },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $gt: [value(args[0]), value(args[1])] }),
@@ -375,7 +495,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$gte") },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $gte: [value(args[0]), value(args[1])] }),
@@ -395,7 +515,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lt") },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $lt: [value(args[0]), value(args[1])] }),
@@ -415,7 +535,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "bool",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "left, right", exact: 2 }, emit: (input) => orderedQuery(input, "$lte") },
     expr: {
       args: { sig: "left, right", exact: 2 },
       emit: ({ args, value }) => ({ $lte: [value(args[0]), value(args[1])] }),
@@ -724,7 +844,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: inCode("src/compiler/emit/filter.ts"),
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'.method()' produces a value, not a stage."),
     statement: unsupported("'.method()' is not a statement — see its 'where'."),
@@ -738,7 +858,7 @@ export const PRODUCTIONS = {
     on: "any",
     returns: "unknown",
     where: ["value", "filter"],
-    filter: pending("src/match-translation.ts"),
+    filter: inCode("src/compiler/emit/filter.ts"),
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'$op()' produces a value, not a stage."),
     statement: unsupported("'$op()' is not a statement — see its 'where'."),

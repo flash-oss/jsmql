@@ -15,11 +15,7 @@ import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { ObjectId } from "../../objectid.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-// The predicate vocabulary's EXPRESSION cells. Its records carry a source operand
-// only to be read by the query cells; the expression cells never touch it, so the
-// registry's own tree is handed over unread.
-import { existsExpr, typeIsExpr, typeIsFrom } from "../../predicate-ir.ts";
-import type { Expr as IrExpr } from "../../ast.ts";
+import { TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import {
@@ -176,8 +172,13 @@ export function lowerTruth(node: Expr, env: Env): Truth {
     const operands = chainOf(node, node.op).map((e) => lowerTruth(e, childEnv(env, node, "left")));
     return node.op === "&&" ? and(...operands) : or(...operands);
   }
-  if (node.type === "UnaryExpr" && node.op === "!")
-    return not(lowerTruth(node.argument, childEnv(env, node, "argument")));
+  if (node.type === "UnaryExpr" && node.op === "!") {
+    // `!!x` read for truth IS the truth of x — not a `$not` of a `$not`.
+    const inner = node.argument;
+    if (inner.type === "UnaryExpr" && inner.op === "!")
+      return lowerTruth(inner.argument, childEnv(env, inner, "argument"));
+    return not(lowerTruth(inner, childEnv(env, node, "argument")));
+  }
   if (node.type === "TernaryExpr") {
     const test = lowerTruth(node.test, childEnv(env, node, "test"));
     return truthOf(cond(test, lowerTruth(node.consequent, env), lowerTruth(node.alternate, env)), true);
@@ -813,13 +814,11 @@ function binary(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unknown 
       return membership(node, inner);
     case "===":
     case "!==": {
+      // `x === undefined` is a PRESENCE test: `$type` answers "missing" for an absent field
+      // and "null" for a present null, the same line `$exists` draws in a query.
       const operand = orientUndefined(node.left, node.right);
-      if (operand !== null) {
-        return existsExpr(
-          { kind: "Exists", operand: operand as unknown as IrExpr, present: node.op === "!==" },
-          lowerValue(operand, inner),
-        );
-      }
+      if (operand !== null)
+        return { [node.op === "!==" ? "$ne" : "$eq"]: [{ $type: lowerValue(operand, inner) }, "missing"] };
       const typed = typeofComparison(node, inner);
       if (typed !== null) return typed;
       break;
@@ -839,8 +838,18 @@ function typeofComparison(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env)
       : null;
   const o = pick(left, right) ?? pick(right, left);
   if (o === null) return null;
-  const ir = typeIsFrom(o.operand as unknown as IrExpr, o.alias, node.op === "!==");
-  return ir === null ? null : typeIsExpr(ir, lowerValue(o.operand, env));
+  const alias = typeAliasOf(o.alias);
+  // An alias the query language does not know keeps the raw comparison.
+  if (alias === null) return null;
+  const negated = node.op === "!==";
+  const actual = { $type: lowerValue(o.operand, env) };
+  // The expression `$type` answers a CONCRETE type: an umbrella alias is a membership test.
+  const group = TYPE_GROUPS[alias];
+  if (group !== undefined) {
+    const member = { $in: [actual, group] };
+    return negated ? { $not: [member] } : member;
+  }
+  return { [negated ? "$ne" : "$eq"]: [actual, alias] };
 }
 
 /** `x === undefined` either way round: the operand tested for presence, or null when neither side is `undefined`. */
