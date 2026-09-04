@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the filter target's after-audit, first findings — the outer document has no path inside `$elemMatch`, a raw document's top-level list operator, and the two-road agreement suite
+
+A `.some` body that read the OUTER document lowered it as an ELEMENT path — a wrong
+document:
+```js
+$.items.some(i => i.q > 2 && $.flag === true)
+// was → {"items":{"$elemMatch":{"q":{"$gt":2},"flag":true}}}   reads the element's `flag`
+// now → the $expr road (the value form of `.some`, pending today)
+```
+An `$elemMatch` body is a BOUNDARY the environment records (`Env.element()`); inside it a
+field path of the outer document has no query form, so the body falls back. The judgement
+verifier re-ran every filter divergence on mongod over a 15-document fixture per source:
+all `shippedBug`, `equivalent` and `intended` rows confirmed (the per-branch `$or` and the
+`$cond` pushed into branches select the same documents as the shipped on every input);
+two refuted — a raw document whose TOP-level key is a list operator with a scalar
+(`{ $setUnion: $.x }`) still passed through where only a nested one was checked, and the
+`Object.fromEntries` filter row is a `shippedBug` (the shipped `{$arrayToObject:[[…],[…]]}`
+is refused by the server), not an `equivalent`.
+
+`test/compiler-query-expr-agreement.test.ts` runs the NEW `filter` and the NEW `expr` over
+one fixture on mongod: the agree list selects the same documents on both roads, and the
+documented divergences (array-element match on every comparison and per `&&` clause,
+type-bracketed ordered comparison, `$ne` as the complement, element-wise `$type`) are
+asserted to still differ.
+
+---
 ## 2026-09-04 — feat(compiler): the emit phase's filter target — a predicate to a query document, and `||` per branch
 
 `filter(source)` in `src/compiler/index.ts` is the new `jsmql.filter`: a predicate to the query

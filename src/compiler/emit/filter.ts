@@ -84,13 +84,22 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
 
 /** A raw `{ status: "a", $expr: … }` document: keys as written, values in value position. */
 function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): QueryDoc {
+  return rawDocument(node, env.at({ at: "value" }));
+}
+
+/** A raw document's entries, keys as written and checked, values through `rawValue`. */
+function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): QueryDoc {
   const out: QueryDoc = {};
-  const inner = env.at({ at: "value" });
   for (const e of node.entries) {
     if (e.type === "SpreadElement") throw E.spreadInOperatorBody(e.pos);
     const key = staticKey(e);
     if (key === null) throw E.computedKeyInOperatorBody(e.pos);
-    out[key] = rawValue(e.value, inner);
+    // `{ $setUnion: "$x" }` — a list operator with one scalar is a document the server
+    // refuses, on this spelling as on the call, at the top of the document as below it.
+    if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
+      throw E.listOperand(key, e.value.pos);
+    }
+    out[key] = rawValue(e.value, env);
   }
   return out;
 }
@@ -105,21 +114,7 @@ function rawValue(e: Expr, env: Env): unknown {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
     return { [e.name]: lowerValue(e.args[0], env) };
   }
-  if (e.type === "ObjectLiteral") {
-    const out: QueryDoc = {};
-    for (const entry of e.entries) {
-      if (entry.type === "SpreadElement") throw E.spreadInOperatorBody(entry.pos);
-      const key = staticKey(entry);
-      if (key === null) throw E.computedKeyInOperatorBody(entry.pos);
-      // `{ $setUnion: "$x" }` — a list operator with one scalar is a document the server
-      // refuses, on this spelling as on the call.
-      if (key.startsWith("$") && operandShapeOf(key) === "array" && entry.value.type !== "ArrayLiteral") {
-        throw E.listOperand(key, entry.value.pos);
-      }
-      out[key] = rawValue(entry.value, env);
-    }
-    return out;
-  }
+  if (e.type === "ObjectLiteral") return rawDocument(e, env);
   return lowerValue(e, env);
 }
 
@@ -214,7 +209,10 @@ function extractIncludesChain(node: Expr, env: Env): { path: string; values: unk
  * so `i.q` is "q".
  */
 export function pathOfIn(e: Expr, env: Env): string | null {
-  if (e.type === "FieldRef") return e.path === "" ? null : e.path;
+  // Inside an `$elemMatch` body the outer document is out of reach: `$.min` has no
+  // query path there, so a body that reads it takes the `$expr` road.
+  const insideElement = env.site.boundaries.some((b) => b.stage === "$elemMatch");
+  if (e.type === "FieldRef") return e.path === "" || insideElement ? null : e.path;
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;
     if (

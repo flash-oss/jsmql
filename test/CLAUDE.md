@@ -70,6 +70,10 @@ So this suite runs **both** lowerings of the same source over the **same** docum
 
 Add a case here whenever you touch predicate lowering on either side. This is the acceptance harness for migrating a node into the Predicate IR — see [`docs/specs/predicate-ir.md`](../docs/specs/predicate-ir.md).
 
+### `compiler-query-expr-agreement.test.ts` — the NEW compiler's two roads
+
+The same gate as `query-expr-agreement.test.ts`, for `src/compiler/`: the new `filter(src)` and the new `expr(src)` (under `$expr`) run over one fixture on a live mongod and must select the same documents, except for the divergences the language documents — those live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row rather than landing silently. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row here whenever you give a name or a production a query cell.
+
 ### `integration.test.ts` — jsmql MQL run against a live MongoDB
 
 The only suite that runs jsmql's emitted MQL on a **real** server and asserts on the documents that come back — closing the gap a `toEqual(<MQL>)` can't (it proves what jsmql *emits*, not that mongod *runs* it correctly). Each case compiles a jsmql source, runs it read-only against a deterministic fixture dataset, and checks the result; expected values are derived from a live run, never guessed. It runs against a **dedicated, auth-enabled mongod on `:27018`** (separate from your primary instance), with a server-enforced read-only user so a test run can't mutate the data. The dataset, the instance lifecycle, and the read-only design all live in [`test/fixtures/`](fixtures/CLAUDE.md). The suite **skips itself** (green, not failing) when that instance isn't up/seeded, so `npm test` stays green without it; run `npm run fixture:up` first to exercise it. This is the natural home for the "verify it actually runs" discipline below — when in doubt about a shape, add a case here instead of trusting a green `toEqual`.

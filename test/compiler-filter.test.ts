@@ -99,6 +99,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(() => filter('$abs($.n).startsWith("A")')).toThrow(PendingLowering);
     expect(() => filter("$.items.every(i => i.q > 2)")).toThrow(PendingLowering);
     expect(() => filter("$.items.some(i => i.q > $.min)")).toThrow(PendingLowering);
+    // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
+    expect(() => filter("$.items.some(i => i.q > 2 && $.flag === true)")).toThrow(PendingLowering);
     expect(() => filter("$.s.startsWith($.prefix)")).toThrow(PendingLowering);
   });
 

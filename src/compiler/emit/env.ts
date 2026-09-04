@@ -164,6 +164,15 @@ export class Env {
     return new Env(this.scope, { ...this.site, envelope: "$literal" }, this.chain);
   }
 
+  /**
+   * Into an `$elemMatch` body: the element is the root there, and the outer
+   * document has NO query path — a body that reads it has no native form.
+   */
+  element(): Env {
+    const site: Site = { ...this.site, boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [] }] };
+    return new Env(this.scope, site, this.chain);
+  }
+
   /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
   enter(boundary: Boundary, chain: Chain): Env {
     const site: Site = { ...this.site, where: { at: "statement" }, boundaries: [...this.site.boundaries, boundary] };
