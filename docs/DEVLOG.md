@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — fix(compiler): a computed expression in a query document's value slot is refused
+
+`$match({ a: $.b > 1 })` emitted `{ "$match": { "a": { "$gt": ["$b", 1] } } }`. The server ACCEPTS that and returns nothing: `$gt` reads its operand as the value to compare against, so the document asks whether `a` is greater than a two-element array. Both compilers did it, and no test could see it — the emitted document is valid MQL and the suite asserts what is emitted.
+
+A value slot in a query document takes a VALUE or a query operator. A computed expression is neither, and it is refused now with the two spellings that work: the predicate itself (`$match($.a > 1)`) or `$expr`. A constant written as an expression (`-1`) has already settled by then, so it is a value and passes. The other half of the same rule: a value the developer wrote as JAVASCRIPT whose lowering is an aggregation operator the query language has no name for — `{ a: $.s.trim() }` → `{ a: { $trim: … } }`, "unknown operator: $trim" — is refused too.
+
+A document the developer TYPED still passes through, keys as written, including a `$`-name this build does not list in filter position: a query operator newer than the build must round-trip, and the escape hatch is a promise. That distinction is the whole rule — a JavaScript spelling is checked, raw MQL is the developer's own.
+
+`$expr` is the one place a query document changes language, and it now says so: the row states `operandPosition: "value"`, so the query-value rules do not apply inside it. Without that the fix refused `{ $expr: $multiply($.a, 2) }`, which the server accepts. Two rows in the registry are missing their query meaning (`$size` and `$rand` list only value position, and MongoDB has a query `$size`); nothing depends on them today, and the check that would have exposed them is the one deliberately not applied to raw documents.
+
+---
+
 ## 2026-09-05 — feat(compiler): a stage's body is checked from the facts its row states
 
 Every stage row said `body: pending`, so a body the server refuses was emitted unchecked. The statement target now reads two kinds of fact off the row, both mechanisms that already existed for operator arguments: `args` for a body that is not an object — `slotType`, `constant`, `slotRange` — and `body`, a `BodyRule`, for one that is.

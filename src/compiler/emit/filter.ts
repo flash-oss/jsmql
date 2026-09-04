@@ -31,7 +31,7 @@ import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { or, truthOf } from "./mode.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
-import { isCallable, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
+import { isCallable, operandPositionOf, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
 
 /**
  * A predicate's query document, `$expr` included where a leaf has no native form.
@@ -116,7 +116,9 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     if (key.startsWith("$") && operandShapeOf(key) === "array" && e.value.type !== "ArrayLiteral") {
       throw E.listOperand(key, e.value.pos);
     }
-    out[key] = rawValue(e.value, env);
+    // A key whose row states a different position for its operand takes that
+    // language instead of the query one — `$expr`'s operand is an expression.
+    out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, env);
   }
   return out;
 }
@@ -133,7 +135,25 @@ function rawValue(e: Expr, env: Env): unknown {
     return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
-  return lowerValue(e, env);
+  // A computed expression is neither a value nor a query operator. `{ a: $.b > 1 }`
+  // becomes `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS and matches nothing —
+  // the silent kind of wrong. A constant that happens to be written as an expression
+  // (`-1`) has already settled, so it is a value and passes.
+  if ((e.type === "BinaryExpr" || e.type === "UnaryExpr" || e.type === "TernaryExpr") && !evaluate(e, new Map()).ok) {
+    throw E.expressionInQueryValue(e.pos);
+  }
+  const value = lowerValue(e, env);
+  // An aggregation operator in a query document is refused by the server outright:
+  // measured, `{ a: { $trim: … } }` answers "unknown operator: $trim". Checked HERE
+  // and not on a raw document's keys: a document the developer TYPED is their own
+  // MQL and passes through (a query operator newer than this build must still
+  // round-trip), while this value is one they wrote as JavaScript.
+  if (isObj(value) && !Array.isArray(value)) {
+    for (const key of Object.keys(value)) {
+      if (key.startsWith("$") && !listedIn(key, "filter")) throw E.aggregationOperatorInQuery(key, e.pos);
+    }
+  }
+  return value;
 }
 
 /**

@@ -255,6 +255,20 @@ export const multiKeyStage = (index: number, keys: number, pos: number): Codegen
     pos,
   );
 
+/** A computed expression in a raw query document's value slot. */
+export const expressionInQueryValue = (pos: number): CodegenError =>
+  new CodegenError(
+    "The value of a key in a query document is a VALUE or a query operator, and this is a computed expression. The query language reads it as a value to compare against: measured, '{ a: $.b > 1 }' becomes '{ a: { $gt: [\"$b\", 1] } }', which the server accepts and matches nothing. Write the predicate itself ('$.a > 1', or '$match($.a > 1)'), or put the expression in '$expr'.",
+    pos,
+  );
+
+/** An aggregation operator in a query document, where the server knows no such operator. */
+export const aggregationOperatorInQuery = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is an aggregation operator, and a query document has no such operator — the server answers "unknown operator: ${name}". Put it in '$expr' ('$expr($eq(${name}(…), …))'), or use the query operator that says the same thing.`,
+    pos,
+  );
+
 /** A query-only operator written inside a `.some(…)` body, where the server refuses it. */
 export const queryOnlyInsideElement = (name: string, pos: number): CodegenError =>
   new CodegenError(

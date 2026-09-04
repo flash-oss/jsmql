@@ -156,6 +156,29 @@ These are intentional trade-offs — the query-language behavior matches what mo
 
 4. **Null and missing.** `===`/`!==` are JS-strict — missing fields are not null. `==`/`!=` (null-only) are loose — missing fields are treated as null. The two shapes compile to distinct MQL (`$type: "null"` vs bare `null`) on both code paths so the translated and residual fall-back paths agree on semantics. Users who want aggregation's "$eq with null is strict" behaviour use `===`; users who want query-language's "field: null matches missing" behaviour use `==`.
 
+## A raw query document's value slot
+
+A document the developer TYPED is their own MQL and passes through, keys as
+written — including a `$`-name this build does not list in filter position,
+because a query operator newer than the build must still round-trip. What does
+NOT pass through is JavaScript the query language cannot read:
+
+```js
+{ a: 1 }                      // → {"a":1}
+{ a: { $gt: 1 } }             // → {"a":{"$gt":1}}
+{ a: $gt(1) }                 // → {"a":{"$gt":1}}        the call spelling of the same operator
+{ $expr: $multiply($.a, 2) }  // → {"$expr":{"$multiply":["$a",2]}}
+{ a: $.b > 1 }                // → refused
+```
+
+The last one used to emit `{ a: { $gt: ["$b", 1] } }`, which the server ACCEPTS
+and matches nothing: `$gt` reads its operand as the value to compare against, so
+the document asks whether `a` is greater than a two-element array. A computed
+expression is refused there with the two spellings that work — the predicate
+itself, or `$expr`. `$expr`'s own operand is exempt, because its row states that
+the operand stands in value position; that is the one place a query document
+changes language, and it is stated on the row rather than known by the compiler.
+
 ## Escape hatch
 
 The object-literal `$match` body bypasses translation entirely:

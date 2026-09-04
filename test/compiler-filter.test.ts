@@ -143,6 +143,24 @@ describe("compiler/emit/filter — && and ||", () => {
   });
 });
 
+describe("compiler/emit/filter — a raw query document", () => {
+  it("keeps the developer's own MQL, and refuses JavaScript the query language cannot read", () => {
+    // Raw MQL passes through, keys as written (HR1) — including a name this build
+    // does not list in filter position, because a newer query operator must round-trip.
+    expect(filter("{ a: 1 }")).toEqual({ a: 1 });
+    expect(filter("{ a: { $gt: 1 } }")).toEqual({ a: { $gt: 1 } });
+    expect(filter("{ a: { $size: 2 } }")).toEqual({ a: { $size: 2 } });
+    expect(filter("{ a: -1 }")).toEqual({ a: -1 });
+    expect(filter("{ a: $gt(1) }")).toEqual({ a: { $gt: 1 } });
+    // `$expr`'s row states that its operand is an aggregation EXPRESSION, so the
+    // query-value rules do not apply inside it.
+    expect(filter("{ $expr: $multiply($.a, 2) }")).toEqual({ $expr: { $multiply: ["$a", 2] } });
+    // A computed expression in a value slot is neither a value nor a query operator:
+    // it becomes `{ a: { $gt: ["$b", 1] } }`, which the server accepts and matches nothing.
+    expect(() => filter("{ a: $.b > 1 }")).toThrow(/computed expression/);
+  });
+});
+
 describe("compiler/emit/filter — methods and operators", () => {
   it("lowers the boolean methods to their indexable forms", () => {
     // Containment for an array value, substring for a string one — JavaScript reads

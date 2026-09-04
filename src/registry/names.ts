@@ -321,6 +321,15 @@ type MongoSpec<
    * three read a set no row declared.
    */
   replacesDocument?: true;
+  /**
+   * The position this operator's OPERAND stands in, where it is not the operator's
+   * own. A query document's values are read as query values, and `$expr`'s is the
+   * one that is not: `{ $expr: { $multiply: [ … ] } }` is an aggregation expression
+   * and the server accepts it, where `{ a: { $multiply: [ … ] } }` answers
+   * "unknown operator: $multiply". Stated on the operator whose operand changes
+   * language, and nowhere else.
+   */
+  operandPosition?: Position;
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
@@ -8939,6 +8948,7 @@ export const NAMES = {
   $expr: mongo({
     doc: "Allows use of aggregation expressions within the query language.",
     where: ["filter"],
+    operandPosition: "value",
     filter: pending("src/index.ts"),
     expr: unsupported(
       "'$expr' is a query operator with no aggregation-expression form. '$expr' is a top-level query operator: write it as the whole filter, e.g. '{ $expr: … }'.",

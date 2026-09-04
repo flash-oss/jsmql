@@ -317,6 +317,11 @@ export function bodyRuleOf(name: string): BodyRule | undefined {
   return typeof shape === "object" && shape !== null ? (shape.object as BodyRule) : undefined;
 }
 
+/** The position a row states for its OPERAND, where it is not the row's own language. */
+export function operandPositionOf(name: string): Position | undefined {
+  return (row(name) as { operandPosition?: Position } | undefined)?.operandPosition;
+}
+
 /**
  * A STAGE's stated body rule, or undefined while the row still says `pending`.
  * A stage's body is its own field, not the `shape.object` an operator uses.
