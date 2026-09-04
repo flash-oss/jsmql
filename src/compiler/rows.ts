@@ -262,3 +262,115 @@ export function positionsOf(name: string): readonly Position[] | undefined {
 export function lists(name: string, where: Position): boolean {
   return row(name)?.where.includes(where) === true;
 }
+
+// ── the facts the emit phase reads ───────────────────────────────────────────
+
+import type { Binds, BodyRule, Returns } from "../registry/vocabulary.ts";
+import type { CallbackParams } from "../registry/vocabulary.ts";
+import { PRODUCTIONS } from "../registry/productions.ts";
+
+type EmitRow = {
+  returns?: Returns;
+  params?: CallbackParams;
+  binds?: Binds;
+  shape?: "single" | "array" | "none" | "flex" | { object: BodyRule };
+  asReference?: boolean;
+  spreadAlternative?: string;
+  newKeyword?: "required" | "optional" | "forbidden";
+  provides?: unknown;
+  token?: string;
+};
+
+/** A row of either registry: a NAME (`trim`, `$abs`) or a PRODUCTION (`strictEquality`). The keys cannot collide. */
+const emitRow = (name: string): EmitRow | undefined =>
+  (ROWS[name] as EmitRow | undefined) ?? ((PRODUCTIONS as Record<string, unknown>)[name] as EmitRow | undefined);
+
+/** The result type a name states, or "unknown" when it states none. */
+export function returnsOf(name: string): Returns {
+  return emitRow(name)?.returns ?? "unknown";
+}
+
+/** What a name's callback parameters bind, in order, for `position` — or undefined when it takes no callback. */
+export function callbackParamsOf(name: string, position: Position): readonly string[] | undefined {
+  const p = emitRow(name)?.params;
+  if (p === undefined) return undefined;
+  if (Array.isArray(p)) return p as readonly string[];
+  return (p as Readonly<Partial<Record<Position, readonly string[]>>>)[position];
+}
+
+/** The variables a MongoDB operator brings into scope, or undefined. */
+export function bindsOf(name: string): Binds | undefined {
+  return emitRow(name)?.binds;
+}
+
+/** The key order a positional call to an object-shaped operator maps onto; empty when it has none. */
+export function positionalKeysOf(name: string): readonly string[] {
+  const shape = emitRow(name)?.shape;
+  return typeof shape === "object" && shape !== null ? (shape.object.positional ?? []) : [];
+}
+
+/** The object-shaped operator's body rule, or undefined for any other shape. */
+export function bodyRuleOf(name: string): BodyRule | undefined {
+  const shape = emitRow(name)?.shape;
+  return typeof shape === "object" && shape !== null ? (shape.object as BodyRule) : undefined;
+}
+
+/** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
+export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "object" | undefined {
+  const shape = emitRow(name)?.shape;
+  if (shape === undefined) return undefined;
+  return typeof shape === "string" ? shape : "object";
+}
+
+/** The JavaScript form that takes a spread and lowers to this operator, or undefined. */
+export function spreadAlternativeOf(name: string): string | undefined {
+  return emitRow(name)?.spreadAlternative;
+}
+
+/** Can this global be handed to a higher-order name unapplied — `map(String)`? */
+export function asReferenceOf(name: string): boolean {
+  return emitRow(name)?.asReference === true;
+}
+
+/** Whether `new` is required, optional or forbidden before this global, or undefined for a non-global. */
+export function newKeywordOf(name: string): "required" | "optional" | "forbidden" | undefined {
+  return emitRow(name)?.newKeyword;
+}
+
+/** Does the row for `name` exist, of kind `root` or `global` — a name reached without a receiver? */
+export function isGlobalName(name: string): boolean {
+  const k = row(name)?.kind;
+  return k === "global" || k === "root";
+}
+
+/**
+ * The row a CONSTRUCT names, from the production that builds its node type:
+ * `CollectionRef` is built by the production whose first token is `$$`, and
+ * `$$` is a row. Read off both registries, so a root spelling is never listed
+ * beside the node type it builds.
+ */
+export function rowForNodeType(nodeType: string): string | undefined {
+  for (const p of Object.values(PRODUCTIONS) as { becomes: unknown; tokens: readonly string[] }[]) {
+    const becomes = Array.isArray(p.becomes) ? p.becomes : [p.becomes];
+    if (!becomes.includes(nodeType)) continue;
+    const spelling = p.tokens[0];
+    if (spelling !== undefined && ROWS[spelling] !== undefined) return spelling;
+  }
+  return undefined;
+}
+
+/**
+ * The production an operator node lowers by: keyed by the node it builds and
+ * its first token, so `-` the subtraction and `-` the negation are two rows.
+ */
+export function productionForOperator(nodeType: "BinaryExpr" | "UnaryExpr", op: string): string | undefined {
+  for (const [key, p] of Object.entries(PRODUCTIONS) as [string, { becomes: unknown; tokens: readonly string[] }][]) {
+    if (p.becomes === nodeType && p.tokens[0] === op) return key;
+  }
+  return undefined;
+}
+
+/** Does this production state that a left-nested chain lowers as one operator? */
+export function flattensChain(productionKey: string): boolean {
+  return (PRODUCTIONS as Record<string, { flattensChain?: true }>)[productionKey]?.flattensChain === true;
+}

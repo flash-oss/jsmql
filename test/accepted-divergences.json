@@ -1,5 +1,5 @@
 {
-  "reference": { "commit": "cf4b339", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
+  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -3544,6 +3544,1030 @@
       "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$items\",\"as\":\"i\",\"in\":{\"$gt\":[\"$$i.q\",2]}}}}",
       "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$items\",[]]},\"as\":\"i\",\"in\":{\"$gt\":[\"$$i.q\",2]}}}}",
       "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
+    },
+    "expr\u0000$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });": {
+      "entry": "expr",
+      "src": "$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$.r = $$$.orders.filter(o => { const t = o.total; });": {
+      "entry": "expr",
+      "src": "$.r = $$$.orders.filter(o => { const t = o.total; });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$dateDiff({ startDate: $.a, endDate: $.b, unit: \"day\", startOfWeek: \"funday\" })": {
+      "entry": "expr",
+      "src": "$dateDiff({ startDate: $.a, endDate: $.b, unit: \"day\", startOfWeek: \"funday\" })",
+      "kind": "message",
+      "was": "'$dateDiff' startOfWeek must be a weekday (monday, tuesday, wednesday, thursday, friday, saturday, sunday) — got 'funday'. Did you mean 'sunday'?",
+      "now": "'$dateDiff' startOfWeek must be one of: monday, tuesday, wednesday, thursday, friday, saturday, sunday, mon, tue, wed, thu, fri, sat, sun — got 'funday'. Did you mean 'sunday'?",
+      "reason": "message: one wording for every closed set, from the row's enum; the weekday list now also names the three-letter forms the server accepts."
+    },
+    "expr\u0000$convert({ input: $.s, to: \"intt\" })": {
+      "entry": "expr",
+      "src": "$convert({ input: $.s, to: \"intt\" })",
+      "kind": "message",
+      "was": "'$convert' to must be one of: double, string, object, array, binData, objectId, bool, date, null, regex, dbPointer, javascript, symbol, javascriptWithScope, int, timestamp, long, decimal, minKey, maxKey — got 'intt'. Did",
+      "now": "'$convert' to must be one of: double, string, object, array, binData, objectId, bool, date, null, regex, dbPointer, javascript, symbol, javascriptWithScope, int, timestamp, long, decimal, minKey, maxKey, undefined — got ",
+      "reason": "message: one wording for every closed set, from the row's enum; the weekday list now also names the three-letter forms the server accepts."
+    },
+    "expr\u0000$regexMatch({ input: $.s, regex: \"a\", options: \"gi\" })": {
+      "entry": "expr",
+      "src": "$regexMatch({ input: $.s, regex: \"a\", options: \"gi\" })",
+      "kind": "message",
+      "was": "'$regexMatch' options has an invalid regex flag 'g'. MongoDB allows only i, m, x, s — a JavaScript 'g' or 'y' flag is not supported.",
+      "now": "'$regexMatch' options has an invalid flag 'g'. MongoDB allows only i, m, x, s, u — a JavaScript 'g' or 'y' flag is not supported.",
+      "reason": "shippedBug: the server accepts the 'u' regex option (measured); the row states imxsu and the message lists it."
+    },
+    "expr\u00002 ** 3 ** 2": {
+      "entry": "expr",
+      "src": "2 ** 3 ** 2",
+      "kind": "output",
+      "was": "{\"$pow\":[2,{\"$pow\":[3,2]}]}",
+      "now": "512",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000($.a + $.b) && $.c": {
+      "entry": "expr",
+      "src": "($.a + $.b) && $.c",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"v\":{\"$add\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]},\"then\":\"$c\",\"else\":\"$$v\"}}}}",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlV\":{\"$add\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$jsmqlV\",null]},null]},{\"$ne\":[\"$$jsmqlV\",false]},{\"$ne\":[\"$$jsmqlV\",\"\"]},{\"$ne\":[\"$$jsmqlV\",0]}]},\"then\":\"$c\",\"else\":\"$$",
+      "reason": "intended: a compiler mint carries the jsmql prefix (src/namespace.ts), so it can never collide with a developer's parameter; the shipped bare `v` could."
+    },
+    "expr\u0000({ 0x507f1f77bcf86cd799439011: 1 })": {
+      "entry": "expr",
+      "src": "({ 0x507f1f77bcf86cd799439011: 1 })",
+      "kind": "message",
+      "was": "An ObjectId literal can't be an object key at position 3 — a field name is a string. Quote it (`{ \"507f1f77bcf86cd799439011\": … }`) to use it as a field name.",
+      "now": "An ObjectId literal can't be an object key at position 3 — a field name is a string. Quote it (`{ \"507f1f77bcf86cd799439011\": … }`) to use it as a field name. at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$.items.0": {
+      "entry": "expr",
+      "src": "$.items.0",
+      "kind": "message",
+      "was": "Expected property name after '.' at position 8",
+      "now": "Expected a name but got '0' at position 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000[1,2,3,4,5].slice(1, 3)": {
+      "entry": "expr",
+      "src": "[1,2,3,4,5].slice(1, 3)",
+      "kind": "output",
+      "was": "{\"$slice\":[[1,2,3,4,5],1,2]}",
+      "now": "[2,3]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3,4,5].slice(-2)": {
+      "entry": "expr",
+      "src": "[1,2,3,4,5].slice(-2)",
+      "kind": "output",
+      "was": "{\"$slice\":[[1,2,3,4,5],-2]}",
+      "now": "[4,5]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3,4,5].slice(0, -1)": {
+      "entry": "expr",
+      "src": "[1,2,3,4,5].slice(0, -1)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3,4,5]},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}]}}}",
+      "now": "[1,2,3,4]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3,4,5].slice(1, -1)": {
+      "entry": "expr",
+      "src": "[1,2,3,4,5].slice(1, -1)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3,4,5]},\"in\":{\"$let\":{\"vars\":{\"jsmqlK\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]},\"jsmqlF\":{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}},\"in\":{\"$cond\":[{\"$gt\":[{\"$subtract\":[\"$$jsmqlF\",",
+      "now": "[2,3,4]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Boolean + 5": {
+      "entry": "expr",
+      "src": "Boolean + 5",
+      "kind": "message",
+      "was": "'Boolean' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.filter(Boolean)). To coerce a single value, write Boolean(value).",
+      "now": "'Boolean' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.map(Boolean)). To apply it to one value, write Boolean(value).",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000new Date(\"not-a-date\")": {
+      "entry": "expr",
+      "src": "new Date(\"not-a-date\")",
+      "kind": "message",
+      "was": "new Date(\"not-a-date\") — \"not-a-date\" is not a valid date string. Use an ISO 8601 date like \"2026-01-01\" or \"2026-01-01T00:00:00.000Z\".",
+      "now": "new Date(<string>) — the string is not a valid date. Use an ISO 8601 date like \"2026-01-01\" or \"2026-01-01T00:00:00.000Z\".",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "expr\u0000new Date(1, 2, 3, 4, 5, 6, 7, 8)": {
+      "entry": "expr",
+      "src": "new Date(1, 2, 3, 4, 5, 6, 7, 8)",
+      "kind": "message",
+      "was": "'new Date(year, month, day, hour, minute, second, ms)' takes at most 7 arguments, got 8 at position 0",
+      "now": "Date(year, month, day, hour, minute, second, ms) requires 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000Date.UTC(2024, 1, 15)": {
+      "entry": "expr",
+      "src": "Date.UTC(2024, 1, 15)",
+      "kind": "output",
+      "was": "{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}}",
+      "now": "1705276800000",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Date.UTC(1970)": {
+      "entry": "expr",
+      "src": "Date.UTC(1970)",
+      "kind": "output",
+      "was": "{\"$toLong\":{\"$dateFromParts\":{\"year\":1970,\"timezone\":\"UTC\"}}}",
+      "now": "0",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.a | $.b && $.c": {
+      "entry": "expr",
+      "src": "$.a | $.b && $.c",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"v\":{\"$bitOr\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]},\"then\":\"$c\",\"else\":\"$$v\"}}}}",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlV\":{\"$bitOr\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$jsmqlV\",null]},null]},{\"$ne\":[\"$$jsmqlV\",false]},{\"$ne\":[\"$$jsmqlV\",\"\"]},{\"$ne\":[\"$$jsmqlV\",0]}]},\"then\":\"$c\",\"else\":\"",
+      "reason": "intended: a compiler mint carries the jsmql prefix (src/namespace.ts), so it can never collide with a developer's parameter; the shipped bare `v` could."
+    },
+    "expr\u0000$.items.map(x => { const a = 1; })": {
+      "entry": "expr",
+      "src": "$.items.map(x => { const a = 1; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 32, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "now": "A block body must end with a `return <expr>` statement at position 32. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly at posi",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000[1, 2].map(a => a)": {
+      "entry": "expr",
+      "src": "[1, 2].map(a => a)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":[1,2],\"as\":\"a\",\"in\":\"$$a\"}}",
+      "now": "[1,2]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1, 2].join(\",\")": {
+      "entry": "expr",
+      "src": "[1, 2].join(\",\")",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":[1,2],\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then\":{\"$toString\":\"$$this\"},\"else\":{\"$concat\":[\"$$value\",\",\",{\"$toString\":\"$$this\"}]}}}}}",
+      "now": "\"1,2\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.r = $$$.orders.sortBy((o) => { $limit(2); });": {
+      "entry": "expr",
+      "src": "$.r = $$$.orders.sortBy((o) => { $limit(2); });",
+      "kind": "message",
+      "was": "Unexpected stage call at position 33: a `=> { $stage(...); ... }` block is a sub-pipeline, but '.sortBy(...)' doesn't take one. Pipeline stages belong to `.aggregate(pipeline)` alone; every other callback's block body is",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$.r = $$$.orders.aggregat((o) => { $limit(2); });": {
+      "entry": "expr",
+      "src": "$.r = $$$.orders.aggregat((o) => { $limit(2); });",
+      "kind": "message",
+      "was": "Unexpected stage call at position 35: a `=> { $stage(...); ... }` block is a sub-pipeline, but '.aggregat(...)' doesn't take one. Did you mean '.aggregate'? Pipeline stages belong to `.aggregate(pipeline)` alone; every o",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$.items.map((d) => { const a = d.v; })": {
+      "entry": "expr",
+      "src": "$.items.map((d) => { const a = d.v; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 36, got '}'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directl",
+      "now": "A block body must end with a `return <expr>` statement at position 36. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly at posi",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$.items.map((d) => { d.v; })": {
+      "entry": "expr",
+      "src": "$.items.map((d) => { d.v; })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 21, got an identifier 'd'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expr",
+      "now": "A block body must end with a `return <expr>` statement at position 26. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly at posi",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$.items.map(x => { k: x })": {
+      "entry": "expr",
+      "src": "$.items.map(x => { k: x })",
+      "kind": "message",
+      "was": "A block body must end with a `return <expr>` statement at position 19, got an identifier 'k'. Write `x => { const a = …; return <expr>; }` / `function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expr",
+      "now": "Expected ';' but got ':' at position 20",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000\"-\".repeat(5)": {
+      "entry": "expr",
+      "src": "\"-\".repeat(5)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$range\":[0,5]},\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",\"-\"]}}}",
+      "now": "\"-----\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Array.from($.iter)": {
+      "entry": "expr",
+      "src": "Array.from($.iter)",
+      "kind": "message",
+      "was": "Array.from() only supports the {length: n} form: Array.from({length: n}, (_, i) => …). For other inputs use $op($range, …) or .map().",
+      "now": "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00001.5n": {
+      "entry": "expr",
+      "src": "1.5n",
+      "kind": "message",
+      "was": "Invalid BigInt literal at position 0: 'n' suffix requires an integer (no fraction or exponent)",
+      "now": "Invalid BigInt literal: the 'n' suffix requires an integer at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00001e2n": {
+      "entry": "expr",
+      "src": "1e2n",
+      "kind": "message",
+      "was": "Invalid BigInt literal at position 0: 'n' suffix requires an integer (no fraction or exponent)",
+      "now": "Invalid BigInt literal: the 'n' suffix requires an integer at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000((x) => x + 1)(5)": {
+      "entry": "expr",
+      "src": "((x) => x + 1)(5)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$add\":[\"$$x\",1]}}}",
+      "now": "6",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.name.frobulate()": {
+      "entry": "expr",
+      "src": "$.name.frobulate()",
+      "kind": "message",
+      "was": "Unknown method '.frobulate()'.",
+      "now": "Unknown method '.frobulate()' at position 6.",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000$.name.toLowerCse()": {
+      "entry": "expr",
+      "src": "$.name.toLowerCse()",
+      "kind": "message",
+      "was": "Unknown method '.toLowerCse()'. Did you mean '.toLowerCase()'?",
+      "now": "Unknown method '.toLowerCse()' at position 6. Did you mean '.toLowerCase()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000$.items.fliter(x => x)": {
+      "entry": "expr",
+      "src": "$.items.fliter(x => x)",
+      "kind": "message",
+      "was": "Unknown method '.fliter()'. Did you mean '.filter()'?",
+      "now": "Unknown method '.fliter()' at position 7. Did you mean '.filter()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000$.name.substing(1)": {
+      "entry": "expr",
+      "src": "$.name.substing(1)",
+      "kind": "message",
+      "was": "Unknown method '.substing()'. Did you mean '.substring()'?",
+      "now": "Unknown method '.substing()' at position 6. Did you mean '.substring()'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000Math.flor($.x)": {
+      "entry": "expr",
+      "src": "Math.flor($.x)",
+      "kind": "message",
+      "was": "Unknown Math member 'flor' at position 5. Did you mean 'Math.floor'? See docs/LANGUAGE.md for the full list of supported Math methods and constants.",
+      "now": "Unknown method 'Math.flor()' at position 4. Did you mean 'Math.floor'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000Number.isItneger($.x)": {
+      "entry": "expr",
+      "src": "Number.isItneger($.x)",
+      "kind": "message",
+      "was": "Unknown Number static method 'isItneger' at position 7. Did you mean 'Number.isInteger'? Supported: Number.isInteger, Number.isNaN, Number.isFinite.",
+      "now": "Unknown method 'Number.isItneger()' at position 6. Did you mean 'Number.isInteger'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000Object.keyz($.o)": {
+      "entry": "expr",
+      "src": "Object.keyz($.o)",
+      "kind": "message",
+      "was": "Unknown Object method 'keyz' at position 7. Did you mean 'Object.keys'? Supported: keys, values, entries, assign, fromEntries, groupBy.",
+      "now": "Unknown method 'Object.keyz()' at position 6. Did you mean 'Object.keys'?",
+      "reason": "message: a position-bearing error says `at position N` (CLAUDE.md), and a namespace suggestion is spelled as the namespace; the suggestion itself is the same."
+    },
+    "expr\u0000$.s.trim() = 1": {
+      "entry": "expr",
+      "src": "$.s.trim() = 1",
+      "kind": "message",
+      "was": "Cannot assign to a method-call result ('.trim()') at position 11 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '=' at position 11",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u000042 = 1": {
+      "entry": "expr",
+      "src": "42 = 1",
+      "kind": "message",
+      "was": "Cannot assign to a literal value at position 3 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000\"hello\".slice(1, 3)": {
+      "entry": "expr",
+      "src": "\"hello\".slice(1, 3)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"hello\",1,2]}",
+      "now": "\"el\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"hello\".slice(2)": {
+      "entry": "expr",
+      "src": "\"hello\".slice(2)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"hello\",2,3]}",
+      "now": "\"llo\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"hello\".slice(-3)": {
+      "entry": "expr",
+      "src": "\"hello\".slice(-3)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"hello\",2,3]}",
+      "now": "\"llo\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"hello\".slice(1, -1)": {
+      "entry": "expr",
+      "src": "\"hello\".slice(1, -1)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"hello\",1,3]}",
+      "now": "\"ell\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.a &&": {
+      "entry": "expr",
+      "src": "$.a &&",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected end of input at position 6",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$.a ? $.b": {
+      "entry": "expr",
+      "src": "$.a ? $.b",
+      "kind": "message",
+      "was": "Expected ':' in ternary expression at position 9",
+      "now": "Expected ':' but got end of input at position 9",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000Object.fromEntries([[\"a\", 1], [\"b\", 2]])": {
+      "entry": "expr",
+      "src": "Object.fromEntries([[\"a\", 1], [\"b\", 2]])",
+      "kind": "output",
+      "was": "{\"$arrayToObject\":[[\"a\",1],[\"b\",2]]}",
+      "now": "{\"a\":1,\"b\":2}",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1, 2].concat([3, 4])": {
+      "entry": "expr",
+      "src": "[1, 2].concat([3, 4])",
+      "kind": "output",
+      "was": "{\"$concatArrays\":[[1,2],[3,4]]}",
+      "now": "[1,2,3,4]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u00001_": {
+      "entry": "expr",
+      "src": "1_",
+      "kind": "message",
+      "was": "Numeric separator '_' must be between two digits (at position 1)",
+      "now": "Numeric separator '_' must be between two digits at position 1",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00001__0": {
+      "entry": "expr",
+      "src": "1__0",
+      "kind": "message",
+      "was": "Numeric separator '_' must be between two digits (at position 1)",
+      "now": "Numeric separator '_' must be between two digits at position 1",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u000010 /* skip */ / 2": {
+      "entry": "expr",
+      "src": "10 /* skip */ / 2",
+      "kind": "output",
+      "was": "{\"$divide\":[10,2]}",
+      "now": "5",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.a /* unclosed": {
+      "entry": "expr",
+      "src": "$.a /* unclosed",
+      "kind": "message",
+      "was": "Unclosed block comment starting at position 4",
+      "now": "Unterminated block comment at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$min()": {
+      "entry": "expr",
+      "src": "$min()",
+      "kind": "message",
+      "was": "Operator $min expects at least 1 argument",
+      "now": "$min(operands) requires at least 1 argument, got 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$median($.scores, \"approximate\")": {
+      "entry": "expr",
+      "src": "$median($.scores, \"approximate\")",
+      "kind": "now-accepted",
+      "was": "$median is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $median(...) }) to compute it per-group, or $setWindowFields(...) for th",
+      "now": "{\"$median\":{\"input\":\"$scores\",\"method\":\"approximate\"}}",
+      "reason": "shippedBug: $median is an aggregation expression since MongoDB 7.0 — measured: {$addFields:{m:{$median:{input:\"$a\",method:\"approximate\"}}}} → 2 on mongod."
+    },
+    "expr\u0000$$foo": {
+      "entry": "expr",
+      "src": "$$foo",
+      "kind": "message",
+      "was": "Expected '.<name>' or '[<expr>]' after '$$' at position 0",
+      "now": "Unexpected token 'foo' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000Math.max(1, 2,)": {
+      "entry": "expr",
+      "src": "Math.max(1, 2,)",
+      "kind": "output",
+      "was": "{\"$max\":[1,2]}",
+      "now": "2",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Math.max(1, 2)": {
+      "entry": "expr",
+      "src": "Math.max(1, 2)",
+      "kind": "output",
+      "was": "{\"$max\":[1,2]}",
+      "now": "2",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Number($.x, $.y)": {
+      "entry": "expr",
+      "src": "Number($.x, $.y)",
+      "kind": "message",
+      "was": "Type cast 'Number()' takes exactly 1 argument at position 0",
+      "now": "'Number(x)' takes exactly one value.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000Date.UTC(2020, 1,)": {
+      "entry": "expr",
+      "src": "Date.UTC(2020, 1,)",
+      "kind": "output",
+      "was": "{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}}",
+      "now": "1577836800000",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000Date.UTC(2020, 1)": {
+      "entry": "expr",
+      "src": "Date.UTC(2020, 1)",
+      "kind": "output",
+      "was": "{\"$toLong\":{\"$dateFromParts\":{\"year\":2020,\"month\":1,\"timezone\":\"UTC\"}}}",
+      "now": "1577836800000",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$._id === ObjectId(\"507f1f77bcf86cd79943901\")": {
+      "entry": "expr",
+      "src": "$._id === ObjectId(\"507f1f77bcf86cd79943901\")",
+      "kind": "message",
+      "was": "ObjectId(\"507f1f77bcf86cd79943901\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, got 23 characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "expr\u0000$._id === ObjectId(\"zzzf1f77bcf86cd799439011\")": {
+      "entry": "expr",
+      "src": "$._id === ObjectId(\"zzzf1f77bcf86cd799439011\")",
+      "kind": "message",
+      "was": "ObjectId(\"zzzf1f77bcf86cd799439011\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, it contains non-hexadecimal characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "expr\u0000$._id === ObjectId(\"nothex\")": {
+      "entry": "expr",
+      "src": "$._id === ObjectId(\"nothex\")",
+      "kind": "message",
+      "was": "ObjectId(\"nothex\") is not a valid ObjectId: expected exactly 24 hexadecimal characters, got 6 characters, at position 19.",
+      "now": "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+      "reason": "message: the row states one text for the class of constant; the shipped interpolated the offending constant."
+    },
+    "expr\u0000$.x === 0xFFFFFFFFFFFFFFFF": {
+      "entry": "expr",
+      "src": "$.x === 0xFFFFFFFFFFFFFFFF",
+      "kind": "message",
+      "was": "Hex literal '0xFFFFFFFFFFFFFFFF' at position 8 has 16 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.",
+      "now": "Hex literal '0xFFFFFFFFFFFFFFFF' at position 8 has 16 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal. ",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00000x20000000000000": {
+      "entry": "expr",
+      "src": "0x20000000000000",
+      "kind": "message",
+      "was": "Hex literal '0x20000000000000' at position 0 has 14 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.",
+      "now": "Hex literal '0x20000000000000' at position 0 has 14 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal. at",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$._id === 0x507f1f77bcf86cd79943901": {
+      "entry": "expr",
+      "src": "$._id === 0x507f1f77bcf86cd79943901",
+      "kind": "message",
+      "was": "Hex literal '0x507f1f77bcf86cd79943901' at position 10 has 23 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal l",
+      "now": "Hex literal '0x507f1f77bcf86cd79943901' at position 10 has 23 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal l",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00000x1234567812345678123456789": {
+      "entry": "expr",
+      "src": "0x1234567812345678123456789",
+      "kind": "message",
+      "was": "Hex literal '0x1234567812345678123456789' at position 0 has 25 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal ",
+      "now": "Hex literal '0x1234567812345678123456789' at position 0 has 25 digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal ",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00000x000000000000000000000001": {
+      "entry": "expr",
+      "src": "0x000000000000000000000001",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000{ _id: 0x123456781234567812345678 }": {
+      "entry": "expr",
+      "src": "{ _id: 0x123456781234567812345678 }",
+      "kind": "message",
+      "was": "ObjectId 123456781234567812345678 looks like a typo: its embedded timestamp decodes to 1979-09-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 123456781234567812345678 looks like a typo: its embedded timestamp decodes to 1979-09-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00000x000000000000000000000000": {
+      "entry": "expr",
+      "src": "0x000000000000000000000000",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000000 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000000 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00000x49ffffffffffffffffffffff": {
+      "entry": "expr",
+      "src": "0x49ffffffffffffffffffffff",
+      "kind": "message",
+      "was": "ObjectId 49ffffffffffffffffffffff looks like a typo: its embedded timestamp decodes to 2009-05-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 49ffffffffffffffffffffff looks like a typo: its embedded timestamp decodes to 2009-05-05, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$._id === 0x000000000000000000000001": {
+      "entry": "expr",
+      "src": "$._id === 0x000000000000000000000001",
+      "kind": "message",
+      "was": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release).",
+      "now": "ObjectId 000000000000000000000001 looks like a typo: its embedded timestamp decodes to 1970-01-01, older than the smallest valid ObjectId 4a0000000000000000000000 (2009-05-05, around MongoDB's first release). at position",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000((_) => 1)(2)": {
+      "entry": "expr",
+      "src": "((_) => 1)(2)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"v_\":2},\"in\":1}}",
+      "now": "1",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };": {
+      "entry": "expr",
+      "src": "$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };",
+      "kind": "message",
+      "was": "Reusable functions must be declared at the top level of a pipeline, not inside an arrow body. Move `const g = (…) => …` out of the `=> { … }` block.",
+      "now": "Unexpected token '=' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000((x) => x * 2)(5)": {
+      "entry": "expr",
+      "src": "((x) => x * 2)(5)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}}",
+      "now": "10",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000(function (x) { return x * 2 })(5)": {
+      "entry": "expr",
+      "src": "(function (x) { return x * 2 })(5)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"x\":5},\"in\":{\"$multiply\":[\"$$x\",2]}}}",
+      "now": "10",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000function* f(x) { return x } $ = { a: f($.n) }": {
+      "entry": "expr",
+      "src": "function* f(x) { return x } $ = { a: f($.n) }",
+      "kind": "message",
+      "was": "jsmql does not support generator functions (`function*`). Use a plain `function (…) { return … }` or an arrow.",
+      "now": "Expected '(' but got '*' at position 8",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000[1, let x = 5]": {
+      "entry": "expr",
+      "src": "[1, let x = 5]",
+      "kind": "message",
+      "was": "`let` is a pipeline statement, not a value, and is only valid as a pipeline-array element. If this array is meant to be a pipeline, ensure its first element is a stage like `$match(...)`.",
+      "now": "`let` is a statement, not a value. It is only valid at the top level or as a pipeline-array element.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000let = 5;": {
+      "entry": "expr",
+      "src": "let = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got '='",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000let x 5;": {
+      "entry": "expr",
+      "src": "let x 5;",
+      "kind": "message",
+      "was": "Expected '=' after `let x` at position 6, got '5'. `let` requires an initialiser — write `let x = <expr>`.",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000let x = ; $match($.a > 0)": {
+      "entry": "expr",
+      "src": "let x = ; $match($.a > 0)",
+      "kind": "message",
+      "was": "Unexpected token ';' at position 8",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000let in = 5;": {
+      "entry": "expr",
+      "src": "let in = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got 'in'",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000let $foo = 5;": {
+      "entry": "expr",
+      "src": "let $foo = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `let` at position 4, got '$'",
+      "now": "Unexpected token 'let' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000const = 5;": {
+      "entry": "expr",
+      "src": "const = 5;",
+      "kind": "message",
+      "was": "Expected an identifier after `const` at position 6, got '='",
+      "now": "Unexpected token 'const' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000const x 5;": {
+      "entry": "expr",
+      "src": "const x 5;",
+      "kind": "message",
+      "was": "Expected '=' after `const x` at position 8, got '5'. `const` requires an initialiser — write `const x = <expr>`.",
+      "now": "Unexpected token 'const' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000($.a + $.b) || $.c": {
+      "entry": "expr",
+      "src": "($.a + $.b) || $.c",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"v\":{\"$add\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]},\"then\":\"$$v\",\"else\":\"$c\"}}}}",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlV\":{\"$add\":[\"$a\",\"$b\"]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$jsmqlV\",null]},null]},{\"$ne\":[\"$$jsmqlV\",false]},{\"$ne\":[\"$$jsmqlV\",\"\"]},{\"$ne\":[\"$$jsmqlV\",0]}]},\"then\":\"$$jsmqlV\",\"els",
+      "reason": "intended: a compiler mint carries the jsmql prefix (src/namespace.ts), so it can never collide with a developer's parameter; the shipped bare `v` could."
+    },
+    "expr\u0000$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });": {
+      "entry": "expr",
+      "src": "$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });": {
+      "entry": "expr",
+      "src": "$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });": {
+      "entry": "expr",
+      "src": "$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000[1, 2].head().round()": {
+      "entry": "expr",
+      "src": "[1, 2].head().round()",
+      "kind": "output",
+      "was": "{\"$round\":[{\"$first\":[[1,2]]},0]}",
+      "now": "1",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[[1, 2], [3]].head().toReversed()": {
+      "entry": "expr",
+      "src": "[[1, 2], [3]].head().toReversed()",
+      "kind": "output",
+      "was": "{\"$reverseArray\":{\"$first\":[[[1,2],[3]]]}}",
+      "now": "[2,1]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[{ $macth: $.age > 18 }]": {
+      "entry": "expr",
+      "src": "[{ $macth: $.age > 18 }]",
+      "kind": "now-accepted",
+      "was": "Element 0 of pipeline: '$macth' is not a known aggregation stage. Did you mean '$match'?",
+      "now": "[{\"$macth\":{\"$gt\":[\"$age\",18]}}]",
+      "reason": "statement slice: detecting a bracketed stage list is the statement target's job; the value target reads an array of documents, which HR2 passes through."
+    },
+    "expr\u0000[$prject({ name: 1 })]": {
+      "entry": "expr",
+      "src": "[$prject({ name: 1 })]",
+      "kind": "now-accepted",
+      "was": "Element 0 of pipeline: '$prject' is not a known aggregation stage. Did you mean '$project'?",
+      "now": "[{\"$prject\":{\"name\":1}}]",
+      "reason": "statement slice: detecting a bracketed stage list is the statement target's job; the value target reads an array of documents, which HR2 passes through."
+    },
+    "expr\u0000[{ $match: { age: 1 }, $sort: { age: 1 } }]": {
+      "entry": "expr",
+      "src": "[{ $match: { age: 1 }, $sort: { age: 1 } }]",
+      "kind": "now-accepted",
+      "was": "Element 0 of pipeline must be a single-key stage object (e.g. `{ $match: ... }`), but found an object with 2 keys.",
+      "now": "[{\"$match\":{\"age\":1},\"$sort\":{\"age\":1}}]",
+      "reason": "statement slice: detecting a bracketed stage list is the statement target's job; the value target reads an array of documents, which HR2 passes through."
+    },
+    "expr\u0000$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };": {
+      "entry": "expr",
+      "src": "$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };",
+      "kind": "message",
+      "was": "`.filter(o => { … })` takes a JavaScript callback, so its block body holds `const`/`let` bindings and one `return <expr>`. `$sort(...)` is a pipeline stage, not part of a callback — chain them as stage calls instead — `$",
+      "now": "Unexpected token '=' at position 2",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {\n          assert(o.total > 0, \"bad order\");\n          return { id: o._id, t: o.total };\n        });": {
+      "entry": "expr",
+      "src": "$$ = $$$.orders.filter(o => o.userId === $._id).map(o => {\n          assert(o.total > 0, \"bad order\");\n          return { id: o._id, t: o.total };\n        });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "statement slice: a statement program is refused by the expression parser; the statement target words these."
+    },
+    "expr\u0000$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });": {
+      "entry": "expr",
+      "src": "$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });",
+      "kind": "message",
+      "was": "`.map(d => { … })` takes a JavaScript callback, so its block body holds `const`/`let` bindings and one `return <expr>`. `$match(...)` is a pipeline stage, not part of a callback — chain them as stage calls instead — `$$.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, \"empty\"); return { id: d._id }; });": {
+      "entry": "expr",
+      "src": "$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, \"empty\"); return { id: d._id }; });",
+      "kind": "message",
+      "was": "`.map(d => { … })` takes a JavaScript callback, so its block body holds `const`/`let` bindings and one `return <expr>`. `assert(...)` is a pipeline stage, not part of a callback — chain them as stage calls instead — `$$.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$$ = $$.map(d => { const t = d.total; });": {
+      "entry": "expr",
+      "src": "$$ = $$.map(d => { const t = d.total; });",
+      "kind": "message",
+      "was": ".map(d => { … }) must end with 'return <expr>' — the returned value becomes each output document.",
+      "now": "Unexpected token '=' at position 3",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00001 + $.x++": {
+      "entry": "expr",
+      "src": "1 + $.x++",
+      "kind": "message",
+      "was": "Cannot assign to a '+' expression at position 7 — only field paths like '$.x' or '$.x.y' are assignable.",
+      "now": "Unexpected token '++' at position 7",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u00005 - -3": {
+      "entry": "expr",
+      "src": "5 - -3",
+      "kind": "output",
+      "was": "{\"$subtract\":[5,-3]}",
+      "now": "8",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$.a += $.b += 1": {
+      "entry": "expr",
+      "src": "$.a += $.b += 1",
+      "kind": "message",
+      "was": "Compound assignment cannot be chained at position 7 — split into separate statements",
+      "now": "Unexpected token '+=' at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000$.a =": {
+      "entry": "expr",
+      "src": "$.a =",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected token '=' at position 4",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000delete": {
+      "entry": "expr",
+      "src": "delete",
+      "kind": "message",
+      "was": "Unexpected end of expression",
+      "now": "Unexpected token 'delete' at position 0",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000($.a = 1) + 2": {
+      "entry": "expr",
+      "src": "($.a = 1) + 2",
+      "kind": "message",
+      "was": "Assignment is a statement, not a value. It is only valid at the top level or as a pipeline-array element.",
+      "now": "Expected ')' but got '=' at position 5",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000[1,2,3].take(2)": {
+      "entry": "expr",
+      "src": "[1,2,3].take(2)",
+      "kind": "output",
+      "was": "{\"$slice\":[[1,2,3],2]}",
+      "now": "[1,2]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].drop(2)": {
+      "entry": "expr",
+      "src": "[1,2,3].drop(2)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":[1,2,3]},\"in\":{\"$slice\":[\"$$jsmqlArr\",2,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}",
+      "now": "[3]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].slice(1,2)": {
+      "entry": "expr",
+      "src": "[1,2,3].slice(1,2)",
+      "kind": "output",
+      "was": "{\"$slice\":[[1,2,3],1,1]}",
+      "now": "[2]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].slice(-2)": {
+      "entry": "expr",
+      "src": "[1,2,3].slice(-2)",
+      "kind": "output",
+      "was": "{\"$slice\":[[1,2,3],-2]}",
+      "now": "[2,3]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].map(x => x)": {
+      "entry": "expr",
+      "src": "[1,2,3].map(x => x)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}}",
+      "now": "[1,2,3]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].sortBy('t')": {
+      "entry": "expr",
+      "src": "[1,2,3].sortBy('t')",
+      "kind": "output",
+      "was": "{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}}",
+      "now": "[1,2,3]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].reduce((a,b) => a + b, 0)": {
+      "entry": "expr",
+      "src": "[1,2,3].reduce((a,b) => a + b, 0)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":0,\"in\":{\"$add\":[\"$$value\",\"$$this\"]}}}",
+      "now": "6",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].includes(1)": {
+      "entry": "expr",
+      "src": "[1,2,3].includes(1)",
+      "kind": "output",
+      "was": "{\"$in\":[1,[1,2,3]]}",
+      "now": "true",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].join(',')": {
+      "entry": "expr",
+      "src": "[1,2,3].join(',')",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":[1,2,3],\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then\":{\"$toString\":\"$$this\"},\"else\":{\"$concat\":[\"$$value\",\",\",{\"$toString\":\"$$this\"}]}}}}}",
+      "now": "\"1,2,3\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].at(-1)": {
+      "entry": "expr",
+      "src": "[1,2,3].at(-1)",
+      "kind": "output",
+      "was": "{\"$arrayElemAt\":[[1,2,3],-1]}",
+      "now": "3",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].concat([1])": {
+      "entry": "expr",
+      "src": "[1,2,3].concat([1])",
+      "kind": "output",
+      "was": "{\"$concatArrays\":[[1,2,3],[1]]}",
+      "now": "[1,2,3,1]",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000[1,2,3].length": {
+      "entry": "expr",
+      "src": "[1,2,3].length",
+      "kind": "output",
+      "was": "{\"$size\":[[1,2,3]]}",
+      "now": "3",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".slice(1,2)": {
+      "entry": "expr",
+      "src": "\"abc\".slice(1,2)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"abc\",1,1]}",
+      "now": "\"b\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".slice(-2)": {
+      "entry": "expr",
+      "src": "\"abc\".slice(-2)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"abc\",1,2]}",
+      "now": "\"bc\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".groupBy('t')": {
+      "entry": "expr",
+      "src": "\"abc\".groupBy('t')",
+      "kind": "message",
+      "was": "'.groupBy(...)' expects an array receiver, but the value before it returns a string. Call '.groupBy(...)' on an array value instead.",
+      "now": "'.groupBy()' is not available on a 'string' — it is defined on 'array', 'stream', 'Object'.",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
+    },
+    "expr\u0000\"abc\".trim()": {
+      "entry": "expr",
+      "src": "\"abc\".trim()",
+      "kind": "output",
+      "was": "{\"$trim\":{\"input\":\"abc\"}}",
+      "now": "\"abc\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".toUpperCase()": {
+      "entry": "expr",
+      "src": "\"abc\".toUpperCase()",
+      "kind": "output",
+      "was": "{\"$toUpper\":\"abc\"}",
+      "now": "\"ABC\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".startsWith('a')": {
+      "entry": "expr",
+      "src": "\"abc\".startsWith('a')",
+      "kind": "output",
+      "was": "{\"$eq\":[{\"$indexOfCP\":[\"abc\",\"a\"]},0]}",
+      "now": "true",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".endsWith('a')": {
+      "entry": "expr",
+      "src": "\"abc\".endsWith('a')",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlStr\":{\"$ifNull\":[\"abc\",\"\"]}},\"in\":{\"$eq\":[{\"$substrCP\":[\"$$jsmqlStr\",{\"$max\":[0,{\"$subtract\":[{\"$strLenCP\":\"$$jsmqlStr\"},1]}]},1]},\"a\"]}}}",
+      "now": "false",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".charAt(1)": {
+      "entry": "expr",
+      "src": "\"abc\".charAt(1)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"abc\",1,1]}",
+      "now": "\"b\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".substring(1,2)": {
+      "entry": "expr",
+      "src": "\"abc\".substring(1,2)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"abc\",1,1]}",
+      "now": "\"b\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000\"abc\".at(-1)": {
+      "entry": "expr",
+      "src": "\"abc\".at(-1)",
+      "kind": "output",
+      "was": "{\"$substrCP\":[\"abc\",2,1]}",
+      "now": "\"c\"",
+      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
     }
   }
 }

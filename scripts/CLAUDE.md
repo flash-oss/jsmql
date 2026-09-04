@@ -30,7 +30,7 @@ Bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` in
 
 ### `diff-compilers.mjs`
 
-Runs a **reference** compiler (a separate checkout, default: the main checkout this worktree hangs off) and the working-tree compiler over one corpus, and reports every disagreement. Invoked as `npm run diff:compilers`; `--verbose` prints accepted rows too, `--ref <path>` picks a different reference, `--accept` records the current divergences into `test/accepted-divergences.json` for classification.
+Runs a **reference** compiler (a separate checkout, default: the main checkout this worktree hangs off) and the working-tree compiler over one corpus, and reports every disagreement. Invoked as `npm run diff:compilers`; `--verbose` prints accepted rows too, `--ref <path>` picks a different reference, `--accept` records the current divergences into `test/accepted-divergences.json` for classification. `--cur <module>` compares a module whose named exports are the entry points — the new compiler in `src/compiler/index.ts` — and `--entry <name>` narrows the run to one entry; under `--cur` a lowering the registry marks `pending` and a statement-shaped source are verified SKIPS, not divergences (see docs/specs/emit-pass.md § The acceptance gate).
 
 Exists because the test suite cannot catch a refactor that changes meaning — the assertions get rewritten along with the code. The reference is not editable from the branch doing the changing, so it is the only thing here that can.
 

@@ -1,0 +1,199 @@
+// Phase 5 of src/compiler/ — the value target, end to end.
+//
+// Each case is a JSMQL input and the MQL the new compiler emits for it. The
+// expectations are the shipped compiler's outputs where the two agree, and the
+// registry's stated shape where they differ by design (the `$switch` dispatch,
+// the `jsmql`-prefixed mint). The wider net is scripts/diff-compilers.mjs --cur.
+
+import { describe, expect, it } from "vitest";
+import { expr } from "../src/compiler/index.ts";
+import { PendingLowering } from "../src/compiler/emit/errors.ts";
+
+const TRUTHY = (v: unknown) => ({
+  $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
+});
+
+describe("compiler/emit/lower — literals and references", () => {
+  it("lowers each literal to its BSON value", () => {
+    expect(expr("42")).toBe(42);
+    expect(expr('"x"')).toBe("x");
+    expect(expr("true")).toBe(true);
+    expect(expr("null")).toBe(null);
+    expect(expr("123n")).toEqual({ $toLong: "123" });
+    expect(String(expr("0x507f1f77bcf86cd799439011"))).toBe("507f1f77bcf86cd799439011");
+    expect(expr("`n=${$.n}`")).toEqual({ $concat: ["n=", { $toString: "$n" }] });
+    // a row that states `returns: "string"` needs no $toString; an unknown one does
+    expect(expr("`a${$toUpper($.s)}`")).toEqual({ $concat: ["a", { $toUpper: "$s" }] });
+    expect(expr("`a${$abs($.n)}`")).toEqual({ $concat: ["a", { $toString: { $abs: "$n" } }] });
+  });
+
+  it("refuses the literals that have no value", () => {
+    expect(() => expr("undefined")).toThrow(/only meaningful in a comparison/);
+    expect(() => expr("/x/i")).toThrow(/Regex literals are only valid/);
+    expect(() => expr("x => x")).toThrow();
+  });
+
+  it("spells a field path, the root, and a bracketed field", () => {
+    expect(expr("$.a.b")).toBe("$a.b");
+    expect(expr("$")).toBe("$$ROOT");
+    expect(expr('$["a.b"]')).toBe("$a.b");
+    expect(expr("$.a?.b.c")).toBe("$a.b.c");
+  });
+
+  it("groups literal elements around a spread", () => {
+    expect(expr("[1, ...$.a]")).toEqual({ $concatArrays: [[1], "$a"] });
+    expect(expr("[...$.a, ...$.b]")).toEqual({ $concatArrays: ["$a", "$b"] });
+    expect(expr("{ a: 1, ...$.o }")).toEqual({ $mergeObjects: [{ a: 1 }, "$o"] });
+    expect(expr("{ [$.k]: 1, b: 2 }")).toEqual({
+      $arrayToObject: [
+        [
+          { k: "$k", v: 1 },
+          { k: "b", v: 2 },
+        ],
+      ],
+    });
+  });
+});
+
+describe("compiler/emit/lower — operators", () => {
+  it("lowers each binary operator by its production's renderer", () => {
+    expect(expr("$.qty * $.price")).toEqual({ $multiply: ["$qty", "$price"] });
+    expect(expr("$.a * 2 * 3")).toEqual({ $multiply: ["$a", 2, 3] });
+    expect(expr("$.a - 1")).toEqual({ $subtract: ["$a", 1] });
+    expect(expr("$.a ** 2")).toEqual({ $pow: ["$a", 2] });
+    expect(expr("$.a ?? $.b ?? 1")).toEqual({ $ifNull: ["$a", "$b", 1] });
+    expect(expr("$.a === 1")).toEqual({ $eq: ["$a", 1] });
+    expect(expr("$.a >= 1")).toEqual({ $gte: ["$a", 1] });
+    expect(expr("$.a in [1, 2]")).toEqual({ $in: ["$a", [1, 2]] });
+    expect(expr('"k" in { k: 1, j: 2 }')).toEqual({ $in: ["k", ["k", "j"]] });
+  });
+
+  it("reads `+` as $concat when an operand is a string, $add otherwise", () => {
+    expect(expr("$.a + $.b")).toEqual({ $add: ["$a", "$b"] });
+    expect(expr('$.s + "x"')).toEqual({ $concat: ["$s", "x"] });
+  });
+
+  it("lowers the unary operators", () => {
+    expect(expr("-$.a")).toEqual({ $multiply: ["$a", -1] });
+    expect(expr("~$.a")).toEqual({ $bitNot: "$a" });
+    expect(expr("typeof $.a")).toEqual({ $type: "$a" });
+    expect(expr("!$.a")).toEqual({ $not: TRUTHY("$a") });
+    expect(expr("!!$.a")).toEqual(TRUTHY("$a"));
+    expect(expr("!($.a > 1)")).toEqual({ $not: { $gt: ["$a", 1] } });
+  });
+
+  it("checks truthiness on a value and not on a boolean", () => {
+    expect(expr("$.a ? 1 : 2")).toEqual({ $cond: { if: TRUTHY("$a"), then: 1, else: 2 } });
+    expect(expr("$.a > 1 ? 1 : 2")).toEqual({ $cond: { if: { $gt: ["$a", 1] }, then: 1, else: 2 } });
+    expect(expr("$.a > 1 && $.b < 2")).toEqual({ $and: [{ $gt: ["$a", 1] }, { $lt: ["$b", 2] }] });
+    expect(expr("$.a && $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$b", else: "$a" } });
+    expect(expr("$.a || $.b")).toEqual({ $cond: { if: TRUTHY("$a"), then: "$a", else: "$b" } });
+  });
+
+  it("binds a computed left side once, under a namespaced mint", () => {
+    const out = expr("$.a && $.b || $.c") as { $let: { vars: Record<string, unknown>; in: unknown } };
+    expect(Object.keys(out.$let.vars)).toEqual(["jsmqlV"]);
+    expect(out.$let.in).toEqual({ $cond: { if: TRUTHY("$$jsmqlV"), then: "$$jsmqlV", else: "$c" } });
+  });
+
+  it("lowers the presence and type tests through the predicate vocabulary", () => {
+    expect(expr("$.a !== undefined")).toEqual({ $ne: [{ $type: "$a" }, "missing"] });
+    expect(expr('typeof $.a === "boolean"')).toEqual({ $eq: [{ $type: "$a" }, "bool"] });
+    expect(expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
+    expect(() => expr("$.a == 1")).toThrow(/only allowed against null/);
+  });
+});
+
+describe("compiler/emit/lower — access", () => {
+  it("reads an index by what the receiver is proven to be", () => {
+    // a constant settles in the fold; the runtime shapes are for what the fold cannot see
+    expect(expr("[1, 2][0]")).toBe(1);
+    expect(expr("[$.a, 2][0]")).toEqual({ $arrayElemAt: [["$a", 2], 0] });
+    expect(expr("$.a[0]")).toEqual({
+      $cond: {
+        if: { $isArray: "$a" },
+        then: { $arrayElemAt: ["$a", 0] },
+        else: {
+          $cond: {
+            if: { $eq: [{ $type: "$a" }, "string"] },
+            then: { $substrCP: ["$a", 0, 1] },
+            else: { $getField: { field: "0", input: "$a" } },
+          },
+        },
+      },
+    });
+    expect(expr('$.o["k-1"]')).toEqual({ $getField: { field: "k-1", input: "$o" } });
+    expect(expr("$.a[$.i]")).toEqual({
+      $cond: {
+        if: { $isArray: "$a" },
+        then: { $arrayElemAt: ["$a", "$i"] },
+        else: { $getField: { field: { $toString: { $ifNull: ["$i", ""] } }, input: "$a" } },
+      },
+    });
+    expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);
+  });
+
+  it("dispatches an unprovable `.length` at runtime, and proves a literal's", () => {
+    expect(expr("[1, 2].length")).toBe(2);
+    expect(expr('"abc".length')).toBe(3);
+    expect(expr("[$.a, 2].length")).toEqual({ $size: ["$a", 2] });
+    const out = expr("$.x.length");
+    expect(out).toEqual({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } },
+          {
+            case: { $in: [{ $type: "$x" }, ["string", "null", "missing"]] },
+            then: { $strLenCP: { $ifNull: ["$x", ""] } },
+          },
+        ],
+        default: "$$REMOVE",
+      },
+    });
+  });
+
+  it("reads a namespace member from its row", () => {
+    expect(expr("Math.PI")).toBe(3.141592653589793);
+  });
+});
+
+describe("compiler/emit/lower — calls", () => {
+  it("runs a MongoDB operator's row, positional or object-shaped", () => {
+    expect(expr("$abs($.a)")).toEqual({ $abs: "$a" });
+    expect(expr("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
+    expect(expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
+    expect(expr("$cond($.a, 1, 2)")).toEqual({ $cond: { if: "$a", then: 1, else: 2 } });
+    expect(expr('$literal("$x")')).toEqual({ $literal: "$x" });
+    expect(expr("$foo($.a)")).toEqual({ $foo: "$a" });
+  });
+
+  it("binds a `$let` arrow's parameters to its vars, and refuses one that names something else", () => {
+    expect(expr("$let({ x: 1 }, (x) => x + 1)")).toEqual({ $let: { vars: { x: 1 }, in: { $add: ["$$x", 1] } } });
+    expect(() => expr("$let({ x: 1 }, (y) => y + 1)")).toThrow(/must name its variables/);
+  });
+
+  it("lowers the globals by their argument class", () => {
+    expect(expr("Number($.s)")).toEqual({ $toDouble: "$s" });
+    expect(expr("new Date($.ms)")).toEqual({ $toDate: "$ms" });
+    expect(expr("ObjectId($.id)")).toEqual({ $toObjectId: "$id" });
+    expect(() => expr('Number("abc")')).toThrow(/\$toDouble/);
+  });
+
+  it("inlines a declared function and refuses recursion", () => {
+    expect(expr("(() => { const y = $.a * 2; return y + 1 })()")).toEqual({
+      $let: { vars: {}, in: { $let: { vars: { y: { $multiply: ["$a", 2] } }, in: { $add: ["$$y", 1] } } } },
+    });
+    expect(expr("((x) => x * $.a)(2)")).toEqual({ $let: { vars: { x: 2 }, in: { $multiply: ["$$x", "$a"] } } });
+  });
+
+  it("throws a typed PendingLowering for a row still marked pending", () => {
+    expect(() => expr("$.items.map(x => x * 1.1)")).toThrow(PendingLowering);
+  });
+
+  it("refuses a name from a closed set with a suggestion", () => {
+    expect(() => expr("$.s.trimm()")).toThrow(/Unknown method '.trimm\(\)' at position 3. Did you mean '.trim\(\)'/);
+    expect(() => expr("Math.flor($.x)")).toThrow(
+      /Unknown method 'Math.flor\(\)' at position 4. Did you mean 'Math.floor'/,
+    );
+  });
+});

@@ -184,17 +184,28 @@ const fieldPath: Rule = {
     // spelling belongs to the chained stage call (`.$match(…)`).
     if (n.name.startsWith("$") || isFieldProperty(n.name)) return node;
     const segments: string[] = [n.name];
-    let base = n.object as { type: string; object?: object; name?: string; path?: string; pos?: number };
+    let optional = (n as { optional?: boolean }).optional === true;
+    let base = n.object as {
+      type: string;
+      object?: object;
+      name?: string;
+      path?: string;
+      pos?: number;
+      optional?: boolean;
+    };
     while (base.type === "MemberAccess") {
       const name = base.name as string;
       if (name.startsWith("$")) return node;
       segments.unshift(name);
+      optional ||= base.optional === true;
       base = base.object as typeof base;
     }
     if (base.type !== "FieldRef") return node;
+    optional ||= base.optional === true;
     // The bare `$` has an empty path, so it contributes no leading segment.
     const head = base.path === "" ? [] : [base.path as string];
-    return { type: "FieldRef", path: [...head, ...segments].join("."), pos: base.pos } as object;
+    const folded = { type: "FieldRef", path: [...head, ...segments].join("."), pos: base.pos };
+    return (optional ? { ...folded, optional: true } : folded) as object;
   },
 };
 

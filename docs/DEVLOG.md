@@ -10,6 +10,58 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): the emit phase's value target — `jsmql.expr` through the new compiler, judged against the shipped one over 2929 sources
+
+The fifth phase lowers a bare aggregation expression end to end: `src/compiler/index.ts`
+exports `expr(source)`, and `scripts/diff-compilers.mjs --cur src/compiler/index.ts --entry
+expr` compares it with the shipped `jsmql.expr` over every source the test suite spells.
+
+```js
+$.qty * $.price              // → {$multiply:["$qty","$price"]}
+$.a > 1 ? 1 : 2              // → {$cond:{if:{$gt:["$a",1]},then:1,else:2}}
+$.a && $.b || $.c            // → {$let:{vars:{jsmqlV:{$cond:{…}}},in:{$cond:{if:<jsTruthy $$jsmqlV>,then:"$$jsmqlV",else:"$c"}}}}
+$let({ x: 1 }, (x) => x + 1) // → {$let:{vars:{x:1},in:{$add:["$$x",1]}}}
+$.x.length                   // → {$switch:{branches:[{case:{$in:[{$type:"$x"},["array"]]},then:{$size:"$x"}},…],default:"$$REMOVE"}}
+```
+
+New modules under `src/compiler/emit/`: `types.ts` (what a node provably is), `inputs.ts`
+(the one constructor of a renderer's record), `check.ts` (the literal-gated argument checks),
+`errors.ts` (every message, worded once), `lower.ts` (the value and truth readings). The
+simple operator productions carry their own renderer now — `subtraction` emits `$subtract`,
+`conditional` emits `$cond` over `truth(test)` — and a production whose lowering must read its
+neighbours (`+`, `&&`, `x[i]`, `.method()`) states `inCode("src/compiler/emit/lower.ts")`, a
+cell distinct from `pending`: the ratchet counts pending down to zero, and these never move.
+
+The differential found the defects a unit test cannot: a lone array handed to a single-operand
+operator was not wrapped (`$arrayToObject([[…]])`, the server reads it as two arguments — the
+shared `single` renderer wraps once, `$literal` alone stays verbatim); `?.` was lost when a path
+folded (`FieldRef.optional` keeps it, so `[...$.a?.b]` reads `{$ifNull:["$a.b",[]]}`); `$$.length`
+in a bare expression hoisted a stage into a chain nothing drained (a `Chain` knows whether it is
+a pipeline and refuses); a spread or a computed key in an operator body reached the server; a
+16-digit hex literal lost precision silently; an ObjectId literal was accepted as an object key;
+a constant `bigint` reached the output; `Array.from({length}, mapper)` dropped the mapper (now
+`pending`). A raw `{ $add: 5 }` and `$setUnion($.a)` are refused as the server refuses them; an
+explicit `$and([])` passes. Fifty-five per-operator literal types were ported into `slotType` /
+a new `Arity.elementType`, and the shipped ObjectId plausibility guard became one shared
+`objectid-guard.ts`, read by the parser for `0x…` and by the emit phase for `ObjectId("…")`.
+
+Every divergence is judged in `test/accepted-divergences.json`:
+```
+divergent : 153  {"message":73,"now-rejected":2,"output":66,"now-accepted":12}
+skipped   : 2199 (861 pending in the registry, 1338 statement-shaped)
+UNCLASSIFIED: 0
+```
+`equivalent` — the fold settles a constant (`Math.max(1, 2)` → `2`, `"abc".slice(-2)` → `"bc"`);
+`intended` — the `$switch` dispatch, the `jsmql`-prefixed mint; `shippedBug` — `$median` IS an
+expression on mongod 7+, `$sampleRate` has no expression form, the server accepts the `u`
+regex option; `message` — a reworded refusal; `statement slice` — a bracketed stage list or an
+assignment program. The stage rows' value-position text names the statement and chain-link
+spellings and, for ten of them, the expression analogue (`$match` → `$filter`); the
+accumulator-only and window-only rows say where they belong; `$sampleRate` says it is a query
+operator. The spread refusal on `$min`/`$max`/`$concatArrays`/`$mergeObjects` names the
+JavaScript form that takes one, from a new row field `spreadAlternative`.
+
+---
 ## 2026-09-04 — feat(compiler): the emit phase reads an expression two ways — value or truth — and a condition slot takes only a truth
 
 `emit/mode.ts` and `emit/mql.ts`. The developer's ruling on truthiness (a JavaScript spelling

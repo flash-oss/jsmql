@@ -128,8 +128,14 @@ export type Expr =
   | { type: "ObjectLiteral"; entries: readonly ObjectEntry[]; pos: number }
 
   // ── references ────────────────────────────────────────────────────────────
-  /** `$.a.b` and the bare `$`, which is the whole document and has an empty path. */
-  | { type: "FieldRef"; path: string; pos: number }
+  /**
+   * `$.a.b` and the bare `$`, which is the whole document and has an empty path.
+   * `optional` when any link on the way was `?.`: a consumer that null-poisons
+   * (`$concat`, `$concatArrays`, `$size`) then reads a missing path as its empty
+   * value, as JavaScript's `?.` short-circuits — the fold keeps the flag, the
+   * path spelling cannot carry it.
+   */
+  | { type: "FieldRef"; path: string; optional?: true; pos: number }
   /**
    * `$$` — the current collection, as a stream of documents.
    *

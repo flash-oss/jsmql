@@ -15,6 +15,11 @@
 //   node scripts/diff-compilers.mjs --verbose       # every divergence in full
 //   node scripts/diff-compilers.mjs --ref <path>    # a different reference checkout
 //   node scripts/diff-compilers.mjs --accept        # record the current divergences as intended
+//   node scripts/diff-compilers.mjs --cur src/compiler/index.ts --entry expr
+//                                                   # the NEW compiler against the shipped one: a
+//                                                   # fifth kind, `skipped`, for a lowering the
+//                                                   # registry says is still pending — verified
+//                                                   # against the row, so a slice cannot fake one
 //
 // Exit code is 1 while any UNACCEPTED divergence remains, so CI can gate on it.
 
@@ -77,7 +82,63 @@ function referenceIdentity() {
 const refId = referenceIdentity();
 
 const { jsmql: ref } = await import(pathToFileURL(refEntry).href);
-const { jsmql: cur } = await import(pathToFileURL(join(root, "src", "index.ts")).href);
+// `--cur` names a module whose named exports ARE the entry points (`expr`, …), the
+// new compiler's shape; without it the working tree's `jsmql` callable is compared.
+const curPath = opt("--cur", null);
+const curModule = await import(
+  pathToFileURL(curPath === null ? join(root, "src", "index.ts") : resolve(root, curPath)).href
+);
+const cur = curPath === null ? curModule.jsmql : curModule;
+// A lowering the registry still marks `pending` is a SKIP, not a divergence — but only
+// when the row agrees, so the claim is checked rather than trusted.
+const { NAMES } = await import(pathToFileURL(join(root, "src", "registry", "names.ts")).href);
+const { PRODUCTIONS } = await import(pathToFileURL(join(root, "src", "registry", "productions.ts")).href);
+const CELL_OF = {
+  value: "expr",
+  filter: "filter",
+  stream: "stream",
+  statement: "statement",
+  group: "group",
+  window: "window",
+  updateDoc: "updateDoc",
+};
+// The row's cell for that position must itself state `pending: <livesIn>` — in a
+// per-family branch, a byArgs class or the row's `uncertain` as much as at the top.
+const isVerifiedSkip = (e) => {
+  if (e === null || typeof e !== "object" || e.name !== "PendingLowering") return false;
+  const row = NAMES[e.name_] ?? PRODUCTIONS[e.name_];
+  const cell = row?.[CELL_OF[e.position]];
+  return cell !== undefined && JSON.stringify(cell).includes(JSON.stringify({ pending: e.livesIn }).slice(1, -1));
+};
+// The new compiler's `expr` is the VALUE target. The shipped `jsmql.expr` also accepts a
+// statement program and answers with a pipeline; those sources belong to the statement
+// slice. A source is statement-shaped when the expression parser refuses it and the
+// statement parser accepts it — checked, not assumed.
+const newParse =
+  curPath === null ? null : await import(pathToFileURL(join(root, "src", "compiler", "parse", "parser.ts")).href);
+const newShape =
+  curPath === null ? null : await import(pathToFileURL(join(root, "src", "compiler", "passes", "shape.ts")).href);
+const newDesugar =
+  curPath === null ? null : await import(pathToFileURL(join(root, "src", "compiler", "passes", "desugar.ts")).href);
+const isStatementShaped = (src) => {
+  if (newParse === null) return false;
+  try {
+    newParse.parseExpression(src);
+  } catch {
+    try {
+      newParse.parse(src);
+      return true;
+    } catch {
+      return false;
+    }
+  }
+  // An expression that parses may still BE a pipeline — a bracketed stage list.
+  try {
+    return newShape.shapeOf(newDesugar.desugar(newParse.parse(src))) === "pipeline";
+  } catch {
+    return false;
+  }
+};
 
 // ── corpus ───────────────────────────────────────────────────────────────────
 // Every jsmql source string the test suite already exercises, plus generated
@@ -270,14 +331,15 @@ function stable(v) {
  * A migration that changed an error's wording or moved its caret produced ZERO divergence
  * while the other four entries only ever see the throw, never the position.
  */
-const ENTRIES = ["jsmql", "expr", "filter", "pipeline", "update", "validate"];
+const ALL_ENTRIES = ["jsmql", "expr", "filter", "pipeline", "update", "validate"];
+const ENTRIES = opt("--entry", null) === null ? ALL_ENTRIES : [opt("--entry", null)];
 const call = (api, entry, src) => (entry === "jsmql" ? api(src) : api[entry](src));
 
 function run(api, entry, src) {
   try {
     return { ok: true, value: JSON.stringify(stable(call(api, entry, src))) };
   } catch (e) {
-    return { ok: false, value: e instanceof Error ? e.message : String(e) };
+    return { ok: false, skipped: isVerifiedSkip(e), value: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -285,11 +347,19 @@ const accepted = existsSync(ACCEPTED_PATH) ? JSON.parse(readFileSync(ACCEPTED_PA
 const keyOf = (entry, src) => `${entry} ${src}`;
 
 const rows = [];
+const skipped = [];
 for (const src of CORPUS) {
   for (const entry of ENTRIES) {
     const a = run(ref, entry, src);
     const b = run(cur, entry, src);
     if (a.ok === b.ok && a.value === b.value) continue;
+    // The shipped `expr` answers a statement program with a PIPELINE (an array): that
+    // source is the statement slice whatever its spelling — a lone `$match(…)` included.
+    const refIsPipeline = a.ok && a.value.startsWith("[");
+    if (b.skipped === true || (curPath !== null && entry === "expr" && (refIsPipeline || isStatementShaped(src)))) {
+      skipped.push({ key: keyOf(entry, src), entry, src, why: b.skipped === true ? "pending" : "statement-shaped" });
+      continue;
+    }
     const kind = a.ok && b.ok ? "output" : !a.ok && !b.ok ? "message" : a.ok ? "now-rejected" : "now-accepted";
     rows.push({ key: keyOf(entry, src), entry, src, kind, ref: a, cur: b });
   }
@@ -335,6 +405,12 @@ console.log(
 );
 console.log(`corpus    : ${CORPUS.length} sources × ${ENTRIES.length} entry points`);
 console.log(`divergent : ${rows.length}  ${JSON.stringify(byKind(rows))}`);
+if (curPath !== null) {
+  const pendingN = skipped.filter((s) => s.why === "pending").length;
+  console.log(
+    `skipped   : ${skipped.length}  (${pendingN} pending in the registry, ${skipped.length - pendingN} statement-shaped: the statement slice)`,
+  );
+}
 console.log(`accepted  : ${rows.length - unaccepted.length}`);
 console.log(`UNCLASSIFIED: ${unaccepted.length}`);
 

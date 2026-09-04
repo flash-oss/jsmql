@@ -399,6 +399,12 @@ export type Arity = {
   /** Per-slot literal type, checked only when the slot is a literal. */
   slotType?: Readonly<Record<number, ArgType>>;
   /**
+   * The literal type EVERY operand must have, for a list operator — `$multiply`
+   * takes numbers, `$add` numbers or dates. Checked only on a literal operand,
+   * so `$multiply($.a, "x")` is refused and `$multiply($.a, $.b)` is not.
+   */
+  elementType?: ArgType;
+  /**
    * Per-slot closed value set, checked only when the slot is a literal.
    *   $.d.plus(1, "day")   → accepted
    *   $.d.plus(30, "days") → refused, the plural is not a unit
@@ -664,6 +670,19 @@ export type Pending = {
 export const pending = (livesIn: string, args?: Arity): Pending =>
   args === undefined ? { pending: livesIn } : { pending: livesIn, args };
 
+/**
+ * The renderer is CODE, by design, and this names the file. Not `Pending`: a
+ * pending cell is a fact that has yet to move into a row, and a ratchet counts
+ * those down to zero. This cell never moves, because the lowering reads its
+ * NEIGHBOURS — the operand types for `+` (`$add` or `$concat`), the truth of
+ * the left side for `&&`, the receiver's shape for `x[0]` — and a single row
+ * cannot see any of that. A row states that the construct exists and where it
+ * is legal; the code says how it is built.
+ */
+export type InCode = { inCode: string };
+
+export const inCode = (file: string): InCode => ({ inCode: file });
+
 /** A refusal that carries the message the user should read instead. */
 export type Refusal = {
   unsupported: string;
@@ -873,7 +892,7 @@ export type Cell<
    * while checking nothing, which is how two dangling owners went unnoticed.
    */
   C extends readonly string[] = readonly never[],
-> = Listed extends true ? Emitter<F, In, Out> | Pending : NonEmitter<F, C>;
+> = Listed extends true ? Emitter<F, In, Out> | Pending | InCode : NonEmitter<F, C>;
 
 /**
  * The answer for a position `where` omits. One answer for every family, or one
@@ -923,6 +942,22 @@ export const accumulated = (input: { name: string; args: readonly Expr[]; value:
 };
 
 /**
+ * The rendering every SINGLE-operand operator shares.
+ *
+ * An operand that renders as an ARRAY is wrapped one level, because a literal
+ * array in an operator's slot is read as its argument LIST — measured:
+ *   { $size: [1, 2] }      → "Expression $size takes exactly 1 arguments. 2 were passed in"
+ *   { $size: [[1, 2]] }    → 2
+ * A path or an expression renders as a string or a document and is handed over
+ * as it is. Stated once here, so the wrap cannot be forgotten on one of the
+ * seventy rows that need it.
+ */
+export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => {
+  const operand = input.value(input.args[0]);
+  return { [input.name]: Array.isArray(operand) ? [operand] : operand };
+};
+
+/**
  * The rendering every OBJECT-SHAPED operator shares.
  *
  * One argument is the object-literal call and passes straight through. Two or
@@ -931,7 +966,9 @@ export const accumulated = (input: { name: string; args: readonly Expr[]; value:
  * once per row, not twice:
  *   $dateTrunc({ date: $.t, unit: "day" })  → { $dateTrunc: { date: "$t", unit: "day" } }
  *   $dateTrunc($.t, "day")                  → the same document
- * The previous per-row emitter read `args[0]` alone and dropped "day".
+ *   $trim($.name)                           → { $trim: { input: "$name" } }
+ * One argument is the body only when it IS an object literal; a lone value is the
+ * first positional. The previous per-row emitter read `args[0]` alone and dropped "day".
  */
 export const objectBody = (input: {
   name: string;
@@ -940,7 +977,8 @@ export const objectBody = (input: {
   value: (e: Expr) => unknown;
 }): unknown => {
   const { name, args, keys, value } = input;
-  if (args.length <= 1 || keys.length === 0) return { [name]: value(args[0]) };
+  const isBody = args.length === 1 && (args[0] as { type: string }).type === "ObjectLiteral";
+  if (isBody || keys.length === 0) return { [name]: value(args[0]) };
   return { [name]: Object.fromEntries(args.map((a, i) => [keys[i], value(a)])) };
 };
 

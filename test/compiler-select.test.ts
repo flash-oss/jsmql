@@ -60,7 +60,7 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("Date", "f($.y, $.m)")).toMatchObject({ kind: "pending", livesIn: "src/mql-date.ts" });
     // a constant that reached the row did not fold: refused, in the developer's terms
     expect(pick("Date", 'f("not a date")')).toMatchObject({ kind: "refused" });
-    expect((pick("Date", 'f("not a date")') as { message: string }).message).toContain("ISO string");
+    expect((pick("Date", 'f("not a date")') as { message: string }).message).toContain("ISO 8601");
     // the leftover is stated
     expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
     expect(pick("Date", "f(1, 2, 3, 4, 5, 6, 7, 8)")).toMatchObject({ kind: "wrongCount", got: 8 });

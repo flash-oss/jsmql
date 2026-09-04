@@ -37,8 +37,8 @@ produce a document, it calls a function here.
 ## Layout
 
 ```
-index.ts       source → MQL. The only public entry.
-errors.ts      every message built from the registry's own text.
+index.ts       source → MQL. The only public entry: `expr(source)` today.
+objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
 
 lex/
   token.ts     the Token record and the source-position helpers.
@@ -72,6 +72,13 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
                The only minter of `Truth`.
   mql.ts       the MQL shapes that READ a condition ($cond, $filter, $switch, …),
                each typed to take a Truth. Built here and nowhere else.
+  types.ts     what a node PROVABLY is: a literal's kind, a row's measured
+               `returns`, a binding's type. A field path proves nothing.
+  inputs.ts    the one constructor of the `In` record a renderer receives.
+  check.ts     the literal-gated argument checks, each reading a stated rule.
+  errors.ts    every message the phase can produce, worded once.
+  lower.ts     the value and truth readings over every node type. See
+               docs/specs/emit-pass.md.
 ```
 
 ## Conventions

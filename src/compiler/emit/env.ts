@@ -61,6 +61,16 @@ export const injectedNeedsLiteral = (site: Site): boolean =>
  * lowerings of one statement append to the same list, in order.
  */
 export class Chain {
+  /**
+   * Is there a pipeline to place a stage in? A bare expression (`jsmql.expr`)
+   * and a filter have none, so a value that must materialise a stage — the
+   * stream count — has nowhere to go and is refused rather than written into a
+   * list nothing drains.
+   */
+  readonly isPipeline: boolean;
+  constructor(isPipeline = true) {
+    this.isPipeline = isPipeline;
+  }
   /** The stages emitted so far. */
   readonly emitted: Stage[] = [];
   /** Stages a value placed ahead of the statement it stands in; drained by `flush`. */
@@ -122,7 +132,7 @@ export class Env {
    * reserved for the whole of it, so a compiler mint never shadows a parameter
    * bound deeper in.
    */
-  static root(program: object, root: Position, chain: Chain = new Chain()): Env {
+  static root(program: object, root: Position, chain: Chain = new Chain(root === "statement")): Env {
     const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [] };
     return new Env(Scope.root(namesIn(program)), site, chain);
   }

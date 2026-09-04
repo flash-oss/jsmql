@@ -40,6 +40,7 @@ import type { Token } from "../lex/token.ts";
 import type { ProductionKey } from "../../registry/productions.ts";
 import { blockBodyOf } from "../rows.ts";
 import { Cursor, found, ParseError, spell } from "./cursor.ts";
+import { objectIdTypo } from "../objectid-guard.ts";
 import {
   ASSIGN_TRIGGERS,
   INFIX,
@@ -59,6 +60,15 @@ const spelled = (rule: ProductionKey | null): string => (rule === null ? "" : (S
 const OBJECT_ID_DIGITS = 24;
 
 type Parsed = { expr: Expr; /** The rule that produced it, for the mixing rules. */ rule: ProductionKey | null };
+
+/** "Unexpected token 'x'", or "Unexpected end of input" when the token is the end. */
+const unexpected = (t: { type: string }): string =>
+  t.type === "EOF" ? "Unexpected end of input" : `Unexpected token ${found(t as never)}`;
+
+function assertPlausibleObjectId(hex: string, pos: number): void {
+  const typo = objectIdTypo(hex);
+  if (typo !== null) throw new ParseError(typo, pos);
+}
 
 export function parse(source: string): Program {
   const p = new Parser(lex(source));
@@ -100,12 +110,12 @@ export function parseExpression(source: string): Expr {
  * The wording a block body with no `return` gets when its callee does not take
  * pipeline stages — every method but the one whose row says `blockBody: "stages"`.
  */
-const NEEDS_RETURN =
-  "A block body must end with a `return <expr>` statement. Write `x => { const a = …; return <expr>; }` / " +
+const needsReturn = (pos: number): string =>
+  `A block body must end with a \`return <expr>\` statement at position ${pos}. Write \`x => { const a = …; return <expr>; }\` / ` +
   "`function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly";
 
 /** What one `{ … }` block held: statements, an optional `return`, and whether a `;` ended a statement. */
-type Block = { stmts: PipelineStmt[]; ret: Expr | null; retPos: number; sawSemi: boolean };
+type Block = { stmts: PipelineStmt[]; ret: Expr | null; retPos: number; sawSemi: boolean; endPos: number };
 
 class Parser {
   private readonly c: Cursor;
@@ -125,14 +135,14 @@ class Parser {
 
   expectEnd(): void {
     if (!this.c.is("EOF")) {
-      throw new ParseError(`Unexpected ${found(this.c.peek())}`, this.c.peek().pos);
+      throw new ParseError(`${unexpected(this.c.peek())}`, this.c.peek().pos);
     }
   }
 
   /** The checks that need the WHOLE tree: run once, after the entry method returns. */
   finish(): void {
     const first = this.unclaimedStages.values().next();
-    if (!first.done) throw new ParseError(NEEDS_RETURN, first.value);
+    if (!first.done) throw new ParseError(needsReturn(first.value), first.value);
   }
 
   // ── the entry form ────────────────────────────────────────────────────────
@@ -288,11 +298,13 @@ class Parser {
   private block(terminator: "RBrace" | "EOF"): Block {
     const stmts: PipelineStmt[] = [];
     let sawSemi = false;
+    let endPos = this.c.peek().pos;
     for (;;) {
       // An empty statement is not an error, and a `;` anywhere — leading included —
       // is the token that says pipeline.
       while (this.c.eat("Semi")) sawSemi = true;
       if (this.c.is(terminator)) {
+        endPos = this.c.peek().pos;
         if (terminator === "RBrace") this.c.next();
         break;
       }
@@ -302,8 +314,8 @@ class Parser {
         while (this.c.eat("Semi")) {
           /* empty */
         }
-        this.c.expect("RBrace");
-        return { stmts, ret, retPos: r.pos, sawSemi };
+        const close = this.c.expect("RBrace");
+        return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
       const st = this.statement();
       stmts.push(st);
@@ -315,7 +327,7 @@ class Parser {
         throw new ParseError(`Expected ${spell("Semi")} but got ${found(this.c.peek())}`, this.c.peek().pos);
       }
     }
-    return { stmts, ret: null, retPos: 0, sawSemi };
+    return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
 
   private statement(): PipelineStmt {
@@ -787,18 +799,30 @@ class Parser {
         if (WORDS.get(t.text) === "functionBinding") return this.functionExpr();
         return this.identifierOrLambda();
       default:
-        throw new ParseError(`Unexpected ${found(t)}`, t.pos);
+        throw new ParseError(`${unexpected(t)}`, t.pos);
     }
   }
 
-  /** `0x` with exactly 24 hex digits is an ObjectId; otherwise a number. */
+  /**
+   * `0x` with exactly 24 hex digits is an ObjectId; any other hex run is an
+   * integer, accepted only while it fits a double exactly — a longer one would
+   * lose precision silently, and is neither an id nor a number JavaScript can
+   * hold, so it is refused with the two spellings that work.
+   */
   private number(): Expr {
     const t = this.c.next();
-    const hex = /^0[xX]([0-9a-fA-F]+)$/.exec(t.text);
-    if (hex !== null && hex[1].length === OBJECT_ID_DIGITS) {
+    const hex = /^0[xX]([0-9a-fA-F]+)$/.exec(t.text.replace(/_/g, ""));
+    if (hex === null) return { type: "NumberLiteral", value: Number(t.text), pos: t.pos };
+    if (hex[1].length === OBJECT_ID_DIGITS) {
+      assertPlausibleObjectId(hex[1].toLowerCase(), t.pos);
       return { type: "ObjectIdLiteral", hex: hex[1].toLowerCase(), pos: t.pos };
     }
-    return { type: "NumberLiteral", value: Number(t.text), pos: t.pos };
+    const big = BigInt("0x" + hex[1]);
+    if (big <= BigInt(Number.MAX_SAFE_INTEGER)) return { type: "NumberLiteral", value: Number(big), pos: t.pos };
+    throw new ParseError(
+      `Hex literal '${t.text}' at position ${t.pos} has ${hex[1].length} digits — neither a 24-character ObjectId nor an integer that fits Number.MAX_SAFE_INTEGER. Paste a 24-character hex string for an ObjectId, or use a decimal literal.`,
+      t.pos,
+    );
   }
 
   private fieldRef(): Expr {
@@ -878,7 +902,7 @@ class Parser {
       return { type: "Lambda", params, body: this.expression(), pos };
     }
     const open = this.c.next();
-    const { stmts, ret, retPos } = this.block("RBrace");
+    const { stmts, ret, retPos, endPos } = this.block("RBrace");
     // A `return` makes the block JavaScript: declarations, then one result.
     if (ret !== null) {
       const decls = stmts.filter((st): st is LetDecl => st.type === "LetDecl");
@@ -889,7 +913,8 @@ class Parser {
     }
     // No `return`: the statements are pipeline stages, if the callee takes them.
     const lambda: Lambda = { type: "Lambda", params, stages: { type: "Pipeline", stmts, pos: open.pos }, pos };
-    this.unclaimedStages.set(lambda, open.pos);
+    // The message points at the closing brace: the place a `return` belongs.
+    this.unclaimedStages.set(lambda, endPos);
     return lambda;
   }
 
@@ -969,8 +994,16 @@ class Parser {
       this.c.next();
       key = { kind: "static", name: t.text };
     } else if (t.type === "Number") {
-      // A field name is a string, so a numeric key is its own spelling.
-      this.c.next();
+      // A field name is a string, so a numeric key is its own spelling. A 24-hex
+      // `0x…` is an ObjectId, and an ObjectId is not a field name: JavaScript would
+      // read it as a precision-losing number, so neither reading is useful.
+      const literal = this.number();
+      if (literal.type === "ObjectIdLiteral") {
+        throw new ParseError(
+          `An ObjectId literal can't be an object key at position ${t.pos} — a field name is a string. Quote it (\`{ "${literal.hex}": … }\`) to use it as a field name.`,
+          t.pos,
+        );
+      }
       key = { kind: "static", name: String(Number(t.text)) };
     } else if (t.type === "Dollar") {
       // `{ $match: … }` — a raw MQL document, which HR2 requires to round-trip.
