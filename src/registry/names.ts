@@ -54,7 +54,18 @@ import type {
   TokenName,
   ViaFallback,
 } from "./vocabulary.ts";
-import { accumulated, because, objectBody, pending, single, unsupported, viaFallback } from "./vocabulary.ts";
+import {
+  accumulated,
+  because,
+  escapeForRegex,
+  objectBody,
+  OWN_VALUE,
+  queryOwnValue,
+  pending,
+  single,
+  unsupported,
+  viaFallback,
+} from "./vocabulary.ts";
 
 type RootSpec<W extends readonly Position[]> = {
   doc: string;
@@ -4769,8 +4780,7 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        const body = needle.value.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
-        return { [path]: new RegExp(`^${body}`) };
+        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) }, OWN_VALUE);
       },
     },
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
@@ -4796,8 +4806,7 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        const body = needle.value.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
-        return { [path]: new RegExp(`${body}$`) };
+        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}$`) }, OWN_VALUE);
       },
     },
     expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
@@ -4853,7 +4862,7 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return { [path]: new RegExp(re.pattern, re.flags) };
+        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) }, OWN_VALUE);
       },
     },
     expr: pending("src/methods/", { sig: "regex", exact: 1 }),
@@ -4969,7 +4978,19 @@ export const NAMES = {
         const path = pathOf(recv);
         if (path !== null) {
           const c = constant(args[0]);
-          return c === null ? null : { [path]: c.value };
+          if (c === null) return null;
+          // `.includes` reads two ways in JavaScript: CONTAINMENT in an array,
+          // SUBSTRING in a string. A bare field path is the one receiver whose
+          // type the compiler cannot prove (a provable one never reaches this
+          // cell), so both readings are emitted, each gated on the value's own
+          // type. The narrower spellings stay small: `.some(e => e === x)` is
+          // the array reading alone, `.match(/x/)` the string reading alone.
+          const contains = { [path]: { $eq: c.value, $type: "array" } };
+          const v = c.value;
+          // A needle no string could hold — a date, an ObjectId — has the array reading only.
+          if (typeof v !== "string" && typeof v !== "number") return contains;
+          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) }, OWN_VALUE);
+          return { $or: [contains, substring] };
         }
         if (recv.type !== "ArrayLiteral") return null;
         const target = pathOf(args[0]);
@@ -4988,7 +5009,7 @@ export const NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return { [target]: { $in: values } };
+        return queryOwnValue(target, { $in: values }, OWN_VALUE);
       },
     },
     expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),

@@ -17,6 +17,7 @@
 // where `{ tags: "red" }` does — the left leaf's answer changed with its sibling.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
+import { escapeForRegex, OWN_VALUE, queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -57,7 +58,7 @@ const isExpr = (a: { type: string }): a is Expr =>
 function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
   if (node.type === "BinaryExpr" && node.op === "&&") {
     const all = extractIncludesChain(node, env);
-    if (all !== null) return { [all.path]: { $all: all.values } };
+    if (all !== null) return includesChain(all.path, all.values);
     const left = translate(node.left, childEnv(env, node, "left"), nativeOnly);
     const right = translate(node.right, childEnv(env, node, "right"), nativeOnly);
     if (left === null || right === null) return null;
@@ -194,8 +195,24 @@ function chainOf(node: Expr, op: string): Expr[] {
 /**
  * `$.tags.includes("a") && $.tags.includes("b")` — every leaf an `.includes` of a
  * constant on the SAME path — is `{ tags: { $all: ["a", "b"] } }`: the same documents
- * as the `$and` of two clauses, in the shorter shape the developer meant.
+ * as the `$and` of two clauses, in the shorter shape the developer meant. Both
+ * readings of `.includes` survive the fold, each on one side of the `$or` (see
+ * the `includes` row): `$all` is the ARRAY reading, and a string that holds every
+ * needle is the STRING one.
  */
+function includesChain(path: string, values: readonly unknown[]): QueryDoc {
+  const contains = { [path]: { $all: values, $type: "array" } };
+  const needles = values.filter((v) => typeof v === "string" || typeof v === "number");
+  if (needles.length !== values.length) return contains;
+  const [first, ...rest] = needles.map((v) => escapeForRegex(String(v)));
+  const substrings =
+    rest.length === 0
+      ? queryOwnValue(path, { $regex: first }, OWN_VALUE)
+      : { $and: [queryOwnValue(path, { $regex: first }, OWN_VALUE), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
+  return { $or: [contains, substrings] };
+}
+
+/** The path and the needles of an `&&` chain whose every leaf is `.includes(<constant>)` on ONE path, or null. */
 function extractIncludesChain(node: Expr, env: Env): { path: string; values: unknown[] } | null {
   const leaves = chainOf(node, "&&");
   let path: string | null = null;
@@ -261,6 +278,11 @@ export function constantIn(e: Expr): { value: unknown } | null {
  * top level, where the planner reads it; a key that collides goes into ONE `$and`
  * placed where the first collision stood, an existing `$and` flattened into it.
  * Two `$expr` residuals become one `$expr: { $and: [...] }`.
+ *
+ * A collision on a field whose two clauses are OPERATOR documents that name
+ * different operators is not a collision at all: the server reads every operator
+ * in one field document as a conjunction, so `$.a >= 1 && $.a <= 9` is one
+ * clause. Two clauses that name the SAME operator differently stay in the `$and`.
  */
 export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
   // A folded constant clause: `true` adds nothing, `false` decides everything.
@@ -281,6 +303,17 @@ export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
   };
   collect(a);
   collect(b);
+  // Operator documents on one field that agree wherever they overlap are one document.
+  for (let i = 0; i < clauses.length; i++) {
+    for (let j = i + 1; j < clauses.length; j++) {
+      if (clauses[i].key !== clauses[j].key) continue;
+      const merged = mergedOperators(clauses[i].value, clauses[j].value);
+      if (merged === null) continue;
+      clauses[i] = { key: clauses[i].key, value: merged };
+      clauses.splice(j, 1);
+      j--;
+    }
+  }
   const counts = new Map<string, number>();
   for (const c of clauses) counts.set(c.key, (counts.get(c.key) ?? 0) + 1);
   const out: QueryDoc = {};
@@ -301,6 +334,44 @@ export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/**
+ * A value spelled so that two spellings are equal only when the values are.
+ * `JSON.stringify` is not that: it writes every RegExp as `{}`, so `/^a/` and
+ * `/z$/` would read as one value and a merge would drop a condition.
+ */
+function spell(v: unknown): string {
+  if (v instanceof RegExp) return `re:${v.source}/${v.flags}`;
+  if (v instanceof Date) return `date:${v.getTime()}`;
+  if (Array.isArray(v)) return `[${v.map(spell).join(",")}]`;
+  if (isObj(v)) {
+    const proto = Object.getPrototypeOf(v) as unknown;
+    // A BSON value (an ObjectId, a Decimal128) answers for itself; only a plain
+    // object is read key by key.
+    if (proto !== Object.prototype && proto !== null) return `bson:${String(v)}`;
+    return `{${Object.keys(v)
+      .sort()
+      .map((k) => `${k}:${spell(v[k])}`)
+      .join(",")}}`;
+  }
+  return `${typeof v}:${String(v)}`;
+}
+
+/** Two operator documents as one, or null when either is a plain value or they name one operator two ways. */
+function mergedOperators(a: unknown, b: unknown): Record<string, unknown> | null {
+  const operatorDoc = (v: unknown): Record<string, unknown> | null => {
+    if (!isObj(v) || Array.isArray(v) || v instanceof Date || v instanceof RegExp) return null;
+    const keys = Object.keys(v);
+    return keys.length > 0 && keys.every((k) => k.startsWith("$")) ? v : null;
+  };
+  const l = operatorDoc(a);
+  const r = operatorDoc(b);
+  if (l === null || r === null) return null;
+  for (const k of Object.keys(r)) {
+    if (k in l && spell(l[k]) !== spell(r[k])) return null;
+  }
+  return { ...l, ...r };
+}
 
 /** `{ $expr: true }` — a predicate the fold settled to true; it selects every document. */
 const isAlwaysTrue = (d: QueryDoc): boolean => Object.keys(d).length === 1 && d.$expr === true;

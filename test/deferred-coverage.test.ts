@@ -28,8 +28,9 @@ import { resolve, relative } from "node:path";
 // file and operator-spec-coverage.test.ts's meta-comment).
 //
 // Excluded: docs/DEVLOG.md (append-only history), docs/DEFERRED.md itself,
-// this test file itself, the allowlist, vendor/, node_modules/, dist/,
-// src/globals.ts (generated).
+// this test file itself, the allowlist, vendor/, node_modules/, dist/, tmp/
+// (untracked scratch — a probe script is nobody's deferral), src/globals.ts
+// (generated).
 // ---------------------------------------------------------------------------
 
 const ROOT = resolve(import.meta.dirname, "..");
@@ -53,7 +54,7 @@ const PHRASE_RE =
 const SCAN_EXTS = new Set([".ts", ".md"]);
 
 // Skip these directories entirely.
-const SKIP_DIRS = new Set(["node_modules", "dist", "vendor", ".git", ".claude"]);
+const SKIP_DIRS = new Set(["node_modules", "dist", "vendor", ".git", ".claude", "tmp"]);
 
 // Files excluded from gates 1-3 (the meta-files of the system itself, plus
 // the append-only history).

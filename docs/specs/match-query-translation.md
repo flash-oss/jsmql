@@ -130,6 +130,14 @@ $a && $b && $.x === 1 && $.x === 2
 
 ## Documented semantic divergences from aggregation `$eq`
 
+> These divergences describe the translator in `src/match-translation.ts`. The
+> filter target in `src/compiler/` reads the field's OWN value instead, as SR2 of
+> [LANG_RULES.md](../LANG_RULES.md) states: an array-element match is MongoDB's
+> generosity, not what `===` says in JavaScript. Divergences 1, 2 and 4 below are
+> therefore gone on that road, and both roads agree — see
+> [emit-pass.md](emit-pass.md) § the filter target, and the JavaScript oracle in
+> `test/compiler-js-agreement.test.ts`.
+
 These are intentional trade-offs — the query-language behavior matches what most users mean. Users who need strict aggregation semantics use the `$match({ $expr: <expr> })` escape hatch.
 
 1. **Array fields — on every comparison, and per clause under `&&`.** `{ email: "x" }` matches docs where `email === "x"` OR `email` is an array containing `"x"`; `{ a: { $gt: 1 } }` matches when ANY element is greater; `{ a: { $type: "number" } }` matches an array holding a number. `$expr` compares the whole value and matches none of these. Under `&&` each clause is satisfied by its own element: `$.a === 1 && $.a === 2` selects `a: [1, 2, 3]` — the "contains both" reading, which the `.includes` chain spells as `$all`. In practice, this is what users want when filtering by tags, roles, etc.

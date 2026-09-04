@@ -140,6 +140,38 @@ JavaScript, which this language does not model, so an arithmetic expression over
 a field of mixed type can fail on either shape. The per-branch rule stands: a
 predicate that means one thing alone means the same thing beside a sibling.
 
+### A JavaScript spelling reads the field's own value
+
+MongoDB's query language satisfies a field comparison when ANY ELEMENT of an
+array value satisfies it, and it traverses an array in the middle of a path.
+JavaScript does neither. So every query cell of a JavaScript spelling states two
+facts about its own meaning — `ValueReading` in `src/registry/vocabulary.ts` —
+and `queryOwnValue` turns them into MQL:
+
+| the cell's answer | field ABSENT | value IS an array | shape |
+|---|---|---|---|
+| `$.a === 1` | false | false | `{ a: { $eq: 1, $not: { $type: "array" } } }` |
+| `$.a !== 1` | true | true | `{ $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] }` |
+| `$.a == null` | true | false | `{ a: { $eq: null, $not: { $type: "array" } } }` |
+| `$.a != null` | false | true | `{ $or: [{ a: { $ne: null } }, { a: { $type: "array" } }] }` |
+
+An array at a path PREFIX is the ABSENT case, because that is what JavaScript
+reads there: `$.a.b === 1` adds `a: { $not: { $type: "array" } }`, and
+`$.a.b !== 1` offers `{ a: { $type: "array" } }` as an alternative instead.
+`$exists` is the one test the server reads of the field and not of an element,
+so it takes no exclusion.
+
+Two measured facts hold the shape in place. The exclusion costs no index: `{ a: {
+$eq: 1, $not: { $type: "array" } } }` plans an IXSCAN over the bounds `[1, 1]`,
+exactly as `{ a: 1 }` does — while a `$not` wrapped around the whole positive
+clause drops to a collection scan, which is why a negation is an `$or`. And the
+answer is compared with JavaScript's own, by evaluating the source in node over
+the same documents (`test/compiler-js-agreement.test.ts`). Two families of
+source still differ there, neither of them an array: JavaScript COERCES under a
+relational operator (`[2] > 1` is true) and THROWS when a path walks through a
+missing intermediate. Raw MQL — a raw `{ … }` filter document, a `$op(…)` call —
+keeps MongoDB's own reading.
+
 A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
 and friends (the type test, the presence test, the modulo test, the null test, a
 field against a constant — in that order), `includes`/`startsWith`/`endsWith`/

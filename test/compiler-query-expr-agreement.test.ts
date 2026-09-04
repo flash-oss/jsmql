@@ -36,7 +36,15 @@ const DOCS = [
 /** Sources whose two roads must select the SAME documents. */
 const AGREE: readonly string[] = [
   "$.a === 0",
-  // on a field no document holds as an array — the array-element match is a DIVERGE row
+  // A JavaScript spelling reads the field's OWN value on BOTH roads now, so the
+  // array-element match that used to divide them is gone (src/registry/vocabulary.ts § queryOwnValue).
+  "$.a === 1",
+  'typeof $.a === "object"',
+  "$.a === 1 || $.n * 2 > 10",
+  "$.a !== 1",
+  '$.tags === "red"',
+  'typeof $.a === "number"',
+  "$.a === 1 && $.a === 2",
   "$.o.k === 2",
   "$.o.k === 1 || $.n * 2 > 10",
   "$.o.k === 1 && $.b === 2",
@@ -71,40 +79,12 @@ const AGREE: readonly string[] = [
 /** Sources the language DOCUMENTS as selecting different documents, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
   {
-    src: "$.a === 1",
-    why: "Equality on an array field matches an element in the query language: `a: [1, 2, 3]` is selected; the expression compares the whole array (divergence 1).",
-  },
-  {
-    src: 'typeof $.a === "object"',
-    why: 'The query `$type` matches an array of documents element-wise; the expression `$type` of the array is "array" (divergence 1, per element).',
-  },
-  {
-    src: "$.a === 1 || $.n * 2 > 10",
-    why: "The `a === 1` branch keeps its array-element match in the per-branch `$or` — the same documents as `$.a === 1` alone (divergence 1).",
-  },
-  {
     src: "$.a > 1",
     why: "Ordered comparison is type-bracketed in the query language and element-wise on an array; the expression form orders across BSON types and compares the whole array (divergences 1 and 3).",
   },
   {
     src: "$.a < 1",
     why: "The query form skips missing and null; in the expression form both sort below every number (divergence 3).",
-  },
-  {
-    src: "$.a !== 1",
-    why: "The query `$ne` is the complement of the array-element match and excludes `a: [1, 2, 3]`; the expression compares the whole array (divergence 2).",
-  },
-  {
-    src: '$.tags === "red"',
-    why: "Equality on an array field matches an element in the query language (divergence 1).",
-  },
-  {
-    src: 'typeof $.a === "number"',
-    why: 'The query `$type` matches an array holding a number; the expression `$type` of the array is "array" (divergence 1, per element).',
-  },
-  {
-    src: "$.a === 1 && $.a === 2",
-    why: "Under `&&` each clause is satisfied by its own element of `a: [1, 2, 3]`; the expression form finds no value equal to both (divergence 1, per clause).",
   },
 ];
 

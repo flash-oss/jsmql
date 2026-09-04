@@ -5728,6 +5728,678 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$substrCP\":[\"abc\",2,1]},null]},null]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},false]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},\"\"]},{\"$ne\":[{\"$substrCP\":[\"abc\",2,1]},0]}]}}",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"c\",null]},null]},{\"$ne\":[\"c\",false]},{\"$ne\":[\"c\",\"\"]},{\"$ne\":[\"c\",0]}]}}",
       "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
+    },
+    "filter\u0000$.status == null": {
+      "entry": "filter",
+      "src": "$.status == null",
+      "kind": "output",
+      "was": "{\"status\":null}",
+      "now": "{\"status\":{\"$eq\":null,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status === 'active'": {
+      "entry": "filter",
+      "src": "$.status === 'active'",
+      "kind": "output",
+      "was": "{\"status\":\"active\"}",
+      "now": "{\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status === null": {
+      "entry": "filter",
+      "src": "$.status === null",
+      "kind": "output",
+      "was": "{\"status\":{\"$type\":\"null\"}}",
+      "now": "{\"status\":{\"$type\":\"null\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status != null": {
+      "entry": "filter",
+      "src": "$.status != null",
+      "kind": "output",
+      "was": "{\"status\":{\"$ne\":null}}",
+      "now": "{\"$or\":[{\"status\":{\"$ne\":null}},{\"status\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status !== null": {
+      "entry": "filter",
+      "src": "$.status !== null",
+      "kind": "output",
+      "was": "{\"status\":{\"$not\":{\"$type\":\"null\"}}}",
+      "now": "{\"$or\":[{\"status\":{\"$not\":{\"$type\":\"null\"}}},{\"status\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000null == $.status": {
+      "entry": "filter",
+      "src": "null == $.status",
+      "kind": "output",
+      "was": "{\"status\":null}",
+      "now": "{\"status\":{\"$eq\":null,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.age > 18": {
+      "entry": "filter",
+      "src": "$.age > 18",
+      "kind": "output",
+      "was": "{\"age\":{\"$gt\":18}}",
+      "now": "{\"age\":{\"$gt\":18,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.age >= 21": {
+      "entry": "filter",
+      "src": "$.age >= 21",
+      "kind": "output",
+      "was": "{\"age\":{\"$gte\":21}}",
+      "now": "{\"age\":{\"$gte\":21,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.score < 50": {
+      "entry": "filter",
+      "src": "$.score < 50",
+      "kind": "output",
+      "was": "{\"score\":{\"$lt\":50}}",
+      "now": "{\"score\":{\"$lt\":50,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.score <= 100": {
+      "entry": "filter",
+      "src": "$.score <= 100",
+      "kind": "output",
+      "was": "{\"score\":{\"$lte\":100}}",
+      "now": "{\"score\":{\"$lte\":100,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a > 0 && $.b > 0": {
+      "entry": "filter",
+      "src": "$.a > 0 && $.b > 0",
+      "kind": "output",
+      "was": "{\"a\":{\"$gt\":0},\"b\":{\"$gt\":0}}",
+      "now": "{\"a\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}},\"b\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a > 0 || $.b > 0": {
+      "entry": "filter",
+      "src": "$.a > 0 || $.b > 0",
+      "kind": "output",
+      "was": "{\"$or\":[{\"a\":{\"$gt\":0}},{\"b\":{\"$gt\":0}}]}",
+      "now": "{\"$or\":[{\"a\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}},{\"b\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a > 0 && $.b > 0 && $.c > 0": {
+      "entry": "filter",
+      "src": "$.a > 0 && $.b > 0 && $.c > 0",
+      "kind": "output",
+      "was": "{\"a\":{\"$gt\":0},\"b\":{\"$gt\":0},\"c\":{\"$gt\":0}}",
+      "now": "{\"a\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}},\"b\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}},\"c\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.age > 18 && $.active": {
+      "entry": "filter",
+      "src": "$.age > 18 && $.active",
+      "kind": "output",
+      "was": "{\"age\":{\"$gt\":18},\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]}]}}",
+      "now": "{\"age\":{\"$gt\":18,\"$not\":{\"$type\":\"array\"}},\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]}]}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.in === 'test'": {
+      "entry": "filter",
+      "src": "$.in === 'test'",
+      "kind": "output",
+      "was": "{\"in\":\"test\"}",
+      "now": "{\"in\":{\"$eq\":\"test\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.loyalty.years >= 2": {
+      "entry": "filter",
+      "src": "$.loyalty.years >= 2",
+      "kind": "output",
+      "was": "{\"loyalty.years\":{\"$gte\":2}}",
+      "now": "{\"loyalty.years\":{\"$gte\":2,\"$not\":{\"$type\":\"array\"}},\"loyalty\":{\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.email.includes(\"@\")": {
+      "entry": "filter",
+      "src": "$.email.includes(\"@\")",
+      "kind": "output",
+      "was": "{\"email\":\"@\"}",
+      "now": "{\"$or\":[{\"email\":{\"$eq\":\"@\",\"$type\":\"array\"}},{\"email\":{\"$regex\":\"@\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.str.match(/^[A-Z]/)": {
+      "entry": "filter",
+      "src": "$.str.match(/^[A-Z]/)",
+      "kind": "output",
+      "was": "{\"str\":\"«regexp:^[A-Z]/»\"}",
+      "now": "{\"str\":{\"$regex\":\"«regexp:^[A-Z]/»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.str.match(/^[a-z]/i)": {
+      "entry": "filter",
+      "src": "$.str.match(/^[a-z]/i)",
+      "kind": "output",
+      "was": "{\"str\":\"«regexp:^[a-z]/i»\"}",
+      "now": "{\"str\":{\"$regex\":\"«regexp:^[a-z]/i»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a % 5 === 0": {
+      "entry": "filter",
+      "src": "$.a % 5 === 0",
+      "kind": "output",
+      "was": "{\"a\":{\"$mod\":[5,0]}}",
+      "now": "{\"a\":{\"$mod\":[5,0],\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a % 5 !== 0": {
+      "entry": "filter",
+      "src": "$.a % 5 !== 0",
+      "kind": "output",
+      "was": "{\"a\":{\"$not\":{\"$mod\":[5,0]}}}",
+      "now": "{\"$or\":[{\"a\":{\"$not\":{\"$mod\":[5,0]}}},{\"a\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a === null": {
+      "entry": "filter",
+      "src": "$.a === null",
+      "kind": "output",
+      "was": "{\"a\":{\"$type\":\"null\"}}",
+      "now": "{\"a\":{\"$type\":\"null\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a.b.c === undefined": {
+      "entry": "filter",
+      "src": "$.a.b.c === undefined",
+      "kind": "output",
+      "was": "{\"a.b.c\":{\"$exists\":false}}",
+      "now": "{\"$or\":[{\"a.b.c\":{\"$exists\":false}},{\"a\":{\"$type\":\"array\"}},{\"a.b\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a === \"boolean\"": {
+      "entry": "filter",
+      "src": "typeof $.a === \"boolean\"",
+      "kind": "output",
+      "was": "{\"a\":{\"$type\":\"bool\"}}",
+      "now": "{\"a\":{\"$type\":\"bool\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a === \"number\"": {
+      "entry": "filter",
+      "src": "typeof $.a === \"number\"",
+      "kind": "output",
+      "was": "{\"a\":{\"$type\":\"number\"}}",
+      "now": "{\"a\":{\"$type\":\"number\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a !== \"boolean\"": {
+      "entry": "filter",
+      "src": "typeof $.a !== \"boolean\"",
+      "kind": "output",
+      "was": "{\"a\":{\"$not\":{\"$type\":\"bool\"}}}",
+      "now": "{\"$or\":[{\"a\":{\"$not\":{\"$type\":\"bool\"}}},{\"a\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a !== \"number\"": {
+      "entry": "filter",
+      "src": "typeof $.a !== \"number\"",
+      "kind": "output",
+      "was": "{\"a\":{\"$not\":{\"$type\":\"number\"}}}",
+      "now": "{\"$or\":[{\"a\":{\"$not\":{\"$type\":\"number\"}}},{\"a\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a.b.c === \"boolean\"": {
+      "entry": "filter",
+      "src": "typeof $.a.b.c === \"boolean\"",
+      "kind": "output",
+      "was": "{\"a.b.c\":{\"$type\":\"bool\"}}",
+      "now": "{\"a.b.c\":{\"$type\":\"bool\",\"$not\":{\"$type\":\"array\"}},\"a\":{\"$not\":{\"$type\":\"array\"}},\"a.b\":{\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.x === \"string\"": {
+      "entry": "filter",
+      "src": "typeof $.x === \"string\"",
+      "kind": "output",
+      "was": "{\"x\":{\"$type\":\"string\"}}",
+      "now": "{\"x\":{\"$type\":\"string\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.str.match(/[a-z]+/)": {
+      "entry": "filter",
+      "src": "$.str.match(/[a-z]+/)",
+      "kind": "output",
+      "was": "{\"str\":\"«regexp:[a-z]+/»\"}",
+      "now": "{\"str\":{\"$regex\":\"«regexp:[a-z]+/»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.str.match(/pattern/gi)": {
+      "entry": "filter",
+      "src": "$.str.match(/pattern/gi)",
+      "kind": "output",
+      "was": "{\"str\":\"«regexp:pattern/gi»\"}",
+      "now": "{\"str\":{\"$regex\":\"«regexp:pattern/gi»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.x < 5": {
+      "entry": "filter",
+      "src": "$.x < 5",
+      "kind": "output",
+      "was": "{\"x\":{\"$lt\":5}}",
+      "now": "{\"x\":{\"$lt\":5,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.x === 5": {
+      "entry": "filter",
+      "src": "$.x === 5",
+      "kind": "output",
+      "was": "{\"x\":5}",
+      "now": "{\"x\":{\"$eq\":5,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000[\"a\", \"b\"].includes($.x)": {
+      "entry": "filter",
+      "src": "[\"a\", \"b\"].includes($.x)",
+      "kind": "output",
+      "was": "{\"x\":{\"$in\":[\"a\",\"b\"]}}",
+      "now": "{\"x\":{\"$in\":[\"a\",\"b\"],\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.tags?.includes('vip')": {
+      "entry": "filter",
+      "src": "$.tags?.includes('vip')",
+      "kind": "output",
+      "was": "{\"tags\":\"vip\"}",
+      "now": "{\"$or\":[{\"tags\":{\"$eq\":\"vip\",\"$type\":\"array\"}},{\"tags\":{\"$regex\":\"vip\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.user?.role === 'admin'": {
+      "entry": "filter",
+      "src": "$.user?.role === 'admin'",
+      "kind": "output",
+      "was": "{\"user.role\":\"admin\"}",
+      "now": "{\"user.role\":{\"$eq\":\"admin\",\"$not\":{\"$type\":\"array\"}},\"user\":{\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.user?.role == null": {
+      "entry": "filter",
+      "src": "$.user?.role == null",
+      "kind": "output",
+      "was": "{\"user.role\":null}",
+      "now": "{\"$or\":[{\"user.role\":{\"$eq\":null,\"$not\":{\"$type\":\"array\"}}},{\"user\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.path.match(/[/\\\\]/)": {
+      "entry": "filter",
+      "src": "$.path.match(/[/\\\\]/)",
+      "kind": "output",
+      "was": "{\"path\":\"«regexp:[/\\\\\\\\]/»\"}",
+      "now": "{\"path\":{\"$regex\":\"«regexp:[/\\\\\\\\]/»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.path.match(/* skip */ /foo/i)": {
+      "entry": "filter",
+      "src": "$.path.match(/* skip */ /foo/i)",
+      "kind": "output",
+      "was": "{\"path\":\"«regexp:foo/i»\"}",
+      "now": "{\"path\":{\"$regex\":\"«regexp:foo/i»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status === \"active\"": {
+      "entry": "filter",
+      "src": "$.status === \"active\"",
+      "kind": "output",
+      "was": "{\"status\":\"active\"}",
+      "now": "{\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status === 'shipped'": {
+      "entry": "filter",
+      "src": "$.status === 'shipped'",
+      "kind": "output",
+      "was": "{\"status\":\"shipped\"}",
+      "now": "{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.status === 'active' && $.age >= 18": {
+      "entry": "filter",
+      "src": "$.status === 'active' && $.age >= 18",
+      "kind": "output",
+      "was": "{\"status\":\"active\",\"age\":{\"$gte\":18}}",
+      "now": "{\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}},\"age\":{\"$gte\":18,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.address.country === 'AU'": {
+      "entry": "filter",
+      "src": "$.address.country === 'AU'",
+      "kind": "output",
+      "was": "{\"address.country\":\"AU\"}",
+      "now": "{\"address.country\":{\"$eq\":\"AU\",\"$not\":{\"$type\":\"array\"}},\"address\":{\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a === 0": {
+      "entry": "filter",
+      "src": "$.a === 0",
+      "kind": "output",
+      "was": "{\"a\":0}",
+      "now": "{\"a\":{\"$eq\":0,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$._id === 0x507f_1f77_bcf8_6cd7_9943_9011": {
+      "entry": "filter",
+      "src": "$._id === 0x507f_1f77_bcf8_6cd7_9943_9011",
+      "kind": "output",
+      "was": "{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}",
+      "now": "{\"_id\":{\"$eq\":\"«oid:507f1f77bcf86cd799439011»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.let > 5": {
+      "entry": "filter",
+      "src": "$.let > 5",
+      "kind": "output",
+      "was": "{\"let\":{\"$gt\":5}}",
+      "now": "{\"let\":{\"$gt\":5,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.const > 5": {
+      "entry": "filter",
+      "src": "$.const > 5",
+      "kind": "output",
+      "was": "{\"const\":{\"$gt\":5}}",
+      "now": "{\"const\":{\"$gt\":5,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.s.match(/word/g)": {
+      "entry": "filter",
+      "src": "$.s.match(/word/g)",
+      "kind": "output",
+      "was": "{\"s\":\"«regexp:word/g»\"}",
+      "now": "{\"s\":{\"$regex\":\"«regexp:word/g»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.method === \"postalDelivery\" && $.createdAt >= new Date(\"2026-01-01\")": {
+      "entry": "filter",
+      "src": "$.method === \"postalDelivery\" && $.createdAt >= new Date(\"2026-01-01\")",
+      "kind": "output",
+      "was": "{\"method\":\"postalDelivery\",\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"}}",
+      "now": "{\"method\":{\"$eq\":\"postalDelivery\",\"$not\":{\"$type\":\"array\"}},\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.subscription.tier === \"premium\" && $.status === \"active\" && $.expiresAt > new Date(\"2026-05-01\")": {
+      "entry": "filter",
+      "src": "$.subscription.tier === \"premium\" && $.status === \"active\" && $.expiresAt > new Date(\"2026-05-01\")",
+      "kind": "output",
+      "was": "{\"subscription.tier\":\"premium\",\"status\":\"active\",\"expiresAt\":{\"$gt\":\"«date:2026-05-01T00:00:00.000Z»\"}}",
+      "now": "{\"subscription.tier\":{\"$eq\":\"premium\",\"$not\":{\"$type\":\"array\"}},\"subscription\":{\"$not\":{\"$type\":\"array\"}},\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}},\"expiresAt\":{\"$gt\":\"«date:2026-05-01T00:00:00.000Z»\",\"$not\":{\"$",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.pinned === true || $.author === \"ada\"": {
+      "entry": "filter",
+      "src": "$.pinned === true || $.author === \"ada\"",
+      "kind": "output",
+      "was": "{\"$or\":[{\"pinned\":true},{\"author\":\"ada\"}]}",
+      "now": "{\"$or\":[{\"pinned\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}},{\"author\":{\"$eq\":\"ada\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.pinned !== true && $.lastModifiedAt < new Date(\"2025-01-01\")": {
+      "entry": "filter",
+      "src": "$.pinned !== true && $.lastModifiedAt < new Date(\"2025-01-01\")",
+      "kind": "output",
+      "was": "{\"pinned\":{\"$ne\":true},\"lastModifiedAt\":{\"$lt\":\"«date:2025-01-01T00:00:00.000Z»\"}}",
+      "now": "{\"$or\":[{\"pinned\":{\"$ne\":true}},{\"pinned\":{\"$type\":\"array\"}}],\"lastModifiedAt\":{\"$lt\":\"«date:2025-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.inStock === true && $.price >= 50 && $.price <= 200": {
+      "entry": "filter",
+      "src": "$.inStock === true && $.price >= 50 && $.price <= 200",
+      "kind": "output",
+      "was": "{\"inStock\":true,\"$and\":[{\"price\":{\"$gte\":50}},{\"price\":{\"$lte\":200}}]}",
+      "now": "{\"inStock\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}},\"price\":{\"$gte\":50,\"$not\":{\"$type\":\"array\"},\"$lte\":200}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.email != null && $.status === \"active\"": {
+      "entry": "filter",
+      "src": "$.email != null && $.status === \"active\"",
+      "kind": "output",
+      "was": "{\"email\":{\"$ne\":null},\"status\":\"active\"}",
+      "now": "{\"$or\":[{\"email\":{\"$ne\":null}},{\"email\":{\"$type\":\"array\"}}],\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.profile === \"object\" && $.status === \"active\"": {
+      "entry": "filter",
+      "src": "typeof $.profile === \"object\" && $.status === \"active\"",
+      "kind": "output",
+      "was": "{\"profile\":{\"$type\":\"object\"},\"status\":\"active\"}",
+      "now": "{\"profile\":{\"$type\":\"object\",\"$not\":{\"$type\":\"array\"}},\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$._id === \"doc_42\" && $.tenantId === \"acme\"": {
+      "entry": "filter",
+      "src": "$._id === \"doc_42\" && $.tenantId === \"acme\"",
+      "kind": "output",
+      "was": "{\"_id\":\"doc_42\",\"tenantId\":\"acme\"}",
+      "now": "{\"_id\":{\"$eq\":\"doc_42\",\"$not\":{\"$type\":\"array\"}},\"tenantId\":{\"$eq\":\"acme\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$._id === 0x507f1f77bcf86cd799439011 && $.tenantId === \"acme\"": {
+      "entry": "filter",
+      "src": "$._id === 0x507f1f77bcf86cd799439011 && $.tenantId === \"acme\"",
+      "kind": "output",
+      "was": "{\"_id\":\"«oid:507f1f77bcf86cd799439011»\",\"tenantId\":\"acme\"}",
+      "now": "{\"_id\":{\"$eq\":\"«oid:507f1f77bcf86cd799439011»\",\"$not\":{\"$type\":\"array\"}},\"tenantId\":{\"$eq\":\"acme\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.deleted !== true && $.archived !== true": {
+      "entry": "filter",
+      "src": "$.deleted !== true && $.archived !== true",
+      "kind": "output",
+      "was": "{\"deleted\":{\"$ne\":true},\"archived\":{\"$ne\":true}}",
+      "now": "{\"$and\":[{\"$or\":[{\"deleted\":{\"$ne\":true}},{\"deleted\":{\"$type\":\"array\"}}]},{\"$or\":[{\"archived\":{\"$ne\":true}},{\"archived\":{\"$type\":\"array\"}}]}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.parent === null && $.published === true": {
+      "entry": "filter",
+      "src": "$.parent === null && $.published === true",
+      "kind": "output",
+      "was": "{\"parent\":{\"$type\":\"null\"},\"published\":true}",
+      "now": "{\"parent\":{\"$type\":\"null\",\"$not\":{\"$type\":\"array\"}},\"published\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.tier === \"gold\" && $.country === \"AU\"": {
+      "entry": "filter",
+      "src": "$.tier === \"gold\" && $.country === \"AU\"",
+      "kind": "output",
+      "was": "{\"tier\":\"gold\",\"country\":\"AU\"}",
+      "now": "{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}},\"country\":{\"$eq\":\"AU\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000\n$.customerId === \"cust_42\" &&\n$.placedAt >= new Date(\"2026-01-01\") && $.placedAt < new Date(\"2026-02-01\") &&\n$.status === \"shipped\"\n      ": {
+      "entry": "filter",
+      "src": "\n$.customerId === \"cust_42\" &&\n$.placedAt >= new Date(\"2026-01-01\") && $.placedAt < new Date(\"2026-02-01\") &&\n$.status === \"shipped\"\n      ",
+      "kind": "output",
+      "was": "{\"customerId\":\"cust_42\",\"$and\":[{\"placedAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"}},{\"placedAt\":{\"$lt\":\"«date:2026-02-01T00:00:00.000Z»\"}}],\"status\":\"shipped\"}",
+      "now": "{\"customerId\":{\"$eq\":\"cust_42\",\"$not\":{\"$type\":\"array\"}},\"placedAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"},\"$lt\":\"«date:2026-02-01T00:00:00.000Z»\"},\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"a",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000\n// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])\n      ": {
+      "entry": "filter",
+      "src": "\n// age window: 25 to 70 inclusive\n$.driver.age >= 25 && $.driver.age <= 70 &&\n\n/* annual mileage cap — 30k km/year keeps us out of commercial-fleet pricing */\n$.policy.kmPerYear <= 30_000 &&\n\n// hard-list occupations that bump the applicant to the high-risk tier\n!($.driver.occupation in [\"stunt-double\", \"test-pilot\", \"demolition-engineer\"])\n      ",
+      "kind": "output",
+      "was": "{\"$and\":[{\"driver.age\":{\"$gte\":25}},{\"driver.age\":{\"$lte\":70}}],\"policy.kmPerYear\":{\"$lte\":30000},\"$expr\":{\"$not\":{\"$in\":[\"$driver.occupation\",[\"stunt-double\",\"test-pilot\",\"demolition-engineer\"]]}}}",
+      "now": "{\"driver.age\":{\"$gte\":25,\"$not\":{\"$type\":\"array\"},\"$lte\":70},\"driver\":{\"$not\":{\"$type\":\"array\"}},\"policy.kmPerYear\":{\"$lte\":30000,\"$not\":{\"$type\":\"array\"}},\"policy\":{\"$not\":{\"$type\":\"array\"}},\"$expr\":{\"$not\":{\"$in\":[\"$dr",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000\n$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true\n      ": {
+      "entry": "filter",
+      "src": "\n$.score >= 75 &&\n$.grade in [\"A\", \"B\"] &&\n$.submitted === true\n      ",
+      "kind": "output",
+      "was": "{\"score\":{\"$gte\":75},\"submitted\":true,\"$expr\":{\"$in\":[\"$grade\",[\"A\",\"B\"]]}}",
+      "now": "{\"score\":{\"$gte\":75,\"$not\":{\"$type\":\"array\"}},\"submitted\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}},\"$expr\":{\"$in\":[\"$grade\",[\"A\",\"B\"]]}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.age > 18 && $.status === 'active'": {
+      "entry": "filter",
+      "src": "$.age > 18 && $.status === 'active'",
+      "kind": "output",
+      "was": "{\"age\":{\"$gt\":18},\"status\":\"active\"}",
+      "now": "{\"age\":{\"$gt\":18,\"$not\":{\"$type\":\"array\"}},\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a == null": {
+      "entry": "filter",
+      "src": "$.a == null",
+      "kind": "output",
+      "was": "{\"a\":null}",
+      "now": "{\"a\":{\"$eq\":null,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a === 1": {
+      "entry": "filter",
+      "src": "$.a === 1",
+      "kind": "output",
+      "was": "{\"a\":1}",
+      "now": "{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a >= 1": {
+      "entry": "filter",
+      "src": "$.a >= 1",
+      "kind": "output",
+      "was": "{\"a\":{\"$gte\":1}}",
+      "now": "{\"a\":{\"$gte\":1,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a <= 1": {
+      "entry": "filter",
+      "src": "$.a <= 1",
+      "kind": "output",
+      "was": "{\"a\":{\"$lte\":1}}",
+      "now": "{\"a\":{\"$lte\":1,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a != null": {
+      "entry": "filter",
+      "src": "$.a != null",
+      "kind": "output",
+      "was": "{\"a\":{\"$ne\":null}}",
+      "now": "{\"$or\":[{\"a\":{\"$ne\":null}},{\"a\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a !== 1": {
+      "entry": "filter",
+      "src": "$.a !== 1",
+      "kind": "output",
+      "was": "{\"a\":{\"$ne\":1}}",
+      "now": "{\"$or\":[{\"a\":{\"$ne\":1}},{\"a\":{\"$type\":\"array\"}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.arr.includes(1)": {
+      "entry": "filter",
+      "src": "$.arr.includes(1)",
+      "kind": "output",
+      "was": "{\"arr\":1}",
+      "now": "{\"$or\":[{\"arr\":{\"$eq\":1,\"$type\":\"array\"}},{\"arr\":{\"$regex\":\"1\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.s.includes(1)": {
+      "entry": "filter",
+      "src": "$.s.includes(1)",
+      "kind": "output",
+      "was": "{\"s\":1}",
+      "now": "{\"$or\":[{\"s\":{\"$eq\":1,\"$type\":\"array\"}},{\"s\":{\"$regex\":\"1\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.n.includes(1)": {
+      "entry": "filter",
+      "src": "$.n.includes(1)",
+      "kind": "output",
+      "was": "{\"n\":1}",
+      "now": "{\"$or\":[{\"n\":{\"$eq\":1,\"$type\":\"array\"}},{\"n\":{\"$regex\":\"1\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.obj.includes(1)": {
+      "entry": "filter",
+      "src": "$.obj.includes(1)",
+      "kind": "output",
+      "was": "{\"obj\":1}",
+      "now": "{\"$or\":[{\"obj\":{\"$eq\":1,\"$type\":\"array\"}},{\"obj\":{\"$regex\":\"1\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a === \"string\"": {
+      "entry": "filter",
+      "src": "typeof $.a === \"string\"",
+      "kind": "output",
+      "was": "{\"a\":{\"$type\":\"string\"}}",
+      "now": "{\"a\":{\"$type\":\"string\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.a.b.c === \"number\"": {
+      "entry": "filter",
+      "src": "typeof $.a.b.c === \"number\"",
+      "kind": "output",
+      "was": "{\"a.b.c\":{\"$type\":\"number\"}}",
+      "now": "{\"a.b.c\":{\"$type\":\"number\",\"$not\":{\"$type\":\"array\"}},\"a\":{\"$not\":{\"$type\":\"array\"}},\"a.b\":{\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.a === 1 && $.b < 2": {
+      "entry": "filter",
+      "src": "$.a === 1 && $.b < 2",
+      "kind": "output",
+      "was": "{\"a\":1,\"b\":{\"$lt\":2}}",
+      "now": "{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}},\"b\":{\"$lt\":2,\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.tags.includes('x')": {
+      "entry": "filter",
+      "src": "$.tags.includes('x')",
+      "kind": "output",
+      "was": "{\"tags\":\"x\"}",
+      "now": "{\"$or\":[{\"tags\":{\"$eq\":\"x\",\"$type\":\"array\"}},{\"tags\":{\"$regex\":\"x\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.s.match(/^a/)": {
+      "entry": "filter",
+      "src": "$.s.match(/^a/)",
+      "kind": "output",
+      "was": "{\"s\":\"«regexp:^a/»\"}",
+      "now": "{\"s\":{\"$regex\":\"«regexp:^a/»\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.items.some(i => i.q > 2)": {
+      "entry": "filter",
+      "src": "$.items.some(i => i.q > 2)",
+      "kind": "output",
+      "was": "{\"items\":{\"$elemMatch\":{\"q\":{\"$gt\":2}}}}",
+      "now": "{\"items\":{\"$elemMatch\":{\"q\":{\"$gt\":2,\"$not\":{\"$type\":\"array\"}}}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000typeof $.x === 'string'": {
+      "entry": "filter",
+      "src": "typeof $.x === 'string'",
+      "kind": "output",
+      "was": "{\"x\":{\"$type\":\"string\"}}",
+      "now": "{\"x\":{\"$type\":\"string\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.x % 4 === 1": {
+      "entry": "filter",
+      "src": "$.x % 4 === 1",
+      "kind": "output",
+      "was": "{\"x\":{\"$mod\":[4,1]}}",
+      "now": "{\"x\":{\"$mod\":[4,1],\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000$.x === null": {
+      "entry": "filter",
+      "src": "$.x === null",
+      "kind": "output",
+      "was": "{\"x\":{\"$type\":\"null\"}}",
+      "now": "{\"x\":{\"$type\":\"null\",\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
+    },
+    "filter\u0000['a','b'].includes($.s)": {
+      "entry": "filter",
+      "src": "['a','b'].includes($.s)",
+      "kind": "output",
+      "was": "{\"s\":{\"$in\":[\"a\",\"b\"]}}",
+      "now": "{\"s\":{\"$in\":[\"a\",\"b\"],\"$not\":{\"$type\":\"array\"}}}",
+      "reason": "intended: a JavaScript spelling reads the field's OWN value. The shipped shape also selects a document whose field is an ARRAY holding the value, which JavaScript's `===` (and `typeof`, and an ordered comparison) never does, and it TRAVERSES an array in the middle of a path, which JavaScript reads as undefined. The exclusion is the developer's ruling of 2026-09-04, measured against a JavaScript oracle in test/compiler-js-agreement.test.ts, and it keeps the index bounds (measured: IXSCAN over [1, 1], the same as the shipped shape)."
     }
   }
 }

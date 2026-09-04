@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): a JavaScript spelling reads the field's own value — the filter target stops matching array elements
+
+The developer's ruling, asked as code and answered as code: `typeof $.a === "number"` must not select a document whose `a` is `[1, 2]`, and neither must `$.a === 1` — *"if we use JS SYNTAX (not API, but syntax) we should expect JS behaviour. If it was MQL escape hatch — then leave it be. Just make sure indexes are used."*
+
+MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. JavaScript does neither: `[1, 2] === 1` is false, and reading `a.b` where `a` is an array gives `undefined`. Nothing is lost by reading one value, because containment already has its own JavaScript spelling and so does an element test:
+
+```js
+$.tags === "red"            // → { tags: { $eq: "red", $not: { $type: "array" } } }
+$.tags.includes("red")      // → containment for an array value, substring for a string one
+$.items.some(i => i.q > 2)  // → { items: { $elemMatch: { q: { $gt: 2, $not: { $type: "array" } } } } }
+$.a.b === 1                 // → { "a.b": { $eq: 1, … }, a: { $not: { $type: "array" } } }
+```
+
+**One rule, two facts per cell.** The rule lives in `queryOwnValue` in `src/registry/vocabulary.ts`. Each query cell states a `ValueReading` about its own meaning — does the answer hold when the field is ABSENT, does it hold when the value IS an array — and the builder turns the pair into MQL. An array at a path PREFIX is the absent case, because that is what JavaScript reads there. `$exists` is the one query test the server reads of the field rather than of an element, so it takes no exclusion. The four combinations are all reachable: `===` is neither, `!==` is both, `== null` holds for an absent field only, `!= null` for an array only.
+
+**Two measurements decide the shape.** The exclusion costs no index: `{ a: { $eq: 1, $not: { $type: "array" } } }` plans an IXSCAN over the bounds `[1, 1]`, exactly as `{ a: 1 }` does. A `$not` wrapped around the whole positive clause selects the right documents but drops to a COLLSCAN, which is why a negation is an `$or` instead. Both measured on mongod 8.3.7.
+
+**A JavaScript oracle, as a permanent suite.** `test/compiler-js-agreement.test.ts` EVALUATES each source as JavaScript over the fixture and compares the ids with the ids the emitted query selects on a live mongod. It found the one defect this change introduced before it could land: the negated presence test excluded arrays, where JavaScript says an array field `!== undefined`. Two families of source still differ there, neither an array bug, and each is a row with a reason: JavaScript COERCES under a relational operator (`[1] >= 1` is true, `null < 2` is true) and THROWS when a path walks through a missing intermediate. Coercion is the same thing NaN support was ruled out for.
+
+**`.includes` costs more because it means more.** A bare field path proves neither receiver type, so both readings are emitted, gated on the value's own type: `{ $or: [{ tags: { $eq: "red", $type: "array" } }, { tags: { $regex: "red", $not: { $type: "array" } } }] }`. That is 99 characters against the 14 of `{ tags: "red" }`, which was silently equality on a string field — measured: the old shape missed the document holding `"a vip user"`. The chain fold keeps both readings too, one per side of the `$or`. The precise spellings stay small: `.some(e => e === x)` is the array reading alone, `.match(/x/)` the string reading alone.
+
+**Two other repairs came out of the same work.** `mergeAnd` now merges two operator documents on one field when they agree wherever they overlap, so `$.a >= 1 && $.a <= 9` is one clause of 50 characters rather than an `$and` of 94 — and the value comparison behind that merge spells RegExp, Date and BSON values properly, because `JSON.stringify` writes every regex as `{}` and would have merged `/^a/` with `/z$/`, dropping a condition. `typeof` gained its `"array"` spelling as a real answer.
+
+Where the two roads stood apart on arrays they now agree: seven rows moved from DIVERGE to AGREE in `test/compiler-query-expr-agreement.test.ts`, leaving only the two type-bracketing rows. Gates: filter 252 accepted / 0 unclassified, expr 146 / 0. Suite: 61 files, 4796 passed. SR2 in `docs/LANG_RULES.md` now states the rule; `docs/specs/match-query-translation.md` points the shipped translator's divergences at it.
+
+---
+
 ## 2026-09-04 — docs: two rulings on the filter target — `$.` is the root document at every depth, and `||` stays per branch
 
 Two questions the filter target raised, answered by the developer, recorded here so the pipeline chunk inherits them.
