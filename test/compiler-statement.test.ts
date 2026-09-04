@@ -155,6 +155,26 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(() => pipeline("delete $;")).toThrow(/delete the document itself/);
   });
 
+  it("refuses a body the server refuses, from the fact the row states", () => {
+    // Each of these was run against the server first; the message is what the row's
+    // stated fact says, not a copy of the server's wording.
+    expect(() => pipeline('$count("$n");')).toThrow(/starts with '\$'/);
+    expect(() => pipeline('$count("a.b");')).toThrow(/holds a dot/);
+    expect(() => pipeline("$count(5);")).toThrow(/a number is not a name/);
+    expect(() => pipeline("$count($.name);")).toThrow(/compile-time constant/);
+    expect(() => pipeline("$limit(0);")).toThrow(/of 1 or more/);
+    expect(() => pipeline("$limit(1.5);")).toThrow(/expects an integer/);
+    expect(() => pipeline("$limit($.n);")).toThrow(/compile-time constant/);
+    expect(() => pipeline("$skip(-1);")).toThrow(/of 0 or more/);
+    // The server ACCEPTS a path here and unions a collection literally named "$c",
+    // which is the silent kind of wrong a constant slot exists to catch.
+    expect(() => pipeline("$unionWith($.c);")).toThrow(/compile-time constant/);
+    // and the valid spellings still compile
+    expect(compiled('$count("n");')).toEqual([{ $count: "n" }]);
+    expect(compiled("$skip(0);")).toEqual([{ $skip: 0 }]);
+    expect(compiled('$unionWith("c");')).toEqual([{ $unionWith: "c" }]);
+  });
+
   it("refuses a value, and a program that would do nothing", () => {
     // A folded constant array is a VALUE, not the empty pipeline: `[1,2].slice(2,2)`
     // settles to `[]`, which read as a program would compile to no stages at all.

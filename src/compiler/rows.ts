@@ -317,6 +317,15 @@ export function bodyRuleOf(name: string): BodyRule | undefined {
   return typeof shape === "object" && shape !== null ? (shape.object as BodyRule) : undefined;
 }
 
+/**
+ * A STAGE's stated body rule, or undefined while the row still says `pending`.
+ * A stage's body is its own field, not the `shape.object` an operator uses.
+ */
+export function stageBodyRuleOf(name: string): BodyRule | undefined {
+  const body = (row(name) as { body?: BodyRule | { pending: string } } | undefined)?.body;
+  return body !== undefined && !("pending" in body) ? body : undefined;
+}
+
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
 export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "verbatim" | "object" | undefined {
   const shape = emitRow(name)?.shape;

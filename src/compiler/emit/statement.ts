@@ -15,9 +15,9 @@ import type { Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "..
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
-import { forbiddenInOf, isStageName, onlyOf } from "../rows.ts";
+import { forbiddenInOf, isStageName, onlyOf, stageBodyRuleOf } from "../rows.ts";
 import { consult, everyName } from "./consult.ts";
-import { checkSlots } from "./check.ts";
+import { checkBody, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { childEnv, stageInputs } from "./inputs.ts";
@@ -348,6 +348,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     throw E.refusalFor(sel, `'${name}'`, "", "statement", node.pos, []);
   }
   checkSlots(name, sel.rule.args, args);
+  const bodyRule = stageBodyRuleOf(name);
+  if (bodyRule !== undefined) checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means; where they may STAND is the
   // row's other fact, and it is applied to each of them.

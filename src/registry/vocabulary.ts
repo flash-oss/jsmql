@@ -155,6 +155,14 @@ export type OperatorCategory =
 export type ArgType =
   | "number"
   | "string"
+  /**
+   * A field NAME the stage writes into — not a path to read. The server refuses
+   * an empty one, a `$`-prefixed one and one holding a dot: measured,
+   * `{ $count: "$n" }` answers "the count field cannot be a $-prefixed path" and
+   * `{ $count: "a.b" }` "the count field cannot contain '.'". A plain `string`
+   * cannot say it, and every stage that names an output field needs it.
+   */
+  | "fieldName"
   | "int"
   | "int-or-long"
   | "number-or-date"

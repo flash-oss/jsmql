@@ -3545,8 +3545,14 @@ export const NAMES = {
     ),
     group: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "fieldName" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$count' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4402,8 +4408,26 @@ export const NAMES = {
     ),
     group: unsupported("'$limit' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$limit' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: "int" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: "int" },
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$limit' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4841,8 +4865,26 @@ export const NAMES = {
     ),
     group: unsupported("'$skip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$skip' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: "int" },
+        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: "int" },
+        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$skip' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4899,8 +4941,14 @@ export const NAMES = {
     ),
     group: unsupported("'$unionWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unionWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0] },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$unionWith' is not valid in an update document — see its 'where'."),
   }),
 

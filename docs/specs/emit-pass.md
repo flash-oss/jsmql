@@ -273,6 +273,16 @@ Which DOCUMENT the whole program becomes is asked once, at the entry: a folded
 constant array (`[1,2].slice(2,2)` settles to `[]`) is a VALUE, and read as a
 program it would compile to no stages at all.
 
+A stage's BODY is checked from the row's own facts, through the same two
+mechanisms an operator's arguments use: `args` for a body that is not an object
+(`slotType`, `constant`, `slotRange`), and `body` — a `BodyRule` — for one that
+is. The valuable half is `constant`: a slot the server reads before any document
+exists accepts a field path SILENTLY, and `$unionWith($.c)` unions a collection
+literally named `$c` rather than saying so. `fieldName` is the ArgType for a slot
+that NAMES a field to write, where a `$`-led string is the error rather than a
+runtime value — the one place the literal gate is bypassed, because
+`{ $count: "$n" }` is refused by the server.
+
 What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
 `emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
 than trust one, and so the work left is countable. The list emptying is what

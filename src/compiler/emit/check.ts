@@ -77,6 +77,9 @@ function matches(lit: Lit, expected: ArgType): boolean {
     case "array":
     case "object":
       return lit.kind === expected;
+    case "fieldName":
+      // Handled before the literal gate — see `checkType`.
+      return false;
     case "date":
     case "timestamp":
       return false;
@@ -89,6 +92,7 @@ const EXPECTS: Record<ArgType, string> = {
   "int-or-long": "expects an integer",
   "number-or-date": "expects a number or a date",
   string: "expects a string",
+  fieldName: "expects the NAME of a field to write — a non-empty string with no '$' prefix and no dot",
   bool: "expects a boolean",
   array: "expects an array",
   object: "expects a document",
@@ -105,6 +109,32 @@ const hint = (expected: ArgType): string =>
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
+  // A field NAME is the one slot where a `$`-led string is the ERROR rather than a
+  // runtime value, so it is read from the source and not through the literal gate:
+  // `{ $count: "$n" }` is refused by the server, and so is a dotted or empty name.
+  if (expected === "fieldName") {
+    if (e.type !== "StringLiteral") {
+      const other = literal(e);
+      if (other === null || other.kind === "null") return;
+      throw new CodegenError(
+        `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE, and ${NOUN[other.kind]} is not a name. Pass a plain field name, e.g. 'total'.`,
+        e.pos,
+      );
+    }
+    const bad =
+      e.value === ""
+        ? "is empty"
+        : e.value.startsWith("$")
+          ? "starts with '$'"
+          : e.value.includes(".")
+            ? "holds a dot"
+            : null;
+    if (bad === null) return;
+    throw new CodegenError(
+      `'${name}'${slot ? ` ${slot}` : ""} names a field to WRITE, and '${e.value}' ${bad}. The server refuses it — pass a plain field name, e.g. 'total'.`,
+      e.pos,
+    );
+  }
   const lit = literal(e);
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
@@ -251,10 +281,9 @@ export function checkSlots(name: string, args: Arity, operands: readonly Expr[])
     const e = operands[Number(i)];
     const n = e === undefined ? null : numberOf(e);
     if (n !== null && (n < lo || n > hi)) {
-      throw new CodegenError(
-        `'${name}' argument ${Number(i) + 1} must be a number from ${lo} to ${hi} — got ${n}.`,
-        e!.pos,
-      );
+      // A range whose top is the largest safe integer is a FLOOR, and reads as one.
+      const bound = hi === Number.MAX_SAFE_INTEGER ? `of ${lo} or more` : `from ${lo} to ${hi}`;
+      throw new CodegenError(`'${name}' argument ${Number(i) + 1} must be a number ${bound} — got ${n}.`, e!.pos);
     }
   }
   for (const i of args.nonZero ?? []) {

@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): a stage's body is checked from the facts its row states
+
+Every stage row said `body: pending`, so a body the server refuses was emitted unchecked. The statement target now reads two kinds of fact off the row, both mechanisms that already existed for operator arguments: `args` for a body that is not an object — `slotType`, `constant`, `slotRange` — and `body`, a `BodyRule`, for one that is.
+
+The valuable half is `constant`. A slot the server reads before any document exists accepts a field path SILENTLY: measured, `$unionWith($.c)` emits `{ "$unionWith": "$c" }`, and the server unions a collection literally named `$c` — no error, no documents, nothing to tell the developer their expression was never evaluated. `$lookup`'s `from` behaves the same way. A stated `constant` turns that into a compile-time refusal.
+
+`ArgType` gains `fieldName`, for a slot that NAMES a field to write rather than a path to read. It is the one place the literal gate is deliberately bypassed: a `$`-led string is normally a runtime field reference and no business of a validator, but in this slot it is exactly the error — `{ $count: "$n" }` is refused with "the count field cannot be a $-prefixed path", and a dotted or empty name likewise. Many stages name an output field, so the type will be reused.
+
+Four rows are stated from measurement so far, each with both sides run on the server: `$count` (a constant field name), `$limit` (a constant integer of 1 or more — `{ $limit: 0 }` is "the limit must be positive"), `$skip` (0 or more), and `$unionWith` (a constant collection name). A range whose top is the largest safe integer reads as a floor in the message, because that is what it is.
+
+---
+
 ## 2026-09-05 — fix(compiler): the statement target's before-audit findings — six defects, each measured on the server
 
 Six agents each measured one area of the shipped statement lowering before this target was built, and a seventh read all six. Their findings named defects in BOTH compilers. These are the ones that were in the new one, every fix verified against JavaScript's own answer on a live mongod.
