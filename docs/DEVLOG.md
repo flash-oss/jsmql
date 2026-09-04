@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — docs: two rulings on the filter target — `$.` is the root document at every depth, and `||` stays per branch
+
+Two questions the filter target raised, answered by the developer, recorded here so the pipeline chunk inherits them.
+
+**`$.` is the root document, with no exceptions.** Inside a sub-pipeline — a `$$$.<coll>` chain, an `.aggregate([…])` block, a `.filter(…)` predicate — `$.x` reads the OUTER document, threaded in through `$lookup.let`; the inner document is the callback parameter, or a raw `"$x"` MQL path string. This is what HR4 already states and what the shipped compiler does, so nothing changes. It is written down again because the alternative was tempting: MongoDB itself reads `"$total"` inside a `$lookup` sub-pipeline as the FOREIGN document's field, so a reader of the emitted MQL sees two meanings for one spelling. The ruling keeps JSMQL's spelling single-valued and leaves MongoDB's spelling to the escape hatch — a developer who writes raw MQL accepts MongoDB's reading of it.
+
+**`||` stays per branch.** A new fact came out of measuring it: because each branch is its own clause, the server chooses when each one runs, so a branch the server refuses on some document can be reached where one `$expr` over the whole `||` happened to run after a cheaper clause had already excluded that document. Measured, with `b: "oops"` in one document: the per-branch shape is refused ("$multiply only supports numeric types") and the single-`$expr` shape returns two documents. Neither order is promised by the server, and `"oops" * 2` is `NaN`, which this language does not model, so arithmetic over a mixed-type field can fail on either shape. The rule stands, because it is the one that keeps a leaf's meaning independent of its siblings: `{ $expr: { $eq: ["$tags", "red"] } }` does not select `tags: ["red","blue"]` where `{ tags: "red" }` does, and a developer reading one branch should not have to look at the other. The hazard is stated in `docs/specs/emit-pass.md`.
+
+---
+
 ## 2026-09-04 — fix(compiler): the filter target's query-cell review — `typeof … "undefined"` is absence, `$sampleRate` takes a rate, a zero divisor is refused, and a nested `.some` reads its own element
 
 The third after-audit of the filter target reviewed every query cell against a running `mongod` and found six defects; all six are fixed here, each as a stated registry fact or a rule stated once in the emit phase.

@@ -121,6 +121,25 @@ needed it, and `{ $expr: { $eq: ["$tags", "red"] } }` does not match
 changed with its sibling. Per branch, each branch means what the same predicate
 means alone.
 
+Per branch also changes WHEN a branch runs. The server picks the order of the
+clauses in a query document, so a branch whose expression the server refuses on
+some document can now be reached where one `$expr` over the whole `||` happened
+to run after a cheaper clause had already excluded that document. Measured over
+`{a:1,b:1,c:5}`, `{a:2,b:"oops",c:1}`, `{a:2,b:1,c:9}`:
+
+```js
+($.a === 1 || $.b * 2 === 2) && $.c > 3
+// per branch:  {"$or":[{"a":1},{"$expr":{"$eq":[{"$multiply":["$b",2]},2]}}],"c":{"$gt":3}}
+//              the server refuses it: "$multiply only supports numeric types"
+// one $expr:   {"c":{"$gt":3},"$expr":{"$or":[{"$eq":["$a",1]},{"$eq":[{"$multiply":["$b",2]},2]}]}}
+//              selects _id 1 and 3 — the `c` clause excluded the string `b` first
+```
+
+Neither order is promised by the server, and `"oops" * 2` is `NaN` in
+JavaScript, which this language does not model, so an arithmetic expression over
+a field of mixed type can fail on either shape. The per-branch rule stands: a
+predicate that means one thing alone means the same thing beside a sibling.
+
 A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
 and friends (the type test, the presence test, the modulo test, the null test, a
 field against a constant — in that order), `includes`/`startsWith`/`endsWith`/
