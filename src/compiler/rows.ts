@@ -343,6 +343,16 @@ export function productionForNode(nodeType: string): string | undefined {
 }
 
 /** Can this global be handed to a higher-order name unapplied — `map(String)`? */
+/** The containers a row states its stage may not stand inside. */
+export function forbiddenInOf(name: string): readonly string[] {
+  return (row(name) as { forbiddenIn?: readonly string[] } | undefined)?.forbiddenIn ?? [];
+}
+
+/** The extra rules a row states that no renderer implies — where a stage may stand. */
+export function onlyOf(name: string): readonly string[] {
+  return (row(name) as { only?: readonly string[] } | undefined)?.only ?? [];
+}
+
 export function asReferenceOf(name: string): boolean {
   return emitRow(name)?.asReference === true;
 }

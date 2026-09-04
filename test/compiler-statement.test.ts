@@ -34,6 +34,22 @@ describe("compiler/emit/statement — the writes", () => {
     expect(compiled("$.a.b = 1, $.a.c = 2;")).toEqual([{ $set: { "a.b": 1, "a.c": 2 } }]);
   });
 
+  it("assigns a document WHOLE, as JavaScript does", () => {
+    // `{ $set: { n: { x: 1 } } }` MERGES into `n` on the server, leaving the other
+    // sub-fields behind; `$mergeObjects` makes the document a value, so the field
+    // takes it whole — and an expression inside it still evaluates. Both measured.
+    expect(compiled("$.n = { x: 1 };")).toEqual([{ $set: { n: { $mergeObjects: [{ x: 1 }] } } }]);
+    expect(compiled("$.n = { x: $.a };")).toEqual([{ $set: { n: { $mergeObjects: [{ x: "$a" }] } } }]);
+    expect(compiled("$.n = {};")).toEqual([{ $set: { n: { $mergeObjects: [{}] } } }]);
+    // A spread already IS a `$mergeObjects`, and is not wrapped twice.
+    expect(compiled("$.n = { ...$, x: 1 };")).toEqual([{ $set: { n: { $mergeObjects: ["$$ROOT", { x: 1 }] } } }]);
+    // Everything that is not a plain document is already a value.
+    expect(compiled("$.n = [1, 2];")).toEqual([{ $set: { n: [1, 2] } }]);
+    expect(compiled("$.n = $.other;")).toEqual([{ $set: { n: "$other" } }]);
+    // The raw stage form is the developer's own MQL and keeps MongoDB's meaning (HR1).
+    expect(compiled("$set({ n: { x: 1 } });")).toEqual([{ $set: { n: { x: 1 } } }]);
+  });
+
   it("ends a group where one $set would say something else", () => {
     // A later write that READS what an earlier one wrote must read the NEW value.
     expect(compiled("$.x = 1, $.z = $.x;")).toEqual([{ $set: { x: 1 } }, { $set: { z: "$x" } }]);
@@ -41,6 +57,9 @@ describe("compiler/emit/statement — the writes", () => {
     // Writing what an earlier value READ needs no split: one `$set` evaluates
     // every value against the document it received.
     expect(compiled("$.a = $.b, $.b = 1;")).toEqual([{ $set: { a: "$b", b: 1 } }]);
+    // A `"$a"` the developer typed IS a read of `a`, so the group ends there too:
+    // one `$set` would have given `b` the value `a` held BEFORE the stage.
+    expect(compiled('$.a = 1, $.b = "$a";')).toEqual([{ $set: { a: 1 } }, { $set: { b: "$a" } }]);
     // The same path twice is the source saying two things.
     expect(compiled("$.a = 1, $.a = 2;")).toEqual([{ $set: { a: 1 } }, { $set: { a: 2 } }]);
     // A parent beside its own child is refused by the server outright.
@@ -85,6 +104,34 @@ describe("compiler/emit/statement — the stage calls", () => {
     ]);
   });
 
+  it("reads each body key in the position its row states", () => {
+    // `$geoNear`'s row states `filter` for its `query` key, so the predicate there
+    // becomes a query document — an aggregation expression is refused by the server.
+    expect(compiled('$geoNear({ near: [0, 0], distanceField: "d", query: $.k === "a" });')).toEqual([
+      { $geoNear: { near: [0, 0], distanceField: "d", query: { k: { $eq: "a", $not: { $type: "array" } } } } },
+    ]);
+  });
+
+  it("places a stage where its row says it may stand", () => {
+    // A stage that writes the output is filed last, so the `__jsmql` cleanup precedes it.
+    expect(compiled('$.b = 2; $out("o");')).toEqual([{ $set: { b: 2 } }, { $out: "o" }]);
+    expect(compiled('$.n = $$.length; $out("o");')).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $set: { n: "$__jsmql.length" } },
+      { $unset: "__jsmql" },
+      { $out: "o" },
+    ]);
+    expect(compiled("$documents([{ a: 1 }]); $.b = 2;")).toEqual([{ $documents: [{ a: 1 }] }, { $set: { b: 2 } }]);
+    // Each rule exists because the server enforces it.
+    expect(() => pipeline('$out("o"); $.b = 2;')).toThrow(/Nothing can follow '\$out'/);
+    expect(() => pipeline("$.b = 2; $documents([{ a: 1 }]);")).toThrow(/has to be the FIRST stage/);
+    expect(() => pipeline('$out("a"); $merge("b");')).toThrow(/Nothing can follow '\$out'/);
+    // and inside a container that forbids it
+    expect(() => pipeline('$lookup({ from: "o", pipeline: [$out("x")], as: "r" });')).toThrow(
+      /cannot stand inside '\$lookup'/,
+    );
+  });
+
   it("passes a raw stage document through, and reads a bracketed program as the pipeline", () => {
     // HR1: raw MQL is the developer's own and keeps MongoDB's reading.
     expect(compiled("{ $match: { a: 2 } };")).toEqual([{ $match: { a: 2 } }]);
@@ -106,6 +153,21 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   it("refuses a destination that is not a field, and the deletion of the document", () => {
     expect(() => pipeline("$.s.trim() = 1;")).toThrow(/A write names a field|only a field/);
     expect(() => pipeline("delete $;")).toThrow(/delete the document itself/);
+  });
+
+  it("refuses a value, and a program that would do nothing", () => {
+    // A folded constant array is a VALUE, not the empty pipeline: `[1,2].slice(2,2)`
+    // settles to `[]`, which read as a program would compile to no stages at all.
+    expect(() => pipeline("[1, 2, 3].slice(3, 2)")).toThrow(/A pipeline is one or more statements/);
+    expect(() => pipeline("[]")).toThrow(/A pipeline is one or more statements/);
+    expect(() => pipeline("const x = 5;")).toThrow(/produces no stages/);
+  });
+
+  it("keeps a stage inside the body it was written in", () => {
+    expect(compiled('$lookup({ from: "o", pipeline: [$match($.a > 1)], as: "r" });')).toEqual([
+      { $lookup: { from: "o", pipeline: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }], as: "r" } },
+    ]);
+    expect(compiled("$facet({ a: [$limit(1)] });")).toEqual([{ $facet: { a: [{ $limit: 1 }] } }]);
   });
 
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
@@ -150,12 +212,18 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
       expect(RUNS.length).toBeGreaterThan(0);
       return;
     }
+    // A refusal that is about this deployment rather than about the shape: a
+    // collection-level aggregate cannot start from `$documents`, and `$geoNear`
+    // needs an index the fixture has no reason to carry. See test/CLAUDE.md.
+    const environment = /database or cluster-level aggregation|2d or 2dsphere index/;
     const refused: string[] = [];
     for (const src of RUNS) {
       try {
         await coll.aggregate(pipeline(src) as Record<string, unknown>[]).toArray();
       } catch (e) {
-        refused.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${(e as Error).message}`);
+        const message = (e as Error).message;
+        if (environment.test(message)) continue;
+        refused.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${message}`);
       }
     }
     expect(refused, `the server refused ${refused.length} of ${RUNS.length}:\n${refused.join("\n")}`).toEqual([]);

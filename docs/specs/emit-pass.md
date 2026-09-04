@@ -240,6 +240,39 @@ position its row states (`bodyPositions`), which is how `$match`'s predicate
 becomes a query document and a `$group` output key becomes an accumulator
 without either cell knowing which reading it asked for. `readIn` is that hub.
 
+Four facts the row states are applied where the statement stands, each because
+the server enforces it and no renderer implies it:
+
+| the row says | the target does | measured |
+|---|---|---|
+| `only: ["stageFirst"]` | refuses the stage anywhere but first | "$documents is only valid as the first stage" |
+| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, and refuses a statement after it | "$out can only be the final stage" |
+| `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
+| `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
+
+A stage's own body sub-pipeline runs under its OWN chain, with the container
+recorded as a boundary. Without the chain a stage filed as LAST is filed on the
+outer one and silently leaves the body — measured: a `$out` inside a `$lookup`
+body landed at the end of the outer pipeline and the body came out empty.
+
+Two JavaScript meanings the query language does not share by default:
+
+```js
+$.n = { x: 1 }       // → { $set: { n: { $mergeObjects: [{ x: 1 }] } } }
+$.a = 1, $.b = "$a"  // → two $sets, because `"$a"` IS a read of `a`
+```
+
+`{ $set: { n: { x: 1 } } }` MERGES into `n` on the server — measured, `y` survived
+— where a JavaScript assignment replaces the field. `$mergeObjects` makes the
+document the value of an expression rather than a nested field spec, and unlike
+`$literal` an expression inside it still evaluates. And a `"$a"` the developer
+typed is the field `a` (HR1), so it ends a write group exactly as `$.a` does;
+without that, one `$set` gave `b` the value `a` held before the stage.
+
+Which DOCUMENT the whole program becomes is asked once, at the entry: a folded
+constant array (`[1,2].slice(2,2)` settles to `[]`) is a VALUE, and read as a
+program it would compile to no stages at all.
+
 What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
 `emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
 than trust one, and so the work left is countable. The list emptying is what

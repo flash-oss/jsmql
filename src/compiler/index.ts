@@ -16,6 +16,8 @@ import { Env } from "./emit/env.ts";
 import { lowerValue } from "./emit/lower.ts";
 import { lowerFilter } from "./emit/filter.ts";
 import { lowerProgram } from "./emit/statement.ts";
+import { shapeOf } from "./passes/shape.ts";
+import { noStages, notAPipeline } from "./emit/errors.ts";
 
 /** A bare aggregation expression: `$.qty * $.price` → `{ $multiply: ["$qty", "$price"] }`. */
 export function expr(source: string): unknown {
@@ -39,5 +41,11 @@ export function filter(source: string): Record<string, unknown> {
  */
 export function pipeline(source: string): unknown[] {
   const program = desugar(fold(parse(source)), STATEMENT);
-  return lowerProgram(program, Env.root(program, "statement"));
+  // Which DOCUMENT the program becomes is phase 4's other answer, and no single
+  // step can see it. Without asking, a folded constant array — `[1,2].slice(2,2)`
+  // settles to `[]` — reads as the empty pipeline instead of as a value.
+  if (shapeOf(program) !== "pipeline") throw notAPipeline((program as { pos: number }).pos);
+  const stages = lowerProgram(program, Env.root(program, "statement"));
+  if (stages.length === 0) throw noStages((program as { pos: number }).pos);
+  return stages;
 }

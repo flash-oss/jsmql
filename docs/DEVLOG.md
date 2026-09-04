@@ -10,6 +10,26 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — fix(compiler): the statement target's before-audit findings — six defects, each measured on the server
+
+Six agents each measured one area of the shipped statement lowering before this target was built, and a seventh read all six. Their findings named defects in BOTH compilers. These are the ones that were in the new one, every fix verified against JavaScript's own answer on a live mongod.
+
+**A `"$a"` the developer typed is a READ of `a`.** The write grouping counted only `$.a`-spelled reads, so `$.a = 1, $.b = "$a"` merged into one `$set` and `b` took the value `a` held BEFORE the stage — measured: 5 where the program says 1. HR1 says a `$`-prefixed string IS that field, so it ends a group exactly as the JavaScript spelling does. `$$ROOT` and `$$CURRENT` read the whole document.
+
+**A JavaScript assignment REPLACES a field; `$set` merges into it.** `{ $set: { n: { x: 1 } } }` over `n: { x: 11, y: 22 }` leaves `y` behind — measured on the server. `$.n = { x: 1 }` says `y` is gone, so the document is wrapped: `{ $set: { n: { $mergeObjects: [{ x: 1 }] } } }`. `$mergeObjects` makes it the value of an expression rather than a nested field spec, and unlike `$literal` an expression inside it still evaluates (`$.n = { x: $.a }` keeps reading `a`). The raw stage form `$set({ n: { x: 1 } })` is the developer's own MQL and keeps MongoDB's meaning.
+
+**Placement is a row fact, and nothing was reading it.** `only: ["stageFirst"]` sits on 26 rows and `["stageLast"]` on three, and the target emitted `$out("o"); $.b = 2;` — refused by the server, "$out can only be the final stage". A stage that must be last is now FILED on the chain, which is what `Chain.terminal` was built for: the `__jsmql` cleanup then precedes it, where the shipped compiler puts the cleanup after and the server refuses the whole pipeline. A statement written after it is refused rather than silently reordered.
+
+**A stage's body sub-pipeline is its own pipeline.** A `$out` inside a `$lookup` body was filed on the OUTER chain: measured, it landed at the end of the outer pipeline and the body came out empty. A body now runs under its own chain with the container recorded as a boundary, which is also what makes the row's own `forbiddenIn` testable — the server refuses a write stage in a sub-pipeline, and now so does the compiler.
+
+**Every stated body slot is reachable.** `$geoNear`'s row says its `query` key is a FILTER, and the value reading ignored that: the emitted `{"query":{"$eq":["$k","a"]}}` is refused by the server ("unknown top level operator: $eq"). A stage body now walks its own keys, each in the position its row names, so twelve rows with nested non-value slots mean what they say.
+
+**The entry asks which document the program becomes.** `[1,2,3].slice(3,2)` folds to `[]`, and read as a program that is the empty pipeline rather than a value; `const x = 5;` alone produced no stages at all. Both are refused now, the first by `shapeOf` and the second by name.
+
+Suite: 62 files, 4822 passed, and every pipeline the statement suite asserts also runs on a live mongod. The expression and filter gates stay fully classified.
+
+---
+
 ## 2026-09-05 — feat(compiler): the statement target — a program to a pipeline
 
 The next target of the new compiler: a `;`-separated program of statements to an aggregation pipeline. `src/compiler/emit/statement.ts`, and `pipeline(source)` beside `expr` and `filter`.

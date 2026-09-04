@@ -340,3 +340,45 @@ export function pendingStatement(what: string, pos: number): CodegenError {
   if (livesIn === undefined) internalError(`'${what}' is not a stated pending construct`);
   return new PendingLowering(what, "statement", livesIn, pos);
 }
+
+/** A stage the server accepts only as the pipeline's first, written after something else. */
+export const mustBeFirstStage = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.`,
+    pos,
+  );
+
+/** Two stages that each have to be last. */
+export const twoTerminalStages = (name: string, already: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination — keep one of them.`,
+    pos,
+  );
+
+/** A source that is a value, handed to the pipeline entry. */
+export const notAPipeline = (pos: number): CodegenError =>
+  new CodegenError(
+    "A pipeline is one or more statements: `;`-separated ('$match(…); $sort({…});') or a bracketed list of stages ('[$match(…), $sort({…})]'). This source is a single expression — pass it to jsmql() for a filter, or jsmql.expr() for an aggregation expression.",
+    pos,
+  );
+
+/** A program whose statements produce no stages at all. */
+export const noStages = (pos: number): CodegenError =>
+  new CodegenError(
+    "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+    pos,
+  );
+
+/** A statement after the stage that writes the pipeline's output. */
+export const afterTerminalStage = (already: string, pos: number): CodegenError =>
+  new CodegenError(
+    `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
+    pos,
+  );
+
+/** A stage written inside a container its row forbids. */
+export const forbiddenInContainer = (name: string, container: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' cannot stand inside '${container}' — the server refuses a write stage in a sub-pipeline. Run it as a stage of the outer pipeline instead.`,
+    pos,
+  );
