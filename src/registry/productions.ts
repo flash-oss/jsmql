@@ -18,7 +18,7 @@
 
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, pending, unsupported, viaFallback } from "./vocabulary.ts";
-import type { Cell, ExprIn, FilterIn, Lists, Of, QueryDoc, Stage, StageIn } from "./vocabulary.ts";
+import type { Cell, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, StageIn } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -102,12 +102,12 @@ export type ProductionSpec<
    * — JavaScript rejects it. <instead>". Not `delete`: `delete a?.b` is legal.
    */
   neverAWriteTarget?: { instead: string };
-  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc, C>;
-  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown, C>;
+  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, FilterOut<Lists<W, "value">>, C>;
+  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, OutOf["value"], C>;
   /** A link in a `$$ = $$…` chain. */
-  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, Stage[], C>;
+  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, OutOf["stream"], C>;
   /** A `;`-separated statement. SEPARATE from `stream` — see Position. */
-  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, Stage[], C>;
+  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, OutOf["statement"], C>;
 };
 
 export type ProductionEntry<
@@ -265,7 +265,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -282,7 +282,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -299,7 +299,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -316,7 +316,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -333,7 +333,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -350,7 +350,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -367,7 +367,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -384,7 +384,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value", "filter"],
     filter: pending("src/match-translation.ts"),
     expr: pending("src/codegen.ts"),
@@ -401,7 +401,7 @@ export const PRODUCTIONS = {
     associativity: "none",
     fixity: "infix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
@@ -521,7 +521,7 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    returns: "bool",
     where: ["value"],
     filter: viaFallback,
     expr: pending("src/codegen.ts"),
@@ -573,7 +573,7 @@ export const PRODUCTIONS = {
     associativity: "right",
     fixity: "prefix",
     on: "any",
-    returns: "unknown",
+    returns: "string",
     where: ["value"],
     filter: composedInto("strictEquality", "strictInequality"),
     expr: pending("src/codegen.ts"),

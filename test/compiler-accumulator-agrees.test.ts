@@ -40,11 +40,11 @@ if (!up) {
   );
 }
 
-/** A source node the emitters can be handed, and the `gen` that renders one. */
+/** A source node the emitters can be handed, and the `value` service that renders one. */
 type Node = { type: "FieldRef"; segments: readonly string[] } | { type: "ArrayLiteral"; elements: readonly Node[] };
 const F = (p: string): Node => ({ type: "FieldRef", segments: [p] });
 const ARR = (...elements: Node[]): Node => ({ type: "ArrayLiteral", elements });
-const gen = (x: Node): unknown => (x.type === "FieldRef" ? "$" + x.segments.join(".") : x.elements.map(gen));
+const value = (x: Node): unknown => (x.type === "FieldRef" ? "$" + x.segments.join(".") : x.elements.map(value));
 
 /**
  * A field whose VALUE suits this operator, and the array form of the same.
@@ -126,7 +126,7 @@ describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod
         const lists = argumentLists(cell as Cell, name);
         if (lists === null) continue;
         for (const [label, args] of lists) {
-          const doc = (cell as Cell).emit!({ name, args, gen });
+          const doc = (cell as Cell).emit!({ name, args, value });
           checked++;
           try {
             await coll.aggregate([wrap[pos](doc)]).toArray();

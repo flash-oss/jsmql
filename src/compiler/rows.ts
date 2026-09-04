@@ -214,17 +214,20 @@ export function argCountOf(name: string, family?: Family): ArgCount | undefined 
     if (family !== undefined && perFamily[family]?.args !== undefined) return perFamily[family].args;
     return undefined;
   }
-  // A cell that dispatches on the ARGUMENT shape accepts what any of its rows
+  // A cell that dispatches on the ARGUMENT shape accepts what any of its rules
   // accepts. Read as one rule, so `new Date(a, b, c, d, e, f, g, h)` is refused
-  // by the count no row states rather than accepted because no single rule was
+  // by the count no rule states rather than accepted because no single rule was
   // found — which is what an undefined answer means to `acceptsArgumentCount`.
-  const byArgs = (cell as { byArgs?: readonly { args?: ArgCount }[] }).byArgs;
+  // The two refusal keys (`constant`, `otherwise`) state no count: a constant
+  // call is counted by the rule for its class, and the leftover by none.
+  const byArgs = (cell as { byArgs?: Readonly<Record<string, { args?: ArgCount; unsupported?: string }>> }).byArgs;
   if (byArgs === undefined) return undefined;
   const allowed = new Set<number>();
   let atLeast: number | undefined;
-  for (const branch of byArgs) {
+  for (const branch of Object.values(byArgs)) {
+    if (branch.unsupported !== undefined) continue;
     const a = branch.args;
-    if (a === undefined) return undefined; // a branch with no rule accepts anything
+    if (a === undefined) return undefined; // a rule with no count accepts anything
     if (a.none === true) allowed.add(0);
     if (a.exact !== undefined) allowed.add(a.exact);
     for (const n of a.allowed ?? []) allowed.add(n);

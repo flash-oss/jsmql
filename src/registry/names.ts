@@ -21,7 +21,7 @@
 // where a fact still lives in code, the row says `pending(<file>)`.
 
 import type {
-  ArgShape,
+  Binds,
   CallbackParams,
   Arity,
   BodyRule,
@@ -32,11 +32,14 @@ import type {
   Family,
   IterateeSlots,
   FilterIn,
+  FilterOut,
   GroupIn,
   Kind,
   Lists,
+  MongoExprIn,
   Of,
   On,
+  OutOf,
   OperandClass,
   OperatorCategory,
   Only,
@@ -51,7 +54,7 @@ import type {
   TokenName,
   ViaFallback,
 } from "./vocabulary.ts";
-import { accumulated, Anchored, because, objectBody, pending, Range, unsupported, viaFallback } from "./vocabulary.ts";
+import { accumulated, because, objectBody, pending, unsupported, viaFallback } from "./vocabulary.ts";
 
 type RootSpec<W extends readonly Position[]> = {
   doc: string;
@@ -72,12 +75,12 @@ type RootSpec<W extends readonly Position[]> = {
   // three context refs said `where: ["stream"]` while their only stated message
   // read "'$$' is a statement, not an aggregation expression" — one construct,
   // two registries, two answers, and nothing to catch it.
-  filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
-  expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
-  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
-  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
-  group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
-  window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
+  filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
+  expr: Cell<Lists<W, "value">, Family, ExprIn, OutOf["value"]>;
+  stream: Cell<Lists<W, "stream">, Family, StageIn, OutOf["stream"]>;
+  statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
+  group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
+  window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
 };
 
 type NameSpec<W extends readonly Position[], O extends On, T extends string = never> = {
@@ -176,15 +179,15 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   returns: Returns;
   where: W;
   only?: readonly Only[];
-  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, QueryDoc>;
-  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, unknown>;
+  filter: Cell<Lists<W, "filter">, Of<O>, FilterIn, FilterOut<Lists<W, "value">>>;
+  expr: Cell<Lists<W, "value">, Of<O>, ExprIn, OutOf["value"]>;
   /** A link in a `$$ = $$…` chain. */
-  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, Stage[]>;
+  stream: Cell<Lists<W, "stream">, Of<O>, StageIn, OutOf["stream"]>;
   /** A `;`-separated statement. SEPARATE from `stream` — see Position. */
-  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, Stage[]>;
-  group: Cell<Lists<W, "group">, Of<O>, GroupIn, unknown>;
+  statement: Cell<Lists<W, "statement">, Of<O>, StageIn, OutOf["statement"]>;
+  group: Cell<Lists<W, "group">, Of<O>, GroupIn, OutOf["group"]>;
   /** $setWindowFields.output — a DIFFERENT slot from $group. See MongoSpec.window. */
-  window: Cell<Lists<W, "window">, Of<O>, GroupIn, unknown>;
+  window: Cell<Lists<W, "window">, Of<O>, GroupIn, OutOf["window"]>;
 };
 
 type MongoSpec<
@@ -252,6 +255,11 @@ type MongoSpec<
   /** See NameSpec.paramsRepeat. */
   paramsRepeat?: true;
   /**
+   * The MongoDB VARIABLES this operator brings into scope, and in which keys of
+   * its body they are visible. See `Binds`. Absent means it binds none.
+   */
+  binds?: Binds;
+  /**
    * The type of the value this name produces, or absent when it produces none —
    * a stage, or a query fragment like `$box`. Stated exactly on the rows whose
    * `where` includes `value`, `group` or `window`; a test holds both directions.
@@ -297,28 +305,28 @@ type MongoSpec<
    * `$each` in an update document, `$case` in a value.
    */
   onlyInside?: I;
-  filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
-  expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
-  group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
+  filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
+  expr: Cell<Lists<W, "value">, Family, MongoExprIn, OutOf["value"]>;
+  group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
   /**
    * $setWindowFields.output is a DIFFERENT slot from $group, proven both ways on mongod:
    * $rank is a window function and not a group operator; $mergeObjects the reverse.
    */
-  window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
+  window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
   /** A link in a `$$ = $$…` chain. */
-  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
+  stream: Cell<Lists<W, "stream">, Family, StageIn, OutOf["stream"]>;
   /**
    * A top-level `;`-separated statement. SEPARATE from `stream`: `$match(…);`
    * and `$$ = $$.$match(…)` are both legal and a stage row must be able to say
    * so, while `$$.push(...)` is a statement whose chain-link form is refused.
    */
-  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
+  statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
   /**
    * The update DOCUMENT — `updateOne(filter, { $inc: … })`. A whole operator
    * family is valid only here and nowhere else in MQL: the same document in a
    * pipeline is "Unrecognized pipeline stage name: '$inc'".
    */
-  updateDoc: Cell<Lists<W, "updateDoc">, Family, GroupIn, unknown>;
+  updateDoc: Cell<Lists<W, "updateDoc">, Family, GroupIn, OutOf["updateDoc"]>;
 };
 
 type GlobalSpec<W extends readonly Position[]> = {
@@ -333,14 +341,14 @@ type GlobalSpec<W extends readonly Position[]> = {
   returns: Returns;
   where: W;
   only?: readonly Only[];
-  filter: Cell<Lists<W, "filter">, Family, FilterIn, QueryDoc>;
-  expr: Cell<Lists<W, "value">, Family, ExprIn, unknown>;
+  filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
+  expr: Cell<Lists<W, "value">, Family, ExprIn, OutOf["value"]>;
   // `assert(cond);` is receiver-less AND statement-only. With only the two cells
   // above, it had nowhere to be written at all.
-  stream: Cell<Lists<W, "stream">, Family, StageIn, Stage[]>;
-  statement: Cell<Lists<W, "statement">, Family, StageIn, Stage[]>;
-  group: Cell<Lists<W, "group">, Family, GroupIn, unknown>;
-  window: Cell<Lists<W, "window">, Family, GroupIn, unknown>;
+  stream: Cell<Lists<W, "stream">, Family, StageIn, OutOf["stream"]>;
+  statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
+  group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
+  window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
 };
 
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
@@ -421,7 +429,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$abs' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$abs' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$abs' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$abs' is not valid in stage position — see its 'where'."),
@@ -436,7 +444,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$add' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$add' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$add' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$add' is not valid in stage position — see its 'where'."),
@@ -451,7 +459,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$ceil' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$ceil' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ceil' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ceil' is not valid in stage position — see its 'where'."),
@@ -468,7 +476,7 @@ export const NAMES = {
     filter: unsupported("'$divide' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$divide' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$divide' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -484,7 +492,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$exp' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$exp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$exp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$exp' is not valid in stage position — see its 'where'."),
@@ -499,7 +507,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$floor' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$floor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$floor' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$floor' is not valid in stage position — see its 'where'."),
@@ -514,7 +522,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$ln' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$ln' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ln' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$ln' is not valid in stage position — see its 'where'."),
@@ -531,7 +539,7 @@ export const NAMES = {
     filter: unsupported("'$log' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "number, base", exact: 2, slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$log' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -547,7 +555,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$log10' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$log10' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$log10' is not valid in stage position — see its 'where'."),
@@ -564,7 +572,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts"),
     expr: {
       args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$mod' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$mod' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -580,7 +588,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$multiply' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$multiply' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$multiply' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$multiply' is not valid in stage position — see its 'where'."),
@@ -597,7 +605,7 @@ export const NAMES = {
     filter: unsupported("'$pow' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "base, exponent", exact: 2, slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$pow' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$pow' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -615,7 +623,7 @@ export const NAMES = {
     filter: unsupported("'$round' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$round' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$round' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -632,7 +640,7 @@ export const NAMES = {
     minVersion: "8.1",
     shape: "single",
     filter: unsupported("'$sigmoid' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$sigmoid' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sigmoid' is not valid in stage position — see its 'where'."),
@@ -647,7 +655,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sqrt' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$sqrt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sqrt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sqrt' is not valid in stage position — see its 'where'."),
@@ -664,7 +672,7 @@ export const NAMES = {
     filter: unsupported("'$subtract' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "minuend, subtrahend", exact: 2, slotType: { 0: "number-or-date" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$subtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$subtract' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -682,7 +690,7 @@ export const NAMES = {
     filter: unsupported("'$trunc' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$trunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trunc' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -698,7 +706,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitAnd' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$bitAnd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitAnd' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitAnd' is not valid in stage position — see its 'where'."),
@@ -713,7 +721,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$bitNot' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$bitNot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitNot' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitNot' is not valid in stage position — see its 'where'."),
@@ -728,7 +736,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitOr' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$bitOr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitOr' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitOr' is not valid in stage position — see its 'where'."),
@@ -743,7 +751,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$bitXor' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$bitXor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitXor' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bitXor' is not valid in stage position — see its 'where'."),
@@ -758,7 +766,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sin' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$sin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sin' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sin' is not valid in stage position — see its 'where'."),
@@ -773,7 +781,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$cos' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$cos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cos' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cos' is not valid in stage position — see its 'where'."),
@@ -788,7 +796,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tan' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$tan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tan' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tan' is not valid in stage position — see its 'where'."),
@@ -803,7 +811,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$asin' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$asin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asin' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$asin' is not valid in stage position — see its 'where'."),
@@ -818,7 +826,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$acos' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$acos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acos' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$acos' is not valid in stage position — see its 'where'."),
@@ -833,7 +841,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$atan' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$atan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$atan' is not valid in stage position — see its 'where'."),
@@ -850,7 +858,7 @@ export const NAMES = {
     filter: unsupported("'$atan2' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "y, x", exact: 2, slotType: { 0: "number" } },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$atan2' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan2' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -866,7 +874,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$sinh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$sinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sinh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$sinh' is not valid in stage position — see its 'where'."),
@@ -881,7 +889,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$cosh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$cosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cosh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cosh' is not valid in stage position — see its 'where'."),
@@ -896,7 +904,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tanh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$tanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tanh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tanh' is not valid in stage position — see its 'where'."),
@@ -911,7 +919,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$asinh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$asinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asinh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$asinh' is not valid in stage position — see its 'where'."),
@@ -926,7 +934,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$acosh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$acosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acosh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$acosh' is not valid in stage position — see its 'where'."),
@@ -941,7 +949,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$atanh' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$atanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atanh' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$atanh' is not valid in stage position — see its 'where'."),
@@ -956,7 +964,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$degreesToRadians' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$degreesToRadians' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$degreesToRadians' is not valid in stage position — see its 'where'."),
@@ -971,7 +979,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$radiansToDegrees' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$radiansToDegrees' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$radiansToDegrees' is not valid in stage position — see its 'where'."),
@@ -986,7 +994,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$cmp' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$cmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cmp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$cmp' is not valid in stage position — see its 'where'."),
@@ -1003,7 +1011,7 @@ export const NAMES = {
     filter: pending("src/index.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$eq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$eq' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1021,7 +1029,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$ne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ne' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1039,7 +1047,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$gt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gt' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1057,7 +1065,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$gte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gte' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1075,7 +1083,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$lt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lt' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1093,7 +1101,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$lte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lte' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1109,7 +1117,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$and' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$and' is not valid in stage position — see its 'where'."),
@@ -1124,7 +1132,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$or' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$or' is not valid in stage position — see its 'where'."),
@@ -1139,7 +1147,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "single",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$not' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$not' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$not' is not valid in stage position — see its 'where'."),
@@ -1173,7 +1181,7 @@ export const NAMES = {
     filter: unsupported("'$ifNull' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "expr, replacement[, …]", atLeast: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$ifNull' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ifNull' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1206,7 +1214,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$concat' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$concat' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$concat' is not valid in stage position — see its 'where'."),
@@ -1223,7 +1231,7 @@ export const NAMES = {
     filter: unsupported("'$indexOfBytes' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$indexOfBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfBytes' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1241,7 +1249,7 @@ export const NAMES = {
     filter: unsupported("'$indexOfCP' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "string, substring[, start[, end]]", allowed: [2, 3, 4] },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$indexOfCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfCP' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1415,7 +1423,10 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$split' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "string, delimiter", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: {
+      args: { sig: "string, delimiter", exact: 2 },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$split' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$split' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$split' is not valid in stage position — see its 'where'."),
@@ -1430,7 +1441,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$strLenBytes' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$strLenBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strLenBytes' is not valid in stage position — see its 'where'."),
@@ -1445,7 +1456,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$strLenCP' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$strLenCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
@@ -1460,7 +1471,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$strcasecmp' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$strcasecmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strcasecmp' is not valid in stage position — see its 'where'."),
@@ -1477,7 +1488,7 @@ export const NAMES = {
     filter: unsupported("'$substr' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "string, start, length", exact: 3 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$substr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substr' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1495,7 +1506,7 @@ export const NAMES = {
     filter: unsupported("'$substrBytes' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "string, byteIndex, byteCount", exact: 3 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$substrBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrBytes' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1513,7 +1524,7 @@ export const NAMES = {
     filter: unsupported("'$substrCP' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "string, cpIndex, cpCount", exact: 3 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$substrCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrCP' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1529,7 +1540,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toLower' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toLower' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLower' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toLower' is not valid in stage position — see its 'where'."),
@@ -1544,7 +1555,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toUpper' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toUpper' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUpper' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toUpper' is not valid in stage position — see its 'where'."),
@@ -1621,7 +1632,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$arrayElemAt' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$arrayElemAt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$arrayElemAt' is not valid in stage position — see its 'where'."),
@@ -1636,7 +1647,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$arrayToObject' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$arrayToObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$arrayToObject' is not valid in stage position — see its 'where'."),
@@ -1651,7 +1662,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "array",
     filter: unsupported("'$concatArrays' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
@@ -1662,6 +1673,8 @@ export const NAMES = {
   $filter: mongo({
     doc: "Selects a subset of the array, returning only elements that match the filter condition.",
     category: "array",
+    // MEASURED: `limit` does not see `$$this` — "Use of undefined variable: this".
+    binds: { valueAt: "as", default: "this", visibleIn: ["cond"] },
     returns: "array",
     where: ["value"],
     shape: {
@@ -1688,7 +1701,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "single",
     filter: unsupported("'$first' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$first' is not valid in stage position — see its 'where'."),
@@ -1720,7 +1733,7 @@ export const NAMES = {
     filter: pending("src/match-translation.ts"),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$in' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$in' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1738,7 +1751,7 @@ export const NAMES = {
     filter: unsupported("'$indexOfArray' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "array, value[, start[, end]]", allowed: [2, 3, 4] },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$indexOfArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfArray' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1754,7 +1767,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isArray' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$isArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isArray' is not valid in stage position — see its 'where'."),
@@ -1769,7 +1782,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "single",
     filter: unsupported("'$last' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$last' is not valid in stage position — see its 'where'."),
@@ -1795,6 +1808,7 @@ export const NAMES = {
   $map: mongo({
     doc: "Applies a subexpression to each element of an array and returns the array of resulting values.",
     category: "array",
+    binds: { valueAt: "as", default: "this", visibleIn: ["in"] },
     returns: "array",
     where: ["value"],
     shape: { object: { required: ["input", "in"], optional: ["as"], closed: true, positional: ["input", "as", "in"] } },
@@ -1844,7 +1858,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$objectToArray' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$objectToArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$objectToArray' is not valid in stage position — see its 'where'."),
@@ -1861,7 +1875,7 @@ export const NAMES = {
     filter: unsupported("'$range' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "start, end[, step]", allowed: [2, 3] },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$range' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$range' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1873,6 +1887,8 @@ export const NAMES = {
   $reduce: mongo({
     doc: "Applies an expression to each element in an array and combines them into a single value.",
     category: "array",
+    // MEASURED: `initialValue` does not see `$$this` — "Use of undefined variable: this".
+    binds: { fixed: ["this", "value"], visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
     shape: {
@@ -1899,7 +1915,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$reverseArray' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$reverseArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$reverseArray' is not valid in stage position — see its 'where'."),
@@ -1914,7 +1930,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$size' is not valid in stage position — see its 'where'."),
@@ -1932,7 +1948,7 @@ export const NAMES = {
     filter: unsupported("'$slice' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "array, [position, ]count", allowed: [2, 3] },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$slice' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$slice' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -1985,7 +2001,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$allElementsTrue' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$allElementsTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
@@ -2000,7 +2016,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$anyElementTrue' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$anyElementTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$anyElementTrue' is not valid in stage position — see its 'where'."),
@@ -2015,7 +2031,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setDifference' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setDifference' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setDifference' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setDifference' is not valid in stage position — see its 'where'."),
@@ -2030,7 +2046,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setEquals' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setEquals' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setEquals' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
@@ -2045,7 +2061,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setIntersection' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setIntersection' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
@@ -2060,7 +2076,7 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setIsSubset' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setIsSubset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setIsSubset' is not valid in stage position — see its 'where'."),
@@ -2075,7 +2091,7 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "array",
     filter: unsupported("'$setUnion' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }) },
+    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
@@ -2107,7 +2123,7 @@ export const NAMES = {
     filter: unsupported("'$mergeObjects' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2389,7 +2405,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfMonth' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$dayOfMonth' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfMonth' is not valid in stage position — see its 'where'."),
@@ -2404,7 +2420,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfWeek' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$dayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfWeek' is not valid in stage position — see its 'where'."),
@@ -2419,7 +2435,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$dayOfYear' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$dayOfYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$dayOfYear' is not valid in stage position — see its 'where'."),
@@ -2434,7 +2450,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$hour' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$hour' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hour' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$hour' is not valid in stage position — see its 'where'."),
@@ -2449,7 +2465,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoDayOfWeek' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$isoDayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoDayOfWeek' is not valid in stage position — see its 'where'."),
@@ -2464,7 +2480,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoWeek' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$isoWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoWeek' is not valid in stage position — see its 'where'."),
@@ -2479,7 +2495,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isoWeekYear' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$isoWeekYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isoWeekYear' is not valid in stage position — see its 'where'."),
@@ -2494,7 +2510,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$millisecond' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$millisecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$millisecond' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$millisecond' is not valid in stage position — see its 'where'."),
@@ -2509,7 +2525,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$minute' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$minute' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$minute' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$minute' is not valid in stage position — see its 'where'."),
@@ -2524,7 +2540,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$month' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$month' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$month' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$month' is not valid in stage position — see its 'where'."),
@@ -2539,7 +2555,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$second' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$second' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$second' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$second' is not valid in stage position — see its 'where'."),
@@ -2554,7 +2570,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDate' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toDate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDate' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDate' is not valid in stage position — see its 'where'."),
@@ -2569,7 +2585,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$week' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$week' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$week' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$week' is not valid in stage position — see its 'where'."),
@@ -2584,7 +2600,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$year' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$year' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$year' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$year' is not valid in stage position — see its 'where'."),
@@ -2599,7 +2615,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tsIncrement' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$tsIncrement' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tsIncrement' is not valid in stage position — see its 'where'."),
@@ -2614,7 +2630,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$tsSecond' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$tsSecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$tsSecond' is not valid in stage position — see its 'where'."),
@@ -2676,7 +2692,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$isNumber' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$isNumber' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isNumber' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$isNumber' is not valid in stage position — see its 'where'."),
@@ -2691,7 +2707,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toArray' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toArray' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toArray' is not valid in stage position — see its 'where'."),
@@ -2706,7 +2722,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toBool' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toBool' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toBool' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toBool' is not valid in stage position — see its 'where'."),
@@ -2721,7 +2737,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDecimal' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toDecimal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDecimal' is not valid in stage position — see its 'where'."),
@@ -2736,7 +2752,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toDouble' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toDouble' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDouble' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toDouble' is not valid in stage position — see its 'where'."),
@@ -2751,7 +2767,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toInt' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toInt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toInt' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toInt' is not valid in stage position — see its 'where'."),
@@ -2766,7 +2782,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toLong' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toLong' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLong' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toLong' is not valid in stage position — see its 'where'."),
@@ -2781,7 +2797,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toObject' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObject' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toObject' is not valid in stage position — see its 'where'."),
@@ -2796,7 +2812,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toObjectId' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toObjectId' is not valid in stage position — see its 'where'."),
@@ -2811,7 +2827,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toString' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toString' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toString' is not valid in stage position — see its 'where'."),
@@ -2826,7 +2842,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toUUID' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toUUID' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUUID' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toUUID' is not valid in stage position — see its 'where'."),
@@ -2841,7 +2857,7 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "single",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$type' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$type' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$type' is not valid in stage position — see its 'where'."),
@@ -2856,7 +2872,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$literal' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$literal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$literal' is not valid in stage position — see its 'where'."),
@@ -2869,6 +2885,7 @@ export const NAMES = {
     category: "variable",
     params: ["binding"],
     paramsRepeat: true,
+    binds: { keysOf: "vars", visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
     shape: { object: { required: ["vars", "in"], optional: [], closed: true, positional: ["vars", "in"] } },
@@ -2939,7 +2956,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$binarySize' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$binarySize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$binarySize' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$binarySize' is not valid in stage position — see its 'where'."),
@@ -2954,7 +2971,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$bsonSize' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$bsonSize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$bsonSize' is not valid in stage position — see its 'where'."),
@@ -2969,7 +2986,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$meta' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$meta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$meta' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$meta' is not valid in stage position — see its 'where'."),
@@ -3064,7 +3081,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$toHashedIndexKey' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, gen }) => ({ [name]: gen(args[0]) }) },
+    expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$toHashedIndexKey' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$toHashedIndexKey' is not valid in stage position — see its 'where'."),
@@ -3096,7 +3113,7 @@ export const NAMES = {
     filter: unsupported("'$avg' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3121,8 +3138,8 @@ export const NAMES = {
     expr: unsupported("'$count' is not valid in expression position — see its 'where'."),
     group: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$count' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3135,7 +3152,7 @@ export const NAMES = {
     filter: unsupported("'$max' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3176,7 +3193,7 @@ export const NAMES = {
     filter: unsupported("'$min' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3232,7 +3249,7 @@ export const NAMES = {
     filter: unsupported("'$stdDevPop' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3250,7 +3267,7 @@ export const NAMES = {
     filter: unsupported("'$stdDevSamp' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3268,7 +3285,7 @@ export const NAMES = {
     filter: unsupported("'$sum' is not valid in filter position — see its 'where'."),
     expr: {
       args: { sig: "operands", atLeast: 1 },
-      emit: ({ name, args, gen }) => ({ [name]: args.length === 1 ? gen(args[0]) : args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3362,7 +3379,7 @@ export const NAMES = {
     group: unsupported("'$covariancePop' is not valid in a $group output position — see its 'where'."),
     window: {
       args: { sig: "expression1, expression2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     stream: unsupported("'$covariancePop' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$covariancePop' is not a statement — see its 'where'."),
@@ -3380,7 +3397,7 @@ export const NAMES = {
     group: unsupported("'$covarianceSamp' is not valid in a $group output position — see its 'where'."),
     window: {
       args: { sig: "expression1, expression2", exact: 2 },
-      emit: ({ name, args, gen }) => ({ [name]: args.map(gen) }),
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     stream: unsupported("'$covarianceSamp' is not valid in stage position — see its 'where'."),
     statement: unsupported("'$covarianceSamp' is not a statement — see its 'where'."),
@@ -3564,8 +3581,8 @@ export const NAMES = {
     expr: unsupported("'$addFields' is not valid in expression position — see its 'where'."),
     group: unsupported("'$addFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$addFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$addFields' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3580,8 +3597,8 @@ export const NAMES = {
     expr: unsupported("'$bucket' is not valid in expression position — see its 'where'."),
     group: unsupported("'$bucket' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucket' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$bucket' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3596,8 +3613,8 @@ export const NAMES = {
     expr: unsupported("'$bucketAuto' is not valid in expression position — see its 'where'."),
     group: unsupported("'$bucketAuto' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$bucketAuto' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3612,8 +3629,8 @@ export const NAMES = {
     expr: unsupported("'$changeStream' is not valid in expression position — see its 'where'."),
     group: unsupported("'$changeStream' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$changeStream' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$changeStream' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3630,8 +3647,8 @@ export const NAMES = {
     window: unsupported(
       "'$changeStreamSplitLargeEvent' is not valid in a $setWindowFields output position — see its 'where'.",
     ),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$changeStreamSplitLargeEvent' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3646,8 +3663,8 @@ export const NAMES = {
     expr: unsupported("'$collStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$collStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$collStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$collStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3662,8 +3679,8 @@ export const NAMES = {
     expr: unsupported("'$currentOp' is not valid in expression position — see its 'where'."),
     group: unsupported("'$currentOp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$currentOp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$currentOp' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3677,8 +3694,8 @@ export const NAMES = {
     expr: unsupported("'$densify' is not valid in expression position — see its 'where'."),
     group: unsupported("'$densify' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$densify' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$densify' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3693,8 +3710,8 @@ export const NAMES = {
     expr: unsupported("'$documents' is not valid in expression position — see its 'where'."),
     group: unsupported("'$documents' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$documents' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3709,8 +3726,8 @@ export const NAMES = {
     expr: unsupported("'$facet' is not valid in expression position — see its 'where'."),
     group: unsupported("'$facet' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$facet' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$facet' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3724,8 +3741,8 @@ export const NAMES = {
     expr: unsupported("'$fill' is not valid in expression position — see its 'where'."),
     group: unsupported("'$fill' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$fill' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$fill' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3740,8 +3757,8 @@ export const NAMES = {
     expr: unsupported("'$geoNear' is not valid in expression position — see its 'where'."),
     group: unsupported("'$geoNear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$geoNear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$geoNear' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3755,8 +3772,8 @@ export const NAMES = {
     expr: unsupported("'$graphLookup' is not valid in expression position — see its 'where'."),
     group: unsupported("'$graphLookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$graphLookup' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3771,8 +3788,8 @@ export const NAMES = {
     expr: unsupported("'$group' is not valid in expression position — see its 'where'."),
     group: unsupported("'$group' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$group' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$group' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3787,8 +3804,8 @@ export const NAMES = {
     expr: unsupported("'$indexStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$indexStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$indexStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3802,8 +3819,8 @@ export const NAMES = {
     expr: unsupported("'$limit' is not valid in expression position — see its 'where'."),
     group: unsupported("'$limit' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$limit' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$limit' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3818,8 +3835,8 @@ export const NAMES = {
     expr: unsupported("'$listLocalSessions' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listLocalSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$listLocalSessions' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3834,8 +3851,8 @@ export const NAMES = {
     expr: unsupported("'$listSampledQueries' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSampledQueries' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSampledQueries' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$listSampledQueries' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3850,8 +3867,8 @@ export const NAMES = {
     expr: unsupported("'$listSearchIndexes' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSearchIndexes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSearchIndexes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$listSearchIndexes' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3866,8 +3883,8 @@ export const NAMES = {
     expr: unsupported("'$listSessions' is not valid in expression position — see its 'where'."),
     group: unsupported("'$listSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$listSessions' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3876,13 +3893,14 @@ export const NAMES = {
     where: ["stream", "statement"],
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value", pipeline: "statement" },
+    binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
     filter: unsupported("'$lookup' is not valid in filter position — see its 'where'."),
     expr: unsupported("'$lookup' is not valid in expression position — see its 'where'."),
     group: unsupported("'$lookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$lookup' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3896,8 +3914,8 @@ export const NAMES = {
     expr: unsupported("'$match' is not valid in expression position — see its 'where'."),
     group: unsupported("'$match' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$match' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$match' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3912,8 +3930,8 @@ export const NAMES = {
     expr: unsupported("'$merge' is not valid in expression position — see its 'where'."),
     group: unsupported("'$merge' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$merge' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$merge' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3928,8 +3946,8 @@ export const NAMES = {
     expr: unsupported("'$out' is not valid in expression position — see its 'where'."),
     group: unsupported("'$out' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$out' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$out' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3944,8 +3962,8 @@ export const NAMES = {
     expr: unsupported("'$planCacheStats' is not valid in expression position — see its 'where'."),
     group: unsupported("'$planCacheStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$planCacheStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3960,8 +3978,8 @@ export const NAMES = {
     expr: unsupported("'$project' is not valid in expression position — see its 'where'."),
     group: unsupported("'$project' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$project' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$project' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3976,8 +3994,8 @@ export const NAMES = {
     expr: unsupported("'$rankFusion' is not valid in expression position — see its 'where'."),
     group: unsupported("'$rankFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rankFusion' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$rankFusion' is not valid in an update document — see its 'where'."),
   }),
 
@@ -3991,8 +4009,8 @@ export const NAMES = {
     expr: unsupported("'$redact' is not valid in expression position — see its 'where'."),
     group: unsupported("'$redact' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$redact' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$redact' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4008,8 +4026,8 @@ export const NAMES = {
     expr: unsupported("'$replaceRoot' is not valid in expression position — see its 'where'."),
     group: unsupported("'$replaceRoot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceRoot' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$replaceRoot' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4025,8 +4043,8 @@ export const NAMES = {
     expr: unsupported("'$replaceWith' is not valid in expression position — see its 'where'."),
     group: unsupported("'$replaceWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$replaceWith' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4040,8 +4058,8 @@ export const NAMES = {
     expr: unsupported("'$sample' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sample' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sample' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$sample' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4056,8 +4074,8 @@ export const NAMES = {
     expr: unsupported("'$scoreFusion' is not valid in expression position — see its 'where'."),
     group: unsupported("'$scoreFusion' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$scoreFusion' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$scoreFusion' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4072,8 +4090,8 @@ export const NAMES = {
     expr: unsupported("'$search' is not valid in expression position — see its 'where'."),
     group: unsupported("'$search' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$search' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$search' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4088,8 +4106,8 @@ export const NAMES = {
     expr: unsupported("'$searchMeta' is not valid in expression position — see its 'where'."),
     group: unsupported("'$searchMeta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$searchMeta' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$searchMeta' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4104,8 +4122,8 @@ export const NAMES = {
     expr: unsupported("'$set' is not valid in expression position — see its 'where'."),
     group: unsupported("'$set' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$set' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: pending("src/index.ts"),
   }),
 
@@ -4119,8 +4137,8 @@ export const NAMES = {
     expr: unsupported("'$setWindowFields' is not valid in expression position — see its 'where'."),
     group: unsupported("'$setWindowFields' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setWindowFields' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$setWindowFields' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4137,8 +4155,8 @@ export const NAMES = {
     window: unsupported(
       "'$shardedDataDistribution' is not valid in a $setWindowFields output position — see its 'where'.",
     ),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$shardedDataDistribution' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4152,8 +4170,8 @@ export const NAMES = {
     expr: unsupported("'$skip' is not valid in expression position — see its 'where'."),
     group: unsupported("'$skip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$skip' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$skip' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4168,8 +4186,8 @@ export const NAMES = {
     expr: unsupported("'$sort' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sort' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sort' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: pending("src/operator-validation.ts"),
   }),
 
@@ -4183,8 +4201,8 @@ export const NAMES = {
     expr: unsupported("'$sortByCount' is not valid in expression position — see its 'where'."),
     group: unsupported("'$sortByCount' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sortByCount' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$sortByCount' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4198,8 +4216,8 @@ export const NAMES = {
     expr: unsupported("'$unionWith' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unionWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unionWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$unionWith' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4214,8 +4232,8 @@ export const NAMES = {
     expr: unsupported("'$unset' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: pending("src/index.ts"),
   }),
 
@@ -4229,8 +4247,8 @@ export const NAMES = {
     expr: unsupported("'$unwind' is not valid in expression position — see its 'where'."),
     group: unsupported("'$unwind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unwind' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$unwind' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4245,8 +4263,8 @@ export const NAMES = {
     expr: unsupported("'$vectorSearch' is not valid in expression position — see its 'where'."),
     group: unsupported("'$vectorSearch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$vectorSearch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, gen }) => [{ [name]: gen(args[0]) }] },
+    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
     updateDoc: unsupported("'$vectorSearch' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4948,6 +4966,10 @@ export const NAMES = {
           ".lastIndexOf() on strings isn't supported — MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.",
         ),
       },
+      // A receiver that cannot be proven takes the array form: the string form
+      // is refused on its own, so nothing is lost, and a string that reaches
+      // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
+      uncertain: pending("src/methods/", { sig: "searchValue", exact: 1 }),
     },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported("'.lastIndexOf()' is not a statement — see its 'where'."),
@@ -8858,18 +8880,23 @@ export const NAMES = {
     where: ["value"],
     filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
     expr: {
-      byArgs: [
-        { when: "none", args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
-        { when: "constant", args: { sig: "iso", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
-        { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDate: gen(args[0]) }) },
+      byArgs: {
+        none: { args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
+        // A valid date spelling never reaches this row — the fold makes it a Date value first.
+        constant: unsupported(
+          "'new Date(<constant>)' — this constant is not a date JavaScript can parse. Write an ISO string ('new Date(\"2024-01-01\")') or a millisecond count.",
+        ),
+        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
         // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
         // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
-        {
-          when: "multiple",
+        multiple: {
           args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
           pending: "src/mql-date.ts",
         },
-      ],
+        otherwise: unsupported(
+          "'new Date(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.",
+        ),
+      },
     },
     stream: unsupported("'Date' produces a value, not a stream of documents."),
     statement: unsupported("'Date' produces a value. Use it inside a reshape or a '$set'."),
@@ -8886,11 +8913,15 @@ export const NAMES = {
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
     expr: {
-      byArgs: [
-        { when: "none", args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
-        { when: "constant", args: { sig: "hex", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
-        { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toObjectId: gen(args[0]) }) },
-      ],
+      byArgs: {
+        none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
+        // A 24-hex constant never reaches this row — the fold makes it a live ObjectId first.
+        constant: unsupported(
+          "'ObjectId(<constant>)' — this constant is not 24 hex characters. Write '0x507f1f77bcf86cd799439011' (or 'ObjectId(\"507f1f77bcf86cd799439011\")').",
+        ),
+        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toObjectId: value(args[0]) }) },
+        otherwise: unsupported("'ObjectId(…)' takes no argument (a new id) or one value to convert."),
+      },
     },
     stream: unsupported("'ObjectId' produces a value, not a stream of documents."),
     statement: unsupported("'ObjectId' produces a value. Use it inside a reshape or a '$set'."),
@@ -8907,10 +8938,12 @@ export const NAMES = {
     where: ["value"],
     filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),
     expr: {
-      byArgs: [
-        { when: "constant", args: { sig: "values", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
-        { when: "dynamic", args: { sig: "values", exact: 1 }, emit: ({ args, gen }) => gen(args[0]) },
-      ],
+      byArgs: {
+        // A constant array never reaches this row — the fold makes `new Set([1, 2])` the array first.
+        constant: unsupported("'new Set(<constant>)' — the constant is not an array. Write 'new Set([1, 2, 3])'."),
+        dynamic: { args: { sig: "values", exact: 1 }, emit: ({ args, value }) => value(args[0]) },
+        otherwise: unsupported("'new Set(…)' takes exactly one array of values."),
+      },
     },
     stream: unsupported("'Set' produces a value, not a stream of documents."),
     statement: unsupported("'Set' produces a value. Use it inside a reshape or a '$set'."),
@@ -8928,9 +8961,14 @@ export const NAMES = {
     where: ["value"],
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
-      byArgs: [
-        { when: "dynamic", args: { sig: "value", exact: 1 }, emit: ({ args, gen }) => ({ $toDouble: gen(args[0]) }) },
-      ],
+      byArgs: {
+        // A plain decimal never reaches this row — the fold makes `Number("12")` the number first.
+        constant: unsupported(
+          "'Number(<constant>)' — MongoDB's $toDouble accepts only a plain decimal ('12', '-3.5', '1e3'), and this constant is not one. Write the number itself.",
+        ),
+        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
+        otherwise: unsupported("'Number(x)' takes exactly one value."),
+      },
     },
     stream: unsupported("'Number' produces a value, not a stream of documents."),
     statement: unsupported("'Number' produces a value. Use it inside a reshape or a '$set'."),
@@ -8975,12 +9013,18 @@ export const NAMES = {
     expr: {
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: recv }) },
-        string: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $strLenCP: { $ifNull: [recv, ""] } }) },
-        // `$$.length` has no inline size: it HOISTS a materialiser and reads the field.
+        // The emit answers 0 for a missing string, so the runtime test admits one too.
+        string: {
+          args: { sig: "", none: true },
+          alsoTypes: ["null", "missing"],
+          emit: ({ recv }) => ({ $strLenCP: { $ifNull: [recv, ""] } }),
+        },
+        // `$$.length` has no inline size: it places a materialiser ahead of the
+        // statement and reads the field it wrote.
         stream: {
           args: { sig: "", none: true },
-          hoists: () => [{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }],
-          emit: () => "$__jsmql.length",
+          emit: ({ hoist }) =>
+            hoist([{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }], "__jsmql.length"),
         },
       },
       // Stated, not derived: a receiver that is neither array nor string yields $$REMOVE.
@@ -9036,13 +9080,16 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      byArgs: [
-        {
-          when: { objectWithKeys: ["length"] },
+      byArgs: {
+        object: {
+          keys: ["length"],
           args: { sig: "{ length: n }[, mapper]", allowed: [1, 2] },
-          emit: ({ args, gen }) => ({ $range: [0, gen(args[0])] }),
+          emit: ({ args, value }) => ({ $range: [0, value(args[0])] }),
         },
-      ],
+        otherwise: unsupported(
+          "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
+        ),
+      },
     },
     stream: unsupported("'Array.from()' is a value. Use it inside a reshape."),
     statement: unsupported("'.from()' is not a statement — see its 'where'."),

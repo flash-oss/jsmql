@@ -202,20 +202,20 @@ export type Context = "expression" | "params" | "callArgs" | "statement" | "obje
  * (`where`) and receiver (`on`): `ObjectId()` mints one, `ObjectId("<hex>")` is
  * a live BSON value, and `ObjectId($.id)` is `$toObjectId`. Same name, same
  * receiver, same position — three different MQL, chosen by the arguments.
+ *
+ * A PARTITION: every argument list falls in exactly one class, decided in this
+ * order, so no two classes can claim the same call:
+ *   "none"      ObjectId()
+ *   "multiple"  new Date($.y, $.m, $.d)    MORE THAN ONE argument, whatever their
+ *                                          types — a count, not a type:
+ *                                            new Date($.ms)           → { $toDate: "$ms" }
+ *                                            new Date($.y, $.m, $.d)  → { $dateFromParts: … }
+ *   "object"    Array.from({ length: n })  one object literal
+ *   "constant"  ObjectId("507f…")          one argument the fold could evaluate
+ *   "dynamic"   ObjectId($.id)             one argument it could not
+ * These are the keys of `ByArgs`; a row states one answer per class.
  */
-export type ArgShape =
-  | "none" //                             ObjectId()
-  | "constant" //                         ObjectId("507f…"), new Date("2024-01-01")
-  | "dynamic" //                          ObjectId($.id), new Date($.ms)
-  /**
-   * MORE THAN ONE argument, whatever their types. A count, not a type — which is
-   * why it cannot be folded into `dynamic`:
-   *   new Date($.ms)            → { $toDate: "$ms" }
-   *   new Date($.y, $.m, $.d)   → { $dateFromParts: { year, month, day } }
-   * Same name, same receiver, same position; the ARITY picks the operator.
-   */
-  | "multiple"
-  | { objectWithKeys: readonly string[] }; // Array.from({ length: n })
+export type ArgShape = "none" | "multiple" | "object" | "constant" | "dynamic";
 
 /** The type a result has. Not the same set as `Family`. */
 export type Kind =
@@ -296,6 +296,26 @@ export type Position = "value" | "filter" | "stream" | "statement" | "group" | "
  * own `stream` cell, which is the same fact where a reader already looks.
  */
 export type Only = "stageFirst" | "stageLast" | "update" | "afterSort";
+
+/**
+ * The VARIABLES a MongoDB operator brings into scope, and in which of its keys
+ * they are visible. Stated so the compiler applies one scope rule to both
+ * spellings — the developer's own `$let({ vars: { k: 2 } }, …)` and the `$let`
+ * a lowering writes — and a name the compiler mints steps aside from a variable
+ * the developer declared. MEASURED per key: a variable read outside `visibleIn`
+ * is "Use of undefined variable":
+ *   { $filter: { input: "$a", cond: { $gt: ["$$this", 1] } } }              → runs
+ *   { $filter: { input: "$a", cond: true, limit: { $add: ["$$this", 0] } } } → refused
+ *   { $reduce: { input: "$a", initialValue: "$$this", in: "$$value" } }      → refused
+ *
+ *   keysOf   the keys of the object at this key are the variable names — `$let.vars`, `$lookup.let`
+ *   valueAt  the string at this key is the ONE variable's name, `default` when absent — `$map.as`
+ *   fixed    the operator names its variables itself — `$reduce`'s `this` and `value`
+ */
+export type Binds =
+  | { keysOf: string; visibleIn: readonly string[] }
+  | { valueAt: string; default: string; visibleIn: readonly string[] }
+  | { fixed: readonly string[]; visibleIn: readonly string[] };
 
 /** The result type. `.filter` on an array is an array; on a stream, a stream. */
 export type Returns =
@@ -491,35 +511,102 @@ export type BodyRule = {
 // 3. WHAT EACH RENDERER IS HANDED — different per position, deliberately
 // ═════════════════════════════════════════════════════════════════════════════
 
+/**
+ * A condition ALREADY read for truth: the MQL that `$cond.if`, `$filter.cond`
+ * and `$match.$expr` take as it stands. Only the compiler's mode module mints
+ * one, and every slot that reads a boolean is typed to take one — so a VALUE
+ * cannot land in a condition slot by mistake; the type error names the missing
+ * `truth()` call. A brand, not a wrapper: at runtime a Truth IS the document.
+ *
+ *   $.name ? "has" : "none"        truth($.name) checks missing, null, false, "", 0
+ *   $cond($.name, "has", "none")   the escape hatch hands "$name" on as it is
+ *   Boolean($.a > 1)               `>` states `returns: "bool"`, so no check is added
+ */
+declare const TRUTH: unique symbol;
+export type Truth = { readonly [TRUTH]: "truth" };
+
+/**
+ * What each position's renderer PRODUCES. Keyed by Position in one place, so
+ * the cells and the dispatcher that switches on a position cannot disagree.
+ */
+export type OutOf = {
+  value: unknown;
+  filter: QueryDoc;
+  stream: Stage[];
+  statement: Stage[];
+  group: unknown;
+  window: unknown;
+  updateDoc: unknown;
+};
+
+/**
+ * A filter cell's result. A row that ALSO lists `value` may answer null — "no
+ * native query form for these operands; wrap my value form in `$expr`":
+ *   $.s.startsWith("A")          → { s: /^A/ }
+ *   $.s.trim().startsWith("A")   → null, and becomes { $expr: { $eq: [{ $indexOfCP: … }, 0] } }
+ * A filter-only row has no value form to fall back on, so its emit is total,
+ * and a null there is a type error rather than a document the server refuses.
+ */
+export type FilterOut<HasValue extends boolean> = HasValue extends true ? QueryDoc | null : QueryDoc;
+
 export type FilterIn = {
-  /** This entry's own key. Lets a generated renderer emit `{ [name]: … }`
-   *  without the name being written a second time inside the entry. */
+  /** This entry's own key. Lets a renderer emit `{ [name]: … }` without the
+   *  name being written a second time inside the entry. */
   name: string;
-  /** The receiver as a field path ("a.b.c"). Present only when it IS one. */
-  path: string;
+  /** The receiver as SOURCE — a filter renders field paths, not lowered values. Null for none. */
+  recv: Expr | null;
   args: readonly Expr[];
   /** This entry's `shape.positional` key order, empty when it has none. */
   keys: readonly string[];
-  /** A callback body as a query document: `d => d.n > 1` → `{ n: { $gt: 1 } }`. */
-  predicate: (cb: Expr) => QueryDoc | null;
-  /** An argument's compile-time value, or null when it is not constant. */
-  constant: (e: Expr) => unknown;
+  /** The field path an expression names ("a.b.c"), or null when it is not a plain path. */
+  pathOf: (e: Expr) => string | null;
+  /** A compile-time value, boxed so that a constant `null` is not read as "not constant". */
+  constant: (e: Expr) => { value: unknown } | null;
+  /** A predicate as a query document, `$expr` fallback included. Always answers. */
+  query: (e: Expr) => QueryDoc;
+  /** The same, only when it has a NATIVE (indexable) form. Null otherwise. */
+  nativeQuery: (e: Expr) => QueryDoc | null;
 };
 
 export type ExprIn = {
   /** This entry's own key. See FilterIn.name. */
   name: string;
-  /** The receiver, ALREADY lowered. Absent for a namespace receiver. */
+  /** The receiver, ALREADY lowered. Null for a namespace receiver, or none. */
   recv: unknown;
   args: readonly Expr[];
   /** See FilterIn.keys. */
   keys: readonly string[];
-  gen: (e: Expr) => unknown;
-  /** A callback as `{ as, in }` with the parameter bound as `$$name`. */
-  iteratee: (cb?: Expr) => { as: string; in: unknown };
-  /** A collision-free MongoDB variable name. */
-  fresh: (hint: string) => [string, string];
+  /** Lower an expression to the MQL of its VALUE. */
+  value: (e: Expr) => unknown;
+  /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
+  truth: (e: Expr) => Truth;
+  /** A callback whose body is a value: `{ as, in }`, the parameter bound as `$$as`. */
+  iteratee: (cb: Expr) => { as: string; in: unknown };
+  /** A callback whose body is a condition. */
+  predicate: (cb: Expr) => { as: string; in: Truth };
+  /**
+   * A collision-free MongoDB variable: the bare name for an `as` / `vars` slot,
+   * and the `$$name` that reads it.
+   */
+  bind: (hint: string) => { as: string; ref: string };
+  /**
+   * Place stages BEFORE the statement this expression stands in, and read back
+   * the field they wrote — for a value that has no inline form:
+   *   $.n = $$.length  →  [{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+   *                        { $set: { n: "$__jsmql.length" } }]
+   */
+  hoist: (stages: readonly Stage[], reads: string) => string;
+  /** A fresh `__jsmql.tmp.<n>` scratch field path. */
+  slot: () => string;
 };
+
+/**
+ * What a MONGODB row's renderer is handed: no `truth`, no `predicate`. The
+ * `$op(...)` escape hatch is the developer's own MQL, and its condition slots
+ * keep MongoDB's truthiness ("" is true); the JavaScript spellings are where
+ * JavaScript's rules apply.
+ */
+export type MongoExprIn = Pick<ExprIn, "name" | "recv" | "args" | "keys" | "value" | "bind">;
 
 export type StageIn = {
   /** This entry's own key. See FilterIn.name. */
@@ -529,10 +616,10 @@ export type StageIn = {
   predicate: (cb: Expr) => QueryDoc | null;
   /** A callback body as a document reshape, for $replaceWith / $set. */
   reshape: (cb: Expr) => unknown;
-  gen: (e: Expr) => unknown;
+  value: (e: Expr) => unknown;
   /** What the chain has already emitted — `sort().take(1)` reads this. */
   prevStages: readonly Stage[];
-  fresh: (hint: string) => [string, string];
+  bind: (hint: string) => { as: string; ref: string };
 };
 
 export type GroupIn = {
@@ -540,28 +627,28 @@ export type GroupIn = {
   args: readonly Expr[];
   /** See FilterIn.keys. */
   keys: readonly string[];
-  gen: (e: Expr) => unknown;
+  value: (e: Expr) => unknown;
 };
 
 export type SugarIn = {
   /** This entry's own key. See FilterIn.name. */
   name: string;
   captured: Readonly<Record<string, Expr>>;
-  gen: (e: Expr) => unknown;
+  value: (e: Expr) => unknown;
   lowerSub: (stmts: readonly Node[]) => Stage[];
-  fresh: (hint: string) => [string, string];
+  bind: (hint: string) => { as: string; ref: string };
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
-// 4. A RENDERER — three states, all three of them real
+// 4. A RENDERER — total. The one null answer is typed on the filter cell alone.
 // ═════════════════════════════════════════════════════════════════════════════
 
 /**
- * Produce the MQL — or return null meaning "not expressible for THIS receiver,
- * use the fallback". `$.s.startsWith("A")` renders a query;
- * `$.s.trim().startsWith("A")` returns null and becomes an `$expr`.
+ * Produce the MQL. Total: every input has an answer. The one place null is an
+ * answer is `FilterOut`, and the type says so there rather than here — so a
+ * dispatcher never inspects a value renderer's result for a signal.
  */
-export type Emit<In, Out> = (input: In) => Out | null;
+export type Emit<In, Out> = (input: In) => Out;
 
 /**
  * A declarative fact that has not moved into the registry yet, naming where it
@@ -639,16 +726,96 @@ export const because = (reason: string): Refusal => ({ unsupported: reason, subj
 /** The families a given `on` covers. */
 export type Of<O> = O extends readonly (infer F extends Family)[] ? F : O extends Family ? O : Family;
 
+/**
+ * A BSON type name, as `$type` reports it and as the type tests (`$isNumber`,
+ * `$isArray`, `{ $type: … }` in a query) name it.
+ */
+export type BsonType =
+  | "double"
+  | "string"
+  | "object"
+  | "array"
+  | "binData"
+  | "undefined"
+  | "objectId"
+  | "bool"
+  | "date"
+  | "null"
+  | "regex"
+  | "javascript"
+  | "symbol"
+  | "int"
+  | "timestamp"
+  | "long"
+  | "decimal"
+  | "minKey"
+  | "maxKey"
+  | "missing";
+
 export type Rule<In, Out> = {
   args: Arity;
   /**
-   * Stages this renderer must place BEFORE the stage it lands in, for a value
-   * that cannot be computed inline. `$$.length` materialises a
-   * `$setWindowFields` count into a scratch field, and `emit` then returns a
-   * reference to that field rather than an expression.
+   * BSON types this family's runtime test admits BESIDES the family's own. A
+   * per-row fact, stated where it is true and nowhere else:
+   *   $.s.length  with s missing → 0,    because `length.string` claims null and missing
+   *   $.s.trim()  with s missing → null, because `trim.string` claims nothing more
+   * Read by the dispatch a receiver of unprovable family gets. A blanket rule
+   * ("a string test admits null") would give `.trim()` a claim its own emit does
+   * not honour.
    */
-  hoists?: (input: In) => Stage[];
+  alsoTypes?: readonly BsonType[];
   emit: Emit<In, Out>;
+};
+
+/**
+ * The families a DOCUMENT FIELD's value can have. `Math`, `Object`, `Number`,
+ * `Date`, `Array` and `cluster` are reached through a bare name, never through
+ * a field, and `stream` is `$$` — so a receiver of unprovable family is one of
+ * these seven and no other.
+ */
+export type FieldFamily = Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp" | "set">;
+
+type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] extends [T] ? false : true) : never;
+
+/**
+ * What a receiver whose family CANNOT BE PROVEN gets — `$.x.length` where `x`
+ * is a field of unknown type.
+ *
+ * REQUIRED when the row lists two or more field families, because then the
+ * answer is a decision no rule implies: `length` says `$$REMOVE` (a two-way
+ * `$cond` that read "not an array" as "string" aborted the whole command), and
+ * `lastIndexOf` says the array form. Refused for a row with ONE field family:
+ * there the receiver is that family by the row's own claim, exactly as
+ * `$.price.ceil()` is a number because `.ceil()` is, and stating an `uncertain`
+ * would be a second answer to a question with one.
+ *
+ * `Refusal` and `Pending` are answers too — "cannot tell which" is a decision.
+ */
+export type Uncertain<F extends Family, In, Out> =
+  IsUnion<Extract<F, FieldFamily>> extends true
+    ? { uncertain: Emit<In, Out> | Refusal | Pending }
+    : { uncertain?: never };
+
+/**
+ * One answer per ARGUMENT class — see `ArgShape` for the partition. Keyed, not
+ * ordered: two rows cannot overlap, and the leftover is STATED.
+ */
+export type ByArgs<In, Out> = {
+  none?: Rule<In, Out> | Pending;
+  multiple?: Rule<In, Out> | Pending;
+  /** One object literal, which must carry `keys` — `Array.from({ length: n })`. */
+  object?: { keys: readonly string[] } & (Rule<In, Out> | Pending);
+  /**
+   * A constant that REACHES a row did not fold — the fold turns every constant
+   * the server would accept into its value first — so what is left is one the
+   * server refuses too. Never a rule: the row says why, in the developer's terms.
+   *   new Date("2024-01-01")   → folded to a Date; the row never sees it
+   *   Number("abc")            → here, refused: $toDouble takes a plain decimal
+   */
+  constant?: Refusal;
+  dynamic?: Rule<In, Out> | Pending;
+  /** Every class no key above claims. Stated, so a leftover is a decision and not a hole. */
+  otherwise: Refusal;
 };
 
 /**
@@ -657,8 +824,7 @@ export type Rule<In, Out> = {
  * `Math.max(a, b)` takes arguments, `$.rows.max()` takes none, and both are the
  * `max` entry. Every family `on` lists must appear, with a rule or with a
  * refusal that says why; no family `on` omits may appear. `uncertain` answers a
- * receiver whose family is not provable; leave it out and a runtime `$cond`
- * dispatch is derived from the rules, so it cannot drift from them.
+ * receiver whose family is not provable — see `Uncertain` for when it is required.
  */
 export type Emitter<F extends Family, In, Out> =
   | Rule<In, Out>
@@ -667,20 +833,16 @@ export type Emitter<F extends Family, In, Out> =
    * works and `$.arr.keys()` is refused, and the working half still lives in
    * src/codegen.ts — without `Pending` the row had to invent an emitter for it.
    */
-  | { perFamily: Record<F, Rule<In, Out> | Refusal | Pending>; uncertain?: Emit<In, Out> }
+  | ({ perFamily: Record<F, Rule<In, Out> | Refusal | Pending> } & Uncertain<F, In, Out>)
   /**
    * Dispatch on the ARGUMENT SHAPE — the third axis, alongside position
    * (`where`) and receiver (`on`). `ObjectId()` mints one, `ObjectId("<hex>")`
    * is a live BSON value, `ObjectId($.id)` is `$toObjectId`: same name, same
-   * receiver, same position, three different MQL. Ordered — the first matching
-   * row wins — so precedence between `constant` and `dynamic` is visible.
+   * receiver, same position, three different MQL. A row may be `Pending`
+   * instead of a rule: the shape and the arity are registry facts, the lowering
+   * is code.
    */
-  /**
-   * A row may be `Pending` instead of a rule: the argument shape and the arity
-   * are registry facts, the lowering is code. Without it a new shape had to
-   * invent a placeholder emitter to be written down at all.
-   */
-  | { byArgs: readonly ({ when: ArgShape } & (Rule<In, Out> | Pending))[] };
+  | { byArgs: ByArgs<In, Out> };
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 5. THE AGREEMENT RULE — `where` is written by hand and cannot contradict the
@@ -755,8 +917,8 @@ export type On = Family | readonly Family[] | "any";
  * cells use this one emitter anyway, so the rule is stated once and the two
  * slots cannot drift apart.
  */
-export const accumulated = (input: { name: string; args: readonly Expr[]; gen: (e: Expr) => unknown }): unknown => {
-  const operand = input.gen(input.args[0]);
+export const accumulated = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => {
+  const operand = input.value(input.args[0]);
   return { [input.name]: Array.isArray(operand) ? { $let: { vars: {}, in: operand } } : operand };
 };
 
@@ -775,34 +937,12 @@ export const objectBody = (input: {
   name: string;
   args: readonly Expr[];
   keys: readonly string[];
-  gen: (e: Expr) => unknown;
+  value: (e: Expr) => unknown;
 }): unknown => {
-  const { name, args, keys, gen } = input;
-  if (args.length <= 1 || keys.length === 0) return { [name]: gen(args[0]) };
-  return { [name]: Object.fromEntries(args.map((a, i) => [keys[i], gen(a)])) };
+  const { name, args, keys, value } = input;
+  if (args.length <= 1 || keys.length === 0) return { [name]: value(args[0]) };
+  return { [name]: Object.fromEntries(args.map((a, i) => [keys[i], value(a)])) };
 };
-
-export type Operand = { path: string } | { lowered: unknown };
-
-/** A range test. Knows its own query spelling and its own expression spelling. */
-export const Range = (operand: Operand, lo: unknown, hi: unknown, ends: "both" | "startOnly") => ({
-  query: (): QueryDoc | null =>
-    "path" in operand ? { [operand.path]: { $gte: lo, [ends === "both" ? "$lte" : "$lt"]: hi } } : null,
-  expr: (): unknown => {
-    const v = "lowered" in operand ? operand.lowered : null;
-    return { $and: [{ $gte: [v, lo] }, { [ends === "both" ? "$lte" : "$lt"]: [v, hi] }] };
-  },
-});
-
-/** An anchored substring test — an indexable regex as a query, $indexOfCP as an expression. */
-export const Anchored = (operand: Operand, needle: string, at: "start" | "end") => ({
-  query: (): QueryDoc | null => {
-    if (!("path" in operand)) return null;
-    const esc = needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
-    return { [operand.path]: new RegExp(at === "start" ? `^${esc}` : `${esc}$`) };
-  },
-  expr: (): unknown => ({ $eq: [{ $indexOfCP: ["lowered" in operand ? operand.lowered : null, needle] }, 0] }),
-});
 
 // ═════════════════════════════════════════════════════════════════════════════
 // 8. THE ENTRIES

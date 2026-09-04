@@ -32,7 +32,7 @@ type Cell =
   | { composedInto: readonly string[] }
   | { pending: string }
   | { perFamily: Record<string, Cell> }
-  | { byArgs: readonly unknown[] }
+  | { byArgs: Readonly<Record<string, unknown>> }
   | Record<string, unknown>;
 
 type Row = { kind: string; where: readonly Position[]; on?: Family | readonly Family[] | "any" } & Record<

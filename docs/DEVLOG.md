@@ -10,6 +10,70 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — refactor(registry): the renderer contract for the emit phase — total renderers, a Truth brand, a keyed argument dispatch, and the facts a dispatcher reads
+
+Three developer rulings open this chunk, each measured first:
+
+- **Truthiness follows the SPELLING.** A raw `$op(...)` is the developer's own MQL and
+  keeps MongoDB's rules (`""` is true, measured: `{$cond:[{$literal:""},"T","F"]}` → `"T"`).
+  The JavaScript spellings — `? :`, `&&`, `||`, `!`, a predicate body — check missing, null,
+  `false`, `""`, `0`. NaN is not checked: JSMQL does not support NaN.
+  ```js
+  $.name ? "has" : "none"       // → {$cond:{if:{$and:[{$ne:[{$ifNull:["$name",null]},null]},{$ne:["$name",false]},{$ne:["$name",""]},{$ne:["$name",0]}]},then:"has",else:"none"}}
+  $cond($.name, "has", "none")  // → {$cond:{if:"$name",then:"has",else:"none"}}
+  ```
+- **A filter `||` lowers per branch.** The shipped compiler wraps the whole disjunction in
+  `$expr` as soon as one side needs arithmetic — and that changes the OTHER side's answer:
+  ```js
+  $.tags === "red"                            // → {tags:"red"}                          matches tags:["red","blue"]
+  $.tags === "red" || $.qty * $.price > 100   // → {$expr:{$or:[{$eq:["$tags","red"]},…]}} matches nothing for that document
+  ```
+  Measured on mongod: `{tags:"red"}` returns the document, `{$expr:{$eq:["$tags","red"]}}`
+  does not. The new shape is `{$or:[{tags:"red"},{$expr:{$gt:[…]}}]}`: a leaf's query form
+  never depends on its siblings.
+- **`$$$.orders.find(cb)` is ONE document**, as `Array.prototype.find` is; `.filter(cb)` is
+  many. The shipped compiler already emits the `$lookup` plus `{$set:{order:{$first:"$order"}}}`.
+
+The registry then changes shape for the emit phase, types first and rows second:
+
+- `Emit<In, Out>` is TOTAL. The one null answer is `FilterOut<HasValue>`: a filter cell may
+  answer null only on a row that also lists `value` ("wrap my value form in `$expr`"); a
+  filter-only row's renderer is total, and a null there is a type error.
+- `Truth` is a brand only the compiler's mode module mints, and every condition slot is
+  typed to take one — a value cannot land in `$cond.if` without a `truth()` call.
+- `ExprIn` is `{ name, recv, args, keys, value, truth, iteratee, predicate, bind, hoist, slot }`
+  — every field a service, every field required. `MongoExprIn` has no `truth`/`predicate`:
+  the escape hatch keeps MongoDB truthiness by construction. `gen` is `value` on every
+  renderer (184 calls, 219 destructurings, 51 `.map(gen)`).
+- `Rule.hoists` is gone; `hoist(stages, reads)` is a service. `$$.length` reads
+  `hoist([{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }], "__jsmql.length")`.
+- `byArgs` is a KEYED partition `{ none?, multiple?, object?, constant?, dynamic?, otherwise }`
+  in place of an ordered list. `constant` can only be a refusal — a constant that reaches a
+  row did not fold, so the server refuses it too and the row says why in the developer's
+  terms (`Number("abc")` → "$toDouble accepts only a plain decimal"). `otherwise` is
+  required, so a leftover class is a decision and not a hole. Five rows: `Date`, `ObjectId`,
+  `Set`, `Number`, `Array.from`.
+- `uncertain` is REQUIRED on a per-family cell with two or more field families and refused
+  on one with one (`Uncertain<F>`, a conditional on the row's `on`). `length` had it;
+  `lastIndexOf` states the array form for an unprovable receiver.
+- `Rule.alsoTypes` — BSON types a family's runtime test admits besides its own, per row:
+  `length.string` claims `null` and `missing`, because its emit answers 0 for both.
+- `binds` on the five operators that bring variables into scope, MEASURED per key on mongod
+  (`$filter.limit` and `$reduce.initialValue` do NOT see `$$this`: "Use of undefined variable"):
+  `$let { keysOf: "vars", visibleIn: ["in"] }`, `$map`/`$filter { valueAt: "as", default: "this", … }`,
+  `$reduce { fixed: ["this", "value"], visibleIn: ["in"] }`, `$lookup { keysOf: "let", visibleIn: ["pipeline"] }`.
+- `OutOf` states each position's result type once; every cell reads it.
+- `returns: "bool"` on the ten boolean productions and `"string"` on `typeof`, so
+  `Boolean($.a > 1)` elides the truthiness check.
+- `Anchored`, `Range`, `Operand` deleted: no row used them.
+- `tsconfig.json` says `"strict": true` explicitly (it already held: zero errors under `--strict`).
+
+Every type rule now stands twice in `test/types/registry-contracts.ts` — a value that
+compiles and a `@ts-expect-error` that must not — run by `test/registry-contracts.test.ts`.
+`src/registry/CLAUDE.md` is new. The three rulings and the still-open question (what a
+nested pipeline's `$` points at, per stage) are in `tmp/audit2/PLAN-phase5.md`.
+
+---
 ## 2026-08-27 — fix(compiler): the after-audit of the phase 1–4 hardening — fifteen more, and five registry rows the server contradicts
 
 Three auditors re-read the hardening commit. The first confirmed all sixteen hazards closed, with a
