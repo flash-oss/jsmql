@@ -60,6 +60,9 @@ passes/        naming.ts answers "which row does this node name", "what is the
                and docs/specs/position-pass.md.
 emit/          the lowerings, and the dispatcher that checks a row before running one.
   consult.ts   what a row says about one name in one position — a pure read.
+  select.ts    which rule runs: the receiver's proof (a closed Receiver) and the
+               arguments' class (a closed partition) against the row — a rule, a
+               runtime dispatch over the field families, or one of nine refusals.
   names.ts     every MongoDB variable name written: the injective encoding, the
                brands (MongoVar / VarRef / FieldSlot), and Scope — what each
                JavaScript name stands for, and which names a mint must avoid.

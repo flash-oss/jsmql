@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): the emit phase's selection — one answer for a receiver's proof and an argument list's class
+
+`emit/select.ts` resolves the two axes a row cannot see: the RECEIVER's family and the
+ARGUMENTS' shape. `consult` says what a row says about a name in a position; `select` says
+which rule runs, from a closed `Receiver` (none / namespace / stream / value-with-proof /
+opaque) and a closed `Shaped` partition (spread → none → multiple → object → constant →
+dynamic, decided in that order by one function). The answer is a closed union — `rule`,
+`dispatch`, `refused`, `pending`, `fallback`, `composedOnly`, `noCell`, `unknown`,
+`wrongReceiver`, `spreadRefused`, `wrongCount`, `rejectedCount` — so a dispatcher switches on
+it exhaustively and no case is decided twice.
+
+An unprovable receiver — a field path — is the receiver the shipped compiler guessed at by
+name. Here the rule is the registry's own: on a row with ONE field family it IS that family
+(`$.price.ceil()` is a number because `.ceil()` is); on a row with two or more it takes one
+runtime `$switch` over the families that hold a rule, in the row's order, with the row's
+required `uncertain` as the default. The guard per family is one shape — `$type` against a
+list — widened by the rule's `alsoTypes`, and the table is keyed by `FieldFamily` so a new
+family without a guard fails `tsc`:
+```
+$.x.length   with x unprovable   → branches [array: {$in:[{$type:"$$v"},["array"]]}, string: {$in:[{$type:"$$v"},["string","null","missing"]]}], default $$REMOVE
+```
+Measured on mongod: `$type` answers `"missing"` for an absent field, and each guard is true
+exactly for the types its family covers (one document per BSON type in the test).
+
+A keyed `byArgs` routes by class and states its leftover: `new Date("not a date")` is refused
+with the row's text (a constant that reached the row did not fold), `Array.from({ size: 3 })`
+falls to `otherwise`, `new Date(1, 2, 3, 4, 5, 6, 7, 8)` is a wrong count — checked on a
+`pending` branch too, because its argument rule is a registry fact that holds before the
+lowering does. The `perFamily` verdict from `consult` now carries the cell's `uncertain`.
+
+---
 ## 2026-09-04 — feat(compiler): the emit phase's names and environment — an injective variable encoding, and a context nothing can build by hand
 
 Two modules the lowerings will run under, each closing a class of shipped bug by type.
