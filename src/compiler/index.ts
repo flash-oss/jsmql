@@ -8,13 +8,14 @@
 // One entry per shape of program. `expr` is the bare aggregation expression —
 // what `jsmql.expr(…)` returns: no `$expr` wrap, no query translation.
 
-import { parseExpression } from "./parse/parser.ts";
+import { parse, parseExpression } from "./parse/parser.ts";
 import { fold } from "./passes/fold.ts";
 import { desugar } from "./passes/desugar.ts";
-import { FILTER, VALUE } from "./passes/position.ts";
+import { FILTER, STATEMENT, VALUE } from "./passes/position.ts";
 import { Env } from "./emit/env.ts";
 import { lowerValue } from "./emit/lower.ts";
 import { lowerFilter } from "./emit/filter.ts";
+import { lowerProgram } from "./emit/statement.ts";
 
 /** A bare aggregation expression: `$.qty * $.price` → `{ $multiply: ["$qty", "$price"] }`. */
 export function expr(source: string): unknown {
@@ -29,4 +30,14 @@ export function expr(source: string): unknown {
 export function filter(source: string): Record<string, unknown> {
   const program = desugar(fold(parseExpression(source)), FILTER);
   return lowerFilter(program as Parameters<typeof lowerFilter>[0], Env.root(program, "filter"));
+}
+
+/**
+ * The pipeline for `aggregate(pipeline)`: `$.total = $.qty * $.price;` →
+ * `[{ $set: { total: { $multiply: ["$qty", "$price"] } } }]`. Every statement
+ * of the program becomes stages, in the order it was written.
+ */
+export function pipeline(source: string): unknown[] {
+  const program = desugar(fold(parse(source)), STATEMENT);
+  return lowerProgram(program, Env.root(program, "statement"));
 }

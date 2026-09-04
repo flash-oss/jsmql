@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the statement target — a program to a pipeline
+
+The next target of the new compiler: a `;`-separated program of statements to an aggregation pipeline. `src/compiler/emit/statement.ts`, and `pipeline(source)` beside `expr` and `filter`.
+
+**Two statements never merge.** The `;` the developer wrote IS the stage boundary and the `,` IS the merge, so one source keeps one output and no rule reads across a boundary the developer drew. Inside a `,`-joined run the writes group as far as one stage can carry them, and the run ends where a group would say something else than the source does — measured, all three of them: a later write that READS what an earlier one wrote must read the new value (`$.x = 1, $.z = $.x`); a path that touches one already written is the source saying two things, and the server refuses a parent beside its own child outright ("specification contains two conflicting paths"); and a deletion is its own stage. Writing what an earlier value READ needs no split, because that is exactly what one `$set` already means.
+
+**The row decides what may stand as a statement, not a stage test.** The first version asked `isStageName`, which refused `assert(…)` — a statement that is not a stage — with the wrong word, and did so 1135 times across the corpus. Now any named row is consulted for its `statement` cell, and the cell's own text answers. A stage's BODY lowers in the position its row states, so `$match`'s predicate becomes a query document and a `$group` output key becomes an accumulator without either cell knowing which reading it asked for: `readIn` is the one hub that gives each position its reading.
+
+**What is not built yet is stated as data.** `PENDING_CONSTRUCTS` in `emit/errors.ts` names each statement construct that still lives in the shipped compiler — a `let` binding, a write to the stream, a read from another collection, a stream chain as a statement, a write to another collection. The differential harness verifies a "not yet" against that list instead of trusting the throw, and the list emptying is what finishing this target means. It is the same discipline the name-pendings already had, for constructs no row names.
+
+**380 refusal texts became actionable.** Every value-producing name said "'$abs' is not a statement — see its 'where'", which tells a developer nothing. Each now names the way out: "'$abs' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $abs(…);'".
+
+Thirteen representative programs run on a live mongod and return the right documents, including `$group` with an accumulator, `$project`, a raw stage document, and the stream-length hoist with its trailing cleanup. `test/compiler-statement.test.ts` asserts the shapes and then runs every one of them against the server, because a green `toEqual` proves what the compiler emits and never that the server accepts it. Gate: `--entry pipeline` now compares, with 897 sources skipped as verified pendings; the remaining rows are the slices still to build.
+
+---
+
 ## 2026-09-04 — fix(compiler): the measurement fan-out's findings — a `.some` receiver is a path, a remainder may be negative, and the third reading is stated
 
 Eight agents measured one query-cell family each against a JavaScript oracle on a live mongod, and a skeptic tried to refute each proposal. Two refutations named defects the implementation already avoids — a missing prefix exclusion, and a leaf exclusion dropped from the loose-null cell — both re-checked here against the refuters' own documents. Three findings were real.

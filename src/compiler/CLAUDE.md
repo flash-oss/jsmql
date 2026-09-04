@@ -37,7 +37,8 @@ produce a document, it calls a function here.
 ## Layout
 
 ```
-index.ts       source → MQL. The public entries: `expr(source)`, `filter(source)`.
+index.ts       source → MQL. The public entries: `expr(source)`, `filter(source)`,
+               `pipeline(source)`.
 objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
 
 lex/
@@ -81,6 +82,9 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
                docs/specs/emit-pass.md.
   filter.ts    the query reading: a predicate to a query document, the `&&`
                merge, the per-branch `$or`, the `$expr` residual.
+  statement.ts the statement reading: a program to a pipeline. The write
+               grouping, the stage calls, and `readIn` — the one hub that gives
+               each position the reading it asks for.
 ```
 
 ## Conventions

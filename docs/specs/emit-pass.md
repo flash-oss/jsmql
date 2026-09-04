@@ -201,6 +201,50 @@ language compares as written — never an array, a regex or a bigint), `query`,
 predicate alias tables (`typeof` spellings, the numeric group) are registry data
 in `vocabulary.ts`, read by both the query and the expression cells.
 
+## The statement target
+
+A program is a sequence of statements, and each becomes zero or more STAGES.
+Two statements never merge: the `;` the developer wrote IS the stage boundary and
+the `,` IS the merge, so one source keeps one output and no rule reads across a
+boundary the developer drew.
+
+```js
+$.total = $.qty * $.price;   // → [{"$set":{"total":{"$multiply":["$qty","$price"]}}}]
+$.a = 1, $.b = 2;            // → [{"$set":{"a":1,"b":2}}]          one run, one stage
+$.a = 1; $.b = 2;            // → [{"$set":{"a":1}},{"$set":{"b":2}}]   two statements
+delete $.a, delete $.b;      // → [{"$unset":["a","b"]}]
+$ = { id: $._id };           // → [{"$replaceWith":{"id":"$_id"}}]
+$match($.a > 1); $limit(1);  // → [{"$match":{"a":{"$gt":1,…}}},{"$limit":1}]
+{ $match: { a: 2 } };        // → [{"$match":{"a":2}}]              raw MQL, HR1
+[$match($.a > 1)]            // → the same program, bracketed
+```
+
+Inside a `,`-joined run the writes group as far as ONE stage can carry them.
+Three things end a group, each measured on the server:
+
+| the run | becomes | because |
+|---|---|---|
+| `$.a = 1, $.b = 2` | one `$set` | one `$set` evaluates every value against the document it received |
+| `$.x = 1, $.z = $.x` | two `$set`s | the second must read the NEW `x`, and one stage would read the old one |
+| `$.a = 1, $.a.b = 2` | two `$set`s | the server refuses a parent beside its own child: "specification contains two conflicting paths" |
+| `$.a = 1, delete $.b` | `$set` then `$unset` | two stages, because they are two stages |
+
+A write to the document ROOT is its own stage: it replaces what the next write
+would be written into. `$.a = $.b, $.b = 1` needs NO split — writing what an
+earlier value read is exactly what one `$set` already means.
+
+A statement that NAMES something asks the row, and the row's own cell renders
+it. Not `isStageName`: `assert(…)` is a statement and is not a stage, and asking
+the wrong question refuses it with the wrong word. A stage's BODY lowers in the
+position its row states (`bodyPositions`), which is how `$match`'s predicate
+becomes a query document and a `$group` output key becomes an accumulator
+without either cell knowing which reading it asked for. `readIn` is that hub.
+
+What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
+`emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
+than trust one, and so the work left is countable. The list emptying is what
+finishing the statement target means.
+
 ## What has no value
 
 `undefined` (compare with it instead), a regex outside its methods, a lambda

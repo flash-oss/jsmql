@@ -5,7 +5,7 @@
 // states — a signature, a receiver list, a position. No sentence here says
 // something a row could have carried.
 
-import { CodegenError, UnknownIdentifierError } from "../../errors.ts";
+import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import type { Arity, Position } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
@@ -261,3 +261,82 @@ export const queryOnlyInsideElement = (name: string, pos: number): CodegenError 
     `'${name}' applies to the top-level document only — the server refuses it inside an array element test. Move it out of the '.some(…)' body: '$.items.some(…) && ${name}(…)'.`,
     pos,
   );
+
+// ── the statement target ─────────────────────────────────────────────────────
+
+/** An expression standing where a statement must: it computes a value and writes nothing. */
+export const notAStatement = (pos: number): CodegenError =>
+  new CodegenError(
+    "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a predicate as '$match(…)'.",
+    pos,
+  );
+
+/** A name that is not a stage, standing as a statement. */
+export const notAStage = (name: string, stages: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is not an aggregation stage, so it cannot stand as a statement.${didYouMean(name, stages, (s) => s)}`,
+    pos,
+  );
+
+/** A raw stage document with more than one key: which stage would it be? */
+export const multiKeyStageDocument = (name: string, keys: number, pos: number): CodegenError =>
+  new CodegenError(
+    `A raw stage document holds exactly one stage, and this one holds ${keys} keys. Write '{ ${name}: … }' on its own, and the next stage as its own statement.`,
+    pos,
+  );
+
+/** `delete $` — the root is not a field, and a pipeline that drops the document has no shape. */
+export const cannotDeleteRoot = (pos: number): CodegenError =>
+  new CodegenError(
+    "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'.",
+    pos,
+  );
+
+/** A write whose destination is not a field path. */
+export const notAWriteTarget = (pos: number): CodegenError =>
+  new CodegenError(
+    "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' when the name is a value.",
+    pos,
+  );
+
+/** A stage body that must be a bracketed list of stages. */
+export const needsStageList = (pos: number): CodegenError =>
+  new CodegenError(
+    "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+    pos,
+  );
+
+/** A spread inside a stage list: the pipeline is written out, stage by stage. */
+export const spreadInStageList = (pos: number): CodegenError =>
+  new CodegenError(
+    "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+    pos,
+  );
+
+/**
+ * The statement CONSTRUCTS this compiler has not built yet, each naming the
+ * module it still lives in.
+ *
+ * Stated as data for two reasons. The differential harness can VERIFY a "not
+ * yet" instead of trusting one — a lowering cannot dodge a comparison by
+ * claiming to be pending. And the list emptying is what finishing the statement
+ * target means, so the work left is countable rather than remembered. A name a
+ * ROW could carry belongs in the row's own cell instead; these are constructs,
+ * which no row names.
+ */
+export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
+  "a 'let' binding that is not a constant": "src/pipeline.ts",
+  "a function declaration": "src/codegen.ts",
+  "a write to the stream ('$$ = …')": "src/pipeline.ts",
+  "a read from another collection ('$$$.<coll>.find(…)')": "src/lookup-translation.ts",
+  "a read of the stream ('$$.filter(…)') as a value": "src/pipeline.ts",
+  "a stream chain as a statement ('$$.filter(…);')": "src/stream-methods.ts",
+  "a write to another collection ('$$$.<coll> = …')": "src/out-translation.ts",
+};
+
+/** A statement form this compiler does not lower yet. See `PENDING_CONSTRUCTS`. */
+export function pendingStatement(what: string, pos: number): CodegenError {
+  const livesIn = PENDING_CONSTRUCTS[what];
+  if (livesIn === undefined) internalError(`'${what}' is not a stated pending construct`);
+  return new PendingLowering(what, "statement", livesIn, pos);
+}
