@@ -13,7 +13,9 @@ import type { Token } from "../lex/token.ts";
 export class ParseError extends Error {
   pos: number;
   constructor(message: string, pos: number) {
-    super(`${message} at position ${pos}`);
+    // Every message says where; a message that already places the position
+    // mid-sentence is not told twice.
+    super(/\bat position \d+/.test(message) ? message : `${message} at position ${pos}`);
     this.name = "ParseError";
     this.pos = pos;
   }

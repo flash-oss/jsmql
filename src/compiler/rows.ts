@@ -7,7 +7,8 @@
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
-import type { Family, IterateeSlots, On, Position } from "../registry/vocabulary.ts";
+import type { Family, FieldFamily, IterateeSlots, On, Position } from "../registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
 /** Every row, by name. Null-prototype: `toString` and `valueOf` are real rows. */
@@ -32,7 +33,7 @@ function families(on: On | undefined): readonly Family[] | "any" | undefined {
  * `Math.PI` is a read on a namespace and `$.Math.PI` is a two-segment field path,
  * and the two cannot be told apart without this distinction.
  */
-const FIELD_FAMILIES: readonly Family[] = ["string", "array", "number", "object", "date", "regexp", "set"];
+const FIELD_FAMILIES: readonly Family[] = Object.keys(FIELD_FAMILY_TYPES) as FieldFamily[];
 
 /**
  * Is `name` read WITHOUT `()` on something a field can hold?
@@ -275,6 +276,7 @@ type EmitRow = {
   binds?: Binds;
   shape?: "single" | "array" | "none" | "flex" | { object: BodyRule };
   asReference?: boolean;
+  family?: Family;
   spreadAlternative?: string;
   newKeyword?: "required" | "optional" | "forbidden";
   provides?: unknown;
@@ -325,6 +327,19 @@ export function operandShapeOf(name: string): "single" | "array" | "none" | "fle
 /** The JavaScript form that takes a spread and lowers to this operator, or undefined. */
 export function spreadAlternativeOf(name: string): string | undefined {
   return emitRow(name)?.spreadAlternative;
+}
+
+/** The receiver family a value built by this global belongs to (`Set` → "set"), or undefined. */
+export function constructedFamilyOf(name: string): Family | undefined {
+  return emitRow(name)?.family;
+}
+
+/** The production that builds `nodeType` on its own — the first row whose `becomes` is exactly it. */
+export function productionForNode(nodeType: string): string | undefined {
+  for (const [key, p] of Object.entries(PRODUCTIONS) as [string, { becomes: unknown }][]) {
+    if (p.becomes === nodeType) return key;
+  }
+  return undefined;
 }
 
 /** Can this global be handed to a higher-order name unapplied — `map(String)`? */

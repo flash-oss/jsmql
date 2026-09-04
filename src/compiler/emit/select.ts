@@ -15,6 +15,7 @@
 // dispatch, with the row's own `uncertain` as the default. A name never decides.
 
 import type { Arity, BsonType, Emit, Family, FieldFamily, Pending, Refusal, Rule } from "../../registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
 import { familiesFor } from "./consult.ts";
@@ -108,16 +109,8 @@ export type Selected =
 
 // ── the runtime guards: one per field family, held complete by the type ──────
 
-/** The `$type` names each field family covers. A `Set` folds to an array, so it is one. */
-const TYPES: Readonly<Record<FieldFamily, readonly BsonType[]>> = {
-  string: ["string"],
-  array: ["array"],
-  number: ["int", "long", "double", "decimal"],
-  object: ["object"],
-  date: ["date"],
-  regexp: ["regex"],
-  set: ["array"],
-};
+/** The `$type` names each field family covers — the vocabulary's one table. */
+const TYPES: Readonly<Record<FieldFamily, readonly BsonType[]>> = FIELD_FAMILY_TYPES;
 
 /**
  * The runtime test that the bound receiver holds `family` — widened by the

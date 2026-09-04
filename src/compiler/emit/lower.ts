@@ -12,6 +12,7 @@
 import type { Expr, Position, Truth } from "../../registry/vocabulary.ts";
 import type { ArrayElement, ObjectEntry, CallArg } from "../../registry/ast.ts";
 import { internalError } from "../../errors.ts";
+import { didYouMean } from "../../levenshtein.ts";
 import { ObjectId } from "../../objectid.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 // The predicate vocabulary's EXPRESSION cells. Its records carry a source operand
@@ -27,9 +28,11 @@ import {
   flattensChain,
   isCallable,
   isGlobalName,
+  isStageName,
   namespaceNames,
   newKeywordOf,
   positionalKeysOf,
+  productionForNode,
   productionForOperator,
   rowForNodeType,
 } from "../rows.ts";
@@ -52,13 +55,16 @@ const READ: Reader = { value: lowerValue, truth: lowerTruth };
 /** The position the Env stands in, or `value` when phase 4 named a waypoint (a raw `{ $op: … }` in a value slot is a document). */
 const positionIn = (env: Env): Position => positionOf(env.site.where) ?? "value";
 
-const isExpr = (a: CallArg | ArrayElement): a is Expr =>
-  a.type !== "SpreadElement" &&
-  a.type !== "LetDecl" &&
-  a.type !== "FuncDecl" &&
-  a.type !== "AssignExpr" &&
-  a.type !== "DeleteStmt" &&
-  a.type !== "UpdateFilter";
+/** The element and argument types that are NOT expressions, held against the tree's own names. */
+const NOT_EXPR: ReadonlySet<Exclude<CallArg | ArrayElement, Expr>["type"]> = new Set([
+  "SpreadElement",
+  "LetDecl",
+  "FuncDecl",
+  "AssignExpr",
+  "DeleteStmt",
+  "UpdateFilter",
+] as const);
+const isExpr = (a: CallArg | ArrayElement): a is Expr => !(NOT_EXPR as ReadonlySet<string>).has(a.type);
 
 // ── the value reading ────────────────────────────────────────────────────────
 
@@ -67,16 +73,18 @@ const isExpr = (a: CallArg | ArrayElement): a is Expr =>
  * `undefined` and a regex have no value position, a lambda is not a value, and a
  * string literal is itself already. Each has its own case below.
  */
-const hasOwnCase = (type: string): boolean =>
-  type === "StringLiteral" ||
-  type === "BigIntLiteral" ||
-  type === "UndefinedLiteral" ||
-  type === "RegexLiteral" ||
-  type === "Lambda" ||
+const OWN_CASE: ReadonlySet<Expr["type"]> = new Set<Expr["type"]>([
+  "StringLiteral",
+  "BigIntLiteral",
+  "UndefinedLiteral",
+  "RegexLiteral",
+  "Lambda",
   // A literal's own case lowers its parts and holds the list-operand rule for a
   // raw `{ $op: … }`; settling the whole literal would skip both.
-  type === "ObjectLiteral" ||
-  type === "ArrayLiteral";
+  "ObjectLiteral",
+  "ArrayLiteral",
+]);
+const hasOwnCase = (type: Expr["type"]): boolean => OWN_CASE.has(type);
 
 /** A settled value holding a JavaScript bigint anywhere — the driver has no BSON for one; `$toLong` spells it. */
 function holdsBigInt(v: unknown): boolean {
@@ -149,8 +157,11 @@ export function lowerValue(node: Expr, env: Env): unknown {
       return unary(node, env);
     case "BinaryExpr":
       return binary(node, env);
-    case "TernaryExpr":
-      return production(node, "conditional", [node.test, node.consequent, node.alternate], env);
+    case "TernaryExpr": {
+      const key = productionForNode("TernaryExpr");
+      if (key === undefined) internalError("no production builds a TernaryExpr");
+      return production(node, key, [node.test, node.consequent, node.alternate], env);
+    }
     case "Lambda":
       throw E.lambdaAsValue(node.pos);
     case "ExprBlock":
@@ -206,7 +217,45 @@ function chainHasOptional(e: Expr): boolean {
   return cursor.type === "FieldRef" && cursor.optional === true;
 }
 
+/** Every stage name the registry has, for the suggestion a mistyped stage gets. */
+const STAGE_NAMES = everyName().filter(isStageName);
+
+/**
+ * A bracketed STAGE LIST — `[$match(…), $sort(…)]`, `[{ $match: … }]` — is a
+ * pipeline. It has no value, and lowering it as an array of operators produces a
+ * document the server refuses on every input; the developer is told what it is.
+ * The judgement is by the FIRST element: a `$`-named call, or an object whose
+ * single key is `$`-led. A mistyped stage gets the stage it meant.
+ */
+function refuseStageList(node: Expr, elements: readonly ArrayElement[]): void {
+  const first = elements[0];
+  if (first === undefined) return;
+  const stageLike = (el: ArrayElement): { name: string; keys: number } | null => {
+    if (el.type === "OperatorCall") return { name: el.name, keys: 1 };
+    if (el.type === "ObjectLiteral") {
+      const keys = el.entries.map(staticKey);
+      if (keys.length > 0 && keys[0] !== null && keys[0].startsWith("$")) return { name: keys[0], keys: keys.length };
+    }
+    return null;
+  };
+  const head = stageLike(first);
+  if (head === null) return;
+  // A known stage, or a name the registry does not know that is NEAR a stage
+  // (`$macth`). A known operator (`[$abs($.a), 1]`) or an unknown name near no
+  // stage is an array of values — HR2 passes it through.
+  const near = consult(head.name, "value").kind === "unknown" && didYouMean(head.name, STAGE_NAMES) !== "";
+  if (!isStageName(head.name) && !near) return;
+  elements.forEach((el, i) => {
+    const s = stageLike(el);
+    if (s === null) return;
+    if (s.keys !== 1) throw E.multiKeyStage(i, s.keys, el.pos);
+    if (!isStageName(s.name)) throw E.unknownStage(i, s.name, STAGE_NAMES, el.pos);
+  });
+  throw E.stageListAsValue(node.pos);
+}
+
 function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): unknown {
+  refuseStageList(node, elements);
   const inner = childEnv(env, node, "elements");
   for (const el of elements) {
     if (el.type === "AssignExpr" || el.type === "UpdateFilter") throw E.statementInValue("Assignment", el.pos);
@@ -330,8 +379,8 @@ function pathOf(node: Expr, env: Env): string | null {
 
 /** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — rather than a field read? */
 function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
-  if (sourceFamily(node.object) !== null) return true; // a namespace has members, not fields
-  return !isCallable(node.name) && node.object.type !== "FieldRef" ? !isCallable(node.name) : !isCallable(node.name);
+  // A namespace has members, not fields; elsewhere only a row that is READ (`length`) is a property.
+  return sourceFamily(node.object) !== null || !isCallable(node.name);
 }
 
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
@@ -424,6 +473,7 @@ function dispatchOn(
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   if (sel.kind === "rule") {
+    checkSlots(name, sel.rule.args, exprArgs);
     const recv =
       receiver.kind === "value" || receiver.kind === "opaque"
         ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode))
@@ -471,6 +521,7 @@ function runDispatch(
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
     if ("pending" in rule) throw new E.PendingLowering(name, position, rule.pending, node.pos);
+    checkSlots(name, rule.args, args);
     return rule.emit(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
@@ -580,13 +631,21 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
   // server refuses, and is refused here in the same words.
   let args: readonly CallArg[] = node.args;
-  if (operandShapeOf(node.name) === "array" && args.length === 1 && args[0].type !== "SpreadElement") {
-    const only = args[0];
-    if (only.type === "ArrayLiteral") {
-      // An EMPTY list is the developer's own MQL, and valid: `{ $and: [] }` is true.
-      if (only.elements.length === 0) return { [node.name]: [] };
-      if (!only.elements.some((el) => el.type === "SpreadElement")) args = only.elements.filter(isExpr);
-    } else if (verdict.kind !== "refused") throw E.listOperand(node.name, only.pos);
+  const shape = operandShapeOf(node.name);
+  const first = args[0];
+  const loneArray =
+    args.length === 1 && first.type === "ArrayLiteral" && !first.elements.some((el) => el.type === "SpreadElement")
+      ? first
+      : null;
+  if (shape === "array" && args.length === 1 && first.type !== "SpreadElement") {
+    if (loneArray !== null) {
+      // An EMPTY list is valid only where the row states it: `{ $and: [] }` is
+      // true, `{ $divide: [] }` is refused. Nothing was written, so no count
+      // applies — the fact is the row's `emptyList`.
+      if (loneArray.elements.length === 0) {
+        if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
+      } else args = loneArray.elements.filter(isExpr);
+    } else if (verdict.kind !== "refused") throw E.listOperand(node.name, first.pos);
   }
   const exprArgs = args.filter(isExpr);
   const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), args.length);
@@ -596,7 +655,10 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   }
   const body = bodyRuleOf(node.name);
   if (body !== undefined) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  checkSlots(node.name, sel.rule.args, exprArgs);
+  // A `flex` operator's lone array literal IS its operand list: the per-operand
+  // types are judged on the elements, not on the array.
+  const judged = shape === "flex" && loneArray !== null ? loneArray.elements.filter(isExpr) : exprArgs;
+  checkSlots(node.name, sel.rule.args, judged);
   // An operator that BINDS variables: an arrow in a visible slot is lowered under
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
   const overrides = boundArrowOverrides(node, exprArgs, env);
@@ -629,6 +691,13 @@ function boundArrowOverrides(
   return out;
 }
 
+/** The count rule a `lower` verdict's cell states, or undefined. */
+function ruleArgsOf(verdict: ReturnType<typeof consult>): { emptyList?: true } | undefined {
+  if (verdict.kind !== "lower") return undefined;
+  const cell = verdict.cell as { args?: { emptyList?: true } } | null;
+  return cell !== null && typeof cell === "object" ? cell.args : undefined;
+}
+
 /** HR2: an operator the registry does not know passes through as written. */
 function unknownOperator(node: Extract<Expr, { type: "OperatorCall" }>, args: readonly Expr[], env: Env): unknown {
   const inner = childEnv(env, node, "args");
@@ -646,6 +715,7 @@ function production(node: Expr, key: string, operands: readonly Expr[], env: Env
     if (sel.kind === "dispatch") internalError(`production '${key}' selected a receiver dispatch`);
     throw E.refusalFor(sel, `'${key}'`, "", positionIn(env), node.pos, []);
   }
+  checkSlots(key, sel.rule.args, operands);
   return sel.rule.emit(exprInputs(key, null, operands, [], env, node, READ));
 }
 

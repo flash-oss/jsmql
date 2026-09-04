@@ -60,7 +60,8 @@ A MongoDB operator's `shape` is applied at the call, not in the renderer:
 ```js
 $setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list
 $setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
-$and([])                // → {$and:[]}                    an explicit empty list passes (HR2)
+$and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
+$divide([])             // refused: nothing was written, and `$divide` states no empty list
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
 $size([$.a, 2])         // → {$size:[["$a",2]]}           a single operand that renders as an array is wrapped one level
 $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       verbatim — the one exception
@@ -68,9 +69,13 @@ $literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       verbatim — the one
 
 `check.ts` holds the literal-gated checks, each reading a `BodyRule` or `Arity`
 field the row states: required and closed keys (with a suggestion), enums,
-flag sets, key and slot types, `elementType` over every operand, and the two
-refusals for a spread or a computed key inside an operator body. A slot that
-is a field path, an expression or a spread is never judged.
+flag sets, key and slot types, `elementType` over every operand, `nullRefused`
+slots (a per-row fact: `$size(null)` is refused by the server, `$reverseArray(null)`
+answers null), `constant` slots and `constantKeys`, and the two refusals for a
+spread or a computed key inside an operator body. A slot that is a field path,
+an expression or a spread is never judged. The checks run on every rule —
+an operator's, a method's, a production's — and `test/registry-fields-read.test.ts`
+holds that every stated rule field has a reader.
 
 ## Truthiness
 

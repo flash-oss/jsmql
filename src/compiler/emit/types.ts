@@ -14,7 +14,7 @@ import type { Expr, Kind, Returns } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
-import { isCallable, namespaceNames, productionForOperator, returnsOf } from "../rows.ts";
+import { constructedFamilyOf, isCallable, namespaceNames, productionForOperator, returnsOf } from "../rows.ts";
 
 export type Known = Kind | "unknown";
 
@@ -50,7 +50,8 @@ function resolveReturns(r: Returns, receiver: Known, family: FieldFamily | "rege
 export function sourceFamily(node: Expr): FieldFamily | "regexp" | "set" | string | null {
   if (node.type === "Ident" && NAMESPACES.has(node.name)) return node.name;
   if (node.type === "RegexLiteral") return "regexp";
-  if (node.type === "NewExpression" && node.callee.type === "Ident" && node.callee.name === "Set") return "set";
+  if (node.type === "NewExpression" && node.callee.type === "Ident")
+    return constructedFamilyOf(node.callee.name) ?? null;
   return null;
 }
 

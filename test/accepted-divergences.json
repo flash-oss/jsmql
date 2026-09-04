@@ -3927,7 +3927,7 @@
       "kind": "output",
       "was": "{\"$arrayToObject\":[[\"a\",1],[\"b\",2]]}",
       "now": "{\"a\":1,\"b\":2}",
-      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+      "reason": "shippedBug: the shipped emitted {$arrayToObject:[[\"a\",1],[\"b\",2]]}, which the server reads as two arguments and refuses (measured: 'Expression $arrayToObject takes exactly 1 arguments. 2 were passed in'); the fold settles the constant to {a:1,b:2}."
     },
     "expr\u0000[1, 2].concat([3, 4])": {
       "entry": "expr",
@@ -4568,6 +4568,14 @@
       "was": "{\"$substrCP\":[\"abc\",2,1]}",
       "now": "\"c\"",
       "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
+    },
+    "expr\u0000$accumulator({ init: \"function() {}\", accumulate: \"function() {}\", merge: \"function() {}\", lang: \"js\" })": {
+      "entry": "expr",
+      "src": "$accumulator({ init: \"function() {}\", accumulate: \"function() {}\", merge: \"function() {}\", lang: \"js\" })",
+      "kind": "message",
+      "was": "$accumulator is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $accumulator(...) }) to compute it per-group, or $setWindowFields(.",
+      "now": "$accumulator is a '$group'-only accumulator — MongoDB has no expression or window form for it. Use $group({ _id: ..., <key>: $accumulator({ init, accumulate, accumulateArgs, merge, lang }) }).",
+      "reason": "message: reworded — both compilers refuse the source; the new text is the row's own or the generic wording for its class."
     }
   }
 }

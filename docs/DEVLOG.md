@@ -10,6 +10,51 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the after-audit of the value target — rows the server contradicts, checks on every rule, and a stage list refused where a value belongs
+
+Three auditors read the value target after it landed. A judgement verifier re-ran every
+`equivalent`/`intended`/`shippedBug` row of `test/accepted-divergences.json` on mongod over
+plausible, missing, null and wrong-type documents: 48 of 49 folds identical on every document,
+every `$switch` dispatch identical on every input, `$median` accepted by the server; one row
+re-judged (`Object.fromEntries` is a `shippedBug`: the shipped `{$arrayToObject:[[…],[…]]}` is
+refused as two arguments). It also found that a bracketed stage list in `jsmql.expr` produced a
+document the server refuses — the shipped `expr` detected the pipeline:
+```js
+[{ $macth: $.age > 18 }]                   // → Element 0 of pipeline: '$macth' is not a known aggregation stage. Did you mean '$match'?
+[{ $match: { age: 1 }, $sort: { age: 1 } }] // → Element 0 of pipeline must be a single-key stage object …, but found an object with 2 keys.
+[$match($.a > 1)]                           // → A bracketed stage list is a pipeline, not an expression. Pass it to jsmql.pipeline(…) …
+[$abs($.a), 1]                              // → [{"$abs":"$a"},1]   an array of values is HR2 passthrough
+```
+
+A registry reviewer measured the edited rows: `$setEquals` needs two operands (the server: "needs
+at least two arguments"); `$log10` joins the `single` renderer; `$round`/`$trunc` precision is an
+integer (`$round(5.55, 1.5)` is refused); `$mergeObjects([{a:1},{b:2}])` is judged element by
+element; an explicit empty list is a STATED fact — `emptyList` on the eleven rows the server
+accepts it for (`$and([])` → true, `$concat([])` → "") and `$divide([])` is refused with the
+count rule; `nullRefused` on the three rows whose operand refuses `null` (`$size`, `$strLenCP`,
+`$allElementsTrue` — `$reverseArray(null)` and `$toUpper(null)` answer, so it is per row); the
+`$accumulator` text no longer offers a window form it has none of; `$addToSet`/`$push` name
+`jsmql.update`; `$count` names its accumulator homes; the `Date` constant text names both
+constants it takes.
+
+An extensibility reviewer walked five extension scenarios. Fixed now: the literal-gated checks
+run on EVERY rule (a method's `slotType` was decoration); `Arity.constant` and
+`BodyRule.constantKeys` have readers; one `FIELD_FAMILY_TYPES` table in the vocabulary replaces
+three copies; the ternary's production is found by the node it builds; `Set` is a `set` receiver
+by its row's `family`; two node-type lists are held by the tree's own type; a tautology in the
+property-row test is gone. `test/registry-fields-read.test.ts` ratchets the `pending` cells
+(437) and asserts every stated rule field is read somewhere in the compiler. The larger
+findings — two registries coexisting, `returns` measured for mongo rows only, the hand-numbered
+precedence scale, per-row refusal boilerplate — are design work for the next chunks and are
+recorded in the plan.
+
+Also: a parse error states its position once (`ParseError` no longer appends one the message
+already places), and `x => { k: x }` names the `x => ({ … })` spelling. The gate:
+```
+divergent : 146  {"message":69,"now-rejected":2,"output":66,"now-accepted":9}   UNCLASSIFIED: 0
+```
+
+---
 ## 2026-09-04 — feat(compiler): the emit phase's value target — `jsmql.expr` through the new compiler, judged against the shipped one over 2929 sources
 
 The fifth phase lowers a bare aggregation expression end to end: `src/compiler/index.ts`

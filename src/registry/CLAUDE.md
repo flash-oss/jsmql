@@ -57,4 +57,8 @@ pair there whenever you add a rule. The cross-references no type can hold
   pair in the contracts fixture, and the rows that state it. Never a list in the
   compiler.
 - **A new position** — `Position`, `OutOf`, `CELL_OF` in
-  `src/compiler/emit/consult.ts`, and a cell on every spec type.
+  `src/compiler/emit/consult.ts`, a cell on every spec type (`names.ts`,
+  `productions.ts`), the constants and `edge()` in `passes/position.ts`, the root
+  facts in `emit/env.ts` (which roots are pipelines, where an injected `$…` is
+  literal), and the `CELL_OF` copy in `scripts/diff-compilers.mjs`. The position
+  tests each hold their own list of the seven; extend them.

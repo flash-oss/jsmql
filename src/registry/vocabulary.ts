@@ -399,6 +399,21 @@ export type Arity = {
   /** Per-slot literal type, checked only when the slot is a literal. */
   slotType?: Readonly<Record<number, ArgType>>;
   /**
+   * Slots that refuse a literal `null` — the server errors rather than answering
+   * null. A per-ROW fact, measured: `$size: null` and `$strLenCP: null` are
+   * refused ("must be an array" / "requires a string argument"), while
+   * `$reverseArray: null`, `$toUpper: null` and `$year: null` answer null or "".
+   * Keyed by slot index like `slotType`.
+   */
+  nullRefused?: readonly number[];
+  /**
+   * An explicit EMPTY operand list is valid — `$and([])` → `{ $and: [] }` (true),
+   * `$concat([])` → "". A separate fact from the positional count: `$and()` with
+   * no argument is still refused by `atLeast`, because nothing was written.
+   * MEASURED per row; `$divide([])` and `$ifNull([])` are refused by the server.
+   */
+  emptyList?: true;
+  /**
    * The literal type EVERY operand must have, for a list operator — `$multiply`
    * takes numbers, `$add` numbers or dates. Checked only on a literal operand,
    * so `$multiply($.a, "x")` is refused and `$multiply($.a, $.b)` is not.
@@ -787,12 +802,25 @@ export type Rule<In, Out> = {
 };
 
 /**
- * The families a DOCUMENT FIELD's value can have. `Math`, `Object`, `Number`,
- * `Date`, `Array` and `cluster` are reached through a bare name, never through
- * a field, and `stream` is `$$` — so a receiver of unprovable family is one of
- * these seven and no other.
+ * The families a DOCUMENT FIELD's value can have, each with the `$type` names it
+ * covers — the ONE table the runtime guards, the receiver readers and their
+ * tests read. `Math`, `Object`, `Number`, `Date`, `Array` and `cluster` are
+ * reached through a bare name, never through a field, and `stream` is `$$` — so
+ * a receiver of unprovable family is one of these seven and no other. A `Set`
+ * folds to an array, so it is one.
  */
-export type FieldFamily = Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp" | "set">;
+export const FIELD_FAMILY_TYPES = {
+  string: ["string"],
+  array: ["array"],
+  number: ["int", "long", "double", "decimal"],
+  object: ["object"],
+  date: ["date"],
+  regexp: ["regex"],
+  set: ["array"],
+} as const satisfies Readonly<
+  Record<Extract<Family, "string" | "array" | "number" | "object" | "date" | "regexp" | "set">, readonly BsonType[]>
+>;
+export type FieldFamily = keyof typeof FIELD_FAMILY_TYPES;
 
 type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] extends [T] ? false : true) : never;
 

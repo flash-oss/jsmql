@@ -345,6 +345,8 @@ type GlobalSpec<W extends readonly Position[]> = {
   asReference: boolean;
   /** When it is also a namespace: the family a name bound to it resolves against. */
   provides?: Family;
+  /** The receiver family a VALUE built by this constructor belongs to — `new Set(…)` is a `set`. */
+  family?: Family;
   returns: Returns;
   where: W;
   only?: readonly Only[];
@@ -452,7 +454,7 @@ export const NAMES = {
     shape: "array",
     filter: unsupported("'$add' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number-or-date" },
+      args: { sig: "operands", atLeast: 1, elementType: "number-or-date", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$add' is not valid in a $group output position — see its 'where'."),
@@ -565,10 +567,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$log10' is not valid in filter position — see its 'where'."),
-    expr: {
-      args: { sig: "operand", exact: 1, slotType: { 0: "number" } },
-      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
-    },
+    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$log10' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$log10' is not valid in stage position — see its 'where'."),
@@ -602,7 +601,7 @@ export const NAMES = {
     shape: "array",
     filter: unsupported("'$multiply' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "number" },
+      args: { sig: "operands", atLeast: 1, elementType: "number", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$multiply' is not valid in a $group output position — see its 'where'."),
@@ -638,7 +637,7 @@ export const NAMES = {
     shape: "flex",
     filter: unsupported("'$round' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number" }, elementType: "number" },
+      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$round' is not valid in a $group output position — see its 'where'."),
@@ -705,7 +704,7 @@ export const NAMES = {
     shape: "flex",
     filter: unsupported("'$trunc' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number" }, elementType: "number" },
+      args: { sig: "number[, place]", allowed: [1, 2], slotType: { 0: "number", 1: "int" } },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     group: unsupported("'$trunc' is not valid in a $group output position — see its 'where'."),
@@ -723,7 +722,7 @@ export const NAMES = {
     shape: "array",
     filter: unsupported("'$bitAnd' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitAnd' is not valid in a $group output position — see its 'where'."),
@@ -756,7 +755,7 @@ export const NAMES = {
     shape: "array",
     filter: unsupported("'$bitOr' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitOr' is not valid in a $group output position — see its 'where'."),
@@ -774,7 +773,7 @@ export const NAMES = {
     shape: "array",
     filter: unsupported("'$bitXor' is not valid in filter position — see its 'where'."),
     expr: {
-      args: { sig: "operands", atLeast: 1, elementType: "int-or-long" },
+      args: { sig: "operands", atLeast: 1, elementType: "int-or-long", emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$bitXor' is not valid in a $group output position — see its 'where'."),
@@ -1142,7 +1141,10 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$and' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$and' is not valid in stage position — see its 'where'."),
@@ -1157,7 +1159,10 @@ export const NAMES = {
     where: ["value", "filter"],
     shape: "array",
     filter: pending("src/match-translation.ts"),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$or' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$or' is not valid in stage position — see its 'where'."),
@@ -1239,7 +1244,10 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$concat' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$concat' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$concat' is not valid in stage position — see its 'where'."),
@@ -1481,7 +1489,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$strLenCP' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
+    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$strLenCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
@@ -1688,7 +1696,10 @@ export const NAMES = {
     spreadAlternative: "use array spread ([...a, ...b]) or .concat()",
     shape: "array",
     filter: unsupported("'$concatArrays' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
@@ -1956,7 +1967,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: viaFallback,
-    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" } }, emit: single },
+    expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$size' is not valid in stage position — see its 'where'."),
@@ -2027,7 +2038,7 @@ export const NAMES = {
     where: ["value"],
     shape: "single",
     filter: unsupported("'$allElementsTrue' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operand", exact: 1 }, emit: single },
+    expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$allElementsTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
@@ -2072,7 +2083,10 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setEquals' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "set1, set2[, …]", atLeast: 2 },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$setEquals' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setEquals' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
@@ -2087,7 +2101,10 @@ export const NAMES = {
     where: ["value"],
     shape: "array",
     filter: unsupported("'$setIntersection' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: unsupported("'$setIntersection' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
@@ -2117,7 +2134,10 @@ export const NAMES = {
     where: ["value", "group", "window"],
     shape: "array",
     filter: unsupported("'$setUnion' is not valid in filter position — see its 'where'."),
-    expr: { args: { sig: "operands", atLeast: 1 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
+    expr: {
+      args: { sig: "operands", atLeast: 1, emptyList: true },
+      emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
+    },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     stream: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
@@ -2942,7 +2962,7 @@ export const NAMES = {
     },
     filter: unsupported("'$accumulator' is not valid in filter position — see its 'where'."),
     expr: unsupported(
-      "$accumulator is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $accumulator(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
+      "$accumulator is a '$group'-only accumulator — MongoDB has no expression or window form for it. Use $group({ _id: ..., <key>: $accumulator({ init, accumulate, accumulateArgs, merge, lang }) }).",
     ),
     group: {
       args: {
@@ -3130,7 +3150,7 @@ export const NAMES = {
     shape: "single",
     filter: unsupported("'$addToSet' is not valid in filter position — see its 'where'."),
     expr: unsupported(
-      "$addToSet is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
+      "$addToSet is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $addToSet(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -3171,7 +3191,7 @@ export const NAMES = {
     forbiddenIn: [],
     filter: unsupported("'$count' is not valid in filter position — see its 'where'."),
     expr: unsupported(
-      "'$count' is a pipeline stage, not an expression — MongoDB has no '$count' expression operator, so '{ $count: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$count(…);') or as a chain link ('$$.$count(…)').",
+      "'$count' is a pipeline stage, not an expression — MongoDB has no '$count' expression operator, so '{ $count: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$count(…);') or as a chain link ('$$.$count(…)'). As an accumulator it counts a group: $group({ _id: ..., n: $count() }) or a window's documents.",
     ),
     group: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
@@ -3272,7 +3292,7 @@ export const NAMES = {
     shape: "single",
     filter: unsupported("'$push' is not valid in filter position — see its 'where'."),
     expr: unsupported(
-      "$push is an accumulator operator — only valid inside '$group' field-value slots or '$setWindowFields' output slots. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
+      "$push is an accumulator operator — valid inside '$group' field-value slots, '$setWindowFields' output slots, or as an update operator in jsmql.update. Use $group({ _id: ..., <key>: $push(...) }) to compute it per-group, or $setWindowFields(...) for the windowed form.",
     ),
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
@@ -9047,7 +9067,7 @@ export const NAMES = {
         // A constant the fold could evaluate never reaches this row; one that stays
         // is a string `Date.parse` refuses.
         constant: unsupported(
-          'new Date(<string>) — the string is not a valid date. Use an ISO 8601 date like "2026-01-01" or "2026-01-01T00:00:00.000Z".',
+          'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
         ),
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
         // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
@@ -9097,6 +9117,9 @@ export const NAMES = {
     token: "Ident",
     newKeyword: "required",
     asReference: false,
+    // A value built by this constructor is a receiver of the `set` family: the
+    // set operations (`.union`, `.difference`) are names on it.
+    family: "set",
     returns: "array",
     where: ["value"],
     filter: because("a set is a value, not a test. Use '.union(...)' / '.difference(...)' on it."),

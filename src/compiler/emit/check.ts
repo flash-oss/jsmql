@@ -12,6 +12,7 @@ import { CodegenError } from "../../errors.ts";
 import { didYouMean, closestNameTo } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
+import { evaluate } from "../passes/evaluate.ts";
 
 type Lit = { kind: "number" | "string" | "bool" | "null" | "array" | "object" | "regex" | "bigint"; value: Expr };
 
@@ -212,10 +213,30 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
+  // A key the server reads at compile time — `$bucket.boundaries`, `$lookup.pipeline` —
+  // must hold a constant; a field path or an expression there is refused as the server refuses it.
+  for (const k of rule.constantKeys ?? []) {
+    const v = valueOf(k);
+    if (v !== undefined && !evaluate(v, new Map()).ok) {
+      throw new CodegenError(
+        `'${name}' ${k} must be a compile-time constant — the server reads it before any document; got an expression.`,
+        v.pos,
+      );
+    }
+  }
 }
 
 /** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
 export function checkSlots(name: string, args: Arity, operands: readonly Expr[]): void {
+  for (const i of args.nullRefused ?? []) {
+    const e = operands[i];
+    if (e !== undefined && e.type === "NullLiteral") {
+      throw new CodegenError(
+        `'${name}' does not accept null — the server refuses it rather than answering null. Guard the operand: '$ifNull(<value>, <fallback>)'.`,
+        e.pos,
+      );
+    }
+  }
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
     // An object literal is exempt: the date accessors take a date OR the
@@ -225,6 +246,15 @@ export function checkSlots(name: string, args: Arity, operands: readonly Expr[])
   }
   if (args.elementType !== undefined) {
     for (const e of operands) checkType(name, "", e, args.elementType);
+  }
+  for (const i of args.constant ?? []) {
+    const e = operands[i];
+    if (e !== undefined && !evaluate(e, new Map()).ok) {
+      throw new CodegenError(
+        `'${name}' argument ${i + 1} must be a compile-time constant — the server reads it before any document; got an expression.`,
+        e.pos,
+      );
+    }
   }
   for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
     const e = operands[Number(i)];

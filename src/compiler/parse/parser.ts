@@ -110,8 +110,8 @@ export function parseExpression(source: string): Expr {
  * The wording a block body with no `return` gets when its callee does not take
  * pipeline stages — every method but the one whose row says `blockBody: "stages"`.
  */
-const needsReturn = (pos: number): string =>
-  `A block body must end with a \`return <expr>\` statement at position ${pos}. Write \`x => { const a = …; return <expr>; }\` / ` +
+const needsReturn = (pos: number, got: string): string =>
+  `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = …; return <expr>; }\` / ` +
   "`function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly";
 
 /** What one `{ … }` block held: statements, an optional `return`, and whether a `;` ended a statement. */
@@ -142,7 +142,7 @@ class Parser {
   /** The checks that need the WHOLE tree: run once, after the entry method returns. */
   finish(): void {
     const first = this.unclaimedStages.values().next();
-    if (!first.done) throw new ParseError(needsReturn(first.value), first.value);
+    if (!first.done) throw new ParseError(needsReturn(first.value, "'}'"), first.value);
   }
 
   // ── the entry form ────────────────────────────────────────────────────────
@@ -318,6 +318,11 @@ class Parser {
         return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
       const st = this.statement();
+      // `x => { k: x }` — JavaScript reads `k:` as a label; the developer meant an
+      // object. Say so, with the spelling that returns one.
+      if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
+        throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
+      }
       stmts.push(st);
       // `function f(x) { … }` ends with its closing brace, so the separator is
       // optional after it — the same rule JavaScript uses.
