@@ -28,7 +28,7 @@ import * as E from "./errors.ts";
 import { childEnv, filterInputs } from "./inputs.ts";
 import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
-import { or } from "./mode.ts";
+import { or, truthOf } from "./mode.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { isCallable, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
 
@@ -67,7 +67,11 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
     // Each branch on its own: a leaf's query form never depends on its sibling.
     const branches = chainOf(node, "||").map((b) => translate(b, childEnv(env, node, "left"), nativeOnly));
     if (branches.some((b) => b === null)) return null;
-    const docs = branches as QueryDoc[];
+    // A folded constant branch: `false` adds nothing, `true` decides everything.
+    if ((branches as QueryDoc[]).some(isAlwaysTrue)) return {};
+    const docs = (branches as QueryDoc[]).filter((d) => !isAlwaysFalse(d));
+    if (docs.length === 0) return matchExpr(truthOf(false, true));
+    if (docs.length === 1) return docs[0];
     // Every branch an `$expr`: one `$expr: { $or }` says the same in less. A native
     // branch keeps the per-branch form, where its own meaning is kept.
     if (docs.every((d) => Object.keys(d).length === 1 && "$expr" in d))
@@ -112,7 +116,8 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
  */
 function rawValue(e: Expr, env: Env): unknown {
   if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
-    return { [e.name]: lowerValue(e.args[0], env) };
+    // The operand is raw too: `{ a: $not($gt(1)) }` nests one query operator in another.
+    return { [e.name]: rawValue(e.args[0], env) };
   }
   if (e.type === "ObjectLiteral") return rawDocument(e, env);
   return lowerValue(e, env);
@@ -248,8 +253,10 @@ export function constantIn(e: Expr): { value: unknown } | null {
  * Two `$expr` residuals become one `$expr: { $and: [...] }`.
  */
 export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
-  if (Object.keys(a).length === 0) return b;
-  if (Object.keys(b).length === 0) return a;
+  // A folded constant clause: `true` adds nothing, `false` decides everything.
+  if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(truthOf(false, true));
+  if (isAlwaysTrue(a) || Object.keys(a).length === 0) return b;
+  if (isAlwaysTrue(b) || Object.keys(b).length === 0) return a;
   type Clause = { key: string; value: unknown };
   const clauses: Clause[] = [];
   const exprs: unknown[] = [];
@@ -284,6 +291,11 @@ export function mergeAnd(a: QueryDoc, b: QueryDoc): QueryDoc {
 }
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
+
+/** `{ $expr: true }` — a predicate the fold settled to true; it selects every document. */
+const isAlwaysTrue = (d: QueryDoc): boolean => Object.keys(d).length === 1 && d.$expr === true;
+/** `{ $expr: false }` — a predicate the fold settled to false; it selects none. */
+const isAlwaysFalse = (d: QueryDoc): boolean => Object.keys(d).length === 1 && d.$expr === false;
 
 /** Is this the document the whole program means — a raw query — rather than a predicate? */
 export const isRawQuery = (node: Expr): boolean => node.type === "ObjectLiteral" && namedRow(node) === null;

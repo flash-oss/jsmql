@@ -115,5 +115,18 @@ describe("compiler/emit/filter — methods and operators", () => {
       $expr: { $gt: ["$score", "$threshold"] },
     });
     expect(filter("{ a: { $gt: 1 }, tags: { $all: ['x'] } }")).toEqual({ a: { $gt: 1 }, tags: { $all: ["x"] } });
+    // a one-operand $op inside a raw document is the query operator, at any depth
+    expect(filter("{ a: $not($gt(1)) }")).toEqual({ a: { $not: { $gt: 1 } } });
+    expect(filter("{ a: $size(2) }")).toEqual({ a: { $size: 2 } });
+    expect(() => filter("({ $setUnion: $.x })")).toThrow(/operates on a list of operands/);
+  });
+
+  it("drops a branch the fold settled, and keeps the rest as written", () => {
+    expect(filter("$.a === 1 || false")).toEqual({ a: 1 });
+    expect(filter("$.a === 1 && true")).toEqual({ a: 1 });
+    expect(filter("$.a === 1 || true")).toEqual({});
+    expect(filter("$.a === 1 && false")).toEqual({ $expr: false });
+    expect(filter("1 === 1")).toEqual({ $expr: true });
+    expect(filter("$.a > -1")).toEqual({ a: { $gt: -1 } });
   });
 });

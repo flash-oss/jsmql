@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the filter hunter's findings — a nested query operator, dead constant branches, and the `.length` and `%` rules stated once
+
+A hunter probed the filter target with 224 predicates on mongod: 161 byte-identical to the
+shipped, 24 the same documents in another shape, and these to act on.
+
+```js
+{ a: $not($gt(1)) }        // was refused ($gt counted by the expression rule one level down) → {"a":{"$not":{"$gt":1}}}
+$.a === 1 || false          // was {"$or":[{"a":1},{"$expr":false}]}  → {"a":1}
+$.a === 1 && true           // was {"a":1,"$expr":true}                → {"a":1}
+$.a === 1 || true           // → {}                                     every document
+$.a > -1                    // → {"a":{"$gt":-1}}   the shipped escaped a unary minus to $expr, which orders across BSON types
+```
+
+Inside a raw query document a one-operand `$op` is the query operator at ANY depth. A branch
+the fold settled to `false` adds nothing to an `||`, and one settled to `true` decides it; the
+same for `&&` the other way round. The filter spec's `.length` paragraph now states the one
+rule both targets follow — a dot `.length` is a LENGTH whatever it is compared with; a field
+literally named `length` is bracket access — and a new divergence records that `%` truncates a
+double in the query language (`a: 2.5` satisfies `$.a % 2 === 0`), on both roads.
+
+One finding is a consequence of the per-branch `||` ruling, for the developer: with `($.a === 1
+|| $.b * 2 === 2) && $.c > 3`, the `$expr` branch now sits inside the `$or`, and the server may
+evaluate it against documents the `c` clause excludes — a `$multiply` on a string there aborts
+the query where the shipped's top-level `$expr` happened to run after the `c` clause. Both
+documents state the same predicate; the abort depends on the planner's evaluation order.
+
+---
 ## 2026-09-04 — fix(compiler): the filter target's after-audit, first findings — the outer document has no path inside `$elemMatch`, a raw document's top-level list operator, and the two-road agreement suite
 
 A `.some` body that read the OUTER document lowered it as an ELEMENT path — a wrong

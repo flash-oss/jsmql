@@ -144,6 +144,8 @@ These are intentional trade-offs — the query-language behavior matches what mo
 
 3. **Field-to-field comparison.** `{ a: "$b" }` is a literal-string match against `"$b"`, NOT a field comparison. We avoid this entirely by refusing to translate `BinaryExpr` where both sides resolve as field paths — those stay in `$expr`.
 
+6. **`%` truncates in the query language.** `{ a: { $mod: [2, 0] } }` truncates a double before dividing, so `a: 2.5` satisfies `$.a % 2 === 0`, where JavaScript's `2.5 % 2` is `0.5`. The expression form (`$mod` under `$expr`) does the same. A fractional field with a modulo test is a domain error either way; state the integer type where it matters.
+
 4. **Null and missing.** `===`/`!==` are JS-strict — missing fields are not null. `==`/`!=` (null-only) are loose — missing fields are treated as null. The two shapes compile to distinct MQL (`$type: "null"` vs bare `null`) on both code paths so the translated and residual fall-back paths agree on semantics. Users who want aggregation's "$eq with null is strict" behaviour use `===`; users who want query-language's "field: null matches missing" behaviour use `==`.
 
 ## Escape hatch
@@ -174,12 +176,7 @@ A few patterns translate differently in `$match` position than they would in an 
 
 - **`.includes(<literal>)` on a field receiver.** Expression form is type-polymorphic (`$cond` over `$isArray` to choose `$in` vs `$indexOfCP`-substring). Query form emits the bare `{ field: <value> }` — which matches arrays-containing-value *and* scalar equality (MongoDB's "value or array-of-value" semantics), but NOT string substring. Users who want substring match in `$match` reach for `.match(/value/)`.
 - **`typeof === "boolean"` / `typeof === "bool"`.** JS's `typeof` returns `"boolean"`; MongoDB's `$type` accepts `"bool"`. The translator accepts either spelling and emits the BSON form.
-- **`.length` natural-number test.** Only the **dot** form `.length` is interpreted as a length — bracket access (`["length"]`) is raw data access and is never folded here (see [method-dispatch.md](method-dispatch.md) for the language rule). The dot form is read one of two ways depending on the other operand:
-  - **vs a natural-number literal** (non-negative integer): it's the *length of a string or array*. The comparison residualises into `$expr` so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch. This applies to **all** comparison operators — `===`, `!==`, `<`, `<=`, `>`, `>=`. (The old array-only `$size` peephole was removed: `$size` silently fails on strings, so it didn't honour the "string or array" contract.)
-  - **vs anything else** (`3.5`, a string, etc.): a length can't sensibly equal a non-natural value, so `.length` is read as a *literal field path* and collapses into the dotted key `{ "items.length": <value> }` via the generic field-path translation. This is the documented way the dotted-key path is reached intentionally.
-
-  **Boundary:** a `.length` compared against a *non-literal* (another field or expression) has no natural-number literal to test, so it residualises to the `$expr` length form rather than a literal field path — `$expr` position can't express "the field literally named length" without `$getField`. To read such a field, use raw bracket access: `$["items.length"]` (a plain field reference on the root) or `$getField($.items, "length")`.
-
+- **`.length` is a length.** The dot form `.length` is the length of a string or an array, whatever it is compared with: the comparison residualises into `$expr`, where the runtime dispatch on the receiver's type runs (`$size` for an array, `$strLenCP` for a string). It is never read as a field named `length`; a document field literally named `length` is reached with bracket access — `$["items.length"]` (a plain field reference on the root) or `$getField($.items, "length")`. Bracket access is raw data access and is never folded to a length (see [method-dispatch.md](method-dispatch.md)).
 ## Out of scope — rejected as bad DX
 
 - **`!expr` via De Morgan.** Negation has subtle null/missing interactions in MongoDB — silent index/non-index flips driven by data shape are exactly the surprise jsmql aims to avoid. Users write positive forms or `$op($not, …)` explicitly. See `feedback_no_silent_output_drift.md` in user memory for the rationale.
