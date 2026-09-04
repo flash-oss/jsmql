@@ -1,0 +1,229 @@
+// Phase 5 — EMIT. Every MongoDB variable name the compiler writes, and the scope
+// that says what a JavaScript name means.
+//
+// MongoDB variables live in ONE flat scope: the developer's lambda parameters, a
+// `$let` the developer wrote, and every variable a lowering binds for itself all
+// share it. Three things go wrong there, and each is closed by a TYPE here rather
+// than by care at each site:
+//
+//   * a name the server refuses. MEASURED on mongod, `$let: { vars: { <name>: 7 } }`:
+//       x, x_1, xY, jsmqlArr, v_id       accepted
+//       _x, X, 1x                        "starts with an invalid character for a user variable name"
+//       x-y, x$                          "contains an invalid character for a variable name"
+//     so a `MongoVar` is minted only by `mongoVarName`, which is total.
+//   * two JavaScript names that become one variable. A scheme that merely
+//     prepended a letter made `_id` and `v_id` the same variable, `v_id`, and a
+//     body that read both read one. `mongoVarName` is INJECTIVE: a plain name is
+//     itself and never starts with `v_`; every other name is `v_` + an escape in
+//     which `_` only ever opens an escape.
+//   * a compiler mint that captures a developer's name. `Scope.bind` mints
+//     against every name the PROGRAM introduces, not only the ones in scope at
+//     the site — a parameter bound deeper inside the body is exactly the one a
+//     mint at the site would shadow.
+//
+// The spellings themselves — `jsmql<Hint>`, `__jsmql.tmp.<n>` — live in
+// src/namespace.ts, the one home for jsmql's three namespaces.
+
+import type { Expr, Kind } from "../../registry/vocabulary.ts";
+import { UnknownIdentifierError, internalError } from "../../errors.ts";
+import { exprVar, tmpSlot } from "../../namespace.ts";
+
+declare const VAR: unique symbol;
+declare const REF: unique symbol;
+declare const SLOT: unique symbol;
+
+/** A variable name the server accepts, without its `$$`. Minted only here. */
+export type MongoVar = string & { readonly [VAR]: true };
+/** The read of a variable — `$$name`. Minted only here; the only thing `lookup` returns. */
+export type VarRef = string & { readonly [REF]: true };
+/** A `__jsmql.…` scratch field: the path to write, and the `$path` that reads it. */
+export type FieldSlot = { readonly path: string; readonly ref: string; readonly [SLOT]: true };
+
+/** The names MongoDB itself binds. Read with `systemRef`; never rebound. */
+export const SYSTEM_VARS = [
+  "ROOT",
+  "CURRENT",
+  "REMOVE",
+  "NOW",
+  "CLUSTER_TIME",
+  "DESCEND",
+  "PRUNE",
+  "KEEP",
+  "SEARCH_META",
+  "USER_ROLES",
+] as const;
+export type SystemVar = (typeof SYSTEM_VARS)[number];
+
+/** `$$ROOT`, `$$REMOVE`, … — a system variable's read. */
+export const systemRef = (name: SystemVar): VarRef => ("$$" + name) as VarRef;
+
+const refOf = (v: MongoVar): VarRef => ("$$" + v) as VarRef;
+
+/** What the server accepts as written. A `v_` lead is reserved for the escape. */
+const PLAIN = /^[a-z][A-Za-z0-9_]*$/;
+const KEPT = /^[A-Za-z0-9]$/;
+
+/**
+ * The variable a JavaScript name becomes. Total and injective.
+ *
+ *   x       → x            the common case is untouched, so MQL reads as written
+ *   _id     → v__5fid      `_` opens an escape: two hex digits of the code point
+ *   $x      → v__24x
+ *   X       → v_X          an uppercase lead is legal in the body, so only the prefix is added
+ *   v_id    → v_v_5fid     a `v_` lead is itself escaped, so it cannot collide with an escape
+ *   é       → v__e9        two hex digits below U+0100; `_u` + four (漢 → v__u6f22) below
+ *                          U+10000; `_U` + six above (😀 → v__U01f600)
+ *
+ * Injective because a plain result never starts with `v_`, and in an escaped
+ * result every `_` opens an escape of fixed width, so the encoding can be read
+ * back one escape at a time.
+ */
+export function mongoVarName(js: string): MongoVar {
+  if (PLAIN.test(js) && !js.startsWith("v_")) return js as MongoVar;
+  let out = "v_";
+  for (const ch of js) {
+    if (KEPT.test(ch)) {
+      out += ch;
+      continue;
+    }
+    const cp = ch.codePointAt(0);
+    if (cp === undefined) internalError(`mongoVarName read an empty character in '${js}'`);
+    out +=
+      cp < 0x100
+        ? "_" + cp.toString(16).padStart(2, "0")
+        : cp < 0x10000
+          ? "_u" + cp.toString(16).padStart(4, "0")
+          : "_U" + cp.toString(16).padStart(6, "0");
+  }
+  return out as MongoVar;
+}
+
+/**
+ * What a JavaScript name STANDS FOR. A closed union: a lowering switches on it
+ * exhaustively, so a new way to bind a name is a compile error at every read
+ * until each says what it does with it.
+ */
+export type Ref =
+  /** A MongoDB variable — a lambda parameter, a `$let` var. Read as `$$name`. */
+  | { readonly kind: "var"; readonly ref: VarRef }
+  /** The current document itself — `$`, or a stream callback's element (`$$.filter(d => …)`). */
+  | { readonly kind: "document" }
+  /** A value carried between stages in a `__jsmql.var.<name>` field. */
+  | { readonly kind: "field"; readonly slot: FieldSlot }
+  /** A value the fold settled but could not inline as source — a live Date, an ObjectId. */
+  | { readonly kind: "constant"; readonly value: unknown }
+  /**
+   * A declared function, inlined at each call. `expanding` when its body is a
+   * block of STAGES that expands in place, rather than a value.
+   */
+  | { readonly kind: "function"; readonly lambda: Expr; readonly expanding: boolean }
+  /** A named stream — `const s = $$.filter(…)` — lowered where it is consumed. */
+  | { readonly kind: "streamHandle"; readonly source: Expr }
+  /**
+   * A binding a document-replacing stage destroyed. Reading it is the
+   * developer's error, and `fix` is the row's own advice:
+   *   let t = $.a; $group({ _id: $.k }); $.b = t   → "`t` … can't be read after '$group'"
+   */
+  | { readonly kind: "dropped"; readonly by: string; readonly fix: string };
+
+/** Everything a read needs to know about a name. Every field required. */
+export type Binding = {
+  readonly ref: Ref;
+  /** The provable type, or "unknown" — the chain type-check reads this. */
+  readonly type: Kind | "unknown";
+  /** `let` is mutable, everything else is not. */
+  readonly mutable: boolean;
+  /** Where the binding was made, for the message that names it. */
+  readonly pos: number;
+};
+
+/**
+ * A variable and the scope its body is lowered under. A body can only be
+ * lowered under `binder.scope`, so "the mint must be visible to the body" and
+ * "the body's own names must be avoided" cannot be forgotten at a site.
+ */
+export type Binder = { readonly as: MongoVar; readonly ref: VarRef; readonly scope: Scope };
+
+/**
+ * What each JavaScript name means, and which variable names are spoken for.
+ * Immutable: every binding returns a new scope, so a lambda body's scope is
+ * gone when the lambda is.
+ */
+export class Scope {
+  private readonly bound: ReadonlyMap<string, Binding>;
+  private readonly taken: ReadonlySet<string>;
+
+  private constructor(bound: ReadonlyMap<string, Binding>, taken: ReadonlySet<string>) {
+    this.bound = bound;
+    this.taken = taken;
+  }
+
+  /**
+   * The root scope. `introduced` is every name the program binds anywhere — the
+   * parameters and declarations `namesIn` collects — so a mint made before a
+   * deeper lambda binds its parameter still steps aside from it.
+   */
+  static root(introduced: Iterable<string>): Scope {
+    const taken = new Set<string>(SYSTEM_VARS);
+    for (const js of introduced) taken.add(mongoVarName(js));
+    return new Scope(new Map(), taken);
+  }
+
+  /** Is this JavaScript name bound here? */
+  has(js: string): boolean {
+    return this.bound.has(js);
+  }
+
+  /**
+   * What a JavaScript name means here — the ONLY way a read learns it. An
+   * unbound name is the developer's error, positioned at the read.
+   */
+  lookup(js: string, pos: number): Binding {
+    const b = this.bound.get(js);
+    if (b === undefined) throw new UnknownIdentifierError(js, pos);
+    return b;
+  }
+
+  /** A name bound to something other than a variable — the document, a field slot, a function. */
+  declare(js: string, binding: Binding): Scope {
+    const bound = new Map(this.bound);
+    bound.set(js, binding);
+    return new Scope(bound, this.taken);
+  }
+
+  /**
+   * The developer's own variable binder — a lambda parameter, a `$let` var.
+   * Encoded, never renamed. `type` is what the row says the parameter holds.
+   */
+  param(js: string, type: Kind | "unknown", pos: number): Binder {
+    const as = mongoVarName(js);
+    const ref = refOf(as);
+    const bound = new Map(this.bound);
+    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos });
+    const taken = new Set(this.taken);
+    taken.add(as);
+    return { as, ref, scope: new Scope(bound, taken) };
+  }
+
+  /**
+   * A compiler mint — `bind("arr")` is `jsmqlArr`, or `jsmqlArr2`, `jsmqlArr3`
+   * … when a name the program uses stands in the way. The developer's names are
+   * never the ones that move.
+   */
+  bind(hint: string): Binder {
+    const base = exprVar(hint);
+    let as = base;
+    for (let n = 2; this.taken.has(as); n++) as = base + String(n);
+    const taken = new Set(this.taken);
+    taken.add(as);
+    return { as: as as MongoVar, ref: refOf(as as MongoVar), scope: new Scope(this.bound, taken) };
+  }
+}
+
+/** The scratch field `__jsmql.tmp.<n>`, with the reference that reads it. */
+export const scratchSlot = (n: number): FieldSlot => fieldSlot(tmpSlot(n));
+
+/** A `__jsmql.…` field as a slot: the path to write and the `$path` to read. */
+export function fieldSlot(path: string): FieldSlot {
+  return { path, ref: "$" + path } as FieldSlot;
+}

@@ -10,6 +10,53 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): the emit phase's names and environment — an injective variable encoding, and a context nothing can build by hand
+
+Two modules the lowerings will run under, each closing a class of shipped bug by type.
+
+`emit/names.ts` — every MongoDB variable the compiler writes. The server's grammar was
+measured on mongod (`$let: { vars: { <name>: 7 } }`): a lowercase ASCII lead, then
+`[A-Za-z0-9_]`; `_x`, `X`, `1x`, `x-y`, `x$`, `ROOT`, `REMOVE`, `NOW` are refused. So
+`mongoVarName` is total and INJECTIVE: a plain name is itself and never starts with `v_`; any
+other is `v_` + an escape in which `_` only ever opens an escape of fixed width.
+```
+x      → x            _id  → v__5fid       v_id → v_v_5fid      é → v__e9
+$x     → v__24x       X    → v_X           漢   → v__u6f22      😀 → v__U01f600
+```
+The shipped scheme prepended a letter, so `_id` and `v_id` were one variable. A `MongoVar`
+(a bare name for `as`/`vars`), a `VarRef` (`$$name`) and a `FieldSlot` (`__jsmql.…` path +
+`$path`) are three brands, so a read cannot be spliced where a binder belongs. `Scope` maps
+each JavaScript name to a `Binding` — what it stands for (`var`, `document`, `field`,
+`constant`, `function`, `streamHandle`, `dropped`), its provable type, mutability, position —
+and mints a compiler variable against EVERY name the program introduces, not only the ones in
+scope at the site: a parameter bound deeper in the body is exactly the one a mint would shadow.
+```js
+$.a.map(jsmqlArr => jsmqlArr)      // a mint for "arr" here is jsmqlArr2, never jsmqlArr
+```
+
+`emit/env.ts` — the one record a lowering runs under. Three services (`scope`, `site`,
+`chain`), a private constructor, and transitions that each change one thing (`bind`, `param`,
+`fresh`, `at`, `literal`, `enter`) — so a lambda body inherits everything, and a literal or a
+spread is a type error rather than a field silently lost (the shipped context had 21 optional
+fields of 23, and every context bug was an omitted one). `Site` carries phase 4's `Where`
+verbatim, the program's root, the `$literal` envelope and the sub-pipeline boundaries. The HR1
+gate is one predicate, `injectedNeedsLiteral`, with a stated truth table matching the shipped
+outputs:
+```js
+jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })          // → {$add:["$a",{$literal:"$b"}]}
+jsmql.compile(({ s }, { $ }) => $.a === s)({ s: "$b" })             // → {a:"$b"}
+jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })  // → [{$set:{x:"$b"}}]
+```
+`Chain` holds a (sub-)pipeline by reference: `emitted`, `hoisted` (drained ahead of the
+statement that triggered it), the scratch-slot counter, a `dirty` flag that owns the trailing
+`{ $unset: "__jsmql" }`, and a `terminal` slot so a `$out`/`$merge` is always last and the
+cleanup always precedes it.
+
+Tests: `test/compiler-names.test.ts` (a 5000-identifier injectivity fuzz, the grammar over a
+hostile sample, and the hostile spellings accepted live on mongod), `test/compiler-env.test.ts`,
+and the brand / no-literal / no-spread / no-optional-field rules in the contracts fixture.
+
+---
 ## 2026-09-04 — refactor(registry): the renderer contract for the emit phase — total renderers, a Truth brand, a keyed argument dispatch, and the facts a dispatcher reads
 
 Three developer rulings open this chunk, each measured first:

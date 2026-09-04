@@ -59,6 +59,12 @@ passes/        naming.ts answers "which row does this node name", "what is the
                document the program becomes). See docs/specs/desugar-pass.md
                and docs/specs/position-pass.md.
 emit/          the lowerings, and the dispatcher that checks a row before running one.
+  consult.ts   what a row says about one name in one position — a pure read.
+  names.ts     every MongoDB variable name written: the injective encoding, the
+               brands (MongoVar / VarRef / FieldSlot), and Scope — what each
+               JavaScript name stands for, and which names a mint must avoid.
+  env.ts       the one record a lowering runs under: scope, site, chain. Made only
+               from another Env; no field optional, no literal, no spread.
 ```
 
 ## Conventions

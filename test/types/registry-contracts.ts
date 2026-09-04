@@ -9,6 +9,9 @@
 
 import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
 import { pending, unsupported } from "../../src/registry/vocabulary.ts";
+import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
+import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
+import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
 
 const A = { sig: "", none: true } as const;
 const R = { args: A, emit: () => 1 };
@@ -68,3 +71,27 @@ export const readTruth = (input: ExprIn): Truth => input.truth(input.args[0]);
 export const oldGen: Value<"array"> = { args: A, emit: ({ gen }) => gen };
 // @ts-expect-error — `hoists` is the `hoist` service a renderer calls
 export const oldHoists: Value<"array"> = { args: A, hoists: () => [], emit: () => 1 };
+
+// ── the naming brands: a string is not a variable, a read is not a binder ────
+
+// @ts-expect-error — a MongoVar is minted by `mongoVarName`, never written as a string
+export const notAVar: MongoVar = "x";
+// @ts-expect-error — a `$$name` read cannot be spliced where a bare `as` belongs
+export const readAsBinder: MongoVar = systemRef("ROOT");
+// @ts-expect-error — a field slot is built by `fieldSlot`, never as a literal
+export const notASlot: FieldSlot = { path: "__jsmql.tmp.1", ref: "$__jsmql.tmp.1" };
+export const minted: MongoVar = mongoVarName("_id");
+export const read: VarRef = Scope.root([]).param("x", "unknown", 0).ref;
+
+// ── the environment record: nothing optional, no literal, no spread ──────────
+
+type Eq<A, B> = (<T>() => T extends A ? 1 : 2) extends <T>() => T extends B ? 1 : 2 ? true : false;
+/** A Site has no optional field: a literal that omits one cannot type-check. */
+export const siteIsTotal: Eq<Site, Required<Site>> = true;
+
+const env = Env.root({ type: "Program", stmts: [] }, "value", new Chain());
+// @ts-expect-error — an Env is made from an Env; there is no literal for one
+export const literalEnv: Env = { scope: env.scope, site: env.site, chain: env.chain };
+// @ts-expect-error — spreading drops the nominal mark; a copy is not an Env
+export const spreadEnv: Env = { ...env };
+export const derived: Env = env.at({ at: "filter" }).literal();
