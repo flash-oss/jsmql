@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — feat(compiler): the emit phase reads an expression two ways — value or truth — and a condition slot takes only a truth
+
+`emit/mode.ts` and `emit/mql.ts`. The developer's ruling on truthiness (a JavaScript spelling
+checks missing/null/false/""/0, the `$op(...)` escape hatch keeps MongoDB's rules, NaN is not
+supported) becomes a TYPE: `Truth` is minted only by `mode.ts`, and every MQL slot MongoDB
+evaluates for truth — `$cond.if`, `$filter.cond`, `$switch…case`, `$anyElementTrue`,
+`$allElementsTrue`, `$match.$expr` — is built by a constructor in `mql.ts` that takes one. A
+value dropped into a condition slot, where `""` or a missing field would then read as true, is a
+compile error naming the missing `truth()` call.
+
+The check is the shipped shape, kept exactly, and a node whose row states `returns: "bool"`
+passes through unchanged:
+```js
+$.a ? 1 : 2       // → {$cond:{if:{$and:[{$ne:[{$ifNull:["$a",null]},null]},{$ne:["$a",false]},{$ne:["$a",""]},{$ne:["$a",0]}]},then:1,else:2}}
+$.a > 1 ? 1 : 2   // → {$cond:{if:{$gt:["$a",1]},then:1,else:2}}
+```
+`and`/`or` flatten a nested `$and`/`$or` into one, as the shipped compiler does for
+`$.a && $.b ? 1 : 2`. The truth table is measured on mongod against JavaScript's `Boolean(v)`
+for eleven value classes plus a missing field, and agrees on all of them.
+
+---
 ## 2026-09-04 — feat(compiler): the emit phase's selection — one answer for a receiver's proof and an argument list's class
 
 `emit/select.ts` resolves the two axes a row cannot see: the RECEIVER's family and the

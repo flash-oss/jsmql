@@ -12,6 +12,8 @@ import { pending, unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
+import { and, jsTruthy, truthOf } from "../../src/compiler/emit/mode.ts";
+import { cond, filter, matchExpr } from "../../src/compiler/emit/mql.ts";
 
 const A = { sig: "", none: true } as const;
 const R = { args: A, emit: () => 1 };
@@ -95,3 +97,16 @@ export const literalEnv: Env = { scope: env.scope, site: env.site, chain: env.ch
 // @ts-expect-error — spreading drops the nominal mark; a copy is not an Env
 export const spreadEnv: Env = { ...env };
 export const derived: Env = env.at({ at: "filter" }).literal();
+
+// ── a condition slot takes a Truth, never a value ────────────────────────────
+
+// @ts-expect-error — a lowered value has not been read for truth
+export const condOfValue = cond({ $gt: ["$a", 1] }, 1, 2);
+// @ts-expect-error — a field reference is a value, and "" would read as true
+export const filterOfValue = filter("$items", mongoVarName("x"), "$$x.ok");
+// @ts-expect-error — `$expr` reads its operand for truth
+export const exprOfValue = matchExpr("$a");
+// @ts-expect-error — `&&` combines truths, not values
+export const andOfValues = and("$a", "$b");
+export const condOfTruth = cond(jsTruthy("$a"), 1, 2);
+export const condOfBool = cond(truthOf({ $gt: ["$a", 1] }, true), 1, 2);

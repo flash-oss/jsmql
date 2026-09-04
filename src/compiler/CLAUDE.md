@@ -68,6 +68,10 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
                JavaScript name stands for, and which names a mint must avoid.
   env.ts       the one record a lowering runs under: scope, site, chain. Made only
                from another Env; no field optional, no literal, no spread.
+  mode.ts      value or truth: `truthOf`, the JavaScript truthiness check, and/or/not.
+               The only minter of `Truth`.
+  mql.ts       the MQL shapes that READ a condition ($cond, $filter, $switch, …),
+               each typed to take a Truth. Built here and nowhere else.
 ```
 
 ## Conventions
