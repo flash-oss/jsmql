@@ -144,9 +144,23 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   );
 }
 
-/** A literal string outside a closed set, with a suggestion. */
-function checkEnum(name: string, key: string, e: Expr, allowed: readonly string[], caseInsensitive: boolean): void {
-  if (e.type !== "StringLiteral" || e.value.startsWith("$")) return;
+/**
+ * A literal string outside a closed set, with a suggestion.
+ *
+ * A `$`-led string is normally a runtime field reference and no business of a
+ * validator — unless the slot is CONSTANT-only, where the server reads the
+ * string as itself: measured, `{ $bucketAuto: { granularity: "$g" } }` answers
+ * "granularity must be one of: R5, R10, …" rather than reading a field.
+ */
+function checkEnum(
+  name: string,
+  key: string,
+  e: Expr,
+  allowed: readonly string[],
+  caseInsensitive: boolean,
+  isConstantSlot = false,
+): void {
+  if (e.type !== "StringLiteral" || (e.value.startsWith("$") && !isConstantSlot)) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
   const near = closestNameTo(v, allowed);
@@ -229,6 +243,24 @@ export function checkBody(
         );
       }
     }
+    for (const group of rule.atLeastOneOf ?? []) {
+      if (!group.some((k) => present.includes(k))) {
+        throw new CodegenError(
+          `'${name}' needs at least one of ${group.map((k) => `'${k}'`).join(", ")}, and none is present.`,
+          pos,
+        );
+      }
+    }
+    for (const group of rule.together ?? []) {
+      const found = group.filter((k) => present.includes(k));
+      if (found.length !== 0 && found.length !== group.length) {
+        const missing = group.filter((k) => !present.includes(k));
+        throw new CodegenError(
+          `'${name}' takes ${group.map((k) => `'${k}'`).join(" and ")} together or neither: ${missing.map((k) => `'${k}'`).join(" and ")} ${missing.length === 1 ? "is" : "are"} missing.`,
+          pos,
+        );
+      }
+    }
   }
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
   for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
@@ -257,7 +289,20 @@ export function checkBody(
 }
 
 /** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
-export function checkSlots(name: string, args: Arity, operands: readonly Expr[]): void {
+export function checkSlots(
+  name: string,
+  args: Arity,
+  operands: readonly Expr[],
+  /**
+   * Does the row state an OBJECT form for this body? When it does, an object
+   * literal is exempt from `slotType` — the date accessors take a date OR the
+   * `{ date, timezone }` document, and the rule stated for the first must not
+   * refuse the second, which the row's own `body` rule judges instead. When it
+   * does not, an object literal is simply the wrong type: `$documents({ a: 1 })`
+   * is refused by the server.
+   */
+  hasObjectForm = true,
+): void {
   for (const i of args.nullRefused ?? []) {
     const e = operands[i];
     if (e !== undefined && e.type === "NullLiteral") {
@@ -269,10 +314,20 @@ export function checkSlots(name: string, args: Arity, operands: readonly Expr[])
   }
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
-    // An object literal is exempt: the date accessors take a date OR the
-    // `{ date, timezone }` document, and a rule stated for the first must not
-    // refuse the second.
-    if (e !== undefined && e.type !== "ObjectLiteral") checkType(name, "", e, t);
+    if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
+    if (!Array.isArray(t)) {
+      checkType(name, "", e, t as ArgType);
+      continue;
+    }
+    // A slot that takes more than one shape: the literal must match one of them,
+    // and the message names them all.
+    const types = t as readonly ArgType[];
+    const lit = literal(e);
+    if (lit === null || types.some((one) => matches(lit, one))) continue;
+    throw new CodegenError(
+      `'${name}' takes ${types.map((one) => EXPECTS[one].replace(/^expects /, "")).join(" or ")} here, and ${NOUN[lit.kind]} is neither.`,
+      e.pos,
+    );
   }
   if (args.elementType !== undefined) {
     for (const e of operands) checkType(name, "", e, args.elementType);
@@ -297,7 +352,11 @@ export function checkSlots(name: string, args: Arity, operands: readonly Expr[])
   }
   for (const i of args.constant ?? []) {
     const e = operands[i];
-    if (e !== undefined && !evaluate(e, new Map()).ok) {
+    // An object literal is exempt, as it is for `slotType`: a body that may be a
+    // name OR a document has its keys described by the row's `body` rule, and
+    // several of those keys hold expressions. `$unionWith("c")` must be constant;
+    // `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be.
+    if (e !== undefined && e.type !== "ObjectLiteral" && !evaluate(e, new Map()).ok) {
       throw new CodegenError(
         `'${name}' argument ${i + 1} must be a compile-time constant — the server reads it before any document; got an expression.`,
         e.pos,

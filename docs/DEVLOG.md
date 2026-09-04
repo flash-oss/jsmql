@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): eleven stage bodies stated from the server's own answers, and two facts the vocabulary could not hold
+
+A measurement fan-out ran every key of every join, write, group and window stage against mongod and reported what the server enforces, key by key, with the refusal verbatim. Eleven stage rows now state their body instead of pointing at `pending`: `$bucket`, `$bucketAuto`, `$collStats`, `$currentOp`, `$graphLookup`, `$listLocalSessions`, `$listSessions`, `$lookup`, `$planCacheStats`, `$unionWith`, `$unwind`. The pending ratchet fell from 419 to 408, which is the only way that number is allowed to move.
+
+Two of the reported facts no field could express, so the vocabulary gained one field each — both measured, neither invented:
+
+**`together`** — a set of keys that must be ALL present or ALL absent. `required` cannot say it, because each key is optional on its own, and `exactlyOneOf` says the opposite. `{ $lookup: { from: "o", localField: "a", as: "j" } }` is refused by the server with "requires both or neither of 'localField' and 'foreignField'".
+
+**`atLeastOneOf`** — a set of which at least one must be present, where more than one is fine. `$lookup` joins by the `localField`/`foreignField` pair, by a `pipeline`, or by BOTH — measured accepted — and by none of them the server refuses it. `exactlyOneOf` would have refused the both-together form that works.
+
+**`slotType` widened to a set.** `$unionWith` takes a collection NAME or a body document and refuses everything else ("the $unionWith stage specification must be an object or string, but found int"), which one `ArgType` per slot could not say. A slot with one type stays a bare `ArgType`.
+
+Two checks learned the same distinction from the other side. A stage whose body may be a string OR an object runs its `body` rule on the object form alone — on a string body the rule would take its positional branch and demand the object's required keys of a name. And `constant` exempts an object literal for the same reason: `$unionWith("c")` must be a constant, `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be. A `$`-led string is normally a runtime path and no business of a validator, except in a constant-only slot, where the server reads the string as itself — measured: `{ $bucketAuto: { granularity: "$g" } }` answers "granularity must be one of: R5, R10, …".
+
+Every newly ruled stage runs on a live mongod and returns documents; every refusal above quotes the server's own words for the same input.
+
+---
+
 ## 2026-09-05 — fix(compiler): a computed expression in a query document's value slot is refused
 
 `$match({ a: $.b > 1 })` emitted `{ "$match": { "a": { "$gt": ["$b", 1] } } }`. The server ACCEPTS that and returns nothing: `$gt` reads its operand as the value to compare against, so the document asks whether `a` is greater than a two-element array. Both compilers did it, and no test could see it — the emitted document is valid MQL and the suite asserts what is emitted.

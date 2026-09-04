@@ -142,6 +142,48 @@ describe("compiler/emit/statement — the stage calls", () => {
   });
 });
 
+describe("compiler/emit/statement — a stage body is checked from the facts its row states", () => {
+  it("takes the key combinations the server takes, and no others", () => {
+    // `$lookup` joins by the localField/foreignField PAIR, by a `pipeline`, or by
+    // both — and by none of them the server refuses it. Each case measured.
+    expect(compiled('$lookup({ from: "o", localField: "a", foreignField: "b", as: "j" });')).toEqual([
+      { $lookup: { from: "o", localField: "a", foreignField: "b", as: "j" } },
+    ]);
+    expect(compiled('$lookup({ from: "o", pipeline: [$limit(1)], as: "j" });')).toEqual([
+      { $lookup: { from: "o", pipeline: [{ $limit: 1 }], as: "j" } },
+    ]);
+    expect(() => pipeline('$lookup({ from: "o", localField: "a", as: "j" });')).toThrow(/together or neither/);
+    expect(() => pipeline('$lookup({ from: "o", as: "j" });')).toThrow(/at least one of/);
+    expect(() => pipeline('$lookup({ from: "o", localField: "a", foreignField: "b" });')).toThrow(
+      /requires the 'as' field/,
+    );
+  });
+
+  it("takes a body that has two forms, and refuses a third", () => {
+    // The collection NAME or the body document, and nothing else: measured, the
+    // server answers "must be an object or string, but found int".
+    expect(compiled('$unionWith("o");')).toEqual([{ $unionWith: "o" }]);
+    expect(compiled('$unionWith({ coll: "o", pipeline: [$limit(1)] });')).toEqual([
+      { $unionWith: { coll: "o", pipeline: [{ $limit: 1 }] } },
+    ]);
+    expect(() => pipeline("$unionWith(5);")).toThrow(/a string or a document/);
+    // The collection name is read before any document, so a path there is silently
+    // wrong on the server — it looks for a collection literally called "$c".
+    expect(() => pipeline("$unionWith($.c);")).toThrow(/compile-time constant/);
+  });
+
+  it("checks a key's literal value against the closed set the server keeps", () => {
+    expect(compiled("$bucket({ groupBy: $.a, boundaries: [0, 10, 30] });")).toEqual([
+      { $bucket: { groupBy: "$a", boundaries: [0, 10, 30] } },
+    ]);
+    expect(() => pipeline("$bucket({ groupBy: $.a });")).toThrow(/requires the 'boundaries' field/);
+    expect(() => pipeline("$bucket({ groupBy: $.a, boundaries: $.b });")).toThrow(/compile-time constant/);
+    expect(() => pipeline('$bucketAuto({ groupBy: $.a, buckets: 2, granularity: "nope" });')).toThrow(
+      /must be one of: R5, R10/,
+    );
+  });
+});
+
 describe("compiler/emit/statement — the refusals name the way out", () => {
   it("tells a value what to do instead of standing as a statement", () => {
     expect(() => pipeline("$.a > 1;")).toThrow(/A pipeline statement writes something/);

@@ -21,7 +21,7 @@ import { PRODUCTIONS } from "../src/registry/productions.ts";
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Lower this as lowerings move into rows; never raise it. */
-const MAX_PENDING = 419;
+const MAX_PENDING = 408;
 
 describe("registry — the pending ratchet", () => {
   it("holds at most MAX_PENDING pending cells, and the ceiling only falls", () => {

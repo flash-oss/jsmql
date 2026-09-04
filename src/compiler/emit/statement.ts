@@ -347,9 +347,15 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
     throw E.refusalFor(sel, `'${name}'`, "", "statement", node.pos, []);
   }
-  checkSlots(name, sel.rule.args, args);
   const bodyRule = stageBodyRuleOf(name);
-  if (bodyRule !== undefined) checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
+  checkSlots(name, sel.rule.args, args, bodyRule !== undefined);
+  // A stage's `body` rule describes an OBJECT body, and several stages take either
+  // an object or a string — `$out("c")`, `$unionWith("c")`, `$merge("c")`. The rule
+  // runs on the object form alone: on a string body `checkBody` would take its
+  // positional branch and demand the object's required keys of a name.
+  if (bodyRule !== undefined && args.length === 1 && args[0].type === "ObjectLiteral") {
+    checkBody(name, bodyRule, args, positionalKeysOf(name), node.pos);
+  }
   const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, node, READ)) as Stage[];
   // A cell answers with the stages its name means; where they may STAND is the
   // row's other fact, and it is applied to each of them.

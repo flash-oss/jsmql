@@ -4128,7 +4128,13 @@ export const NAMES = {
     doc: "Categorizes incoming documents into groups, called buckets, based on a specified expression and bucket boundaries.",
     where: ["stream", "statement"],
     replacesDocument: true,
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["groupBy", "boundaries"],
+      optional: ["default", "output"],
+      closed: true,
+      keyTypes: { boundaries: "array", output: "object" },
+      constantKeys: ["boundaries", "default"],
+    },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4139,8 +4145,14 @@ export const NAMES = {
     ),
     group: unsupported("'$bucket' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucket' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$bucket' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4148,7 +4160,16 @@ export const NAMES = {
     doc: "Categorizes incoming documents into a specific number of groups, called buckets, based on a specified expression. Bucket boundaries are automatically determined in an attempt to evenly distribute the documents into the specified number of buckets.",
     where: ["stream", "statement"],
     replacesDocument: true,
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["groupBy", "buckets"],
+      optional: ["output", "granularity"],
+      closed: true,
+      keyTypes: { buckets: "int", granularity: "string", output: "object" },
+      constantKeys: ["buckets", "granularity"],
+      enums: {
+        granularity: ["R5", "R10", "R20", "R40", "R80", "1-2-5", "E6", "E12", "E24", "E48", "E96", "E192", "POWERSOF2"],
+      },
+    },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4159,8 +4180,14 @@ export const NAMES = {
     ),
     group: unsupported("'$bucketAuto' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bucketAuto' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$bucketAuto' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4210,7 +4237,13 @@ export const NAMES = {
     doc: "Returns statistics regarding a collection or view.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: ["latencyStats", "storageStats", "count", "queryExecStats"],
+      closed: true,
+      keyTypes: { latencyStats: "object", storageStats: "object", count: "object", queryExecStats: "object" },
+      constantKeys: ["latencyStats", "storageStats", "count", "queryExecStats"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -4221,8 +4254,14 @@ export const NAMES = {
     ),
     group: unsupported("'$collStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$collStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$collStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4230,7 +4269,37 @@ export const NAMES = {
     doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: [
+        "allUsers",
+        "idleConnections",
+        "idleCursors",
+        "idleSessions",
+        "localOps",
+        "truncateOps",
+        "targetAllNodes",
+      ],
+      closed: true,
+      keyTypes: {
+        allUsers: "bool",
+        idleConnections: "bool",
+        idleCursors: "bool",
+        idleSessions: "bool",
+        localOps: "bool",
+        truncateOps: "bool",
+        targetAllNodes: "bool",
+      },
+      constantKeys: [
+        "allUsers",
+        "idleConnections",
+        "idleCursors",
+        "idleSessions",
+        "localOps",
+        "truncateOps",
+        "targetAllNodes",
+      ],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4241,8 +4310,14 @@ export const NAMES = {
     ),
     group: unsupported("'$currentOp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$currentOp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$currentOp' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4280,8 +4355,14 @@ export const NAMES = {
     ),
     group: unsupported("'$documents' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "array" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "array" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$documents' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4289,7 +4370,7 @@ export const NAMES = {
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
     where: ["stream", "statement"],
     replacesDocument: true,
-    body: pending("src/stage-validation.ts"),
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -4300,8 +4381,14 @@ export const NAMES = {
     ),
     group: unsupported("'$facet' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$facet' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$facet' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4347,7 +4434,13 @@ export const NAMES = {
   $graphLookup: mongo({
     doc: "Performs a recursive search on a collection. Adds a new array field to each output document that contains the traversal results of the recursive search.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["from", "startWith", "connectFromField", "connectToField", "as"],
+      optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
+      closed: true,
+      constantKeys: ["from", "connectFromField", "connectToField", "as", "depthField", "maxDepth"],
+      keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" },
+    },
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4358,8 +4451,14 @@ export const NAMES = {
     ),
     group: unsupported("'$graphLookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$graphLookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$graphLookup' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4367,7 +4466,7 @@ export const NAMES = {
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
     where: ["stream", "statement"],
     replacesDocument: true,
-    body: pending("src/stage-validation.ts"),
+    body: { required: ["_id"], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4378,8 +4477,14 @@ export const NAMES = {
     ),
     group: unsupported("'$group' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$group' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$group' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4387,7 +4492,7 @@ export const NAMES = {
     doc: "Returns statistics regarding the use of each index for the collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -4398,8 +4503,14 @@ export const NAMES = {
     ),
     group: unsupported("'$indexStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$indexStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4422,7 +4533,7 @@ export const NAMES = {
         sig: "body",
         exact: 1,
         constant: [0],
-        slotType: { 0: "int" },
+        slotType: { 0: "int-or-long" },
         slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
       },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
@@ -4432,7 +4543,7 @@ export const NAMES = {
         sig: "body",
         exact: 1,
         constant: [0],
-        slotType: { 0: "int" },
+        slotType: { 0: "int-or-long" },
         slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
       },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
@@ -4444,7 +4555,13 @@ export const NAMES = {
     doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: ["users", "allUsers"],
+      closed: true,
+      keyTypes: { users: "array", allUsers: "bool" },
+      constantKeys: ["users", "allUsers"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -4455,8 +4572,14 @@ export const NAMES = {
     ),
     group: unsupported("'$listLocalSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listLocalSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$listLocalSessions' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4504,7 +4627,13 @@ export const NAMES = {
     doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: ["users", "allUsers"],
+      closed: true,
+      keyTypes: { users: "array", allUsers: "bool" },
+      constantKeys: ["users", "allUsers"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4515,15 +4644,29 @@ export const NAMES = {
     ),
     group: unsupported("'$listSessions' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$listSessions' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$listSessions' is not valid in an update document — see its 'where'."),
   }),
 
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["as"],
+      optional: ["from", "localField", "foreignField", "let", "pipeline"],
+      closed: true,
+      constantKeys: ["from", "localField", "foreignField", "as"],
+      together: [["localField", "foreignField"]],
+      atLeastOneOf: [["localField", "pipeline"]],
+      keyTypes: { let: "object", pipeline: "array" },
+    },
     bodyPositions: { "": "value", pipeline: "statement" },
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
@@ -4535,8 +4678,14 @@ export const NAMES = {
     ),
     group: unsupported("'$lookup' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lookup' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$lookup' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4603,7 +4752,13 @@ export const NAMES = {
     doc: "Returns plan cache information for a collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: ["allHosts"],
+      closed: true,
+      keyTypes: { allHosts: "bool" },
+      constantKeys: ["allHosts"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -4614,8 +4769,14 @@ export const NAMES = {
     ),
     group: unsupported("'$planCacheStats' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$planCacheStats' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$planCacheStats' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4723,7 +4884,7 @@ export const NAMES = {
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    body: { required: ["size"], optional: [], closed: true, keyTypes: { size: "number" }, constantKeys: ["size"] },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4734,8 +4895,14 @@ export const NAMES = {
     ),
     group: unsupported("'$sample' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sample' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$sample' is not valid in an update document — see its 'where'."),
   }),
 
@@ -4879,7 +5046,7 @@ export const NAMES = {
         sig: "body",
         exact: 1,
         constant: [0],
-        slotType: { 0: "int" },
+        slotType: { 0: "int-or-long" },
         slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
       },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
@@ -4889,7 +5056,7 @@ export const NAMES = {
         sig: "body",
         exact: 1,
         constant: [0],
-        slotType: { 0: "int" },
+        slotType: { 0: "int-or-long" },
         slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
       },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
@@ -4939,7 +5106,13 @@ export const NAMES = {
   $unionWith: mongo({
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: [],
+      optional: ["coll", "pipeline"],
+      closed: true,
+      constantKeys: ["coll"],
+      keyTypes: { pipeline: "array" },
+    },
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4951,11 +5124,11 @@ export const NAMES = {
     group: unsupported("'$unionWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unionWith' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "object"] } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$unionWith' is not valid in an update document — see its 'where'."),
@@ -4984,7 +5157,13 @@ export const NAMES = {
   $unwind: mongo({
     doc: "Deconstructs an array field from the input documents to output a document for each element. Each output document replaces the array with an element value.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    body: {
+      required: ["path"],
+      optional: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
+      closed: true,
+      keyTypes: { path: "string", includeArrayIndex: "string", preserveNullAndEmptyArrays: "bool" },
+      constantKeys: ["includeArrayIndex", "preserveNullAndEmptyArrays"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4995,8 +5174,14 @@ export const NAMES = {
     ),
     group: unsupported("'$unwind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unwind' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
-    statement: { args: { sig: "body", exact: 1 }, emit: ({ name, args, value }) => [{ [name]: value(args[0]) }] },
+    stream: {
+      args: { sig: "body", exact: 1, slotType: { 0: "string" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
+    statement: {
+      args: { sig: "body", exact: 1, slotType: { 0: "string" } },
+      emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
+    },
     updateDoc: unsupported("'$unwind' is not valid in an update document — see its 'where'."),
   }),
 

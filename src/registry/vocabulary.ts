@@ -501,7 +501,14 @@ export type Arity = {
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
   /** Per-slot literal type, checked only when the slot is a literal. */
-  slotType?: Readonly<Record<number, ArgType>>;
+  /**
+   * A slot's accepted literal type, or the SET of them where a slot takes more
+   * than one shape: `$unionWith` takes a collection NAME or a body document, and
+   * the server refuses everything else ("the $unionWith stage specification must
+   * be an object or string, but found int"). One type is the common case and
+   * stays a bare `ArgType`.
+   */
+  slotType?: Readonly<Record<number, ArgType | readonly ArgType[]>>;
   /**
    * Slots whose literal must fall in a closed numeric range — `$sampleRate` takes
    * a rate in [0, 1]; the server refuses 2 ("must be in [0, 1]"). Checked only on
@@ -628,6 +635,23 @@ export type BodyRule = {
    *   {$dateFromParts:{}}          → "requires either 'year' or 'isoWeekYear'"
    */
   exactlyOneOf?: readonly (readonly string[])[];
+  /**
+   * Each inner list is a set of keys that must be ALL present or ALL absent.
+   * `required` cannot say it — every key of the set is optional on its own — and
+   * `exactlyOneOf` says the opposite. Measured: `{ $lookup: { from: "o", as: "j",
+   * localField: "a" } }` is refused with "$lookup requires both or neither of
+   * 'localField' and 'foreignField' to be specified".
+   */
+  together?: readonly (readonly string[])[];
+  /**
+   * Each inner list is a set of keys of which AT LEAST ONE must be present —
+   * unlike `exactlyOneOf`, more than one is fine. Measured on `$lookup`: it joins
+   * by the `localField`/`foreignField` pair, or by a `pipeline`, or by both
+   * together, and by none of them it is refused ("requires both or neither of
+   * 'localField' and 'foreignField'", and with no `from` at all, "must specify
+   * 'pipeline' when 'from' is empty").
+   */
+  atLeastOneOf?: readonly (readonly string[])[];
   /**
    * The key order a POSITIONAL call maps onto, for an object-shaped operator:
    *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
