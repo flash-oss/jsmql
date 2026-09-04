@@ -853,13 +853,14 @@ export type ByArgs<In, Out> = {
   /** One object literal, which must carry `keys` — `Array.from({ length: n })`. */
   object?: { keys: readonly string[] } & (Rule<In, Out> | Pending);
   /**
-   * A constant that REACHES a row did not fold — the fold turns every constant
-   * the server would accept into its value first — so what is left is one the
-   * server refuses too. Never a rule: the row says why, in the developer's terms.
-   *   new Date("2024-01-01")   → folded to a Date; the row never sees it
-   *   Number("abc")            → here, refused: $toDouble takes a plain decimal
+   * A constant that REACHES a row is one the fold did not settle: a value with
+   * no source spelling (a Date, an ObjectId — settled by the evaluator at the
+   * call), a value the server would refuse (`ObjectId("nothex")` — a refusal,
+   * in the developer's terms), or one whose TYPE the server decides
+   * (`Number("3")` is a double; a folded `3` would be an int — a rule, so the
+   * server converts).
    */
-  constant?: Refusal;
+  constant?: Rule<In, Out> | Refusal | Pending;
   dynamic?: Rule<In, Out> | Pending;
   /** Every class no key above claims. Stated, so a leftover is a decision and not a hole. */
   otherwise: Refusal;
@@ -970,20 +971,16 @@ export const accumulated = (input: { name: string; args: readonly Expr[]; value:
 };
 
 /**
- * The rendering every SINGLE-operand operator shares.
- *
- * An operand that renders as an ARRAY is wrapped one level, because a literal
- * array in an operator's slot is read as its argument LIST — measured:
- *   { $size: [1, 2] }      → "Expression $size takes exactly 1 arguments. 2 were passed in"
- *   { $size: [[1, 2]] }    → 2
- * A path or an expression renders as a string or a document and is handed over
- * as it is. Stated once here, so the wrap cannot be forgotten on one of the
- * seventy rows that need it.
+ * The rendering every SINGLE-operand operator shares: `{ $op: <operand> }`, the
+ * operand as written. HR2 — `$size([$.a])` is the developer's own operand list
+ * and round-trips as `{ $size: ["$a"] }`, which the server reads as one operand;
+ * no wrap is added here. A JavaScript lowering that hands an ARRAY LITERAL to
+ * such an operator (`[$.a, 2].length`) wraps it itself, because there the array
+ * is the value and not a list — see the `length` row.
  */
-export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => {
-  const operand = input.value(input.args[0]);
-  return { [input.name]: Array.isArray(operand) ? [operand] : operand };
-};
+export const single = (input: { name: string; args: readonly Expr[]; value: (e: Expr) => unknown }): unknown => ({
+  [input.name]: input.value(input.args[0]),
+});
 
 /**
  * The rendering every OBJECT-SHAPED operator shares.

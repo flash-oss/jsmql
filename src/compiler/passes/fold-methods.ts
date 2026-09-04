@@ -223,17 +223,12 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
     case "Boolean":
       return args.length === 1 ? ok(Boolean(a)) : NO;
     case "Number":
-    case "parseFloat": {
-      if (typeof a === "number") return ok(a);
-      if (typeof a === "boolean") return ok(a ? 1 : 0);
-      if (typeof a !== "string") return NO;
-      // Only a PLAIN decimal spelling: `$toDouble` refuses " 12 " ("Failed to
-      // parse number") and "0x10" ("Illegal hexadecimal input"), both of which
-      // JavaScript's `Number` accepts. A fold must agree with the server.
-      if (!PLAIN_DECIMAL.test(a)) return NO;
-      const n = Number(a);
-      return Number.isFinite(n) ? ok(n) : NO;
-    }
+    case "parseFloat":
+      // Never folded. `$toDouble("3")` is a DOUBLE on the server and a written `3`
+      // is an int — `$type` tells them apart, and so does `$out`. The call stays
+      // and converts at run time, where the server also judges a string it cannot
+      // parse (" 12 ", "0x10"), exactly as the shipped compiler left it.
+      return NO;
     case "parseInt": {
       if (typeof a !== "string" || !PLAIN_DECIMAL.test(a)) return NO;
       const n = Number(a);

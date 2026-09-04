@@ -371,7 +371,8 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
   });
 
   it("converts only where the server converts", () => {
-    expect(valueOf('Number("42")')).toBe(42);
+    // never folded: `$toDouble("42")` is a double on the server; a written 42 is an int
+    expect(valueOf('Number("42")')).toBe("(not constant)");
     expect(valueOf('parseInt("42")')).toBe(42);
     // `$convert` with no `onError` fails on a string it cannot parse, and `$toInt`
     // refuses a fractional string rather than truncating it the way JavaScript does.
@@ -449,7 +450,7 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
     for (const src of ['Number(" 12 ")', 'Number("0x10")', 'parseInt("0x10")', 'parseFloat("1_000")']) {
       expect(evaluate(parseExpression(src), new Map()).ok, src).toBe(false);
     }
-    expect(evaluate(parseExpression('Number("12.5")'), new Map())).toEqual({ ok: true, value: 12.5 });
+    expect(evaluate(parseExpression('Number("12.5")'), new Map())).toEqual({ ok: false });
   });
 
   it("keeps a constant that evaluates to -0 as a runtime binding rather than throwing", () => {

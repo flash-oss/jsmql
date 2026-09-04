@@ -36,7 +36,7 @@ import {
   productionForOperator,
   rowForNodeType,
 } from "../rows.ts";
-import { consult, everyName } from "./consult.ts";
+import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
 import { operandShapeOf, bodyRuleOf } from "../rows.ts";
 import type { Env } from "./env.ts";
@@ -47,7 +47,7 @@ import { cond, letOne, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { familyOfKind, kindOf, sourceFamily } from "./types.ts";
-import type { MongoVar } from "./names.ts";
+import { mongoVarName, type MongoVar } from "./names.ts";
 
 const NAMESPACES = namespaceNames();
 const READ: Reader = { value: lowerValue, truth: lowerTruth };
@@ -485,7 +485,15 @@ function dispatchOn(
     return runDispatch(sel, name, receiver.lowered, exprArgs, env, node, spelled, container);
   }
   const format = receiver.kind === "namespace" ? (c: string) => `${receiver.name}.${c}` : (c: string) => `.${c}()`;
-  throw E.refusalFor(sel, spelled, container, position, node.pos, JS_NAMES, format);
+  // A namespace's suggestion draws from its own members; a value's from every JavaScript name.
+  const near =
+    receiver.kind === "namespace"
+      ? JS_NAMES.filter((n) => {
+          const on = familiesFor(n);
+          return on !== undefined && on !== "any" && on.includes(receiver.name);
+        })
+      : JS_NAMES;
+  throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);
 }
 
 /** An optional chain's receiver takes the family's empty value, so a missing field reads as empty. */
@@ -630,38 +638,62 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
   // server refuses, and is refused here in the same words.
-  let args: readonly CallArg[] = node.args;
   const shape = operandShapeOf(node.name);
-  const first = args[0];
-  const loneArray =
-    args.length === 1 && first.type === "ArrayLiteral" && !first.elements.some((el) => el.type === "SpreadElement")
-      ? first
-      : null;
-  if (shape === "array" && args.length === 1 && first.type !== "SpreadElement") {
-    if (loneArray !== null) {
+  const first = node.args[0];
+  const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
+  // HR2: one array literal IS the operand list, as written — `$eq([$.n, 4])` is
+  // `{ $eq: ["$n", 4] }`, `$size([$.a])` is `{ $size: ["$a"] }`. It is COUNTED and
+  // CHECKED by its elements, and emitted as the developer spelled it.
+  let args: readonly CallArg[] = node.args;
+  let operands: readonly Expr[] = node.args.filter(isExpr);
+  let count = node.args.length;
+  const overrides = new Map<Expr, unknown>();
+  if (
+    lone !== null &&
+    shape === "single" &&
+    !lone.elements.some((el) => el.type === "SpreadElement") &&
+    lone.elements.length >= 2
+  ) {
+    // A 1-operand operator given a two-or-more-element array can only mean the
+    // array VALUE — the server would read the literal as two arguments — so it is
+    // wrapped once: `$arrayToObject([[k, v], [k, v]])` → `{ $arrayToObject: [[…]] }`.
+    overrides.set(lone, [lowerValue(lone, childEnv(env, node, "args"))]);
+  } else if (lone !== null && shape !== undefined && shape !== "object" && shape !== "verbatim") {
+    if (lone.elements.some((el) => el.type === "SpreadElement")) {
+      // A list with a spread is one array-valued expression: the operand list at runtime.
+      if (shape === "array") return { [node.name]: lowerValue(lone, childEnv(env, node, "args")) };
+    } else {
+      operands = lone.elements.filter(isExpr);
+      count = operands.length;
       // An EMPTY list is valid only where the row states it: `{ $and: [] }` is
       // true, `{ $divide: [] }` is refused. Nothing was written, so no count
       // applies — the fact is the row's `emptyList`.
-      if (loneArray.elements.length === 0) {
+      if (count === 0 && shape === "array") {
         if (ruleArgsOf(verdict)?.emptyList === true) return { [node.name]: [] };
-      } else args = loneArray.elements.filter(isExpr);
-    } else if (verdict.kind !== "refused") throw E.listOperand(node.name, first.pos);
+      }
+      // A list operator renders the elements; a single or flex one renders the array as written.
+      if (shape === "array") args = operands;
+    }
+  } else if (
+    shape === "array" &&
+    node.args.length === 1 &&
+    first.type !== "SpreadElement" &&
+    verdict.kind !== "refused"
+  ) {
+    throw E.listOperand(node.name, first.pos);
   }
   const exprArgs = args.filter(isExpr);
-  const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), args.length);
+  const sel = select(verdict, { kind: "none" }, shapeOf(args as readonly Expr[]), count);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`'${node.name}' selected a receiver dispatch`);
     throw E.refusalFor(sel, node.name, "", position, node.pos, []);
   }
   const body = bodyRuleOf(node.name);
   if (body !== undefined) checkBody(node.name, body, exprArgs, positionalKeysOf(node.name), node.pos);
-  // A `flex` operator's lone array literal IS its operand list: the per-operand
-  // types are judged on the elements, not on the array.
-  const judged = shape === "flex" && loneArray !== null ? loneArray.elements.filter(isExpr) : exprArgs;
-  checkSlots(node.name, sel.rule.args, judged);
+  checkSlots(node.name, sel.rule.args, operands);
   // An operator that BINDS variables: an arrow in a visible slot is lowered under
   // them, so `$let({ x: 1 }, (x) => x + 1)` reads `x` as `$$x`.
-  const overrides = boundArrowOverrides(node, exprArgs, env);
+  for (const [k, v] of boundArrowOverrides(node, exprArgs, env)) overrides.set(k, v);
   const inputs = exprInputs(node.name, null, exprArgs, positionalKeysOf(node.name), env, node, READ, overrides);
   return sel.rule.emit(inputs);
 }
@@ -680,6 +712,16 @@ function boundArrowOverrides(
   const varsArg = args[varsAt];
   if (varsArg === undefined || varsArg.type !== "ObjectLiteral") return out;
   const names = varsArg.entries.map(staticKey).filter((k): k is string => k !== null);
+  // The variables are spelled by the same encoder that spells the parameters
+  // reading them — `v_x` becomes `v_v_5fx` on BOTH sides, so the body's `$$v_v_5fx`
+  // finds its variable, and a name the server refuses (`ROOT`) becomes one it takes.
+  const inner = childEnv(env, node, "args");
+  const vars: Record<string, unknown> = {};
+  for (const e of varsArg.entries) {
+    if (e.type !== "KeyValueEntry" || e.key.kind !== "static") return out; // a spread or computed key: as written
+    vars[mongoVarName(e.key.name)] = lowerValue(e.value, inner);
+  }
+  out.set(varsArg, vars);
   for (const slot of binds.visibleIn) {
     const arg = args[keys.indexOf(slot)];
     if (arg === undefined || arg.type !== "Lambda" || arg.body === undefined) continue;

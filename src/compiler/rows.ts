@@ -274,7 +274,7 @@ type EmitRow = {
   returns?: Returns;
   params?: CallbackParams;
   binds?: Binds;
-  shape?: "single" | "array" | "none" | "flex" | { object: BodyRule };
+  shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
   asReference?: boolean;
   family?: Family;
   spreadAlternative?: string;
@@ -318,7 +318,7 @@ export function bodyRuleOf(name: string): BodyRule | undefined {
 }
 
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
-export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "object" | undefined {
+export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "verbatim" | "object" | undefined {
   const shape = emitRow(name)?.shape;
   if (shape === undefined) return undefined;
   return typeof shape === "string" ? shape : "object";

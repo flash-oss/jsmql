@@ -45,7 +45,7 @@ export const uncertainPending: Value<"array" | "string"> = {
 export const keyed: Value<"array"> = {
   byArgs: { dynamic: R, constant: unsupported("did not fold"), otherwise: unsupported("no") },
 };
-// @ts-expect-error — a constant that reached a row did not fold; the row refuses, never lowers
+// a constant may be lowered (`Number("3")` converts on the server, a double), refused, or pending
 export const constantLowered: Value<"array"> = { byArgs: { constant: R, otherwise: unsupported("no") } };
 // @ts-expect-error — the leftover class is stated, so a hole is a decision
 export const noLeftover: Value<"array"> = { byArgs: { dynamic: R } };

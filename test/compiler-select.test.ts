@@ -73,10 +73,8 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("from", "f($.a)")).toMatchObject({ kind: "refused" });
   });
 
-  it("refuses a constant `Number(…)` with the server's own reason", () => {
-    const r = pick("Number", 'f("abc")');
-    expect(r.kind).toBe("refused");
-    expect((r as { message: string }).message).toContain("$toDouble");
+  it("converts a constant `Number(…)` on the server, where the type is decided", () => {
+    expect(pick("Number", 'f("abc")').kind).toBe("rule");
     expect(pick("Number", "f($.s)").kind).toBe("rule");
     expect(pick("ObjectId", "f($.id)").kind).toBe("rule");
     expect(pick("ObjectId", "f()").kind).toBe("rule");

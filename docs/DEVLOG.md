@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-04 — fix(compiler): the hunter's findings — HR2 operand lists, `$let` variables encoded on both sides, `Number` never folded
+
+A fourth auditor probed the value target with 440 sources the corpus does not have, judging
+every difference on mongod. Six were real, and two were the language rule itself.
+
+**HR2 wins over the one-level wrap.** `docs/LANG_RULES.md` says `$op([…])` is the developer's
+own operand list and round-trips as `{ $op: […] }`; the `single` renderer had wrapped it. Now:
+```js
+$size([$.a])                        // → {$size:["$a"]}            one element: the list as written
+$size([$.a, 1])                     // → {$size:[["$a",1]]}        a 1-operand operator can only mean the array VALUE
+$arrayToObject([["a",1],["b",2]])   // → {$arrayToObject:[[…]]}    the same rule — the shipped's special case, stated for every row
+$eq([$.n, 4])                       // → {$eq:["$n",4]}            a flex operator counted by its elements (was refused)
+$literal(["$a", "$b"])              // → {$literal:["$a","$b"]}    shape "verbatim": the operand is a value, never a list
+$concatArrays([...$.a, [1]])        // → {$concatArrays:{$concatArrays:["$a",[[1]]]}}   was a dead-end refusal
+```
+The JavaScript `.length` lowering wraps an array-literal receiver itself (`[$.a, 2].length`),
+because there the array is the value.
+
+**`$let` variables.** `$let({ v_x: 1 }, (v_x) => v_x)` encoded the parameter (`v_v_5fx`) and
+left the `vars` key as written, so the body read an undefined variable — the server refused it.
+Both sides now take the one encoder: `{$let:{vars:{v_v_5fx:1},in:"$$v_v_5fx"}}`; `$let({ ROOT: 1
+}, (ROOT) => ROOT)` becomes a name the server accepts where both compilers had emitted one it
+refuses.
+
+**`Number(<constant>)` is never folded.** `$toDouble("3")` is a double on the server; a folded
+`3` is an int, and `$type` and `$out` tell them apart. The call stays and converts at run time;
+a string the server cannot parse is the server's own error, as the shipped compiler left it.
+`ByArgs.constant` may therefore be a rule, not only a refusal.
+
+Also: a namespace's unknown member is suggested from that namespace's own names
+(`Math.flor` → `Math.floor`). The gate stays at zero unclassified rows.
+
+---
 ## 2026-09-04 — fix(compiler): the after-audit of the value target — rows the server contradicts, checks on every rule, and a stage list refused where a value belongs
 
 Three auditors read the value target after it landed. A judgement verifier re-ran every

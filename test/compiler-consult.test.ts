@@ -232,7 +232,7 @@ describe("registry — a stage is one construct with two spellings", () => {
 });
 
 describe("registry — an operator cannot accept more operands than it renders", () => {
-  type Shape = "single" | "array" | "none" | "flex" | { object: { positional?: readonly string[] } };
+  type Shape = "single" | "verbatim" | "array" | "none" | "flex" | { object: { positional?: readonly string[] } };
   type Cell = { args?: Arity; emit?: unknown };
   type Row = { kind?: string; shape?: Shape } & Partial<Record<Position, Cell>>;
 
@@ -254,7 +254,7 @@ describe("registry — an operator cannot accept more operands than it renders",
   /** How many operands the row's SHAPE can actually put into a document. */
   const renders = (shape: Shape): number => {
     if (shape === "none") return 0;
-    if (shape === "single") return 1;
+    if (shape === "single" || shape === "verbatim") return 1;
     if (typeof shape === "object") return shape.object.positional?.length ?? 1;
     return Infinity; // "array" and "flex" render the whole list
   };

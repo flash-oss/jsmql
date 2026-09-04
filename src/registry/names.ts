@@ -211,8 +211,21 @@ type MongoSpec<
   /**
    * How the operand list is written, for the expression positions. Omitted for
    * a name that is only ever a stage: its `body` is its shape.
+   *
+   *   "single"    one operand — `{ $abs: <operand> }`; a lone array literal with
+   *               one element is the operand list as written (`$size([$.a])` →
+   *               `{ $size: ["$a"] }`, HR2), with two or more it can only be the
+   *               array VALUE and is wrapped once (`$arrayToObject([[k, v], …])` →
+   *               `{ $arrayToObject: [[…]] }` — the server reads a literal array in
+   *               the slot as its argument list)
+   *   "array"     a list of two or more, or one array literal that IS the list
+   *   "flex"      one operand bare, two or more as a list
+   *   "none"      `{ $op: {} }`
+   *   "verbatim"  the operand is a VALUE, never a list: `$literal([a, b])` is
+   *               `{ $literal: [a, b] }`, whatever the array holds
+   *   { object }  a body of named keys
    */
-  shape?: "single" | "array" | "none" | "flex" | { object: BodyRule };
+  shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
   /** Stage-position facts. Meaningful when `where` includes "stream". */
   body?: BodyRule | Pending;
   /**
@@ -2917,10 +2930,8 @@ export const NAMES = {
     category: "literal",
     returns: "unknown",
     where: ["value"],
-    shape: "single",
+    shape: "verbatim",
     filter: unsupported("'$literal' is not valid in filter position — see its 'where'."),
-    // VERBATIM, never the one-level wrap: `{ $literal: [a, b] }` IS the array —
-    // the operand is the value, not an operand list.
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$literal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -9148,10 +9159,10 @@ export const NAMES = {
     filter: because("a conversion is a value, not a test. Compare it: 'Number($.s) > 2'."),
     expr: {
       byArgs: {
-        // A plain decimal never reaches this row — the fold makes `Number("12")` the number first.
-        constant: unsupported(
-          "'Number(<constant>)' — MongoDB's $toDouble accepts only a plain decimal ('12', '-3.5', '1e3'), and this constant is not one. Write the number itself.",
-        ),
+        // Never folded: `Number("3")` is a DOUBLE on the server, and a folded `3` would
+        // be an int. The constant converts like anything else; a string the server
+        // cannot parse is the server's own error, as in the shipped compiler.
+        constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         otherwise: unsupported("'Number(x)' takes exactly one value."),
       },
@@ -9198,7 +9209,9 @@ export const NAMES = {
     },
     expr: {
       perFamily: {
-        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: recv }) },
+        // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
+        // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
+        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : recv }) },
         // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
           args: { sig: "", none: true },

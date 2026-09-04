@@ -58,14 +58,24 @@ not a path or a variable is bound once with `$let`.
 A MongoDB operator's `shape` is applied at the call, not in the renderer:
 
 ```js
-$setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list
+$setUnion([$.a, $.b])   // → {$setUnion:["$a","$b"]}     one array literal IS the operand list (HR2)
+$eq([$.n, 4])           // → {$eq:["$n",4]}              the same for a flex operator; counted by its elements
 $setUnion($.a)          // refused: a list operator with one scalar (the server refuses it too)
 $and([])                // → {$and:[]}                    an explicit empty list passes where the row states `emptyList`
 $divide([])             // refused: nothing was written, and `$divide` states no empty list
+$concatArrays([...$.a, [1]]) // → {$concatArrays:{$concatArrays:["$a",[[1]]]}}  a list with a spread is one array-valued expression
 $trim($.name)           // → {$trim:{input:"$name"}}      one value maps onto the first positional key
-$size([$.a, 2])         // → {$size:[["$a",2]]}           a single operand that renders as an array is wrapped one level
-$literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       verbatim — the one exception
+$size([$.a])            // → {$size:["$a"]}               a 1-operand operator: one element is the operand list as written
+$size([$.a, 2])         // → {$size:[["$a",2]]}           two or more can only be the array VALUE — wrapped once
+$literal(["$a", "$b"])  // → {$literal:["$a","$b"]}       shape "verbatim": the operand is a value, never a list
+[$.a, 2].length         // → {$size:[["$a",2]]}           a JavaScript lowering wraps an array LITERAL receiver itself
 ```
+
+`$let(vars, arrow)` binds the arrow's parameters to the vars, and both sides are
+spelled by the one variable encoder: `$let({ v_x: 1 }, (v_x) => v_x)` →
+`{$let:{vars:{v_v_5fx:1},in:"$$v_v_5fx"}}`, so a name the server refuses (`ROOT`)
+becomes one it takes. `Number(<constant>)` is never folded: `$toDouble("3")` is a
+double on the server and a written `3` an int.
 
 `check.ts` holds the literal-gated checks, each reading a `BodyRule` or `Arity`
 field the row states: required and closed keys (with a suggestion), enums,

@@ -136,7 +136,8 @@ describe("compiler/emit/lower — access", () => {
   it("dispatches an unprovable `.length` at runtime, and proves a literal's", () => {
     expect(expr("[1, 2].length")).toBe(2);
     expect(expr('"abc".length')).toBe(3);
-    expect(expr("[$.a, 2].length")).toEqual({ $size: ["$a", 2] });
+    // an array LITERAL receiver is the value, wrapped once — `{ $size: ["$a", 2] }` would be two operands
+    expect(expr("[$.a, 2].length")).toEqual({ $size: [["$a", 2]] });
     const out = expr("$.x.length");
     expect(out).toEqual({
       $switch: {
@@ -161,6 +162,22 @@ describe("compiler/emit/lower — calls", () => {
   it("runs a MongoDB operator's row, positional or object-shaped", () => {
     expect(expr("$abs($.a)")).toEqual({ $abs: "$a" });
     expect(expr("$sum($.a, $.b)")).toEqual({ $sum: ["$a", "$b"] });
+    // HR2: one array literal is the operand list as written, counted by its elements
+    expect(expr("$eq([$.n, 4])")).toEqual({ $eq: ["$n", 4] });
+    expect(expr("$size([$.a])")).toEqual({ $size: ["$a"] });
+    // a 1-operand operator given two elements can only mean the array VALUE: wrapped once
+    expect(expr("$size([$.a, 1])")).toEqual({ $size: [["$a", 1]] });
+    expect(expr('$arrayToObject([["a", 1], ["b", 2]])')).toEqual({
+      $arrayToObject: [
+        [
+          ["a", 1],
+          ["b", 2],
+        ],
+      ],
+    });
+    expect(expr('$literal(["$a", "$b"])')).toEqual({ $literal: ["$a", "$b"] });
+    expect(expr("$concatArrays([...$.a, [1]])")).toEqual({ $concatArrays: { $concatArrays: ["$a", [[1]]] } });
+    expect(expr("$let({ v_x: 1 }, (v_x) => v_x)")).toEqual({ $let: { vars: { v_v_5fx: 1 }, in: "$$v_v_5fx" } });
     expect(expr('$dateTrunc($.t, "day")')).toEqual({ $dateTrunc: { date: "$t", unit: "day" } });
     expect(expr("$cond($.a, 1, 2)")).toEqual({ $cond: { if: "$a", then: 1, else: 2 } });
     expect(expr('$literal("$x")')).toEqual({ $literal: "$x" });
@@ -176,7 +193,9 @@ describe("compiler/emit/lower — calls", () => {
     expect(expr("Number($.s)")).toEqual({ $toDouble: "$s" });
     expect(expr("new Date($.ms)")).toEqual({ $toDate: "$ms" });
     expect(expr("ObjectId($.id)")).toEqual({ $toObjectId: "$id" });
-    expect(() => expr('Number("abc")')).toThrow(/\$toDouble/);
+    // never folded: `$toDouble("3")` is a double; the server judges a string it cannot parse
+    expect(expr('Number("3")')).toEqual({ $toDouble: "3" });
+    expect(expr('Number("abc")')).toEqual({ $toDouble: "abc" });
   });
 
   it("inlines a declared function and refuses recursion", () => {
