@@ -83,7 +83,7 @@ export const readAsBinder: MongoVar = systemRef("ROOT");
 // @ts-expect-error — a field slot is built by `fieldSlot`, never as a literal
 export const notASlot: FieldSlot = { path: "__jsmql.tmp.1", ref: "$__jsmql.tmp.1" };
 export const minted: MongoVar = mongoVarName("_id");
-export const read: VarRef = Scope.root([]).param("x", "unknown", 0).ref;
+export const read: VarRef = Scope.root([]).param("x", "unknown", 0, 0).ref;
 
 // ── the environment record: nothing optional, no literal, no spread ──────────
 

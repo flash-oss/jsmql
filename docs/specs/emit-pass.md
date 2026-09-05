@@ -354,6 +354,73 @@ What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
 than trust one, and so the work left is countable. The list emptying is what
 finishing the statement target means.
 
+### The join road
+
+`$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
+(`emit/join.ts`). One route: `let` + `pipeline` + `$expr`, never `localField` /
+`foreignField`. The pipeline form compares the two fields' OWN values as
+JavaScript does — `1 === [1, 2]` is false, `undefined === undefined` is true,
+`undefined === null` is false — where the basic form reads null as missing and
+matches an array element-wise; and the pipeline form uses the foreign index too
+(measured on mongod 8.3.7: `indexesUsed`, keys examined = rows matched, `$limit: 1`
+examines one key per document). One route also means one meaning: the shipped
+compiler switched routes on a syntactic accident, and adding `&& o.status === "paid"`
+changed which documents matched.
+
+```js
+$.orders = $$$.orders.filter(o => o.userId === $._id);
+// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//       pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "orders" } }]
+$.first = $$$.orders.find(o => o.userId === $._id);
+// → the same with `{ $limit: 1 }`, then { $set: { first: { $first: "$first" } } } — absent when nothing matched
+$.n = $$$.orders.filter(o => o.userId === $._id).length;
+// → the $lookup HOISTED into "__jsmql.tmp.0", { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }
+```
+
+**The chain peels.** A link goes into `$lookup.pipeline` while its row has a
+`stream` cell that accepts it — `filter`/`reject`, the sort spellings, `take`,
+`aggregate`, a stage link, a `.map` whose body is a provable document (the row
+states `streamBody: "document"`). The first link that is not such a link ends the
+body; it and everything after it — `.length`, `.total`, `[0]`, a value `.map` —
+read the materialised array as a VALUE. `.find` is the one special head (the row
+states `picksOne`): `filter` plus `{ $limit: 1 }`, the slot unwrapped with `$first`.
+A link that folds the stream into one document (`collapses` on the row: `countBy`,
+`keyBy`, `groupBy` with a field name) is unwrapped too, to `{}` when nothing
+matched, as lodash answers for an empty array. The slot is a typed binding, so
+`.length` on it is `$size` with no runtime guard and `.total` after `.find` is a path.
+
+**Where it stands decides the destination.** A bare write `$.o = <chain>` and a
+`let` make the target the stage's `as` — no scratch, no cleanup. Inside a value the
+stage is hoisted ahead of the statement into `__jsmql.tmp.<n>`. `$$ = <chain>`
+switches the stream: correlated (the body read the outer document), a `$lookup`
+per document unwound into the stream; uncorrelated, `{ $match: { $expr: false } }`
+and a `$unionWith`. `$ = $$$.c.find(p)` makes each document the one it found,
+through `$unwind` — a document that found nothing has nothing to become and leaves
+the stream (`$replaceWith: { $first: … }` fails on the server for it, measured).
+A chain with no destination is refused with the three that exist.
+
+**Correlation is the Env's business.** Every binding records the LEVEL of
+documents it lives on (0 for the root pipeline's, one more per body over another
+collection), and `Env.render` reads a located value: on this level, as its path;
+on a shallower level, through the `let` of the boundary whose stage runs over that
+level's documents (`Capture`, held by reference on the boundary like a Chain), as
+`$$jsmql_<f|v|s><level>_<hint>` — `f` a field, `v` a `let` binding, `s` a system
+value; the names come from `src/namespace.ts`. A root read two levels down is
+captured once, at the outermost `$lookup`, and read by name below: MQL variables
+are lexically scoped through nested `$lookup.pipeline`s (measured). The raw stage
+call `$lookup({ …, pipeline: [ … ] })` is the same road: what its body reads of the
+outer document is merged into the developer's own `let`. `$unionWith` has no `let`
+(measured: `IDLUnknownField`), so a read of the outer document inside it is refused
+with the way out.
+
+**Inside the body.** The callback's parameter IS the body's document: `o.x` reads
+it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `$$` is the body's stream
+(`$$.filter(…)` is a `$match` there). `$.` is the OUTER document at every depth
+(HR4) and is read-only from inside — `$.x = …` is refused naming `o.x = …`. A nested
+`$$$.items.filter(…)` inside a predicate is hoisted inside the body's own chain,
+whose close runs its own cleanup, so no scratch leaks into the joined array (the
+shipped compiler leaked `__jsmql.tmp` there).
+
 ## What has no value
 
 `undefined` (compare with it instead), a regex outside its methods, a lambda

@@ -14,17 +14,18 @@ import type { Expr, QueryDoc, Stage } from "../../registry/vocabulary.ts";
 import type { LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
-import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
+import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import { forbiddenInOf, isStageName, onlyOf, replacesDocumentOf, stageBodyRuleOf, pipelineOverOf } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
-import { fieldSlot, type Binding } from "./names.ts";
+import { Capture, fieldSlot, type Declared } from "./names.ts";
 import { bindingSlot } from "../../namespace.ts";
 import * as E from "./errors.ts";
 import { childEnv, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
-import { lowerValue } from "./lower.ts";
+import { locate, lowerValue, provideJoin } from "./lower.ts";
+import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
 import { select } from "./select.ts";
@@ -65,6 +66,7 @@ function stageBody(node: Expr, env: Env): unknown {
   if (node.type !== "ObjectLiteral") return lowerValue(node, env);
   const entries = childEnv(env, node, "entries");
   const out: Record<string, unknown> = {};
+  const captures: Capture[] = [];
   for (const entry of node.entries) {
     if (entry.type !== "KeyValueEntry") return lowerValue(node, env);
     const key = staticKey(entry);
@@ -73,11 +75,21 @@ function stageBody(node: Expr, env: Env): unknown {
     const at = slot.site.where.at;
     out[key] =
       at === "statement" || at === "stream"
-        ? pipelineBody(entry.value, slot, env.site.where.at === "stageBody" ? env.site.where.stage : "", [
-            ...(env.site.where.at === "stageBody" ? env.site.where.path : []),
-            key,
-          ])
+        ? pipelineBody(
+            entry.value,
+            slot,
+            env.site.where.at === "stageBody" ? env.site.where.stage : "",
+            [...(env.site.where.at === "stageBody" ? env.site.where.path : []), key],
+            captures,
+          )
         : readIn(entry.value, slot);
+  }
+  // What the body read of the outer document goes into the stage's `let`, beside
+  // whatever the developer wrote there; the `jsmql_` names cannot collide with theirs.
+  const captured = captures.filter((c) => c.any);
+  if (captured.length > 0) {
+    const own = typeof out.let === "object" && out.let !== null ? (out.let as Record<string, unknown>) : {};
+    out.let = Object.assign({}, own, ...captured.map((c) => c.vars));
   }
   return out;
 }
@@ -107,10 +119,22 @@ function subPipeline(node: Expr, env: Env): Stage[] {
  * empty. Without the boundary, the row's own `forbiddenIn` has no container to
  * test, and the server refuses a write stage in a sub-pipeline.
  */
-function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath): Stage[] {
-  const body = env.enter({ stage, path }, new Chain());
+function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captures: Capture[] = []): Stage[] {
+  // A body over another collection starts a new level of documents; what it reads
+  // of the levels above goes through the stage's `let`, which `capture` fills.
+  // A stage over another collection with NO `let` states that as null, and a read
+  // of the outer document inside it is refused.
+  const capture = pipelineOverOf(stage) === "foreign" ? (hasLet(stage) ? new Capture(env.level) : null) : undefined;
+  if (capture) captures.push(capture);
+  const body = env.enter({ stage, path, capture }, new Chain());
   body.chain.emitted.push(...subPipeline(node, body));
   return body.chain.close();
+}
+
+/** Does this stage's body take a `let`? The row's body rule says. */
+function hasLet(stage: string): boolean {
+  const rule = stageBodyRuleOf(stage);
+  return rule !== undefined && [...(rule.required ?? []), ...(rule.optional ?? [])].includes("let");
 }
 
 /** The services a stage cell reads: each reading of an argument this file can give. */
@@ -192,16 +216,17 @@ function letStages(decl: LetDecl, env: Env): Step {
   if (!ownDocuments && env.scope.has(decl.name) && env.lookup(decl.name, decl.pos).ref.kind === "field")
     throw E.shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
-  const value = readIn(decl.value, childEnv(env, decl, "value"));
   const slot = fieldSlot(bindingSlot(decl.name));
   env.chain.dirty = true;
-  const bound = env.bind(decl.name, {
-    ref: { kind: "field", slot },
-    type: kindOf(decl.value, env),
-    mutable: decl.kind === "let",
-    pos: decl.pos,
-  });
-  return { stages: [{ $set: { [slot.path]: value } }], env: bound };
+  const bind = (type: Declared["type"]): Env =>
+    env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
+  // `let os = $$$.c.filter(p)` — the binding's slot IS the `$lookup`'s `as`.
+  if (readsAnotherCollection(decl.value)) {
+    const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
+    if (w !== null) return { stages: w.stages, env: bind(w.yields) };
+  }
+  const value = readIn(decl.value, childEnv(env, decl, "value"));
+  return { stages: [{ $set: { [slot.path]: value } }], env: bind(kindOf(decl.value, env)) };
 }
 
 /**
@@ -288,7 +313,22 @@ const STREAM_TARGET = "$$";
 /** A write's destination: the field path it names, `""` for the document root. */
 function targetPath(op: UpdateOp, env: Env): string {
   const t = op.target;
-  if (t.type === "FieldRef") return t.path;
+  // Inside a body over another collection the outer document is out of reach;
+  // the body's own document is its parameter, and `o.x = …` writes that.
+  if (t.type === "FieldRef") {
+    if (env.level > 0) throw E.outerWriteInForeign(op.pos);
+    return t.path;
+  }
+  if (
+    t.type === "MemberAccess" ||
+    (t.type === "Ident" && env.scope.has(t.name) && env.lookup(t.name, t.pos).ref.kind === "document")
+  ) {
+    const loc = locate(t, env);
+    if (loc !== null && loc.kind === "f") {
+      if (loc.level < env.level) throw E.outerWriteInForeign(op.pos);
+      return loc.path;
+    }
+  }
   // `x = …` on a declared binding writes the field that carries it.
   if (t.type === "Ident" && env.scope.has(t.name)) {
     const b = env.lookup(t.name, t.pos);
@@ -423,6 +463,22 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       flush();
     }
     refuseUnbuiltSugar(op.value);
+    if (readsAnotherCollection(op.value)) {
+      const valueEnv = childEnv(inner, op, "value");
+      if (path === "") {
+        flush();
+        out.push(...joinRoot(op.value, valueEnv, JOIN));
+        continue;
+      }
+      // `$.o = $$$.c.filter(p)` — the target IS the stage's `as`; a chain that goes
+      // on after the `$lookup` materialises through the value road instead.
+      const w = joinWrite(op.value, path, valueEnv, JOIN);
+      if (w !== null) {
+        flush();
+        out.push(...w.stages);
+        continue;
+      }
+    }
     const value = readIn(op.value, childEnv(inner, op, "value"));
     // The root is not a field: replacing it is its own stage, and nothing groups with it.
     if (path === "") {
@@ -440,7 +496,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     sets.paths.push(path);
     sets.fields[path] = replacesWhole(value) ? { $mergeObjects: [value] } : value;
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
-      const binding: Binding = {
+      const binding: Declared = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
         type: kindOf(op.value, inner),
         mutable: true,
@@ -463,9 +519,6 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
  */
 function refuseUnbuiltSugar(value: Expr): void {
   const base = chainBase(value) as { type: string };
-  if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
-    throw E.pendingStatement("a read from another collection ('$$$.<coll>.find(…)')", value.pos);
-  }
   // `$$.length` is a VALUE the stream carries and it already lowers; a call on the
   // stream is the pipeline-shaped read that does not.
   if (base.type === "CollectionRef" && value.type === "MethodCall") {
@@ -489,39 +542,63 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
     cur = cur.object;
   }
   // `$$ = $$$.orders.…` switches the stream to another collection — the join road.
-  const root = chainBase(cur) as { type: string };
-  if (root.type === "DatabaseRef" || root.type === "ClusterRef") {
-    throw E.pendingStatement("a switch of the stream to another collection ('$$ = $$$.<coll>.…')", chain.pos);
-  }
+  if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
   if (cur.type !== "CollectionRef") throw E.notAStreamChain(chain.pos);
   const out: Stage[] = [];
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
     if (link.optional) throw E.optionalOnStream(link.pos);
-    // A link after the stage that writes the output has nowhere to run, exactly
-    // as a statement after it has not — measured, the server refuses both.
-    if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
-    const name = namedRow(link) ?? link.name;
-    const verdict = consult(name, "stream", "stream");
-    if (verdict.kind === "unknown" || verdict.kind === "noCell") {
+    const stages = streamLink(link, env, first && out.length === 0);
+    if (stages === null) {
       throw E.notAStreamLink(
         link.name,
         everyName().filter((n) => listedIn(n, "stream")),
         link.pos,
       );
     }
-    const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
-    if (sel.kind !== "rule") {
-      if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
-      throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
-    }
-    const args = link.args as readonly Expr[];
-    checkSlots(name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
-    const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ)) as Stage[];
-    for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
+    out.push(...stages);
   }
   return out;
 }
+
+/**
+ * One chain link as its stages, placed as a statement's are — or null when the
+ * row has no stream cell, which the caller words for its own chain. A link after
+ * the stage that writes the output has nowhere to run, exactly as a statement
+ * after it has not — measured, the server refuses both.
+ */
+function streamLink(
+  link: Extract<Expr, { type: "MethodCall" }>,
+  env: Env,
+  first: boolean,
+  row: string = namedRow(link) ?? link.name,
+): Stage[] | null {
+  if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
+  const name = row;
+  const verdict = consult(name, "stream", "stream");
+  if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
+  if (sel.kind !== "rule") {
+    if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
+    throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+  }
+  const args = link.args as readonly Expr[];
+  checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
+  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ)) as Stage[];
+  const out: Stage[] = [];
+  for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
+  return out;
+}
+
+/** Does the row behind this link have a stream RULE — is it a chain link at all? */
+function peels(link: Extract<Expr, { type: "MethodCall" }>): boolean {
+  const verdict = consult(namedRow(link) ?? link.name, "stream", "stream");
+  return verdict.kind !== "unknown" && verdict.kind !== "noCell" && verdict.kind !== "refused";
+}
+
+/** What the join road borrows from this file. */
+const JOIN: JoinServices = { link: streamLink, peels };
+provideJoin((node, env) => joinValue(node, env, JOIN));
 
 // ── the stage calls ──────────────────────────────────────────────────────────
 
@@ -547,15 +624,15 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     // union sugar (`$$.push(…)`) and the source stages (`$$.indexStats()`) are
     // statements that happen to be spelled on the stream, and their rows say so.
     // Everything else is `$$ = $$.<chain>;` — the same chain, the same stages.
-    if (base.type === "CollectionRef") {
+    const onRef = ["CollectionRef", "DatabaseRef", "ClusterRef"].includes(base.type);
+    if (onRef) {
       if (node.optional) throw E.optionalOnStream(node.pos);
-      const says = node.object.type === "CollectionRef" ? consult(namedRow(node) ?? node.name, "statement") : null;
-      if (says === null || says.kind === "refused" || says.kind === "noCell" || says.kind === "unknown") {
-        return streamStages(node, env, first);
+      const says = isContextRef(node.object) ? consult(namedRow(node) ?? node.name, "statement") : null;
+      const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown";
+      if (!asStatement) {
+        if (base.type === "CollectionRef") return streamStages(node, env, first);
+        throw E.noDestination(node.pos);
       }
-    }
-    if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
-      throw E.pendingStatement("a read from another collection ('$$$.<coll>.find(…)')", node.pos);
     }
   }
   const name = namedRow(node);

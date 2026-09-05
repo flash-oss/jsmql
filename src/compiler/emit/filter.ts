@@ -31,14 +31,7 @@ import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { or, truthOf } from "./mode.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
-import {
-  isCallable,
-  operandPositionOf,
-  operandShapeOf,
-  pipelineOverOf,
-  positionalKeysOf,
-  productionForOperator,
-} from "../rows.ts";
+import { isCallable, operandPositionOf, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
 
 /**
  * A predicate's query document, `$expr` included where a leaf has no native form.
@@ -106,9 +99,76 @@ function translate(node: Expr, env: Env, nativeOnly: boolean): QueryDoc | null {
   return matchExpr(lowerTruth(node, env.at({ at: "value" })));
 }
 
-/** A raw `{ status: "a", $expr: … }` document: keys as written, values in value position. */
+/**
+ * A raw `{ status: "a", $expr: … }` document: keys as written, values in value
+ * position. A value that is a RUNTIME read — `{ userId: $.other }`, an outer
+ * binding, `{ createdAt: { $gte: $.since } }` — has no query form: the query
+ * language compares a field with a constant, and `"$other"` there is the string.
+ * Such an entry is lifted into `$expr` (`{ $eq: ["$userId", "$other"] }`), where
+ * the read means the field; the constant entries stay native beside it.
+ */
 function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): QueryDoc {
-  return rawDocument(node, env.at({ at: "value" }));
+  const valueEnv = env.at({ at: "value" });
+  const lifted: unknown[] = [];
+  const kept: Array<(typeof node.entries)[number]> = [];
+  for (const e of node.entries) {
+    if (e.type === "SpreadElement" || staticKey(e) === null || staticKey(e)!.startsWith("$")) {
+      kept.push(e);
+      continue;
+    }
+    const key = staticKey(e)!;
+    if (isRuntimeRead(e.value)) {
+      lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
+      continue;
+    }
+    // `{ createdAt: { $gte: $.since } }` — the operators with a runtime operand lift, the rest stay.
+    if (
+      e.value.type === "ObjectLiteral" &&
+      e.value.entries.some((o) => o.type === "KeyValueEntry" && isRuntimeRead(o.value))
+    ) {
+      const stay: Array<(typeof e.value.entries)[number]> = [];
+      for (const o of e.value.entries) {
+        if (o.type !== "KeyValueEntry" || !isRuntimeRead(o.value)) {
+          stay.push(o);
+          continue;
+        }
+        const op = staticKey(o);
+        if (op === null || !LIFTABLE.has(op)) throw E.runtimeInQueryOperator(op ?? "?", o.pos);
+        const operand = lowerValue(o.value, valueEnv);
+        lifted.push(op === "$nin" ? { $not: [{ $in: ["$" + key, operand] }] } : { [op]: ["$" + key, operand] });
+      }
+      if (stay.length > 0) kept.push({ ...e, value: { ...e.value, entries: stay } });
+      continue;
+    }
+    kept.push(e);
+  }
+  const out = rawDocument({ ...node, entries: kept }, valueEnv);
+  if (lifted.length === 0) return out;
+  const own = out.$expr === undefined ? [] : [out.$expr];
+  const all = [...own, ...lifted];
+  out.$expr = all.length === 1 ? all[0] : { $and: all };
+  return out;
+}
+
+/** The query operators whose expression twin takes `[field, operand]`. */
+const LIFTABLE: ReadonlySet<string> = new Set(["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"]);
+
+/**
+ * Is this value read at RUN time — a field, a bound name, an access or a call on
+ * one — rather than a constant, a literal document or the developer's own operator?
+ */
+function isRuntimeRead(e: Expr): boolean {
+  switch (e.type) {
+    case "FieldRef":
+    case "Ident":
+    case "MemberAccess":
+    case "IndexAccess":
+    case "MethodCall":
+    case "CallExpression":
+      return constantIn(e) === null;
+    default:
+      return false;
+  }
 }
 
 /** A raw document's entries, keys as written and checked, values through `rawValue`. */
@@ -281,18 +341,17 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
   // Inside a sub-pipeline over ANOTHER collection, `$.x` is still the OUTER
-  // document (HR4), which the server reaches only through the stage's `let` —
-  // the join road, not built yet. It must not become the foreign document's path.
-  if (e.type === "FieldRef" && env.site.boundaries.some((b) => pipelineOverOf(b.stage) === "foreign")) {
-    throw E.pendingStatement("a read of the outer document inside a sub-pipeline over another collection", e.pos);
-  }
-  if (e.type === "FieldRef") return e.path === "" || innermost !== null ? null : e.path;
+  // document (HR4), which the server reaches only through the stage's `let`: no
+  // query path, so the `$expr` road reads it and captures it.
+  if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;
     if (
       e.object.type === "Ident" &&
       env.scope.has(e.object.name) &&
-      env.lookup(e.object.name, e.object.pos).ref.kind === "document"
+      env.lookup(e.object.name, e.object.pos).ref.kind === "document" &&
+      // a parameter of a SHALLOWER level has no path here either — the `$expr` road captures it
+      env.lookup(e.object.name, e.object.pos).level === env.level
     ) {
       // A name bound as the DOCUMENT — a stream callback's parameter, or a `.some`
       // element — has its fields as paths. Inside an `$elemMatch` only the

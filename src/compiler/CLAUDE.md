@@ -85,6 +85,10 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
   statement.ts the statement reading: a program to a pipeline. The write
                grouping, the stage calls, and `readIn` — the one hub that gives
                each position the reading it asks for.
+  join.ts      the join road: `$$$.<coll>.<chain>` as `$lookup` in every position
+               — the peel, the slot, the four destinations. Lent to lower.ts at
+               load (`provideJoin`), since it needs the statement target's link
+               walker and the statement target imports lower.ts.
 ```
 
 ## Conventions

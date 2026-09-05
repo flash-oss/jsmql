@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the join road — `$$$.<coll>.<chain>` as `$lookup`, one route
+
+A read of another collection leaves the statement target's pending list: `$.o = $$$.orders.filter(o => o.userId === $._id)` and its kin lower in every position a chain may stand — a bare write, a `let`, inside a value, the stream switch `$$ = …`, the root replace `$ = ….find(…)`. Three decisions shaped it, each measured on mongod 8.3.7 first.
+
+**One route: `let` + `pipeline` + `$expr`, never `localField`/`foreignField`.** The developer's ruling is that a JavaScript spelling gets JavaScript behaviour, and the basic form does not have it: it reads null as missing (every user with a missing `nul` matched every order with a null one) and matches an array element-wise (`[101, 103]` matched two orders where `101 === [101, 103]` is false). The pipeline form compares the fields' OWN values — `undefined === undefined` true, `undefined === null` false — and, since MongoDB 5.0, uses the foreign index just the same: `indexesUsed: ["userId_1"]`, keys examined equal to rows matched, and `$limit: 1` after the match examines one key per outer document. The shipped compiler chose between the two forms on a syntactic accident, so `o.userId === $._id && o.status === "paid"` selected a different set of documents from `o.userId === $._id` alone. One route, one meaning. `.find(p)` gets its `$limit: 1` inside the body now; the shipped form scanned every match to keep the first.
+
+**`$.` is the outer document inside the body, read-only; the parameter is the body's document.** HR4 has no exception for a join. `o.x` reads the foreign document, `o.x = …` and `delete o.x` write it, `$$` inside is the body's stream, and `$.x = …` inside is refused naming `o.x = …` — the shipped compiler wrote the FOREIGN document for `$.x =` there, the one exception to the ruling. Every binding now records the LEVEL of documents it lives on, and the Env renders a read of a shallower level through the `let` of the boundary whose stage runs over that level (`Capture`, held by reference on the boundary like a Chain). A root read two levels down is captured once, at the outermost `$lookup`, and read by name below — MQL variables are lexically scoped through nested bodies, measured. The raw `$lookup({ …, pipeline: [ … ] })` stage call is the same road: what its body reads of the outer document is merged into the developer's own `let`. `$unionWith` has no `let` (`IDLUnknownField`, measured), so a read of the outer document inside it is refused with the way out.
+
+**`$ = $$$.c.find(p)` drops a document that found nothing.** The shipped `$replaceWith: { $first: "$slot" }` failed on the server for every unmatched document (`Location40228 … MISSING`); `$unwind` of the empty slot removes it instead — a document that has nothing to become leaves the stream. Flagged to the developer as a decision, with the left-join alternative (`$ifNull` to `$$ROOT`) measured and available.
+
+Two rules the gate surfaced beside the road. A runtime read inside a raw query document — `$match({ userId: $.other })`, `{ createdAt: { $gte: $.since } }`, an outer binding — was the string `"$other"` to the server, a literal that matches nothing; it is lifted into `$expr` now (`{ $eq: ["$userId", "$other"] }`), the constant entries staying native beside it, and inside a join body the read is captured on the way. And `$unionWith` states `replacesDocument`: the stream after it is another collection's documents, or a mix, so a `let` carried in a field is not reliable there and its read is refused as after a `$group`.
+
+Also fixed on the way: a nested join written inside a predicate leaked `__jsmql.tmp` into the joined array (the body's own chain now closes with its own `$unset`); `.length` on a joined array is `$size` outright, because the slot is a typed binding; a collapse (`countBy`, `keyBy`, `groupBy("k")`) unwraps to `{}` when nothing matched, as lodash does. Three registry facts are stated for the first time — `picksOne` on `find`, `streamBody: "document"` on `map`, `collapses` on the three folds — and the `$$$` root's stream cell points at `emit/join.ts`. Gates: pipeline re-judged (the route change is one class of divergence with one reason), expr and filter unchanged at zero.
+
+---
+
 ## 2026-09-05 — feat(compiler): bindings between stages, and the stream from a literal list of documents
 
 Two more constructs leave the statement target's pending list.

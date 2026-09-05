@@ -21,17 +21,32 @@
 import type { Position, Stage } from "../../registry/vocabulary.ts";
 import type { BodyPath } from "../rows.ts";
 import type { Where } from "../passes/position.ts";
-import type { Binding, Binder, FieldSlot, MongoVar, VarRef } from "./names.ts";
-import { Scope, scratchSlot } from "./names.ts";
+import type { Binding, Binder, Declared, FieldSlot, Located, MongoVar, VarRef } from "./names.ts";
+import { Capture, Scope, scratchSlot } from "./names.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
+import { pipelineOverOf } from "../rows.ts";
+import { noCorrelationSlot } from "./errors.ts";
 
 /**
  * A boundary crossed on the way here: a sub-pipeline (the stage whose body it
  * is, and the path to it), or an `$elemMatch` body, which names the parameter
  * that is the ELEMENT there — the only name whose fields are query paths inside.
  */
-export type Boundary = { readonly stage: string; readonly path: BodyPath; readonly element?: string };
+export type Boundary = {
+  readonly stage: string;
+  readonly path: BodyPath;
+  readonly element?: string;
+  /**
+   * For a body over ANOTHER collection: the stage's `let`, filled by the reads
+   * inside the body. Null when the stage has no `let` (`$unionWith`), so a read
+   * of the outer document there is refused rather than silently misread.
+   */
+  readonly capture?: Capture | null;
+};
+
+/** Does this boundary start a new LEVEL of documents — a body over another collection? */
+export const isForeign = (b: Boundary): boolean => pipelineOverOf(b.stage) === "foreign";
 
 /** Where a node stands. Every field required — see the header. */
 export type Site = {
@@ -144,8 +159,28 @@ export class Env {
   // ── the transitions: each answers a new Env and changes ONE thing ──────────
 
   /** A name bound to something other than a variable — the document, a slot, a function. */
-  bind(js: string, binding: Binding): Env {
-    return new Env(this.scope.declare(js, binding), this.site, this.chain);
+  bind(js: string, binding: Declared): Env {
+    return new Env(this.scope.declare(js, { ...binding, level: this.level }), this.site, this.chain);
+  }
+
+  /** How many bodies over another collection enclose this node: the level of ITS documents. */
+  get level(): number {
+    return this.site.boundaries.filter(isForeign).length;
+  }
+
+  /**
+   * A located value as THIS level reads it: a variable as itself; a path on this
+   * level as the path; a path on a shallower level through the `let` of the
+   * boundary that starts the level below it, as `$$<var>`.
+   */
+  render(loc: Located, pos: number): string {
+    if (loc.kind === "var") return loc.ref;
+    const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
+    if (loc.level === this.level) return value;
+    // The boundary whose `let` evaluates against level-`loc.level` documents.
+    const boundary = this.site.boundaries.filter(isForeign)[loc.level];
+    if (boundary.capture === null || boundary.capture === undefined) throw noCorrelationSlot(boundary.stage, pos);
+    return "$$" + boundary.capture.take(loc.kind, loc.hint, value);
   }
 
   /** The Env after a stage that replaced the document: every field-carried binding is gone. */
@@ -160,7 +195,7 @@ export class Env {
 
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js: string, type: Binding["type"], pos: number): Bound {
-    return this.bound(this.scope.param(js, type, pos));
+    return this.bound(this.scope.param(js, type, pos, this.level));
   }
 
   /** A compiler mint, named after `hint`, that steps aside from every name the program uses. */
@@ -185,7 +220,7 @@ export class Env {
   element(param: string): Env {
     const site: Site = {
       ...this.site,
-      boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param }],
+      boundaries: [...this.site.boundaries, { stage: "$elemMatch", path: [], element: param, capture: null }],
     };
     return new Env(this.scope, site, this.chain);
   }

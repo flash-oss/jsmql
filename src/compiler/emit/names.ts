@@ -26,7 +26,7 @@
 
 import type { Expr, Kind } from "../../registry/vocabulary.ts";
 import { UnknownIdentifierError, internalError } from "../../errors.ts";
-import { exprVar, tmpSlot } from "../../namespace.ts";
+import { exprVar, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "../../namespace.ts";
 
 declare const VAR: unique symbol;
 declare const REF: unique symbol;
@@ -140,7 +140,70 @@ export type Binding = {
   readonly mutable: boolean;
   /** Where the binding was made, for the message that names it. */
   readonly pos: number;
+  /**
+   * The LEVEL of documents the binding lives on: 0 for the root pipeline's, one
+   * more for each sub-pipeline over another collection crossed to reach the
+   * declaration. A read from a deeper level cannot see the field and is captured
+   * into that level's `$lookup.let` — see Capture. Set by Env, never by a caller.
+   */
+  readonly level: number;
 };
+
+/** What a caller states about a name; Env supplies the level. */
+export type Declared = Omit<Binding, "level">;
+
+/**
+ * A value on one level of documents, as a READ on a possibly deeper level sees
+ * it. `var` is a MongoDB variable, lexically scoped through every sub-pipeline
+ * and so level-free. The rest name a document level and a path on it — "" for
+ * the whole document — and how the variable that carries it across a `$lookup`
+ * is named: `f` a field, `v` a `let` binding, `s` a system value.
+ */
+export type Located =
+  | { readonly kind: "var"; readonly ref: string }
+  | { readonly kind: "f" | "v" | "s"; readonly level: number; readonly path: string; readonly hint: string };
+
+/**
+ * The `let` of one `$lookup`, filled as its body is lowered: every read of a
+ * value on the level the stage runs over is interned here under a name that
+ * carries that level, and the body reads it as `$$<name>`. The name is
+ * `jsmql_<f|v|s><level>_<hint>` (SSOT src/namespace.ts), sanitised; two raw
+ * values that sanitise alike take `_2`, `_3`. Held BY REFERENCE on the boundary,
+ * like a Chain, because the body is lowered before the stage is written.
+ */
+export class Capture {
+  /** The level of documents this stage's `let` evaluates against. */
+  readonly level: number;
+  /** var name → the value it carries, in first-read order. */
+  readonly vars: Record<string, string> = {};
+  private readonly byValue = new Map<string, MongoVar>();
+
+  constructor(level: number) {
+    this.level = level;
+  }
+
+  /** The variable that carries `value` (a `"$path"`), minted on first read. */
+  take(kind: "f" | "v" | "s", hint: string, value: string): MongoVar {
+    const have = this.byValue.get(value);
+    if (have !== undefined) return have;
+    const base =
+      kind === "f"
+        ? letFieldVar(hint, this.level)
+        : kind === "v"
+          ? letBindingVar(hint, this.level)
+          : letSysVar(hint, this.level);
+    let name = base;
+    for (let n = 2; name in this.vars; n++) name = `${base}_${n}`;
+    this.byValue.set(value, name as MongoVar);
+    this.vars[name] = value;
+    return name as MongoVar;
+  }
+
+  /** Has anything been captured? An empty `let` is noise the server does not need. */
+  get any(): boolean {
+    return this.byValue.size > 0;
+  }
+}
 
 /**
  * A variable and the scope its body is lowered under. A body can only be
@@ -228,11 +291,11 @@ export class Scope {
    * The developer's own variable binder — a lambda parameter, a `$let` var.
    * Encoded, never renamed. `type` is what the row says the parameter holds.
    */
-  param(js: string, type: Kind | "unknown", pos: number): Binder {
+  param(js: string, type: Kind | "unknown", pos: number, level: number): Binder {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos });
+    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);

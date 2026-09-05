@@ -65,6 +65,7 @@ import {
   objectBody,
   OWN_VALUE,
   queryOwnValue,
+  inCode,
   pending,
   single,
   unsupported,
@@ -117,6 +118,21 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * What this name's callback parameters bind, in order. See `CallbackParams`.
    * Absent means the name takes no callback.
    */
+  /**
+   * On a STREAM of documents this method picks ONE — `.find` — so on another
+   * collection it runs the named row's stream cell (`filter`) plus `$limit: 1`,
+   * takes that row's shorthands, and yields a document.
+   */
+  picksOne?: string;
+  /** The stream cell takes a callback whose body must BE a document — `.map` replaces the document. */
+  streamBody?: "document";
+  /**
+   * The stream cell folds the whole stream into ONE document — `countBy`, `keyBy`,
+   * and `groupBy` when given a field NAME (`"withFieldName"`; its `$group`-body
+   * form keeps a stream). On another collection the joined array then holds that
+   * one document, which IS the value.
+   */
+  collapses?: true | "withFieldName";
   params?: CallbackParams;
   /**
    * The argument slots that take an ITERATEE — a function of one element — and
@@ -5588,6 +5604,8 @@ export const NAMES = {
   }),
 
   $unionWith: mongo({
+    // The stream is another collection's documents after it (or a mix): no field of this one is reliable.
+    replacesDocument: true,
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
     where: ["stream", "statement"],
@@ -6439,6 +6457,9 @@ export const NAMES = {
   }),
 
   map: name({
+    // Its stream cell REPLACES the document, so the body must be one; a `.map` to a
+    // value on another collection reads the joined array value-mode instead.
+    streamBody: "document",
     doc: "'.map()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -6491,6 +6512,9 @@ export const NAMES = {
     doc: "'.find()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    // On another collection (`$$$.c.find(p)`) it is the `filter` row's cell plus
+    // `$limit: 1`, and yields ONE document. See src/compiler/emit/join.ts.
+    picksOne: "filter",
     params: ["value", "index", "collection"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "unknown",
@@ -8463,6 +8487,7 @@ export const NAMES = {
   }),
 
   keyBy: name({
+    collapses: true,
     doc: "'.keyBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -8489,6 +8514,7 @@ export const NAMES = {
   }),
 
   groupBy: name({
+    collapses: "withFieldName",
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream", "Object"],
@@ -8527,6 +8553,7 @@ export const NAMES = {
   }),
 
   countBy: name({
+    collapses: true,
     doc: "'.countBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -10924,7 +10951,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     filter: unsupported("'$$$.<coll>' names a collection, not a test. Join it: '$.o = $$$.<coll>.find(d => …)'."),
     expr: unsupported("'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'."),
-    stream: pending("src/pipeline.ts"),
+    stream: inCode("src/compiler/emit/join.ts"),
     statement: pending("src/pipeline.ts"),
     group: unsupported("'$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),

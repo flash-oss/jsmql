@@ -159,11 +159,12 @@ export function stageInputs(
    * so each is bound as a name whose READ says what to write instead.
    */
   const bound = (cb: Expr): Env | null => {
-    if (cb.type !== "Lambda" || cb.params.length < 1 || cb.params.length > 3) return null;
+    if (cb.type !== "Lambda" || cb.params.length > 3) return null;
     // The parameters open the callback's block: a `let` of the same name inside it collides.
-    let e = argEnv
-      .block()
-      .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+    let e = argEnv.block();
+    if (cb.params.length >= 1) {
+      e = e.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+    }
     if (cb.params.length >= 2) {
       e = e.bind(cb.params[1], {
         ref: {

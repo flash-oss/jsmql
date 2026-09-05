@@ -23,7 +23,14 @@
 
 import { type AssignOp, type BinaryOp, type Expr, type Program, ASSIGN_OPS } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
-import { arrayLiteralOrderOf, immutableTwinOf, isFieldProperty, iterateeSlotsOf, receiverFamily } from "../rows.ts";
+import {
+  arrayLiteralOrderOf,
+  immutableTwinOf,
+  isFieldProperty,
+  iterateeSlotsOf,
+  picksOneOf,
+  receiverFamily,
+} from "../rows.ts";
 import { freshParam } from "./fresh.ts";
 import { readsAContextRef } from "./naming.ts";
 import { isSlotLayout } from "../../registry/vocabulary.ts";
@@ -399,7 +406,9 @@ const iterateeShorthand: Rule = {
     const family = receiverFamily(named, recv !== undefined && readsAContextRef(recv), n.name);
     if (family === undefined) return node;
 
-    const layout = iterateeSlotsOf(n.name, family);
+    // A method that runs as another row on a stream (`.find` as `filter`) takes that row's shorthands.
+    const runsAs = picksOneOf(n.name);
+    const layout = iterateeSlotsOf(n.name, family) ?? (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family));
     // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and a sort
     // specification is read as an order rather than rewritten to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;

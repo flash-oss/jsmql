@@ -366,10 +366,7 @@ export const spreadInStageList = (pos: number): CodegenError =>
  */
 export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
   "a function declaration": "src/codegen.ts",
-  "a read from another collection ('$$$.<coll>.find(…)')": "src/lookup-translation.ts",
-  "a switch of the stream to another collection ('$$ = $$$.<coll>.…')": "src/pipeline.ts",
   "the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')": "src/stream-methods.ts",
-  "a read of the outer document inside a sub-pipeline over another collection": "src/lookup-translation.ts",
   "a read of the stream ('$$.filter(…)') as a value": "src/pipeline.ts",
   "a write to another collection ('$$$.<coll> = …')": "src/out-translation.ts",
 };
@@ -419,7 +416,7 @@ export const afterTerminalStage = (already: string, pos: number): CodegenError =
 /** A stage written inside a container its row forbids. */
 export const forbiddenInContainer = (name: string, container: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' cannot stand inside '${container}' — the server refuses a write stage in a sub-pipeline. Run it as a stage of the outer pipeline instead.`,
+    `'${name}' cannot stand inside '${container}' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.`,
     pos,
   );
 
@@ -497,6 +494,81 @@ export const notAFieldOfTheDocument = (name: string, pos: number): CodegenError 
 export const shadowsOuterBinding = (kind: string, name: string, pos: number): CodegenError =>
   new CodegenError(
     `\`${kind} ${name}\` shadows the \`${name}\` declared outside this block, and both would live in the same document. Pick a different name, or assign the outer one (\`${name} = …\`).`,
+    pos,
+  );
+
+/** A read of the outer document inside a body whose stage has no `let` — `$unionWith`. */
+export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value.`,
+    pos,
+  );
+
+/** `$$$$.<db>.<coll>.find(…)` — a `$lookup` reads the current database only. */
+export const crossDatabaseRead = (pos: number): CodegenError =>
+  new CodegenError(
+    "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+    pos,
+  );
+
+/** `{ tags: { $all: [$.x] } }` — a query operator whose expression twin does not take `[field, operand]`. */
+export const runtimeInQueryOperator = (op: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${op}' compares against a constant in a query document, and this operand is read at run time. Write the test as an expression — '$match($.field …)' — or give '${op}' a constant.`,
+    pos,
+  );
+
+/** `$$$[$.name].find(…)` — the collection a `$lookup` reads is fixed when the pipeline is written. */
+export const collectionNameMustBeConstant = (pos: number): CodegenError =>
+  new CodegenError(
+    "The collection to join is fixed when the pipeline is written: name it, '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
+    pos,
+  );
+
+export const emptyCollectionName = (pos: number): CodegenError =>
+  new CodegenError("'$$$[\"\"]' names no collection — the server refuses an empty namespace.", pos);
+
+export const collectionMissing = (pos: number): CodegenError =>
+  new CodegenError("'$$$' is the database; name the collection to read: '$$$.<coll>.find(…)'.", pos);
+
+export const notAJoinChain = (pos: number): CodegenError =>
+  new CodegenError(
+    "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { … })', a stream method or a stage link.",
+    pos,
+  );
+
+/** `$$$.c.filter(p);` — the documents read have nowhere to go. */
+export const noDestination = (pos: number): CodegenError =>
+  new CodegenError(
+    "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.…'), bind it ('let x = $$$.<coll>.…'), or make it the stream ('$$ = $$$.<coll>.…').",
+    pos,
+  );
+
+/** `$ = $$$.c.filter(p)` — the new root must be ONE document. */
+export const rootNeedsOneDocument = (pos: number): CodegenError =>
+  new CodegenError(
+    "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'.",
+    pos,
+  );
+
+/** `$$ = $$$.c.find(p)` — one document is not a stream. */
+export const oneDocumentInStream = (pos: number): CodegenError =>
+  new CodegenError(
+    "'.find(…)' gives ONE document, and the stream is many. Write '$$ = $$$.<coll>.filter(pred).take(1)' for a stream of the first match, or '$ = $$$.<coll>.find(pred)' to make each document the one it finds.",
+    pos,
+  );
+
+/** `$$ = $$$.c.filter(p).length` — a value is not a stream. */
+export const valueInStream = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' makes a value, and the stream must stay documents. Assign the value to a field instead: '$.<field> = $$$.<coll>.….${name}()'.`,
+    pos,
+  );
+
+/** `$.x = …` inside a body over another collection: the outer document is out of reach there. */
+export const outerWriteInForeign = (pos: number): CodegenError =>
+  new CodegenError(
+    "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: … })'); write the outer field after the join.",
     pos,
   );
 

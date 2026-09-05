@@ -495,7 +495,17 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     expect(compiled('$lookup({ from: "o", pipeline: [$match({ a: { $gt: 1 } }), $limit(2)], as: "r" });')).toEqual([
       { $lookup: { from: "o", pipeline: [{ $match: { a: { $gt: 1 } } }, { $limit: 2 }], as: "r" } },
     ]);
-    expect(() => pipeline('$lookup({ from: "o", pipeline: [$match($.a > 1)], as: "r" });')).toThrow(PendingLowering);
+    // `$.` inside a body over another collection is the OUTER document, carried by `let`
+    expect(compiled('$lookup({ from: "o", pipeline: [$match($.a > 1)], as: "r" });')).toEqual([
+      {
+        $lookup: {
+          from: "o",
+          let: { jsmql_f0_a: "$a" },
+          pipeline: [{ $match: { $expr: { $gt: ["$$jsmql_f0_a", 1] } } }],
+          as: "r",
+        },
+      },
+    ]);
     expect(compiled("$facet({ a: [$limit(1)] });")).toEqual([{ $facet: { a: [{ $limit: 1 }] } }]);
   });
 
@@ -516,10 +526,10 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
-    expect(() => pipeline("$.r = $$$.orders.find(o => o.id === $._id);")).toThrow(PendingLowering);
     // A chain's last LINK is a name the registry knows, so without this the join
     // road would emit a bare stage — a filter on the wrong collection.
-    expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(PendingLowering);
+    // a read of another collection with nowhere to go is refused, not a bare stage on the wrong collection
+    expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(/gives it no destination/);
     expect(() => pipeline("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toThrow(PendingLowering);
   });
 });

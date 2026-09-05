@@ -19,7 +19,6 @@ import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/voca
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import {
-  pipelineOverOf,
   bindsOf,
   callbackParamsOf,
   flattensChain,
@@ -38,13 +37,14 @@ import { checkBody, checkSlots } from "./check.ts";
 import { operandShapeOf, bodyRuleOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
+import { readsAnotherCollection } from "./join.ts";
 import { childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { familyOfKind, kindOf, sourceFamily } from "./types.ts";
-import { mongoVarName, type MongoVar } from "./names.ts";
+import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 
 const NAMESPACES = namespaceNames();
 const READ: Reader = { value: lowerValue, truth: lowerTruth };
@@ -92,7 +92,25 @@ function holdsBigInt(v: unknown): boolean {
   return false;
 }
 
+/**
+ * The join road, lent by statement.ts at load: a chain on another collection in a
+ * value position hoists its `$lookup` ahead of the statement. Registered rather
+ * than imported, because the road needs the statement target's link walker and
+ * the statement target imports this file.
+ */
+let joinRoad: ((node: Expr, env: Env) => unknown) | null = null;
+export function provideJoin(road: (node: Expr, env: Env) => unknown): void {
+  joinRoad = road;
+}
+
 export function lowerValue(node: Expr, env: Env): unknown {
+  if (
+    (node.type === "MethodCall" || node.type === "MemberAccess" || node.type === "IndexAccess") &&
+    readsAnotherCollection(node)
+  ) {
+    if (joinRoad === null) internalError("the join road was read before statement.ts lent it");
+    return joinRoad(node, env);
+  }
   // A constant is its VALUE, before any row is read. The fold writes back what has
   // a source spelling; a Date, an ObjectId or a Set has none and stays a node, so
   // the evaluator is asked here — with its own exclusions (an operator call is the
@@ -131,8 +149,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "FieldRef":
-      if (readsTheOuterDocument(env)) throw E.pendingStatement(OUTER_IN_FOREIGN, node.pos);
-      return node.path === "" ? "$$ROOT" : "$" + node.path;
+      return env.render(locate(node, env) as Located, node.pos);
     case "CollectionRef":
     case "DatabaseRef":
     case "ClusterRef":
@@ -338,17 +355,6 @@ function rootAsValue(node: Expr, env: Env): never {
   throw E.refusalFor(sel, name, "", positionIn(env), node.pos, []);
 }
 
-/**
- * Inside a sub-pipeline over ANOTHER collection — `$lookup.pipeline`,
- * `$unionWith.pipeline` — `$.x` is still the OUTER document (HR4) and a field-
- * carried binding is not there at all. The server reaches the outer document only
- * through the stage's `let`, which is the join road's work; until it lands the
- * read is a stated pending, never the foreign document's field.
- */
-const OUTER_IN_FOREIGN = "a read of the outer document inside a sub-pipeline over another collection";
-const readsTheOuterDocument = (env: Env): boolean =>
-  env.site.boundaries.some((b) => pipelineOverOf(b.stage) === "foreign");
-
 function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
   if (env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
@@ -356,10 +362,8 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
       case "var":
         return b.ref.ref;
       case "document":
-        return "$$ROOT";
       case "field":
-        if (readsTheOuterDocument(env)) throw E.pendingStatement(OUTER_IN_FOREIGN, node.pos);
-        return b.ref.slot.ref;
+        return env.render(locate(node, env) as Located, node.pos);
       case "constant":
         return b.ref.value;
       case "function":
@@ -375,23 +379,48 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
   throw new E.UnknownIdentifierError(node.name, node.pos);
 }
 
-/** The `$$x.a.b` / `$a.b` path an access chain on a bound name spells, or null when it is not one. */
-function pathOf(node: Expr, env: Env): string | null {
-  if (node.type === "FieldRef") return node.path === "" ? "$$ROOT" : "$" + node.path;
+/**
+ * WHERE an access chain reads: which level of documents, which path on it — or a
+ * variable — so the level that reads it can render it (Env.render). `$.x` is the
+ * ROOT document at every depth (HR4); a parameter bound as a document is its own
+ * level's; a `let` carried in a field lives on the level it was declared at.
+ */
+export function locate(node: Expr, env: Env): Located | null {
+  if (node.type === "FieldRef") {
+    return { kind: "f", level: 0, path: node.path, hint: node.path === "" ? "root" : lastSegment(node.path) };
+  }
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
-    if (b.ref.kind === "var") return b.ref.ref;
-    if (b.ref.kind === "document") return "$$ROOT";
-    if (b.ref.kind === "field") return b.ref.slot.ref;
+    if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
+    if (b.ref.kind === "document") return { kind: "f", level: b.level, path: "", hint: node.name };
+    if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
   }
+  // `$["ext-code"]`, `o["sub-id"]` — a field whose name is not a bare identifier.
+  if (node.type === "IndexAccess" && node.index.type === "StringLiteral") {
+    const base = locate(node.object, env);
+    // Only on a DOCUMENT (`$`, a parameter): a bracket on a sub-document reads by `$getField`.
+    if (base === null || base.kind === "var" || base.path !== "") return null;
+    const name = node.index.value;
+    return { ...base, path: base.path === "" ? name : `${base.path}.${name}`, hint: name };
+  }
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
-    const base = pathOf(node.object, env);
+    const base = locate(node.object, env);
+    if (base === null) return null;
+    if (base.kind === "var") return { kind: "var", ref: `${base.ref}.${node.name}` };
     // A field of the DOCUMENT is a root path, spelled as `$.x` spells it: `d.x` in
     // `$$.map(d => d.x)` is "$x", not "$$ROOT.x".
-    return base === null ? null : base === "$$ROOT" ? `$${node.name}` : `${base}.${node.name}`;
+    return { ...base, path: base.path === "" ? node.name : `${base.path}.${node.name}`, hint: node.name };
   }
   return null;
+}
+
+const lastSegment = (path: string): string => path.slice(path.lastIndexOf(".") + 1);
+
+/** The `$$x.a.b` / `$a.b` path an access chain on a bound name spells, or null when it is not one. */
+function pathOf(node: Expr, env: Env): string | null {
+  const loc = locate(node, env);
+  return loc === null ? null : env.render(loc, node.pos);
 }
 
 /** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — rather than a field read? */
@@ -412,8 +441,9 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
   // `$["a.b"]` — a field whose name is not a bare identifier.
-  if (node.index.type === "StringLiteral" && node.object.type === "FieldRef" && node.object.path === "") {
-    return "$" + node.index.value;
+  {
+    const loc = locate(node, env);
+    if (loc !== null) return env.render(loc, node.pos);
   }
   const raw = lowerValue(node.object, objEnv);
   const idx = lowerValue(node.index, childEnv(env, node, "index"));

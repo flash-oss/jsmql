@@ -364,6 +364,21 @@ export function forbiddenInOf(name: string): readonly string[] {
 
 /** The extra rules a row states that no renderer implies — where a stage may stand. */
 /** Does the stage's sub-pipeline run over another collection's documents? */
+/** On a stream of documents, does this method pick ONE — `.find`? The stream row it runs as, or null. */
+export function picksOneOf(name: string): string | null {
+  return (row(name) as { picksOne?: string } | undefined)?.picksOne ?? null;
+}
+
+/** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
+export function collapsesOf(name: string): true | "withFieldName" | null {
+  return (row(name) as { collapses?: true | "withFieldName" } | undefined)?.collapses ?? null;
+}
+
+/** Does the row's stream cell take a callback whose body must BE a document — `.map`? */
+export function streamBodyOf(name: string): "document" | null {
+  return (row(name) as { streamBody?: "document" } | undefined)?.streamBody ?? null;
+}
+
 export function pipelineOverOf(name: string): "foreign" | null {
   return (row(name) as { pipelineOver?: "foreign" } | undefined)?.pipelineOver ?? null;
 }
