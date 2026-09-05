@@ -11,7 +11,7 @@ states which of them it is legal in (`where`):
 | `value` | an aggregation expression | `$addFields: { v: … }` |
 | `filter` | a query document | `db.coll.find(…)`, a `$match` body |
 | `statement` | one element of a pipeline | `$match(…);` |
-| `stream` | one link of a `$$ = $$…` chain | `$$ = $$.filter(p)` |
+| `stream` | one link of a `$$ = $$…` chain | `$$.filter(p)` |
 | `group` | a `$group` output slot | `$group({ _id: …, s: … })` |
 | `window` | a `$setWindowFields.output` slot | `output: { r: … }` |
 | `updateDoc` | the object form of an update | `updateOne(f, { $inc: … })` |
@@ -166,7 +166,7 @@ the stream it names; `$$$` and `$$$$` are scopes, never evaluated, and stand at
 A receiver supplies a FAMILY, not a position: the desugar pass asks whether a
 receiver chain is rooted in a context reference to pick the stream family, and
 never reads the call's own position for it — `$ = { k: $$.map({ a: 1 }) }` and
-`$$ = $$.map({ a: 1 })` rewrite the same shorthand the same way.
+`$$.map({ a: 1 })` rewrite the same shorthand the same way.
 
 One consequence for stage links: a chained stage on a context-rooted chain is a
 stage WHEREVER the chain stands, so its body layout is consulted even when the

@@ -1736,7 +1736,7 @@ const FLAT_MAP: StreamMethodDef = {
           `('.flatMap(d => d.items)') or the equivalent field-name string ('.flatMap("items")'). On a stream it ` +
           `lowers to '$unwind', which needs a field path — a computed arrow, a matches-object, or a ` +
           `["field", value] pair doesn't name one. Materialise the array into a field first, then flatten it ` +
-          `by name: '$.items = <expr>; $$ = $$.flatMap("items");' — or, inside a foreign chain, ` +
+          `by name: '$.items = <expr>; $$.flatMap("items");' — or, inside a foreign chain, ` +
           `'.map(d => ({ items: <expr>, … })).flatMap("items")'.`,
         arg.pos,
       );
@@ -1762,7 +1762,7 @@ const FLAT_MAP: StreamMethodDef = {
     const path = paramFieldPath(body, param);
     if (path === null) {
       throw new CodegenError(
-        `.flatMap(d => …) needs a field path — it lowers to '$unwind', which returns each element to a NAMED field, so a computed body (e.g. '.flatMap(d => d.items.map(...))') has nothing to unwind into. Build the array into a field first, then flatten it by name: '$.items = <expr>; $$ = $$.flatMap("items");'.`,
+        `.flatMap(d => …) needs a field path — it lowers to '$unwind', which returns each element to a NAMED field, so a computed body (e.g. '.flatMap(d => d.items.map(...))') has nothing to unwind into. Build the array into a field first, then flatten it by name: '$.items = <expr>; $$.flatMap("items");'.`,
         body.pos ?? callPos,
       );
     }

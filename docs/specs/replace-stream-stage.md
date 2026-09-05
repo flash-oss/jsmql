@@ -22,8 +22,8 @@ trailing `;`.
 See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream)
 for the user-facing reference.
 
-A `$$.<chain>;` bare statement (no `$$ =` head) is statement sugar for
-`$$ = $$.<chain>;` and lowers identically — see
+The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream; the assignment form this spec covers is its explicit alternative — see
+[stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
 [stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains).
 
 ## Lowering table

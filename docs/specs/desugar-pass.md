@@ -30,10 +30,10 @@ recognises, in what order, and the constraints that order must respect.
 | root fan-out | `$ = [{ a: 1 }, { a: 2 }];` | a fan-out node |
 | root lookup pivot | `$ = $$$.orders.find(…);` | `$lookup` + `$replaceWith` |
 | facet | `$ = { hi: $$.filter(…), lo: $$.filter(…) };` | `$facet` — [replace-root-stage.md](replace-root-stage.md) |
-| replace stream | `$$ = $$.filter(…);` | `$match` — [replace-stream-stage.md](replace-stream-stage.md) |
+| replace stream | `$$.filter(…);` | `$match` — [replace-stream-stage.md](replace-stream-stage.md) |
 | dict-build wrap | `$$ = [{ [d.k]: $$.reduce(…) }];` | a group node — [stream-methods.md](stream-methods.md) |
 | object reduce wrap | `$$ = [{ total: $$.reduce(…) }];` | a group node |
-| array reduce wrap | `$$ = $$.reduce((a,d) => a.concat(d.items), []);` | a group node |
+| array reduce wrap | `$$.reduce((a,d) => a.concat(d.items), []);` | a group node |
 | foreign source switch | `$$ = $$$.orders.filter(…);` | `$match` + `$unionWith` |
 | write out | `$$$.archive = $$;` | `$out` — [out-stage.md](out-stage.md) |
 | lookup | `$.o = $$$.orders.find(…);` | `$lookup` — [lookup-stage.md](lookup-stage.md) |

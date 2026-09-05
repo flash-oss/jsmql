@@ -30,9 +30,9 @@ the third through `lowerStatementTail`:
 
 | Context | Chain head | Lowering site |
 |---|---|---|
-| **`$$ = $$.<chain>;`** | Bare `$$`; any method — `.filter`/`.reject` may appear at any position | Each registry method appends one or more stages to the outer pipeline. |
+| **`$$.<chain>;`** | Bare `$$`; any method — `.filter`/`.reject` may appear at any position | Each registry method appends one or more stages to the outer pipeline. |
 | **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>`; any stream method (or `.filter`/`.reject`) may be the head | **Uncorrelated** → `$match:{$expr:false}` + `$unionWith.pipeline` (this loop). **Correlated** (a `.filter`/`.reject` anywhere references `$.`) → `$lookup`-pivot via `peelForeignChain` ([lookup-stage.md](./lookup-stage.md)). |
-| **`$$.<chain>;`** (bare statement, no `$$ =` head) | Bare `$$` | Statement sugar for `$$ = $$.<chain>;` — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
+| **`$$.<chain>;`** (the statement form) | Bare `$$` | The usual spelling of a chain on the stream; `$$ = $$.<chain>;` is the same program with an explicit head — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
 
 The **value-position** `$$$.<coll>` chain (`const x = …` / `$.f = …`) and the **correlated pivot** don't run through `applyStreamMethods` — they share `peelForeignChain` (owned by [lookup-stage.md](./lookup-stage.md) § "Any lodash stream method may head the chain"), which lowers `.filter`/`.reject` to a correlating `$match` and dispatches the rest through this registry. Same registry, so a chain lowers to the same sub-pipeline in every destination.
 
@@ -288,13 +288,13 @@ docs. The reducer is seeded with `[]` and returns an array — a stream — so i
 is assigned **directly**, with no surrounding `[ ]`:
 
 ```js
-$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), []);
+$$.reduce((acc, d) => (<cond> ? acc.concat(d.<field>) : acc), []);
 //   → [{ $match: <cond translated> }, { $replaceWith: "$<field>" }]
 
-$$ = $$.reduce((acc, d) => acc.concat(d.<field>), []);
+$$.reduce((acc, d) => acc.concat(d.<field>), []);
 //   → [{ $replaceWith: "$<field>" }]                     // unconditional map
 
-$$ = $$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), []);
+$$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), []);
 //   → [{ $match: <cond translated> }]                    // filter-only (bare `d`)
 ```
 
@@ -383,7 +383,7 @@ don't rewrite, and error, don't guess.
 
 ## Bare-statement stream chains
 
-A `$$`-rooted chain may be written as a bare statement, with no `$$ =` head:
+A `$$`-rooted chain is a statement — this is the spelling to write:
 
 ```js
 $$.filter(o => o.tier === "gold");
@@ -391,7 +391,7 @@ $$.map(d => ({ id: d._id }));
 $$.toSorted((a, b) => b.age - a.age).take(10);
 ```
 
-This is sugar for the explicit `$$ = $$.<chain>;` form and lowers identically.
+The assignment form `$$ = $$.<chain>;` is the same program with an explicit head, and lowers identically; it is never the default spelling.
 The detection lives in `lowerStatementTail` ([src/pipeline.ts](../../src/pipeline.ts)):
 after the `$$.push(...)` / diagnostic-source-stage checks, a `collectStreamChain`
 rooted at a bare `$$` (`CollectionRef`) with at least one method is handed to
@@ -399,7 +399,7 @@ the shared `applyStreamMethods` engine. Because `push` / `indexStats` are not
 registered stream methods, they keep their existing meaning and never reach this
 branch. Scope is the bare `$$` receiver only; a bare `$$$.<coll>.<chain>;`
 statement is not a recognised form — chain on `$$`, or use the
-`$$ = $$.concat($$$.<coll>.filter(…))` assignment, instead.
+`$$.concat($$$.<coll>.filter(…))` assignment, instead.
 
 **The composition guarantee.** Splitting a chain across statements produces the
 same MQL as chaining it, which in turn matches the assignment form:
@@ -407,7 +407,7 @@ same MQL as chaining it, which in turn matches the assignment form:
 ```js
 $$.filter(p).map(f);        // ≡
 $$.filter(p); $$.map(f);    // ≡
-$$ = $$.filter(p).map(f);
+$$.filter(p).map(f);
 ```
 
 This holds for *every* method. The bare form passes the **live pipeline `out`** as

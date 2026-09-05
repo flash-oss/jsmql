@@ -337,7 +337,7 @@ describe(
         // knows; the lowering does the MQL bookkeeping.
         expect(
           jsmql`
-$$ = $$.filter({ email: "me@example.com" });
+$$.filter({ email: "me@example.com" });
 assert($$.length === 1, "More than one user with such email found");
 $$ = $$$.orders
   .filter({ userId: $._id })
@@ -528,7 +528,7 @@ describe("tally shipped orders by payment method (lodash `.countBy`)", { feature
     // to a single `{ <paymentMethod>: <count> }` object — the SAME shape as
     // value-mode `$.items.countBy(...)`, not a `{ _id, count }` stream. (For the
     // count-descending stream instead, write `$sortByCount(...)`.)
-    expect(jsmql`$$ = $$.filter({ status: "shipped" }).countBy("paymentMethod");`).toEqual([
+    expect(jsmql`$$.filter({ status: "shipped" }).countBy("paymentMethod");`).toEqual([
       { $match: { status: "shipped" } },
       { $group: { _id: "$paymentMethod", __jsmqlTmp: { $sum: 1 } } },
       {
@@ -644,12 +644,12 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
   });
 });
 
-describe("narrow the current stream (`$$ = $$.filter(...)`)", { features: ["Pipelines"] }, () => {
+describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.transactions.aggregate(jsmql(...))" }, () => {
-    // The symmetric form: source stays on `transactions`, the assignment
-    // narrows the stream. The explicit `$$ = $$.filter(...)` form exists for
-    // symmetry with the source-switch case above, so the two can be swapped
-    // without changing the surrounding shape of the pipeline.
+    // The source stays on `transactions` and the chain narrows the stream. The
+    // assignment spelling, `$$ = $$.filter(...)`, exists for symmetry with the
+    // source-switch case above, so the two can be swapped without changing the
+    // surrounding shape of the pipeline; the bare chain is the usual one.
     //
     // Narrowing has three spellings and they emit the identical `$match`:
     // `$match(<expr>)`, the bare statement chain `$$.filter(<pred>)`, and this
@@ -657,7 +657,7 @@ describe("narrow the current stream (`$$ = $$.filter(...)`)", { features: ["Pipe
     // `$$.filter({ field: value })` — it says the same thing without the `$.`
     // and `===` — while a predicate with a range or null test stays on
     // `$match(<expr>)`, which reads better than a lambda for that.
-    expect(jsmql`$$ = $$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
+    expect(jsmql`$$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
       { $match: { createdAt: { $gte: new Date("2026-01-01") }, client: 156 } },
     ]);
   });
@@ -675,7 +675,7 @@ describe("paginate + project a leaderboard via a bare stream chain", { features:
       //   .slice(40, 60)    → $skip + $limit  (page 3, 20 per page)
       //   .map(p => ({…}))  → $replaceWith     (project a compact card)
       // Splitting the chain across separate `$$.filter(...); $$.slice(...); …`
-      // statements — or writing it as `$$ = $$.filter(...)…` — produces the
+      // statements — or writing it with an explicit `$$ =` head — produces the
       // exact same MQL; the chained form is just the most concise spelling.
       expect(
         jsmql`
@@ -2473,10 +2473,10 @@ describe("a second write stage in a $out chain is rejected", { features: ["Pipel
   );
 });
 
-// ── Stream-method chains on the RHS of `$$ = …` ──────────────────────────────
+// ── Stream-method chains on `$$` ─────────────────────────────────────────────
 //
-// Chainable JS array-method vocabulary that extends a `$$ = $$.<chain>;` (or
-// `$$ = $$$.<coll>.<chain>;`) RHS into one or more pipeline stages. Each
+// Chainable JS array-method vocabulary that turns a `$$.<chain>;` statement (or
+// the `$$ = $$$.<coll>.<chain>;` source switch) into one or more pipeline stages. Each
 // chained method appends stages to the surrounding pipeline; the result is
 // the same MQL you'd write by hand, expressed as a JS expression you can
 // copy-paste.
@@ -2500,7 +2500,7 @@ describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { feat
       expect(
         jsmql`
 $$.filter({ status: "shipped" });
-$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
+$$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
         `,
       ).toEqual([{ $match: { status: "shipped" } }, { $sort: { placedAt: -1 } }, { $skip: 25 }, { $limit: 25 }]);
     },
@@ -2605,7 +2605,7 @@ describe("denormalise order line items for analytics (`.map`)", { features: ["Pi
       expect(
         jsmql`
 $$.filter({ shipped: true });
-$$ = $$.map(o => ({
+$$.map(o => ({
   orderId:  o._id,
   customer: o.userId,
   total:    o.qty * o.unitPrice,
@@ -2635,7 +2635,7 @@ describe("top-10 revenue leaderboard (`.toSorted` + `.take`)", { features: ["Pip
     expect(
       jsmql`
 $group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
-$$ = $$.toSorted({ revenue: -1 }).take(10);
+$$.toSorted({ revenue: -1 }).take(10);
         `,
     ).toEqual([
       { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
@@ -2658,7 +2658,7 @@ describe("most expensive line items across shipped orders (`.flatMap` + `.map`)"
       // matches-object shorthand for `o => o.status === …`.
       expect(
         jsmql`
-$$ = $$.filter({ status: "shipped" }).flatMap("items").map("items");
+$$.filter({ status: "shipped" }).flatMap("items").map("items");
 $sort({ price: -1 });
 $limit(50);
         `,
@@ -2685,7 +2685,7 @@ describe("merge live transactions with the archive stream (`.concat`)", { featur
       expect(
         jsmql`
 $$.filter({ region: "AU" });
-$$ = $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
+$$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
         `,
       ).toEqual([
         { $match: { region: "AU" } },
@@ -2910,12 +2910,12 @@ describe("invalid reduce on $$ — validate() catches the wrap-pattern omission"
     "the bare chain form is rejected at compile time with an actionable wrap-pattern hint",
     { kind: "validate" },
     () => {
-      // A user might reach for `$$ = $$.reduce(...)` expecting it to "just
+      // A user might reach for `$$.reduce(...)` expecting it to "just
       // work" the way `arr.reduce(...)` does in JS — but assigning the
       // scalar result to `$$` would break the "stream is always an array of
       // docs" invariant. `validate()` surfaces the rejection with a real
       // `.pos` and an actionable message pointing at the three wrap shapes.
-      const r = jsmql.validate(`$$ = $$.reduce((acc, o) => acc + o.total, 0);`);
+      const r = jsmql.validate(`$$.reduce((acc, o) => acc + o.total, 0);`);
       expect(r.valid).toBe(false);
       expect(r.errors).toHaveLength(1);
       expect(r.errors[0].code).toBe("CODEGEN_ERROR");

@@ -13,7 +13,7 @@ let filter = jsmql`$.age > ${age} && $.status === "active"`
 // Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
 // Narrow to one user, assert it's the only match, then pivot to their 5 newest orders.
 let pipeline = jsmql`
-  $$ = $$.filter({ email: "me@example.com" });
+  $$.filter({ email: "me@example.com" });
   assert($$.length === 1, "More than one user with such email found");
   $$ = $$$.orders
     .filter({ userId: $._id })
@@ -126,10 +126,10 @@ jsmql(`$ = {
 //   } }]
 
 // Top 10 users by revenue: $group the orders, then sort descending and take the first 10.
-// The `$$ = $$.toSorted(...).take(...)` chain lowers to $sort + $limit.
+// The `$$.toSorted(...).take(...)` chain lowers to $sort + $limit.
 jsmql(`
 $group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
-$$ = $$.toSorted({ revenue: -1 }).take(10);
+$$.toSorted({ revenue: -1 }).take(10);
 `);
 // [
 //     { "$group": { "_id": "$userId", "revenue": { "$sum": "$total" }, "orders": { "$sum": 1 } } },

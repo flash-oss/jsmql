@@ -1068,7 +1068,7 @@ function lowerReplaceStream(
 ): { stages: object[]; clearLets: boolean } {
   if (el.value.type === "BinaryExpr" && el.value.left === el.target) {
     throw new CodegenError(
-      `Cannot use compound assignment / increment on '$$' — '$$' is the document stream, not a scalar. Use '$$ = $$.filter(<predicate>)' to narrow the stream or '$$ = $$$.<coll>.filter(<predicate>)' to switch source.`,
+      `Cannot use compound assignment / increment on '$$' — '$$' is the document stream, not a scalar. Use '$$.filter(<predicate>)' to narrow the stream or '$$ = $$$.<coll>.filter(<predicate>)' to switch source.`,
       el.pos,
     );
   }

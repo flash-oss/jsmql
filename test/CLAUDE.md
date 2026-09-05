@@ -54,7 +54,7 @@ Guards the landing page (`index.html`), the `CNAME` that binds it to jsmql.js.or
 
 ### `parity.test.ts` — the value/stream gate
 
-A method name that carries **two** lowerings — a value form over an array inside a document (`$.rows.take(2)`) and a stream form over the pipeline's documents (`$$ = $$.take(2)`) — has two implementations of one meaning, in two files, sharing no code. This suite runs both over the same documents on a real mongod and compares what comes back.
+A method name that carries **two** lowerings — a value form over an array inside a document (`$.rows.take(2)`) and a stream form over the pipeline's documents (`$$.take(2)`) — has two implementations of one meaning, in two files, sharing no code. This suite runs both over the same documents on a real mongod and compares what comes back.
 
 The comparison is **order-insensitive on purpose**. Parity is contracted on which elements survive and what shape they arrive in, never on their sequence: SR2 in [`docs/LANG_RULES.md`](../docs/LANG_RULES.md) says an ordering guarantee the developer never wrote gives way to MongoDB's behaviour, and `$group` is unordered. `.uniqBy` is the worked case — it returns the same three documents in a different order from each side, and that passes.
 

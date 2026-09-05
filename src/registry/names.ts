@@ -10885,7 +10885,7 @@ export const NAMES = {
     // so `expr` is a refusal even though `$$.length` IS a value: that value is
     // the `length` row, reached through `family: "stream"`, not this root.
     where: ["stream", "statement"],
-    filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$ = $$.filter(d => …)'."),
+    filter: unsupported("'$$' is a stream of documents, not a test. Filter it: '$$.filter(d => …)'."),
     expr: unsupported(
       "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.",
     ),

@@ -285,21 +285,21 @@ runtime value — the one place the literal gate is bypassed, because
 
 ### The stream road
 
-`$$ = $$.filter(d => d.x > 1).sortBy("k").take(3);` and its bare spelling
-`$$.filter(…).sortBy("k").take(3);` are one program: a chain on the stream, one
+`$$.filter(d => d.x > 1).sortBy("k").take(3);` — and the same chain with an
+explicit `$$ =` head, which is never the default spelling — are one program: a chain on the stream, one
 row's `stream` cell per link, base first. A stage is a link too (`$$.$match(…)`),
 through the very cell its statement form uses, and each link's stages take the
 placement its row states — a link after `$out` is refused exactly as a statement
 after it is.
 
 ```js
-$$ = $$.filter(d => d.x > 1);          // → [{"$match":{"x":{"$gt":1,"$not":{"$type":"array"}}}}]
-$$ = $$.map(d => ({ a: d.x }));        // → [{"$replaceWith":{"a":"$x"}}]
-$$ = $$.sortBy("x").take(2);           // → [{"$sort":{"x":1}},{"$limit":2}]
-$$ = $$.toSorted((a, b) => b.x - a.x); // → [{"$sort":{"x":-1}}]
-$$ = $$.reject(d => d.x > 1);          // → [{"$match":{"$nor":[{"x":{"$gt":1,…}}]}}]   the complement, as `!p` is
-$$ = $$.uniqBy("k");                   // → [{"$group":{"_id":"$k","__jsmqlTmp":{"$first":"$$ROOT"}}},{"$replaceWith":"$__jsmqlTmp"}]
-$$ = $$.take(0);                       // → [{"$match":{"$expr":false}}]           `$limit: 0` is refused by the server
+$$.filter(d => d.x > 1);          // → [{"$match":{"x":{"$gt":1,"$not":{"$type":"array"}}}}]
+$$.map(d => ({ a: d.x }));        // → [{"$replaceWith":{"a":"$x"}}]
+$$.sortBy("x").take(2);           // → [{"$sort":{"x":1}},{"$limit":2}]
+$$.toSorted((a, b) => b.x - a.x); // → [{"$sort":{"x":-1}}]
+$$.reject(d => d.x > 1);          // → [{"$match":{"$nor":[{"x":{"$gt":1,…}}]}}]   the complement, as `!p` is
+$$.uniqBy("k");                   // → [{"$group":{"_id":"$k","__jsmqlTmp":{"$first":"$$ROOT"}}},{"$replaceWith":"$__jsmqlTmp"}]
+$$.take(0);                       // → [{"$match":{"$expr":false}}]           `$limit: 0` is refused by the server
 ```
 
 A callback's FIRST parameter IS the stream's document: `d.x` is the path "x" in a

@@ -1604,7 +1604,7 @@ function _generateBody(expr: Expr, ctx: GenerateCtx): unknown {
           `Write \`$$.push({...})\`, \`$$.push(...$$$.<coll>[.filter(pred)])\`, or \`$$.push($$$.<coll>.find(pred))\` ` +
           `as a top-level Pipeline statement to append documents (lowers to '$unionWith'), ` +
           `\`$ = { key1: $$.filter(p1), key2: $$.filter(p2), ... }\` to build a '$facet' stage, ` +
-          `or \`$$ = $$.filter(<pred>)\` / \`$$ = $$$.<coll>.filter(<pred>)\` to replace the current stream. ` +
+          `or \`$$.filter(<pred>)\` / \`$$ = $$$.<coll>.filter(<pred>)\` to replace the current stream. ` +
           `As the first stage it also accepts a collection-scoped diagnostic — \`$$.indexStats()\`, \`$$.collStats({...})\`, \`$$.planCacheStats()\`, \`$$.listSearchIndexes({...})\`. ` +
           `Bare '$$' has no value, and these statement shapes cannot appear on a RHS or inside another expression.`,
         expr.pos,

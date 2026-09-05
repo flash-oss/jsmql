@@ -996,7 +996,7 @@ function lowerFilterStrict(ast: Program, ctx: GenerateCtx): JsmqlOutput {
       throw new CodegenError(
         "jsmql.filter() expects a Filter, but received a stream-replace `$$ = <expr>` (which compiles to the pipeline stages its stream chain describes). " +
           "Call jsmql.pipeline() or jsmql() for Pipeline output — or, to narrow a `find()`, pass the predicate to jsmql.filter() directly " +
-          "(`$.a === 1` rather than `$$ = $$.filter(t => t.a === 1)`).",
+          "(`$.a === 1` rather than `$$.filter(t => t.a === 1)`).",
         ast.pos,
       );
     }

@@ -2966,7 +2966,7 @@ Sister to `$ = <expr>` at the *stream* level. Assigning to bare `$$` replaces th
 
 ```js
 // Narrow the current stream (equivalent to $match($.client === 156 && $.createdAt >= "2026-01-01"))
-jsmql(`$$ = $$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
+jsmql(`$$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)
 // → [{ $match: { client: 156, createdAt: { $gte: "2026-01-01" } } }]
 
 // Switch source to another collection: drop the current stream, union in filtered foreign docs.
@@ -3032,7 +3032,7 @@ Mixed predicates work too — `$.<field>` refs and outer-`let` refs hoist togeth
 
 ```js
 jsmql(`
-  $$ = $$.filter({ email: "me@example.com" });
+  $$.filter({ email: "me@example.com" });
   assert($$.length === 1, "More than one user with such email found");
   $$ = $$$.orders
     .filter({ userId: $._id })
@@ -3073,7 +3073,7 @@ Compile-time rejections:
 | `$$ = $$$.<coll>` (no `.filter` and no other chain method) | Bare collection ref — name a predicate (`.filter(o => …)`) or chain a stream method (e.g. `.slice(0, 10)`). |
 | `$$ += …`, `$$++` | `$$` is the stream, not a scalar. |
 
-**Let scope.** The narrow form (`$$ = $$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after the never-matching `$match`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
+**Let scope.** The narrow form (`$$.filter(p)`) is just a `$match` and preserves any prior `let` bindings — references resolve through `ctx.pipelineLets` as usual. The source-switch form (`$$ = $$$.<coll>.filter(p)`) is **reshape-clearing**: the outer collection's docs are gone after the never-matching `$match`, so any prior `let` becomes unreadable, producing `` `x` is a `let` binding and can't be read after `$unionWith` … `` on the next reference.
 
 #### Stream methods chained after the RHS
 
@@ -3081,11 +3081,11 @@ The RHS of `$$ = …` accepts chainable JS-array-shaped methods after the initia
 
 ```js
 // Skip the first 5 and keep the next 10 — pure $skip + $limit, no $match.
-jsmql(`$$ = $$.slice(5, 15);`)
+jsmql(`$$.slice(5, 15);`)
 // → [{ $skip: 5 }, { $limit: 10 }]
 
 // Filter then take the first 10 — $match + $limit.
-jsmql(`$$ = $$.filter(o => o.tier === "gold").slice(0, 10);`)
+jsmql(`$$.filter(o => o.tier === "gold").slice(0, 10);`)
 // → [{ $match: { tier: "gold" } }, { $limit: 10 }]
 
 // Source-switch with a slice inside the union body.
@@ -3141,17 +3141,17 @@ $.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userI
 **Group keys may be computed.** MongoDB evaluates `$group._id` per document, so the four grouping methods take any expression — it lowers straight into the key, with no extra stages:
 
 ```js
-$$ = $$.countBy(d => d.category.toLowerCase());
+$$.countBy(d => d.category.toLowerCase());
 // → [{ $group: { _id: { $toLower: "$category" }, … } }, … ]
 
-$$ = $$.groupBy(d => d.email.split("@")[1]);   // group by email domain
-$$ = $$.countBy({ active: true });             // count matching vs not (lodash _.matches)
+$$.groupBy(d => d.email.split("@")[1]);   // group by email domain
+$$.countBy({ active: true });             // count matching vs not (lodash _.matches)
 ```
 
 **Sort keys may be computed too**, but a `$sort` key has to be a literal field path, so jsmql puts the value in a scratch field first and clears it once the chain is done:
 
 ```js
-$$ = $$.sortBy(d => d.category.toLowerCase());
+$$.sortBy(d => d.category.toLowerCase());
 // → [{ $addFields: { "__jsmql.tmp.1": { $toLower: "$category" } } },
 //    { $sort: { "__jsmql.tmp.1": 1 } },
 //    { $unset: "__jsmql" }]
@@ -3163,7 +3163,7 @@ The scratch field is cleared once the chain finishes, so it never reaches your o
 
 ```js
 $.allTags = $.tags.concat($.extraTags);
-$$ = $$.flatMap("allTags");
+$$.flatMap("allTags");
 ```
 
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
@@ -3173,14 +3173,14 @@ On three methods an object means something richer than a matcher, so it is read 
 Methods that count **from the end** (`.takeRight(n)`, `.dropRight(n)`, `.initial()`, `.toReversed()`) are deliberately not on this list either. A MongoDB stream has no order except the one a `$sort` gives it, and there is no stage that reverses one (`$reverseArray` is an *expression*, for an array inside a document) — so "the last 3" has nothing to count back from. Say the order you want and take from the **front**:
 
 ```js
-$$ = $$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
+$$.toSorted({ createdAt: -1 }).take(3);   // the 3 most recent
 ```
 
 All four still work in value position on a real array (`$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray`), where the array carries its own order and they mean exactly what they mean in JS.
 
 Methods that return a single element in JS (`.find(p)`, `.findLast(p)`, `.at(n)`) are deliberately not on this list — pipelines are arrays, and chaining a single-element method would mislead. Use `.filter(p).take(1)` or `.slice(n, n + 1)` instead. (`$$$.<coll>.find(<pred>)` is unrelated — that's a lookup-context shape, not a stream chain; see [`$$$.<coll>.find / .filter`](#cross-collection-lookups-collfind--filter).)
 
-**A predicate is a predicate, wherever it sits.** `$$.filter(...)` / `$$.reject(...)` accept the same four spellings in every position a `$$` predicate can appear — narrowing the current stream (`$$ = $$.filter(p)`), a `$facet` branch (`$ = { k: $$.filter(p) }`), and an `$out` write chain (`$$$.archive = $$.filter(p)`) — and each spelling emits identical MQL, so picking one is purely a matter of taste:
+**A predicate is a predicate, wherever it sits.** `$$.filter(...)` / `$$.reject(...)` accept the same four spellings in every position a `$$` predicate can appear — narrowing the current stream (`$$.filter(p)`), a `$facet` branch (`$ = { k: $$.filter(p) }`), and an `$out` write chain (`$$$.archive = $$.filter(p)`) — and each spelling emits identical MQL, so picking one is purely a matter of taste:
 
 ```js
 jsmql(`$$$.archive = $$.filter({ status: "expired" });`)
@@ -3194,7 +3194,7 @@ The one thing a predicate may not do in these positions is reference `$.<field>`
 A worked lodash-style chain — the newest 10 closed orders' distinct products:
 
 ```js
-jsmql(`$$ = $$.filter({ status: "CLOSED" })
+jsmql(`$$.filter({ status: "CLOSED" })
   .sort({ createdAt: -1 })
   .take(10)
   .flatMap("productIds")
@@ -3223,7 +3223,7 @@ Every stream method works this way (e.g. `.filter`, `.map`, `.toSorted`). Chaini
 ```js
 $$.filter(p).map(f);        // chained
 $$.filter(p); $$.map(f);    // split across statements
-$$ = $$.filter(p).map(f);   // explicit assignment
+$$.filter(p).map(f);   // explicit assignment
 ```
 
 It holds for the chained stage calls too, so a chain may mix them freely: `$$.filter(p).$sort({ score: -1 }).take(3);` and `$$.filter(p); $sort({ score: -1 }); $limit(3);` are the same pipeline.
@@ -3273,14 +3273,14 @@ The `init` value is required for JS-faithfulness but the MQL accumulators have t
 
 ```js
 // Filter active users with an email, project to their contactDetails sub-doc.
-jsmql(`$$ = $$.reduce(
+jsmql(`$$.reduce(
   (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),
   []
 );`)
 // → [{ $match: <translated condition> }, { $replaceWith: "$contactDetails" }]
 
 // Unconditional projection (just the map).
-jsmql(`$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
+jsmql(`$$.reduce((acc, d) => acc.concat(d.contactDetails), []);`)
 // → [{ $replaceWith: "$contactDetails" }]
 ```
 

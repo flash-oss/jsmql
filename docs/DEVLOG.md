@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — docs: the bare chain `$$.filter(…);` is the default spelling of a stream chain
+
+The developer's ruling: `$$ = $$.filter(…)` exists and lowers identically, but it is never the default — "stop asking users to write unnecessary `$$ =` characters." Every prose surface now shows the bare statement: README, `docs/LANGUAGE.md`, the specs' examples, the `CLAUDE.md` files, `test/realistic.test.ts` (and so the playground it feeds), and the compiler's own hints where a chain is meant. The assignment form is mentioned only where it is itself the subject — the replace-stream spec, and the sentence that says the two are one program.
+
+Nothing changes in what compiles: the bare form has always lowered to the same stages, and the suite compiles every rewritten source through the shipped compiler against the unchanged expected MQL.
+
+---
+
 ## 2026-09-05 — feat(compiler): the stream road — a chain on `$$` as the stages it means
 
 `$$ = $$.filter(d => d.x > 1).sortBy("k").take(3);` and its bare spelling are one program: one row's `stream` cell per link, base first, each link's stages placed as a statement's are. Twenty-five array methods that pointed at `pending` now state their stream cell — `filter`, `reject`, `map`, `flatMap`, the four sort spellings, `take`, `drop`, `tail`, `slice`, `sample`, `sampleSize`, `pick`, `omit`, the four `uniq` forms, `shuffle`, `groupBy`, `countBy`, `keyBy`, `aggregate` — and every one was measured against the shipped compiler's output before it was written. The pending ratchet fell from 408 to 377.
