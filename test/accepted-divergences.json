@@ -1,5 +1,9 @@
 {
-  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
+  "reference": {
+    "commit": "46afc8d",
+    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
+    "dirty": false
+  },
   "rows": {
     "jsmql\u0000$.a.take(1.5)": {
       "entry": "jsmql",

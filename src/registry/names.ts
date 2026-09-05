@@ -8604,8 +8604,8 @@ export const NAMES = {
     statement: unsupported(
       "'.sum()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sum();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: singleArrayArg(recv) }) },
   }),
 
   mean: name({
@@ -8620,8 +8620,8 @@ export const NAMES = {
     statement: unsupported(
       "'.mean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mean();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: singleArrayArg(recv) }) },
   }),
 
   max: name({
@@ -8645,8 +8645,8 @@ export const NAMES = {
     statement: unsupported(
       "'.max()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.max();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: singleArrayArg(recv) }) },
   }),
 
   min: name({
@@ -8670,8 +8670,8 @@ export const NAMES = {
     statement: unsupported(
       "'.min()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.min();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: singleArrayArg(recv) }) },
   }),
 
   sumBy: name({
@@ -8694,7 +8694,14 @@ export const NAMES = {
     statement: unsupported(
       "'.sumBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sumBy();'",
     ),
-    group: pending("src/methods/"),
+    group: {
+      args: { sig: "iteratee", exact: 1 },
+      // the accumulator of each document's own value: '$sum' of the per-document '$sum' (an array operand alone is ignored by the accumulator, measured)
+      emit: ({ recv, args, iteratee }) => {
+        const it = iteratee(args[0]);
+        return { $sum: { $sum: { $map: { input: recv, as: it.as, in: it.in } } } };
+      },
+    },
     window: unsupported("'.sumBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
@@ -8718,7 +8725,14 @@ export const NAMES = {
     statement: unsupported(
       "'.meanBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.meanBy();'",
     ),
-    group: pending("src/methods/"),
+    group: {
+      args: { sig: "iteratee", exact: 1 },
+      // the accumulator of each document's own value: '$avg' of the per-document '$avg' (an array operand alone is ignored by the accumulator, measured)
+      emit: ({ recv, args, iteratee }) => {
+        const it = iteratee(args[0]);
+        return { $avg: { $avg: { $map: { input: recv, as: it.as, in: it.in } } } };
+      },
+    },
     window: unsupported("'.meanBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
@@ -9337,8 +9351,8 @@ export const NAMES = {
     statement: unsupported(
       "'.head()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.head();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
   }),
 
   first: name({
@@ -9353,8 +9367,8 @@ export const NAMES = {
     statement: unsupported(
       "'.first()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.first();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
   }),
 
   last: name({
@@ -9369,8 +9383,8 @@ export const NAMES = {
     statement: unsupported(
       "'.last()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.last();'",
     ),
-    group: pending("src/methods/"),
-    window: pending("src/methods/"),
+    group: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
+    window: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
   }),
 
   nth: name({

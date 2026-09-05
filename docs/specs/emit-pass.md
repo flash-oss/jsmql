@@ -529,6 +529,24 @@ relations (`isSubsetOf`, `isSupersetOf`, `isDisjointFrom`,
 `symmetricDifference`, and the three set operations) accept a Set or an array
 receiver: `new Set(x)` folds to `x`, since the server has no set type.
 
+A JavaScript aggregate written where a stage takes an ACCUMULATOR — a
+`$group` output field, a `$setWindowFields.output` entry — is the row's `group`
+or `window` cell, and the receiver is the accumulator's operand: `$.a.sum()` is
+`{ $sum: "$a" }`, `.mean()` is `$avg`, `.first()` / `.head()` are `$first`,
+`.last()` is `$last`, `.max()` / `.min()` their operators. `.sumBy(fn)` and
+`.meanBy(fn)` accumulate each document's OWN value — `{ $sum: { $sum: <map> } }`,
+`{ $avg: { $avg: <map> } }` — because the accumulator alone ignores an array
+operand (`$sum` of an array is 0 and `$avg` of one is null, measured), so
+`.meanBy` in a group is the mean of the per-document means. A `GroupIn` carries
+the receiver and `iteratee` for these cells; an operator call passes null.
+
+```
+$group({ _id: $.tag, total: $.a.sum(), f: $.a.first() });
+  → [{"$group":{"_id":"$tag","total":{"$sum":"$a"},"f":{"$first":"$a"}}}]
+$group({ _id: $.tag, q: $.items.sumBy(i => i.q) });
+  → [{"$group":{"_id":"$tag","q":{"$sum":{"$sum":{"$map":{"input":"$items","as":"i","in":"$i.q"}}}}}}]
+```
+
 ## What has no value
 
 `undefined` (compare with it instead), a regex outside its methods, a lambda

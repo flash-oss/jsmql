@@ -341,6 +341,77 @@ const canonical = (v: unknown): string =>
       : x,
   );
 
+describe("compiler/emit — a JavaScript aggregate inside $group / $setWindowFields is the accumulator", () => {
+  it("reads the receiver as the accumulator's operand", () => {
+    expect(
+      compiled(
+        "$group({ _id: $.tag, total: $.a.sum(), avg: $.a.mean(), mx: $.a.max(), mn: $.a.min(), f: $.a.first(), h: $.a.head(), l: $.a.last() }); $sort({ _id: 1 });",
+        [
+          { total: 4, avg: 2, mx: 3, mn: 1, f: 1, h: 1, l: 3 },
+          { total: 2, avg: 2, mx: 2, mn: 2, f: 2, h: 2, l: 2 },
+        ],
+      ),
+    ).toEqual([
+      {
+        $group: {
+          _id: "$tag",
+          total: { $sum: "$a" },
+          avg: { $avg: "$a" },
+          mx: { $max: "$a" },
+          mn: { $min: "$a" },
+          f: { $first: "$a" },
+          h: { $first: "$a" },
+          l: { $last: "$a" },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  it("accumulates each document's own sumBy / meanBy — the accumulator alone ignores an array operand", () => {
+    expect(
+      compiled(
+        "$group({ _id: $.tag, q: [$.a, 1].sumBy(x => x * 2), m: [$.a, 1].meanBy(x => x) }); $sort({ _id: 1 });",
+        [
+          { q: 12, m: 1.5 },
+          { q: 6, m: 1.5 },
+        ],
+      ),
+    ).toEqual([
+      {
+        $group: {
+          _id: "$tag",
+          q: { $sum: { $sum: { $map: { input: ["$a", 1], as: "x", in: { $multiply: ["$$x", 2] } } } } },
+          m: { $avg: { $avg: { $map: { input: ["$a", 1], as: "x", in: "$$x" } } } },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  it("is the window operator inside $setWindowFields.output", () => {
+    expect(
+      compiled(
+        "$setWindowFields({ partitionBy: $.tag, sortBy: { _id: 1 }, output: { run: $.a.sum(), f: $.a.first(), avg: $.a.mean(), l: $.a.last() } }); $sort({ _id: 1 });",
+        [
+          { _id: 1, run: 4, f: 1, avg: 2, l: 3 },
+          { _id: 2, run: 2, f: 2, avg: 2, l: 2 },
+          { _id: 3, run: 4, f: 1, avg: 2, l: 3 },
+        ],
+      ),
+    ).toEqual([
+      {
+        $setWindowFields: {
+          partitionBy: "$tag",
+          sortBy: { _id: 1 },
+          output: { run: { $sum: "$a" }, f: { $first: "$a" }, avg: { $avg: "$a" }, l: { $last: "$a" } },
+        },
+      },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+});
+
 describe("compiler/emit — the server runs every pipeline this file asserts", () => {
   it("ran each one, or none", async () => {
     if (db === null) {

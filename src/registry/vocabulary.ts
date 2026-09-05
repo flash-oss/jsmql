@@ -986,10 +986,12 @@ export type StageIn = {
 
 export type GroupIn = {
   name: string;
+  /** The lowered receiver of a JavaScript accumulator alias — `$.amount` in `$.amount.sum()`; null for an operator call. */
+  recv: unknown;
   args: readonly Expr[];
-  /** See FilterIn.keys. */
   keys: readonly string[];
   value: (e: Expr) => unknown;
+  iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
 };
 
 export type SugarIn = {

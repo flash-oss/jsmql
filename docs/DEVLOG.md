@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the accumulator aliases — `.sum()` and its siblings inside `$group` and `$setWindowFields`
+
+The sixteen `group` / `window` cells of the JavaScript aggregates are stated: `$.a.sum()` in a `$group` output field is `{ $sum: "$a" }`, `.mean()` is `$avg`, `.max()` / `.min()` their operators, `.first()` / `.head()` are `$first` and `.last()` is `$last`; the same seven inside `$setWindowFields.output` are the window operators. `GroupIn` now carries the receiver and the `iteratee` service, since an alias reads the receiver where an operator call reads its argument.
+
+**`.sumBy` and `.meanBy` accumulate the per-document value.** The shipped compiler emitted `{ $sum: { $map: … } }` and `{ $avg: { $map: … } }` in a `$group`, and the server ignores an array operand there — `$sum` answers 0 and `$avg` null (measured on 8.3.7), silently. The cells wrap the per-document aggregate: `{ $sum: { $sum: <map> } }`, `{ $avg: { $avg: <map> } }`; `.meanBy` in a group is therefore the mean of each document's mean, stated in the spec. Both run on mongod in `test/compiler-sugars.test.ts`. Ratchet 145.
+
+---
+
 ## 2026-09-05 — feat(compiler): the JavaScript globals, Math, the regex methods, the reducers and the spread pack
 
 The value target of the new compiler has no pending cell left in `src/registry/names.ts`. The last forty-eight landed: every `Math.*` function, the global constructors (`String`, `Boolean`, `parseInt`, `parseFloat`), the `Number`, `Array` and `Object` statics (`isInteger`, `isNaN`, `isArray`, `assign`, `fromEntries`, `keys`, `values`, `entries`, `groupBy`, `Array.from`), a regex literal's own `.test` and `.exec`, the index searches (`findIndex`, `findLastIndex`), `reduce` / `reduceRight`, `zipWith`, the Set relations, `$case`, `new Date(y, m, …)` and `Date.UTC(…)`, and the number receiver's `.round` / `.ceil` / `.floor`. Each is compared with JavaScript's own answer on mongod 8.3.7 in `test/compiler-methods.test.ts`.
