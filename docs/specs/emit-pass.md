@@ -451,6 +451,17 @@ stage — so the `__jsmql` cleanup precedes it and nothing can follow it. The ri
 side must be `$$` or a chain on it; the target one name for the current database
 (`{ db, coll }` for another), constant, not empty, not `$`-led (measured).
 
+**`$$ = [{ k: $$.reduce((acc, d) => …, init), … }]` folds the stream to one
+document** (`emit/reduce-wrap.ts`): one `$group` with `_id: null` and one
+accumulator per key, then the `$replaceWith` that drops `_id`. Each body is read
+as the accumulator it spells — `acc + d.x` is `$sum`, `acc + 1` counts,
+`Math.max`/`Math.min`, `acc ?? d.x` is `$first`, a bare `d.x` is `$last`,
+`[...acc, d.x]` or `acc.concat(d.x)` is `$push` — and a body that spells none is
+refused naming them. The object form `[$$.reduce((acc, d) => ({ ...acc, k: acc.k + … }), { k: init })]`
+names every fold in its body and its init, and the two sets must agree. The
+init is JavaScript's and unread: MongoDB's accumulators have their own neutral
+elements. A `$$.reduce` anywhere but inside this wrap is refused with the wrap.
+
 **The source stages** — `$$.indexStats()`, `$$$$.currentOp(…)` and their kind —
 run each row's own statement cell (`refStatement`), with the receiver checked
 against the sigil the row's `on` states, so `$$$$.indexStats()` is refused naming
@@ -459,6 +470,28 @@ against the sigil the row's `on` states, so `$$$$.indexStats()` is refused namin
 **A declared function** binds its name to its body and emits no stage; a call
 inlines the body as a `$let` (`lower.ts`, `applyLambda`). A second declaration in
 one block is refused, as JavaScript refuses it.
+
+## The method cells
+
+A JavaScript method's value lowering is its row's `expr` cell — `{ args, emit }`,
+per family under `perFamily` when the method lives on more than one prototype —
+and the pure MQL builders the cells share live in `src/registry/mql.ts`, a leaf
+like the rest of the registry. A cell RECEIVES everything it needs (`ExprIn`: the
+lowered receiver, the source arguments, `value`, `truth`, `iteratee`, `predicate`,
+`objIteratee`, `bind`) and throws nothing: every refusal is a fact on `args` the
+dispatcher checks first — `slotType`, `slotEnums`, `regexFlag` (`.matchAll` needs
+`g`), `dateFormat` (a `%` specifier the server knows, and a Moment token named
+for what it is), `body` (an options document's keys, types and `notTogether`
+families), `reject` (a count with a message of its own). What the cell then reads
+is already known to be well-formed.
+
+Where JavaScript and MongoDB number differently, the cell follows JavaScript:
+`getMonth()` and `getDay()` count from 0 (`$month` and `$dayOfWeek` from 1), so
+each subtracts 1. The local-time accessors are the same operators as the UTC
+ones: the server has no client timezone, so both read UTC. A receiver PROVEN to be
+of a kind no family has — a boolean, an ObjectId — is refused by every
+field-family row, naming the way to the type the method takes; a `?.` on a
+receiver of unproven type takes the neutral of the one family the row names.
 
 ## What has no value
 

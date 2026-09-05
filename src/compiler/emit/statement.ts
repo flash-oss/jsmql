@@ -38,6 +38,7 @@ import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
 import { select, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
+import { holdsStreamReduce, isReduceWrap, reduceWrapStages } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
 
 /**
@@ -300,25 +301,12 @@ function isInclusion(body: unknown): boolean {
  * is the reducer WRAP, a different road.
  */
 function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, first: boolean): Stage[] {
-  if (holdsStreamReduce(list)) throw E.pendingStatement("the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')", list.pos);
+  // `$$ = [{ k: $$.reduce(…) }]` — the stream folded to one document.
+  if (isReduceWrap(list)) return reduceWrapStages(list);
+  if (holdsStreamReduce(list)) throw E.reduceWrapMisplaced(list.pos);
   if (list.elements.length === 0) return [{ $match: { $expr: false } }];
   const call = { type: "OperatorCall", name: "$documents", args: [list], pos: list.pos } as unknown as Expr;
   return stageStatement(call, env, first);
-}
-
-/** Does the tree hold a `.reduce(…)` on the stream anywhere? */
-function holdsStreamReduce(node: unknown): boolean {
-  if (node === null || typeof node !== "object") return false;
-  if (Array.isArray(node)) return node.some(holdsStreamReduce);
-  const n = node as { type?: string; name?: string } & Record<string, unknown>;
-  if (
-    n.type === "MethodCall" &&
-    n.name === "reduce" &&
-    (chainBase(n as object) as { type: string }).type === "CollectionRef"
-  ) {
-    return true;
-  }
-  return Object.entries(n).some(([k, v]) => k !== "type" && k !== "pos" && holdsStreamReduce(v));
 }
 
 /**

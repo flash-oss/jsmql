@@ -572,6 +572,12 @@ export type Arity = {
    * for an object-shaped body.
    */
   slotEnums?: Readonly<Record<number, readonly string[]>>;
+  /** A regex literal in the slot must carry this flag — `.matchAll` needs `g`, as JavaScript does. */
+  regexFlag?: Readonly<Record<number, string>>;
+  /** An options document in the slot follows this rule — `.truncate({ length, omission })`. */
+  body?: Readonly<Record<number, BodyRule>>;
+  /** A string literal in the slot is a MongoDB date format — its `%` specifiers are checked. */
+  dateFormat?: readonly number[];
 };
 
 /**
@@ -683,6 +689,8 @@ export type BodyRule = {
    * literal passes, as does a document — `{ $meta: "textScore" }` is a real sort key.
    */
   everyValueIn?: readonly (string | number)[];
+  /** Key groups that never appear together — the ISO-week and calendar parts of a date. */
+  notTogether?: readonly (readonly (readonly string[])[])[];
   /**
    * The key order a POSITIONAL call maps onto, for an object-shaped operator:
    *   $dateTrunc($.t, "day")  → { date: "$t", unit: "day" }
@@ -862,6 +870,12 @@ export type ExprIn = {
   iteratee: (cb: Expr) => { as: string; in: unknown };
   /** A callback whose body is a condition. */
   predicate: (cb: Expr) => { as: string; in: Truth };
+  /**
+   * A callback over a document's `{ k, v }` pairs — `(value[, key]) => …` — as
+   * the pair variable's name and the body reading `value` and `key` from it:
+   * `{ as: "kv", ref: "$$kv", body: { $let: { vars: { v: "$$kv.v", k: "$$kv.k" }, in: … } } }`.
+   */
+  objIteratee: (cb: Expr) => { as: string; ref: string; body: unknown };
   /**
    * A collision-free MongoDB variable: the bare name for an `as` / `vars` slot,
    * and the `$$name` that reads it.

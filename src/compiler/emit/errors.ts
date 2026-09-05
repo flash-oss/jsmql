@@ -82,7 +82,19 @@ export function refusalFor(
     case "wrongReceiver": {
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
-      return new CodegenError(`'${spelled}()' is not available on ${got} — it is defined on ${accepts}.`, pos);
+      // The way from what the value IS to what the method takes, when there is one.
+      const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
+      const hint =
+        sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
+          ? ` Map over the array first — '.map(x => x${spelled}(…))' — or take one element ('[0]').`
+          : sel.got === "date" && takesString
+            ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
+            : sel.got === "number" && takesString
+              ? ` Render the number as a string first: '.toString()'.`
+              : sel.got === "bool"
+                ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
+                : "";
+      return new CodegenError(`'${spelled}()' is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
     }
     case "wrongCount":
       return new CodegenError(`${signature(spelled, sel.args)} ${countWord(sel.args)}, got ${sel.got}`, pos);
@@ -364,10 +376,7 @@ export const spreadInStageList = (pos: number): CodegenError =>
  * ROW could carry belongs in the row's own cell instead; these are constructs,
  * which no row names.
  */
-export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
-  "a function declaration": "src/codegen.ts",
-  "the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')": "src/stream-methods.ts",
-};
+export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = { "a function declaration": "src/codegen.ts" };
 
 /** A statement form this compiler does not lower yet. See `PENDING_CONSTRUCTS`. */
 export function pendingStatement(what: string, pos: number): CodegenError {
@@ -572,6 +581,69 @@ export const noStageOnDatabase = (name: string, pos: number): CodegenError =>
     `'$$$' is the database, and no stage runs on it alone: '.${name}()' runs on the collection ('$$.${name}()') or the cluster ('$$$$.${name}()') — its row says which.`,
     pos,
   );
+
+// ── the reducer wrap ─────────────────────────────────────────────────────────
+
+export const reduceWrapArity = (got: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$.reduce(reducer, init)' takes the reducer and its initial value — 2 arguments, got ${got}.`,
+    pos,
+  );
+
+export const reduceWrapCallback = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$.reduce(…)' takes a two-parameter arrow with an expression body: '(acc, d) => acc + d.total'.",
+    pos,
+  );
+
+export const reduceWrapEntry = (pos: number): CodegenError =>
+  new CodegenError(
+    "In '$$ = [{ … }]' every entry is a plain key with a '$$.reduce(…)' — one fold per key; a spread or a computed key has no fold to name.",
+    pos,
+  );
+
+export const reduceWrapShape = (acc: string, d: string, pos: number): CodegenError =>
+  new CodegenError(
+    `This reducer body spells no MongoDB accumulator. The shapes that do: '${acc} + ${d}.<field>' ($sum), '${acc} + 1' ($sum: 1), 'Math.max(${acc}, ${d}.<field>)' / 'Math.min(…)' ($max / $min), '${acc} ?? ${d}.<field>' ($first), '${d}.<field>' ($last), '[...${acc}, ${d}.<field>]' or '${acc}.concat(${d}.<field>)' ($push). For anything else write '$group({ … })'.`,
+    pos,
+  );
+
+export const reduceWrapObjectBody = (acc: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$ = [$$.reduce(…)]' folds to one document, so the reducer returns a document: '(${acc}, d) => ({ ...${acc}, total: ${acc}.total + d.amount })'. For one value write '$$ = [{ total: $$.reduce(…) }]'.`,
+    pos,
+  );
+
+export const reduceWrapInit = (key: string, why: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${key}' is uneven between the reducer and its init — ${why}. Name every accumulator in both.`,
+    pos,
+  );
+
+export const reduceWrapSeed = (pos: number): CodegenError =>
+  new CodegenError(
+    "The initial value of a stream fold is a constant — 0, [], null — because MongoDB's accumulators start empty and the seed is folded in afterwards; a field cannot seed them.",
+    pos,
+  );
+
+export const reduceWrapKeyedNeedsSpread = (acc: string, pos: number): CodegenError =>
+  new CodegenError(
+    `A body that returns '{ [d.k]: d.v }' without '...${acc}' replaces the accumulator each step, so JavaScript keeps the LAST document only. To build one document keyed by a field write '({ ...${acc}, [d.k]: d.v })'.`,
+    pos,
+  );
+
+export const reduceWrapKeyedInit = (pos: number): CodegenError =>
+  new CodegenError("A fold keyed by a field — '({ ...acc, [d.k]: d.v })' — starts from '{}'.", pos);
+
+export const reduceWrapMisplaced = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$.reduce(…)' folds the stream to one value, and a stream must stay documents: wrap it in one — '$$ = [{ total: $$.reduce((acc, d) => acc + d.total, 0) }]' — with nothing else in the list.",
+    pos,
+  );
+
+/** `.mapValues(5)` — an object iteratee is a one- or two-parameter arrow. */
+export const objIterateeShape = (name: string, pos: number): CodegenError =>
+  new CodegenError(`'.${name}((value[, key]) => …)' takes a one- or two-parameter arrow with an expression body.`, pos);
 
 /** `$$.push(...$.items)` — only another collection spreads into the stream. */
 export const unionSpreadSource = (pos: number): CodegenError =>

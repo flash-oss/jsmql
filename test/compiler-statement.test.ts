@@ -350,7 +350,11 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(() => pipeline("$.b = 1; $$ = [{ a: 1 }];")).toThrow(/has to be the FIRST stage/);
     expect(() => pipeline("$$ = [{ a: 1 }, 5];")).toThrow(/expects a document, but got a number/);
     // the reducer wrap is a different road, not built yet
-    expect(() => pipeline("$$ = [{ n: $$.reduce((acc, d) => acc + 1, 0) }];")).toThrow(PendingLowering);
+    // a list holding a fold of the stream is the reducer wrap: one `$group`
+    expect(compiled("$$ = [{ n: $$.reduce((acc, d) => acc + 1, 0) }];")).toEqual([
+      { $group: { _id: null, n: { $sum: 1 } } },
+      { $replaceWith: { n: "$n" } },
+    ]);
   });
 });
 

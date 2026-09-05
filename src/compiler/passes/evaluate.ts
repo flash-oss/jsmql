@@ -639,6 +639,9 @@ export function evaluate(node: Expr, env: Constants): Evaluation {
 
 function at(node: Expr, env: Constants, depth: number): Evaluation {
   if (depth > MAX_DEPTH) return NOT_CONSTANT;
+  // `"$s"` typed in source IS the field `s` (HR1): as an OPERAND it is a value read
+  // at run time, and `"$s".trim()` or `"$s" + "x"` must not settle to a string.
+  if (depth > 0 && node.type === "StringLiteral" && node.value.startsWith("$")) return NOT_CONSTANT;
   const literal = readLiteral(node);
   if (literal.ok) return literal;
 

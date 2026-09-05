@@ -10,9 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the string, number, date and object method cells
+
+Seventy-four method rows now carry their value cell in the registry — the string family (`.trim` … `.truncate`), lodash's string helpers (`.camelCase` … `.escape`), `.inRange`, the sixteen date accessors, the date family (`.plus` … `.set`) and the object family (`.mapValues` … `.omit`) — each measured byte-equal with the shipped output for every accepted spelling, and every spelling run on mongod against the value JavaScript gives (`test/compiler-methods.test.ts`). The pure builders they share (`strLenOf`, `normaliseSliceIndex`, `wordsExpr`, `dateOptions`, …) moved into `src/registry/mql.ts`, a leaf, so the registry still imports nothing outside itself. The pending ratchet fell from 365 to 291.
+
+**A cell throws nothing.** Every refusal the shipped families threw from inside a lowering is a fact on the row's `args` now, checked before the cell runs: `regexFlag` (`.matchAll` needs `g`), `dateFormat` (a `%` specifier the server knows; a Moment token is named for what it is and the specifier it should be), `body` for an options document (`.truncate({ length, omission })`, the date methods' `{ binSize, timezone, startOfWeek }`, `.set({ … })`'s parts with the ISO and calendar families stated `notTogether`), `slotEnums` for a time unit, `reject` for the one-argument `.isAfter(other)` that is just `>`. The cell then reads what it knows to be well-formed.
+
+**Two JavaScript facts the shipped compiler did not keep.** `getMonth()` and `getDay()` count from 0 in JavaScript and `$month`/`$dayOfWeek` from 1 (measured: March is 3, a Sunday is 1); the cells subtract 1 now, as the ruling that a JavaScript spelling has JavaScript behaviour requires. The local-time accessors are the UTC operators — the server knows no client timezone — where the shipped compiler spelled a redundant `timezone: "UTC"` on the UTC ones and nothing on the local ones, the same operator either way.
+
+**Two things the cells exposed and the dispatcher now holds.** A method on a receiver PROVEN to be a boolean or an ObjectId (`$.a > 1`, then `.trim()`) was accepted as an unproven receiver; a proven kind no family has is refused by every field-family row now, naming the way to the type the method takes (`.toString()`, `.format(…)`, `.map(…)`). And `$.name?.trim()` lost its `$ifNull` neutral when the receiver's type was unproven; the neutral now comes from the one family the row names.
+
 ## 2026-09-05 — feat(compiler): facet, union, out, the source stages and declared functions
 
-The statement target's pending list is nearly empty: only the reducer wrap (`$$ = [{ k: $$.reduce(…) }]`) remains. Five constructs landed, each measured against the shipped compiler's output and run on mongod 8.3.7.
+The statement target's pending list is empty. Six constructs landed, each measured against the shipped compiler's output and run on mongod 8.3.7.
 
 **`$ = { k: $$.filter(…), … }` is a `$facet`**, one branch per chain on the stream, lowered under a `$facet` boundary so the row's `forbiddenIn` refuses a `$out` or a nested `$facet` inside — the shipped compiler emitted the nested one and the server refused it. Branch names take the server's field rules (not empty, no `.`, no leading `$`), which the shipped compiler did not check. A bare `$$` is the stream unchanged. A chain on `$$` assigned to a FIELD is refused as "not a value", naming the facet form.
 
@@ -20,7 +30,7 @@ The statement target's pending list is nearly empty: only the reducer wrap (`$$ 
 
 **`$$$.<coll> = <stream>` and `$$$$.<db>.<coll> = <stream>` are `$out`**, filed as the pipeline's last stage, the target constant, one name (or `{ db, coll }`), not empty and not `$`-led — the shipped compiler emitted `{ $out: "" }` and `{ $out: "$x" }`, both refused by the server.
 
-**The source stages** run their rows' own statement cells, with the receiver checked against the sigil the row's `on` states: `$$$$.indexStats()` is refused naming `stream`. **A declared function** binds its name and emits nothing; each call inlines the body.
+**The source stages** run their rows' own statement cells, with the receiver checked against the sigil the row's `on` states: `$$$$.indexStats()` is refused naming `stream`. **A declared function** binds its name and emits nothing; each call inlines the body. **The reducer wrap** `$$ = [{ k: $$.reduce((acc, d) => acc + d.x, 0) }]` is one `$group` with one accumulator per key and the `$replaceWith` that drops `_id`; the object form names every fold in body and init, which must agree; the shipped shapes, measured, with the refusals naming the accumulator spellings.
 
 ## 2026-09-05 — feat(compiler): the join road — `$$$.<coll>.<chain>` as `$lookup`, one route
 

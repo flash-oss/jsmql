@@ -16,6 +16,7 @@ import {
   blockWhereValueExpected,
   mapMustReturnDocument,
   needsPipeline,
+  objIterateeShape,
   notAFieldOfTheDocument,
   notAnArrow,
   unfilledParam,
@@ -75,6 +76,28 @@ export function exprInputs(
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; in: Truth },
+    objIteratee: (cb) => {
+      if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
+        throw objIterateeShape(name, (cb as { pos: number }).pos);
+      }
+      const kv = env.fresh("kv");
+      // `value` and `key` are variables over the pair: bound as the developer's own names
+      let bodyEnv = kv.env;
+      const vars: Record<string, unknown> = {};
+      const v = bodyEnv.param(cb.params[0], "unknown", cb.pos);
+      vars[v.as] = `${kv.ref}.v`;
+      bodyEnv = v.env;
+      if (cb.params.length === 2) {
+        const k = bodyEnv.param(cb.params[1], "string", cb.pos);
+        vars[k.as] = `${kv.ref}.k`;
+        bodyEnv = k.env;
+      }
+      return {
+        as: kv.as,
+        ref: kv.ref,
+        body: { $let: { vars, in: read.value(cb.body, childEnv(bodyEnv, cb, "body")) } },
+      };
+    },
     bind: (hint) => {
       const b = env.fresh(hint);
       return { as: b.as, ref: b.ref };

@@ -20,6 +20,28 @@
 // vendor/mql-specifications and the existing registries. Nothing is invented:
 // where a fact still lives in code, the row says `pending(<file>)`.
 
+import {
+  capitalizeExpr,
+  clampNonNegative,
+  clampNonNegativeIndex,
+  coerceStringBinding,
+  cond,
+  escapeHtmlExpr,
+  firstCharExpr,
+  foldedSubtract,
+  isSingleCodePointLiteral,
+  joinWords,
+  literalIndexValue,
+  normaliseSliceIndex,
+  regexBody,
+  strLenOf,
+  wordsExpr,
+  type Minted,
+  DATE_PARTS_CALENDAR,
+  DATE_PARTS_ISO,
+  DATE_PARTS_ISO_MARKERS,
+  dateOptions,
+} from "./mql.ts";
 import type {
   Expr,
   Binds,
@@ -530,6 +552,28 @@ const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
   },
   { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } },
 ];
+
+/** `.padStart` / `.padEnd`: the pad repeated to the target length, cut to fit when it is more than one character. */
+function padded(
+  side: "start" | "end",
+  recv: unknown,
+  args: readonly Expr[],
+  value: (e: Expr) => unknown,
+  bind: (hint: string) => Minted,
+): unknown {
+  const target = value(args[0]);
+  const pad = args.length === 2 ? value(args[1]) : " ";
+  const v = bind("pad");
+  const need = { $subtract: [target, { $strLenCP: v.ref }] };
+  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
+  const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+  return {
+    $let: {
+      vars: { [v.as]: coerceStringBinding(recv) },
+      in: { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] },
+    },
+  };
+}
 
 export const NAMES = {
   $abs: mongo({
@@ -5723,7 +5767,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $trim: { input: recv } }) },
     stream: unsupported("'.trim()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.trim()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trim();'",
@@ -5739,7 +5783,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
     stream: unsupported("'.trimStart()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.trimStart()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trimStart();'",
@@ -5757,7 +5801,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $ltrim: { input: recv } }) },
     stream: unsupported("'.trimLeft()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.trimLeft()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trimLeft();'",
@@ -5775,7 +5819,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
     stream: unsupported("'.trimEnd()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.trimEnd()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trimEnd();'",
@@ -5791,7 +5835,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $rtrim: { input: recv } }) },
     stream: unsupported("'.trimRight()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.trimRight()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.trimRight();'",
@@ -5809,7 +5853,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLower: recv }) },
     stream: unsupported("'.toLowerCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toLowerCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toLowerCase();'",
@@ -5827,7 +5871,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toUpper: recv }) },
     stream: unsupported("'.toUpperCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toUpperCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toUpperCase();'",
@@ -5845,7 +5889,14 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "start[, count]", allowed: [1, 2] }),
+    expr: {
+      args: { sig: "start[, count]", allowed: [1, 2] },
+      emit: ({ recv, args, value }) => {
+        const start = normaliseSliceIndex(args[0], value(args[0]), recv);
+        const count = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
+        return { $substrCP: [recv, start, count] };
+      },
+    },
     stream: unsupported("'.substr()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.substr()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.substr();'",
@@ -5861,7 +5912,15 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "start[, end]", allowed: [0, 1, 2] }),
+    expr: {
+      args: { sig: "start[, end]", allowed: [0, 1, 2] },
+      emit: ({ recv, args, value }) => {
+        if (args.length === 0) return recv;
+        const start = clampNonNegativeIndex(args[0], value(args[0]));
+        const end = args.length === 1 ? strLenOf(recv) : clampNonNegativeIndex(args[1], value(args[1]));
+        return { $substrCP: [recv, start, clampNonNegative(foldedSubtract(end, start))] };
+      },
+    },
     stream: unsupported("'.substring()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.substring()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.substring();'",
@@ -5879,7 +5938,16 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "index", exact: 1 }),
+    expr: {
+      args: { sig: "index", exact: 1 },
+      emit: ({ recv, args, value }) => {
+        // a literal index folds; a negative one is "" as in JavaScript
+        const lit = literalIndexValue(args[0]);
+        if (lit !== null) return lit < 0 ? "" : { $substrCP: [recv, lit, 1] };
+        const index = value(args[0]);
+        return cond({ $lt: [index, 0] }, "", { $substrCP: [recv, index, 1] });
+      },
+    },
     stream: unsupported("'.charAt()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.charAt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.charAt();'",
@@ -5895,7 +5963,10 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "separator", exact: 1 }),
+    expr: {
+      args: { sig: "separator", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $split: [recv, value(args[0])] }),
+    },
     stream: unsupported("'.split()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.split()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.split();'",
@@ -5921,7 +5992,10 @@ export const NAMES = {
         return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) }, OWN_VALUE);
       },
     },
-    expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
+    expr: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $eq: [{ $indexOfCP: [recv, value(args[0])] }, 0] }),
+    },
     stream: unsupported("'.startsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.startsWith()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.startsWith();'",
@@ -5949,7 +6023,25 @@ export const NAMES = {
         return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}$`) }, OWN_VALUE);
       },
     },
-    expr: pending("src/methods/", { sig: "searchString", exact: 1 }),
+    expr: {
+      args: { sig: "searchString", exact: 1 },
+      emit: ({ recv, args, value, bind }) => {
+        const needle = value(args[0]);
+        const needleLen = strLenOf(needle);
+        const s = bind("str");
+        return {
+          $let: {
+            vars: { [s.as]: coerceStringBinding(recv) },
+            in: {
+              $eq: [
+                { $substrCP: [s.ref, clampNonNegative(foldedSubtract({ $strLenCP: s.ref }, needleLen)), needleLen] },
+                needle,
+              ],
+            },
+          },
+        };
+      },
+    },
     stream: unsupported("'.endsWith()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.endsWith()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.endsWith();'",
@@ -5967,7 +6059,12 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "find, replacement", exact: 2 }),
+    expr: {
+      args: { sig: "find, replacement", exact: 2 },
+      emit: ({ recv, args, value }) => ({
+        $replaceOne: { input: recv, find: value(args[0]), replacement: value(args[1]) },
+      }),
+    },
     stream: unsupported("'.replace()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.replace()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.replace();'",
@@ -5983,7 +6080,12 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "find, replacement", exact: 2 }),
+    expr: {
+      args: { sig: "find, replacement", exact: 2 },
+      emit: ({ recv, args, value }) => ({
+        $replaceAll: { input: recv, find: value(args[0]), replacement: value(args[1]) },
+      }),
+    },
     stream: unsupported("'.replaceAll()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.replaceAll()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.replaceAll();'",
@@ -6011,7 +6113,10 @@ export const NAMES = {
         return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) }, OWN_VALUE);
       },
     },
-    expr: pending("src/methods/", { sig: "regex", exact: 1 }),
+    expr: {
+      args: { sig: "regex", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $regexMatch: regexBody(recv, args[0], () => value(args[0])) }),
+    },
     stream: unsupported("'.match()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.match()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.match();'",
@@ -6027,7 +6132,10 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "regex", exact: 1 }),
+    expr: {
+      args: { sig: "regex", exact: 1, regexFlag: { 0: "g" } },
+      emit: ({ recv, args, value }) => ({ $regexFindAll: regexBody(recv, args[0], () => value(args[0])) }),
+    },
     stream: unsupported("'.matchAll()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.matchAll()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.matchAll();'",
@@ -6045,7 +6153,15 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "regex", exact: 1 }),
+    expr: {
+      args: { sig: "regex", exact: 1 },
+      emit: ({ recv, args, value }) => ({
+        $ifNull: [
+          { $getField: { field: "idx", input: { $regexFind: regexBody(recv, args[0], () => value(args[0])) } } },
+          -1,
+        ],
+      }),
+    },
     stream: unsupported("'.search()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.search()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.search();'",
@@ -6061,7 +6177,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "targetLength[, padString]", allowed: [1, 2] }),
+    expr: {
+      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      emit: ({ recv, args, value, bind }) => padded("start", recv, args, value, bind),
+    },
     stream: unsupported("'.padStart()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.padStart()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.padStart();'",
@@ -6079,7 +6198,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "targetLength[, padString]", allowed: [1, 2] }),
+    expr: {
+      args: { sig: "targetLength[, padString]", allowed: [1, 2] },
+      emit: ({ recv, args, value, bind }) => padded("end", recv, args, value, bind),
+    },
     stream: unsupported("'.padEnd()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.padEnd()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.padEnd();'",
@@ -6095,7 +6217,12 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "count", exact: 1 }),
+    expr: {
+      args: { sig: "count", exact: 1 },
+      emit: ({ recv, args, value }) => ({
+        $reduce: { input: { $range: [0, value(args[0])] }, initialValue: "", in: { $concat: ["$$value", recv] } },
+      }),
+    },
     stream: unsupported("'.repeat()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.repeat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.repeat();'",
@@ -7054,7 +7181,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
     stream: unsupported("'.getFullYear()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getFullYear()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getFullYear();'",
@@ -7072,7 +7199,11 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      // JavaScript counts months and weekdays from 0, MongoDB from 1 — measured: `$month` of January is 1.
+      emit: ({ recv }) => ({ $subtract: [{ $month: recv }, 1] }),
+    },
     stream: unsupported("'.getMonth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getMonth()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getMonth();'",
@@ -7090,7 +7221,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
     stream: unsupported("'.getDate()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getDate()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getDate();'",
@@ -7106,7 +7237,11 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      // JavaScript counts months and weekdays from 0, MongoDB from 1 — measured: `$month` of January is 1.
+      emit: ({ recv }) => ({ $subtract: [{ $dayOfWeek: recv }, 1] }),
+    },
     stream: unsupported("'.getDay()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getDay()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getDay();'",
@@ -7122,7 +7257,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
     stream: unsupported("'.getHours()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getHours()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getHours();'",
@@ -7140,7 +7275,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
     stream: unsupported("'.getMinutes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getMinutes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getMinutes();'",
@@ -7158,7 +7293,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
     stream: unsupported("'.getSeconds()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getSeconds()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getSeconds();'",
@@ -7176,7 +7311,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
     stream: unsupported("'.getMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getMilliseconds()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getMilliseconds();'",
@@ -7194,7 +7329,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $year: recv }) },
     stream: unsupported("'.getUTCFullYear()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCFullYear()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCFullYear();'",
@@ -7212,7 +7347,11 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      // JavaScript counts months and weekdays from 0, MongoDB from 1 — measured: `$month` of January is 1.
+      emit: ({ recv }) => ({ $subtract: [{ $month: recv }, 1] }),
+    },
     stream: unsupported("'.getUTCMonth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCMonth()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCMonth();'",
@@ -7230,7 +7369,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dayOfMonth: recv }) },
     stream: unsupported("'.getUTCDate()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCDate()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCDate();'",
@@ -7248,7 +7387,11 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      // JavaScript counts months and weekdays from 0, MongoDB from 1 — measured: `$month` of January is 1.
+      emit: ({ recv }) => ({ $subtract: [{ $dayOfWeek: recv }, 1] }),
+    },
     stream: unsupported("'.getUTCDay()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCDay()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCDay();'",
@@ -7266,7 +7409,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $hour: recv }) },
     stream: unsupported("'.getUTCHours()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCHours()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCHours();'",
@@ -7284,7 +7427,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $minute: recv }) },
     stream: unsupported("'.getUTCMinutes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCMinutes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCMinutes();'",
@@ -7302,7 +7445,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $second: recv }) },
     stream: unsupported("'.getUTCSeconds()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCSeconds()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCSeconds();'",
@@ -7320,7 +7463,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $millisecond: recv }) },
     stream: unsupported("'.getUTCMilliseconds()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getUTCMilliseconds()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getUTCMilliseconds();'",
@@ -7338,7 +7481,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLong: recv }) },
     stream: unsupported("'.getTime()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.getTime()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.getTime();'",
@@ -7354,7 +7497,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $dateToString: { date: recv } }) },
     stream: unsupported("'.toISOString()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toISOString()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toISOString();'",
@@ -7369,10 +7512,28 @@ export const NAMES = {
     doc: "'.plus()' — see docs/LANGUAGE.md.",
     call: true,
     on: "date",
-    returns: "unknown",
+    returns: "date",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "amount, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "amount, unit[, timezone]",
+        allowed: [2, 3],
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => ({
+        $dateAdd: { startDate: recv, unit: value(args[1]), amount: value(args[0]), ...dateOptions(args[2], value) },
+      }),
+    },
     stream: unsupported("'.plus()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.plus()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.plus();'",
@@ -7385,10 +7546,33 @@ export const NAMES = {
     doc: "'.minus()' — see docs/LANGUAGE.md.",
     call: true,
     on: "date",
-    returns: "unknown",
+    returns: "date",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "amount, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "amount, unit[, timezone]",
+        allowed: [2, 3],
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "int-or-long", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => ({
+        $dateSubtract: {
+          startDate: recv,
+          unit: value(args[1]),
+          amount: value(args[0]),
+          ...dateOptions(args[2], value),
+        },
+      }),
+    },
     stream: unsupported("'.minus()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.minus()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.minus();'",
@@ -7404,7 +7588,27 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "other, unit[, timezone]",
+        allowed: [2, 3],
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "date", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => ({
+        $dateDiff: { startDate: value(args[0]), endDate: recv, unit: value(args[1]), ...dateOptions(args[2], value) },
+      }),
+    },
     stream: unsupported("'.diff()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.diff()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.diff();'",
@@ -7417,10 +7621,30 @@ export const NAMES = {
     doc: "'.startOf()' — see docs/LANGUAGE.md.",
     call: true,
     on: "date",
-    returns: "unknown",
+    returns: "date",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "unit[, timezone]", allowed: [1, 2] }),
+    expr: {
+      args: {
+        sig: "unit[, timezone]",
+        allowed: [1, 2],
+        slotEnums: { 0: TIME_UNIT },
+        body: {
+          1: {
+            required: [],
+            optional: ["binSize", "timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+        slotType: { 1: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => ({
+        $dateTrunc: { date: recv, unit: value(args[0]), ...dateOptions(args[1], value) },
+      }),
+    },
     stream: unsupported("'.startOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.startOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.startOf();'",
@@ -7436,7 +7660,25 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "format[, timezone]", allowed: [1, 2] }),
+    expr: {
+      args: {
+        sig: "format[, timezone]",
+        allowed: [1, 2],
+        slotType: { 0: "string", 1: ["string", "object"] },
+        dateFormat: [0],
+        body: {
+          1: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => ({
+        $dateToString: { date: recv, format: value(args[0]), ...dateOptions(args[1], value) },
+      }),
+    },
     stream: unsupported("'.format()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.format()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.format();'",
@@ -7452,7 +7694,25 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        return { $week: opts.timezone === undefined ? recv : { date: recv, ...opts } };
+      },
+    },
     stream: unsupported("'.week()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.week()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.week();'",
@@ -7468,7 +7728,25 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        return { $isoWeek: opts.timezone === undefined ? recv : { date: recv, ...opts } };
+      },
+    },
     stream: unsupported("'.isoWeek()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isoWeek()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isoWeek();'",
@@ -7484,7 +7762,25 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        return { $isoWeekYear: opts.timezone === undefined ? recv : { date: recv, ...opts } };
+      },
+    },
     stream: unsupported("'.isoWeekYear()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isoWeekYear()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isoWeekYear();'",
@@ -7502,7 +7798,25 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        return { $isoDayOfWeek: opts.timezone === undefined ? recv : { date: recv, ...opts } };
+      },
+    },
     stream: unsupported("'.isoWeekday()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isoWeekday()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isoWeekday();'",
@@ -7520,7 +7834,25 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        return { $dayOfYear: opts.timezone === undefined ? recv : { date: recv, ...opts } };
+      },
+    },
     stream: unsupported("'.dayOfYear()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.dayOfYear()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.dayOfYear();'",
@@ -7538,7 +7870,26 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[timezone]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[timezone]",
+        allowed: [0, 1],
+        body: {
+          0: {
+            required: [],
+            optional: ["timezone"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+          },
+        },
+        slotType: { 0: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        const opts = dateOptions(args[0], value);
+        const operand = opts.timezone === undefined ? recv : { date: recv, ...opts };
+        return { $toInt: { $ceil: { $divide: [{ $month: operand }, 3] } } };
+      },
+    },
     stream: unsupported("'.quarter()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.quarter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.quarter();'",
@@ -7554,7 +7905,33 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "other, unit[, timezone]",
+        allowed: [2, 3],
+        reject: {
+          1: ".isSame(other) without a unit is just '===' — write 'a === b'. Pass a unit to compare at that granularity: .isSame(other, \"day\").",
+        },
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "date", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["binSize", "timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => {
+        const bucket = (date: unknown): unknown => ({
+          $dateTrunc: { date, unit: value(args[1]), ...dateOptions(args[2], value) },
+        });
+        return { $eq: [bucket(recv), bucket(value(args[0]))] };
+      },
+    },
     stream: unsupported("'.isSame()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isSame()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isSame();'",
@@ -7570,7 +7947,33 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "other, unit[, timezone]",
+        allowed: [2, 3],
+        reject: {
+          1: ".isBefore(other) without a unit is just '<' — write 'a < b'. Pass a unit to compare at that granularity: .isBefore(other, \"day\").",
+        },
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "date", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["binSize", "timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => {
+        const bucket = (date: unknown): unknown => ({
+          $dateTrunc: { date, unit: value(args[1]), ...dateOptions(args[2], value) },
+        });
+        return { $lt: [bucket(recv), bucket(value(args[0]))] };
+      },
+    },
     stream: unsupported("'.isBefore()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isBefore()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isBefore();'",
@@ -7588,7 +7991,33 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, unit[, timezone]", allowed: [2, 3] }),
+    expr: {
+      args: {
+        sig: "other, unit[, timezone]",
+        allowed: [2, 3],
+        reject: {
+          1: ".isAfter(other) without a unit is just '>' — write 'a > b'. Pass a unit to compare at that granularity: .isAfter(other, \"day\").",
+        },
+        slotEnums: { 1: TIME_UNIT },
+        slotType: { 0: "date", 2: ["string", "object"] },
+        body: {
+          2: {
+            required: [],
+            optional: ["binSize", "timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+      },
+      emit: ({ recv, args, value }) => {
+        const bucket = (date: unknown): unknown => ({
+          $dateTrunc: { date, unit: value(args[1]), ...dateOptions(args[2], value) },
+        });
+        return { $gt: [bucket(recv), bucket(value(args[0]))] };
+      },
+    },
     stream: unsupported("'.isAfter()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isAfter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isAfter();'",
@@ -7601,10 +8030,76 @@ export const NAMES = {
     doc: "'.set()' — see docs/LANGUAGE.md.",
     call: true,
     on: "date",
-    returns: "unknown",
+    returns: "date",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "{ parts }[, timezone]", allowed: [1, 2] }),
+    expr: {
+      args: {
+        sig: "{ parts }[, timezone]",
+        allowed: [1, 2],
+        constant: [0],
+        slotType: { 0: "object", 1: ["string", "object"] },
+        body: {
+          0: {
+            required: [],
+            optional: [
+              "year",
+              "month",
+              "day",
+              "isoWeekYear",
+              "isoWeek",
+              "isoDayOfWeek",
+              "hour",
+              "minute",
+              "second",
+              "millisecond",
+            ],
+            closed: true,
+            keyTypes: {
+              year: "int-or-long",
+              month: "int-or-long",
+              day: "int-or-long",
+              isoWeekYear: "int-or-long",
+              isoWeek: "int-or-long",
+              isoDayOfWeek: "int-or-long",
+              hour: "int-or-long",
+              minute: "int-or-long",
+              second: "int-or-long",
+              millisecond: "int-or-long",
+            },
+            notTogether: [
+              [
+                ["year", "month", "day"],
+                ["isoWeekYear", "isoWeek", "isoDayOfWeek"],
+              ],
+            ],
+          },
+          1: { required: [], optional: ["timezone"], closed: true, keyTypes: { timezone: "string" } },
+        },
+      },
+      emit: ({ recv, args, value, bind }) => {
+        // the parts named decide the family; the rest come from the date itself
+        const given = new Map<string, Expr>();
+        for (const e of (args[0] as Extract<Expr, { type: "ObjectLiteral" }>).entries) {
+          if (e.type === "KeyValueEntry" && e.key.kind === "static") given.set(e.key.name, e.value);
+        }
+        const iso = [...given.keys()].some((k) => (DATE_PARTS_ISO_MARKERS as readonly string[]).includes(k));
+        const family: readonly string[] = iso ? DATE_PARTS_ISO : DATE_PARTS_CALENDAR;
+        const tz = dateOptions(args[1], value);
+        const complete = family.every((k) => given.has(k));
+        const parts = complete ? null : bind("parts");
+        const rebuilt: Record<string, unknown> = {};
+        for (const key of family) {
+          const v = given.get(key);
+          rebuilt[key] = v !== undefined ? value(v) : `${parts!.ref}.${key}`;
+        }
+        const fromParts = { $dateFromParts: { ...rebuilt, ...tz } };
+        if (parts === null) return fromParts;
+        const toParts: Record<string, unknown> = { date: recv, ...tz };
+        if (iso) toParts.iso8601 = true;
+        return { $let: { vars: { [parts.as]: { $dateToParts: toParts } }, in: fromParts } };
+      },
+    },
     stream: unsupported("'.set()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.set()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.set();'",
@@ -7617,10 +8112,38 @@ export const NAMES = {
     doc: "'.endOf()' — see docs/LANGUAGE.md.",
     call: true,
     on: "date",
-    returns: "unknown",
+    returns: "date",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "unit[, timezone]", allowed: [1, 2] }),
+    expr: {
+      args: {
+        sig: "unit[, timezone]",
+        allowed: [1, 2],
+        slotEnums: { 0: TIME_UNIT },
+        body: {
+          1: {
+            required: [],
+            optional: ["binSize", "timezone", "startOfWeek"],
+            closed: true,
+            keyTypes: { binSize: "number", timezone: "string" },
+            enums: { startOfWeek: WEEKDAY },
+            caseInsensitiveKeys: ["startOfWeek"],
+          },
+        },
+        slotType: { 1: ["string", "object"] },
+      },
+      emit: ({ recv, args, value }) => {
+        // the start of the NEXT bucket, one millisecond back
+        const opts = dateOptions(args[1], value);
+        const step: Record<string, unknown> = {
+          startDate: { $dateTrunc: { date: recv, unit: value(args[0]), ...opts } },
+          unit: value(args[0]),
+          amount: opts.binSize ?? 1,
+        };
+        if (opts.timezone !== undefined) step.timezone = opts.timezone;
+        return { $dateSubtract: { startDate: { $dateAdd: step }, unit: "millisecond", amount: 1 } };
+      },
+    },
     stream: unsupported("'.endOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.endOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.endOf();'",
@@ -8641,7 +9164,17 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, objIteratee }) => {
+        const it = objIteratee(args[0]);
+        return {
+          $arrayToObject: {
+            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: `${it.ref}.k`, v: it.body } },
+          },
+        };
+      },
+    },
     stream: unsupported("'.mapValues()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.mapValues()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mapValues();'",
@@ -8665,7 +9198,17 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, objIteratee }) => {
+        const it = objIteratee(args[0]);
+        return {
+          $arrayToObject: {
+            $map: { input: { $objectToArray: recv }, as: it.as, in: { k: { $toString: it.body }, v: `${it.ref}.v` } },
+          },
+        };
+      },
+    },
     stream: unsupported("'.mapKeys()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.mapKeys()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mapKeys();'",
@@ -8681,7 +9224,19 @@ export const NAMES = {
     returns: { object: "unknown", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
+    expr: {
+      args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
+      emit: ({ recv, args, bind }) => {
+        // the keys are field names, stated by the rule
+        const keys = (args[0] as Extract<Expr, { type: "ArrayLiteral" }>).elements.map(
+          (e) => (e as { value: string }).value,
+        );
+        const obj = bind("obj");
+        const out: Record<string, unknown> = {};
+        for (const k of keys) out[k] = { $getField: { field: k, input: obj.ref } };
+        return { $let: { vars: { [obj.as]: recv }, in: out } };
+      },
+    },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Keeps ONLY the named fields: `_id` goes too unless named, as lodash's does.
@@ -8703,7 +9258,20 @@ export const NAMES = {
     returns: { object: "unknown", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
+    expr: {
+      args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" } },
+      emit: ({ recv, args, bind }) => {
+        const keys = (args[0] as Extract<Expr, { type: "ArrayLiteral" }>).elements.map(
+          (e) => (e as { value: string }).value,
+        );
+        const kv = bind("kv");
+        return {
+          $arrayToObject: {
+            $filter: { input: { $objectToArray: recv }, as: kv.as, cond: { $not: [{ $in: [`${kv.ref}.k`, keys] }] } },
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       emit: ({ args, value }) => [{ $project: Object.fromEntries((value(args[0]) as string[]).map((k) => [k, 0])) }],
@@ -8728,7 +9296,13 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, objIteratee }) => {
+        const it = objIteratee(args[0]);
+        return { $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: it.body } } };
+      },
+    },
     stream: unsupported("'.pickBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.pickBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pickBy();'",
@@ -8750,7 +9324,15 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, objIteratee }) => {
+        const it = objIteratee(args[0]);
+        return {
+          $arrayToObject: { $filter: { input: { $objectToArray: recv }, as: it.as, cond: { $not: [it.body] } } },
+        };
+      },
+    },
     stream: unsupported("'.omitBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.omitBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.omitBy();'",
@@ -8766,7 +9348,21 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return {
+          $arrayToObject: {
+            $map: {
+              input: { $objectToArray: recv },
+              as: kv.as,
+              in: { k: { $toString: `${kv.ref}.v` }, v: `${kv.ref}.k` },
+            },
+          },
+        };
+      },
+    },
     stream: unsupported("'.invert()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.invert()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.invert();'",
@@ -8782,7 +9378,13 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+      },
+    },
     stream: unsupported("'.toPairs()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toPairs();'",
@@ -8816,7 +9418,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => capitalizeExpr(recv) },
     stream: unsupported("'.capitalize()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.capitalize()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.capitalize();'",
@@ -8834,7 +9436,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toUpper") },
     stream: unsupported("'.upperFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.upperFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.upperFirst();'",
@@ -8852,7 +9454,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstCharExpr(recv, "$toLower") },
     stream: unsupported("'.lowerFirst()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.lowerFirst()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.lowerFirst();'",
@@ -8870,7 +9472,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => wordsExpr(recv, bind) },
     stream: unsupported("'.words()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.words()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.words();'",
@@ -8886,7 +9488,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => ({ $toLower: joinWords(wordsExpr(recv, bind), "-", bind) }),
+    },
     stream: unsupported("'.kebabCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.kebabCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.kebabCase();'",
@@ -8904,7 +9509,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => ({ $toLower: joinWords(wordsExpr(recv, bind), "_", bind) }),
+    },
     stream: unsupported("'.snakeCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.snakeCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.snakeCase();'",
@@ -8922,7 +9530,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => joinWords(wordsExpr(recv, bind), " ", bind, capitalizeExpr),
+    },
     stream: unsupported("'.startCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.startCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.startCase();'",
@@ -8940,7 +9551,18 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const p = bind("pascal");
+        return {
+          $let: {
+            vars: { [p.as]: joinWords(wordsExpr(recv, bind), "", bind, capitalizeExpr) },
+            in: firstCharExpr(p.ref, "$toLower"),
+          },
+        };
+      },
+    },
     stream: unsupported("'.camelCase()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.camelCase()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.camelCase();'",
@@ -8958,7 +9580,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => escapeHtmlExpr(recv) },
     stream: unsupported("'.escape()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.escape()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.escape();'",
@@ -8974,7 +9596,48 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[{ length, omission }]", allowed: [0, 1] }),
+    expr: {
+      args: {
+        sig: "[{ length, omission }]",
+        allowed: [0, 1],
+        slotType: { 0: "object" },
+        body: {
+          0: {
+            required: [],
+            optional: ["length", "omission"],
+            closed: true,
+            keyTypes: { length: "number", omission: "string" },
+            constantKeys: ["length", "omission"],
+          },
+        },
+      },
+      emit: ({ recv, args, bind }) => {
+        // the options are constants (the rule says so); lodash's defaults otherwise
+        let length = 30;
+        let omission = "...";
+        if (args[0]?.type === "ObjectLiteral") {
+          for (const e of args[0].entries) {
+            if (e.type !== "KeyValueEntry" || e.key.kind !== "static") continue;
+            if (e.key.name === "length" && e.value.type === "NumberLiteral") length = e.value.value;
+            if (e.key.name === "omission" && e.value.type === "StringLiteral") omission = e.value.value;
+          }
+        }
+        const keep = Math.max(0, length - omission.length);
+        const s = bind("str");
+        return {
+          $let: {
+            vars: { [s.as]: coerceStringBinding(recv) },
+            in: {
+              $cond: [
+                { $gt: [{ $strLenCP: s.ref }, length] },
+                { $concat: [{ $substrCP: [s.ref, 0, keep] }, omission] },
+                s.ref,
+              ],
+            },
+          },
+        };
+      },
+    },
     stream: unsupported("'.truncate()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.truncate()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.truncate();'",
@@ -9008,7 +9671,14 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[start, ]end", allowed: [1, 2] }),
+    expr: {
+      args: { sig: "[start, ]end", allowed: [1, 2] },
+      emit: ({ recv, args, value }) => {
+        const lo = args.length === 2 ? value(args[0]) : 0;
+        const hi = value(args[args.length === 2 ? 1 : 0]);
+        return { $and: [{ $gte: [recv, { $min: [lo, hi] }] }, { $lt: [recv, { $max: [lo, hi] }] }] };
+      },
+    },
     stream: unsupported("'.inRange()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.inRange()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.inRange();'",

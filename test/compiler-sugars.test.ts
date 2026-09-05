@@ -194,6 +194,74 @@ describe("compiler/emit — `$$$.<coll> = <stream>` is $out", () => {
   });
 });
 
+describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to one document", () => {
+  it("reads each reducer body as the accumulator it spells", () => {
+    expect(
+      compiled(
+        "$$ = [{ total: $$.reduce((acc, d) => acc + d.a, 0), n: $$.reduce((acc, d) => acc + 1, 0), mx: $$.reduce((acc, d) => Math.max(acc, d.a), 0), tags: $$.reduce((acc, d) => [...acc, d.tag], []), last: $$.reduce((acc, d) => d.a, null), first: $$.reduce((acc, d) => acc ?? d.tag, null) }];",
+        [{ total: 6, n: 3, mx: 3, tags: ["t1", "t2", "t1"], last: 3, first: "t1" }],
+      ),
+    ).toEqual([
+      {
+        $group: {
+          _id: null,
+          total: { $sum: "$a" },
+          n: { $sum: 1 },
+          mx: { $max: "$a" },
+          tags: { $push: "$tag" },
+          last: { $last: "$a" },
+          first: { $first: "$tag" },
+        },
+      },
+      // the seed is folded in as JavaScript would: `Math.max` from 0 is the max with 0
+      {
+        $replaceWith: {
+          total: "$total",
+          n: "$n",
+          mx: { $max: [0, "$mx"] },
+          tags: "$tags",
+          last: "$last",
+          first: "$first",
+        },
+      },
+    ]);
+    // the object reducer names every fold in its body and its init
+    expect(
+      compiled(
+        "$$ = [$$.reduce((acc, d) => ({ ...acc, total: acc.total + d.a, n: acc.n + 1 }), { total: 0, n: 0 })];",
+        [{ total: 6, n: 3 }],
+      ),
+    ).toEqual([
+      { $group: { _id: null, total: { $sum: "$a" }, n: { $sum: 1 } } },
+      { $replaceWith: { total: "$total", n: "$n" } },
+    ]);
+    // the fold's document is the stream's document after it
+    expect(
+      compiled(
+        "$$.filter(d => d.a > 1); $$ = [{ total: $$.reduce((acc, d) => acc + d.a, 0) }]; $.double = $.total * 2;",
+        [{ total: 5, double: 10 }],
+      ),
+    ).toEqual([
+      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $group: { _id: null, total: { $sum: "$a" } } },
+      { $replaceWith: { total: "$total" } },
+      { $set: { double: { $multiply: ["$total", 2] } } },
+    ]);
+  });
+
+  it("refuses a body that spells no accumulator, and a fold outside its wrap", () => {
+    expect(() => pipeline("$$ = [{ t: $$.reduce((acc, d) => acc * d.a, 1) }];")).toThrow(
+      /spells no MongoDB accumulator/,
+    );
+    expect(() => pipeline("$$ = [{ t: $$.reduce((acc, d) => acc + d.a, 0) }, { x: 1 }];")).toThrow(/wrap it in one/);
+    expect(() => pipeline("$$ = [$$.reduce((acc, d) => ({ ...acc, t: acc.t + d.a }), { t: 0, n: 0 })];")).toThrow(
+      /uneven/,
+    );
+    expect(() => pipeline("$$ = [$$.reduce((acc, d) => acc + d.a, 0)];")).toThrow(/returns a document/);
+    expect(() => pipeline("$.t = $$.reduce((acc, d) => acc + d.a, 0);")).toThrow(/not a value/);
+  });
+});
+
 describe("compiler/emit — the source stages, scoped by sigil", () => {
   it("runs the row's stage, first, on the sigil the row states", () => {
     expect(compiled("$$.indexStats();")).toEqual([{ $indexStats: {} }]);

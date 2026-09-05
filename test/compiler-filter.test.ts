@@ -187,8 +187,9 @@ describe("compiler/emit/filter — methods and operators", () => {
 
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
     // The query cell answers null, and the fallback asks the VALUE lowering — which for
-    // these methods is still the registry's `pending`, so that is what arrives.
-    expect(() => filter('$abs($.n).startsWith("A")')).toThrow(PendingLowering);
+    // the array methods is still the registry's `pending`, so that is what arrives.
+    // A receiver PROVEN to be no string is refused before either: `$abs` returns a number.
+    expect(() => filter('$abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
     expect(() => filter("$.items.every(i => i.q > 2)")).toThrow(PendingLowering);
     expect(() => filter("$.items.some(i => i.q > $.min)")).toThrow(PendingLowering);
     // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
@@ -198,7 +199,8 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
       a: { $elemMatch: { b: { $elemMatch: { c: { $eq: 1, $not: { $type: "array" } } } } } },
     });
-    expect(() => filter("$.s.startsWith($.prefix)")).toThrow(PendingLowering);
+    // a field against a field has no query form: the value cell's shape under `$expr`
+    expect(filter("$.s.startsWith($.prefix)")).toEqual({ $expr: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] } });
   });
 
   it("lowers a query-only operator to its query form and refuses a non-constant", () => {

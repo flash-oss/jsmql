@@ -65,6 +65,8 @@ export function kindOf(node: Expr, env: Env): Known {
     case "BigIntLiteral":
       return "number";
     case "StringLiteral":
+      // `"$x"` typed in source IS the field `x` (HR1): its kind is the field's, unknown.
+      return node.value.startsWith("$") ? "unknown" : "string";
     case "TemplateLiteral":
       return "string";
     case "BooleanLiteral":

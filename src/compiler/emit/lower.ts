@@ -488,8 +488,12 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };
   const lowered = lowerValue(recv, env);
   if (src === "set") return { kind: "value", family: "set", lowered };
-  const family = familyOfKind(kindOf(recv, env));
-  return family === null ? { kind: "opaque", lowered } : { kind: "value", family, lowered };
+  const kind = kindOf(recv, env);
+  const family = familyOfKind(kind);
+  if (family !== null) return { kind: "value", family, lowered };
+  // A kind the registry PROVES but no method family has — `$.a > 1` is a boolean —
+  // is not "unknown": every row refuses it, naming what it takes.
+  return kind === "unknown" ? { kind: "opaque", lowered } : { kind: "opaque", lowered, proved: kind };
 }
 
 const spelledMethod = (name: string, recv: Expr): string =>
@@ -530,7 +534,7 @@ function dispatchOn(
     checkSlots(name, sel.rule.args, exprArgs);
     const recv =
       receiver.kind === "value" || receiver.kind === "opaque"
-        ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode))
+        ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
         : null;
     return sel.rule.emit(exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ));
   }
@@ -550,17 +554,20 @@ function dispatchOn(
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);
 }
 
-/** An optional chain's receiver takes the family's empty value, so a missing field reads as empty. */
-function withOptional(lowered: unknown, receiver: Receiver, optional: boolean): unknown {
-  if (!optional || receiver.kind !== "value") return lowered;
+/**
+ * An optional chain's receiver takes the family's empty value, so a missing field
+ * reads as empty. The family is the receiver's when proven; otherwise the one the
+ * row names, when it names exactly one.
+ */
+function withOptional(lowered: unknown, receiver: Receiver, optional: boolean, name: string): unknown {
+  if (!optional || (receiver.kind !== "value" && receiver.kind !== "opaque")) return lowered;
+  let family: string | null = receiver.kind === "value" ? receiver.family : null;
+  if (family === null) {
+    const on = familiesFor(name);
+    if (on !== undefined && on !== "any" && on.length === 1) family = on[0];
+  }
   const neutral =
-    receiver.family === "string"
-      ? ""
-      : receiver.family === "array" || receiver.family === "set"
-        ? []
-        : receiver.family === "object"
-          ? {}
-          : null;
+    family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
   return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
 }
 

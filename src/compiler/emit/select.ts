@@ -37,8 +37,12 @@ export type Receiver =
   | { readonly kind: "stream" }
   /** A value whose family is PROVEN, already lowered. */
   | { readonly kind: "value"; readonly family: FieldFamily; readonly lowered: unknown }
-  /** A value whose family is not provable — a field path, an unknown-typed binding. */
-  | { readonly kind: "opaque"; readonly lowered: unknown };
+  /**
+   * A value whose family is not provable — a field path, an unknown-typed binding —
+   * or one PROVEN to be of a kind no method family has (`proved`: a boolean, an
+   * ObjectId), which every field-family row refuses.
+   */
+  | { readonly kind: "opaque"; readonly lowered: unknown; readonly proved?: string };
 
 /** The argument list's class. A PARTITION — see `shapeOf` for the order. */
 export type Shaped =
@@ -97,7 +101,7 @@ export type Selected =
   | {
       readonly kind: "wrongReceiver";
       readonly name: string;
-      readonly got: Family | null;
+      readonly got: string | null;
       readonly accepts: readonly Family[] | "any";
     }
   /** A spread reached a rule that reads its arguments one by one. */
@@ -192,6 +196,7 @@ function receiverGate(name: string, receiver: Receiver): Selected | null {
   const on = familiesFor(name);
   if (on === undefined || on === "any") return null;
   if (receiver.kind === "opaque") {
+    if (receiver.proved !== undefined) return { kind: "wrongReceiver", name, got: receiver.proved, accepts: on };
     return on.some(isFieldFamily) ? null : { kind: "wrongReceiver", name, got: null, accepts: on };
   }
   const family = familyOf(receiver);

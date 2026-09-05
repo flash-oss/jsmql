@@ -263,6 +263,16 @@ export function checkBody(
         );
       }
     }
+    for (const [a, b] of rule.notTogether ?? []) {
+      const inA = present.filter((k) => a.includes(k));
+      const inB = present.filter((k) => b.includes(k));
+      if (inA.length > 0 && inB.length > 0) {
+        throw new CodegenError(
+          `'${name}' takes '${inA[0]}' or '${inB[0]}', not both: they belong to two families that never mix — ${a.join("/")} against ${b.join("/")}.`,
+          pos,
+        );
+      }
+    }
     for (const group of rule.together ?? []) {
       const found = group.filter((k) => present.includes(k));
       if (found.length !== 0 && found.length !== group.length) {
@@ -346,6 +356,23 @@ export function checkSlots(
       );
     }
   }
+  for (const [i, flag] of Object.entries(args.regexFlag ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== undefined && e.type === "RegexLiteral" && !e.flags.includes(flag)) {
+      throw new CodegenError(
+        `'${name}' needs the '${flag}' flag on its regex, as JavaScript does (a TypeError without it): write /…/${flag}.`,
+        e.pos,
+      );
+    }
+  }
+  for (const i of args.dateFormat ?? []) {
+    const e = operands[i];
+    if (e !== undefined && e.type === "StringLiteral") checkDateFormat(name, e.value, e.pos);
+  }
+  for (const [i, rule] of Object.entries(args.body ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], rule.positional ?? [], e.pos);
+  }
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
     if (e === undefined || (hasObjectForm && e.type === "ObjectLiteral")) continue;
@@ -414,5 +441,74 @@ export function checkSlots(
   for (const [i, allowed] of Object.entries(args.slotEnums ?? {})) {
     const e = operands[Number(i)];
     if (e !== undefined) checkEnum(name, `argument ${Number(i) + 1}`, e, allowed, false);
+  }
+}
+
+// ── date formats ─────────────────────────────────────────────────────────────
+
+const DATE_FORMAT_SPECIFIERS = "dGHjLmMSuUVwYzZ%";
+/** Moment/Luxon tokens a developer may reach for, and the MongoDB specifier each is — or null for one MongoDB cannot format. */
+const MOMENT_FORMAT_TOKENS: readonly (readonly [string, string | null])[] = [
+  ["YYYY", "%Y"],
+  ["MMMM", null],
+  ["dddd", null],
+  ["MMM", null],
+  ["ddd", null],
+  ["DDD", "%j"],
+  ["SSS", "%L"],
+  ["YY", null],
+  ["MM", "%m"],
+  ["DD", "%d"],
+  ["HH", "%H"],
+  ["hh", null],
+  ["ZZ", "%z"],
+  ["mm", "%M"],
+  ["ss", "%S"],
+  ["Do", null],
+];
+const MOMENT_FORMAT_RE = /YYYY|YY|MMMM|MMM|MM|DDD|DD|dddd|ddd|HH|hh|mm|ss|SSS|ZZ|Do/;
+
+function momentFormatHint(fmt: string): string {
+  let out = "";
+  let i = 0;
+  outer: while (i < fmt.length) {
+    for (const [token, spec] of MOMENT_FORMAT_TOKENS) {
+      if (!fmt.startsWith(token, i)) continue;
+      out += spec ?? token;
+      i += token.length;
+      continue outer;
+    }
+    out += fmt[i];
+    i++;
+  }
+  const missing = out.replace(/%./g, "").match(/[A-Za-z]+/g);
+  if (missing === null) return ` Did you mean '${out}'?`;
+  return (
+    ` MongoDB has no format specifier for ${[...new Set(missing)].map((t) => `'${t}'`).join(", ")}: it outputs no ` +
+    `month name, weekday name, 12-hour clock or 2-digit year. Derive those from the numeric parts (e.g. ["Jan", …][$.t.getMonth()]).`
+  );
+}
+
+/** A MongoDB date format: every `%` carries a known specifier, and Moment tokens are named for what they are. */
+export function checkDateFormat(name: string, fmt: string, pos: number): void {
+  for (let i = 0; i < fmt.length; i++) {
+    if (fmt[i] !== "%") continue;
+    const spec = fmt[i + 1];
+    if (spec === undefined || !DATE_FORMAT_SPECIFIERS.includes(spec)) {
+      const flip =
+        spec === undefined ? undefined : spec === spec.toUpperCase() ? spec.toLowerCase() : spec.toUpperCase();
+      const hint = flip !== undefined && DATE_FORMAT_SPECIFIERS.includes(flip) ? ` Did you mean '%${flip}'?` : "";
+      throw new CodegenError(
+        `'${name}' format has an invalid specifier '%${spec ?? ""}'.${hint} MongoDB accepts %Y %G %m %d %j %U %V %u %w %H %M %S %L %z %Z and %%.`,
+        pos,
+      );
+    }
+    i++;
+  }
+  if (!fmt.includes("%") && MOMENT_FORMAT_RE.test(fmt)) {
+    throw new CodegenError(
+      `'${name}' takes MongoDB's date format specifiers, not Moment/Luxon tokens — '${fmt}' formats as that literal text, never a date.${momentFormatHint(fmt)}`,
+      pos,
+    );
   }
 }
