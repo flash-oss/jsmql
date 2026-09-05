@@ -323,7 +323,22 @@ type MongoSpec<
    * stream-chain form. It was six hardcoded strings in src/pipeline.ts, so all
    * three read a set no row declared.
    */
-  replacesDocument?: true;
+  /**
+   * The stage drops every field the input document carried, so a binding held
+   * in a `__jsmql.var.*` field is gone after it. `"inclusion"` says the drop
+   * depends on the body: a `$project` that names fields to KEEP drops the rest,
+   * one that names fields to remove keeps them — measured, the binding survived
+   * `{ $project: { x: 0 } }` and vanished under `{ $project: { x: 1 } }`.
+   */
+  replacesDocument?: true | "inclusion";
+  /**
+   * The stage's sub-pipeline runs over ANOTHER collection's documents. Inside it
+   * `$.x` still means the outer document (HR4), which the server can reach only
+   * through the stage's `let` — the join road's work — and a field-carried
+   * binding is not there at all. `$facet` and its kind run over the same
+   * documents and state nothing.
+   */
+  pipelineOver?: "foreign";
   /**
    * The position this operator's OPERAND stands in, where it is not the operator's
    * own. A query document's values are read as query values, and `$expr`'s is the
@@ -3891,6 +3906,7 @@ export const NAMES = {
     },
     category: "array",
     returns: "number",
+    replacesDocument: true,
     where: ["group", "window", "stream", "statement"],
     shape: "none",
     body: pending("src/stage-validation.ts"),
@@ -4758,11 +4774,11 @@ export const NAMES = {
     group: unsupported("'$documents' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$documents' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, slotType: { 0: "array" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, slotType: { 0: "array" } },
+      args: { sig: "body", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "object" } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: unsupported("'$documents' is not valid in an update document — see its 'where'."),
@@ -5059,6 +5075,7 @@ export const NAMES = {
 
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
+    pipelineOver: "foreign",
     where: ["stream", "statement"],
     body: {
       required: ["as"],
@@ -5196,6 +5213,7 @@ export const NAMES = {
 
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    replacesDocument: "inclusion",
     where: ["stream", "statement"],
     only: ["update"],
     body: pending("src/stage-validation.ts"),
@@ -5551,6 +5569,7 @@ export const NAMES = {
 
   $sortByCount: mongo({
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
+    replacesDocument: true,
     where: ["stream", "statement"],
     body: pending("src/stage-validation.ts"),
     bodyPositions: { "": "value" },
@@ -5570,6 +5589,7 @@ export const NAMES = {
 
   $unionWith: mongo({
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
+    pipelineOver: "foreign",
     where: ["stream", "statement"],
     body: {
       required: [],

@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): bindings between stages, and the stream from a literal list of documents
+
+Two more constructs leave the statement target's pending list.
+
+**A `let` is a field between stages.** `let x = $.a * 2; $.b = x;` carries the value in `__jsmql.var.x`, reads it back as `"$__jsmql.var.x"`, and the chain's trailing cleanup drops it — the shipped shapes, measured first. A constant `let` never gets that far; the fold inlines it. The binding is written again by `x = …` when it is a `let` and refused when it is a `const`. Read in a predicate it is a field, so `$$.filter(d => d.x > t)` is a field-to-field `$expr`, which is what the shipped compiler emitted too.
+
+**The scope threads, and a stage that replaces the document ends it.** Each statement now answers the Env the next one is lowered under. A stage whose row states `replacesDocument` takes every field-carried binding with it, and the scratch namespace is not owed a cleanup for what is gone — `$group` and `$ = { … }` end without a trailing `$unset`, as the shipped compiler's peephole did. A read after that is refused naming the stage. Two rows state the fact for the first time, both from the before-audit's measurement: `$count` and `$sortByCount` drop the document, and the shipped compiler emitted a read of a field that was no longer there (`let t = $.a; $count("n"); $.b = t;` ran and returned `[{ n: 2 }]` with no `b`). `$project` states `"inclusion"`: a body that names fields to keep drops the rest, one that names fields to remove keeps them — measured both ways — so the fact is body-dependent and the type says so rather than a boolean lying half the time.
+
+**The way back after a drop is `x = …`, never a second `let`.** The shipped compiler accepted `let v = …; $group(…); let v = …` — a second declaration in one block, which JavaScript refuses, and this language is a strict syntax subset — and refused `v = 5` after the stage, pointing at exactly that re-declaration. Both are the other way round now: an assignment to a `let` a stage dropped writes its slot again and the next statement reads it, a second `let` in one block is refused, and a nested block (a stage's `[ … ]` body, an `o => { … }` block) declares its own names so a `let` there shadows. Every name with no value at a read — a dropped binding, a callback's index or collection parameter, a function inside its own body — is one `dropped` marker that carries its wording from the place that took the name away, so the message for an index parameter no longer calls it a `let` binding, and recursion is refused without a message-sniffing catch.
+
+**`$$ = [{ … }, { … }]` is `$documents`.** A source stage, so it stands first; every element a document, stated as `arrayOf: object`; the empty list is a stream of nothing, `{ $match: { $expr: false } }`, which needs no source stage. A list holding a `$$.reduce` is the reducer wrap, a different road and a stated pending.
+
+Gate: pipeline fully classified; expr and filter unchanged at zero. The gate's `--accept` now refreshes a kept row's kind and outputs (a reason judges a class of change, and the row must show the change it judges) and prunes the rows of an entry that no longer diverge — 75 stale rows had claimed divergences nobody could see.
+
+---
+
 ## 2026-09-05 — docs: the bare chain `$$.filter(…);` is the default spelling of a stream chain
 
 The developer's ruling: `$$ = $$.filter(…)` exists and lowers identically, but it is never the default — "stop asking users to write unnecessary `$$ =` characters." Every prose surface now shows the bare statement: README, `docs/LANGUAGE.md`, the specs' examples, the `CLAUDE.md` files, `test/realistic.test.ts` (and so the playground it feeds), and the compiler's own hints where a chain is meant. The assignment form is mentioned only where it is itself the subject — the replace-stream spec, and the sentence that says the two are one program.

@@ -147,8 +147,21 @@ export const functionAsValue = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-export const droppedBinding = (name: string, by: string, fix: string, pos: number): CodegenError =>
-  new CodegenError(`\`${name}\` is a \`let\` binding and can't be read after \`${by}\` — ${fix}`, pos);
+/** A read of a name that has no value here; the binding says why, worded where it was dropped. */
+export const droppedBinding = (ref: { readonly message: string }, pos: number): CodegenError =>
+  new CodegenError(ref.message, pos);
+
+/** The wording a document-replacing stage leaves on every binding it took away. */
+export const afterReplace =
+  (by: string) =>
+  (name: string, mutable: boolean): string =>
+    mutable
+      ? `\`${name}\` is a \`let\` binding and can't be read after \`${by}\` — that stage replaced the document that carried it. Assign it again after the stage (\`${name} = …\`), or carry the value as a field of the new document.`
+      : `\`${name}\` is a \`const\` binding and can't be read after \`${by}\` — that stage replaced the document that carried it. Carry the value as a field of the new document, or declare it with \`let\` and assign it again after the stage.`;
+
+/** A callback parameter the stream cannot fill — the index, the collection. */
+export const unfilledParam = (name: string, method: string, why: string): string =>
+  `\`${name}\` has no value inside \`.${method}()\` — ${why}`;
 
 export const statementInValue = (what: string, pos: number): CodegenError =>
   new CodegenError(
@@ -352,11 +365,11 @@ export const spreadInStageList = (pos: number): CodegenError =>
  * which no row names.
  */
 export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
-  "a 'let' binding that is not a constant": "src/pipeline.ts",
   "a function declaration": "src/codegen.ts",
   "a read from another collection ('$$$.<coll>.find(…)')": "src/lookup-translation.ts",
   "a switch of the stream to another collection ('$$ = $$$.<coll>.…')": "src/pipeline.ts",
-  "a literal list of documents as the stream ('$$ = [ … ]')": "src/pipeline.ts",
+  "the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')": "src/stream-methods.ts",
+  "a read of the outer document inside a sub-pipeline over another collection": "src/lookup-translation.ts",
   "a read of the stream ('$$.filter(…)') as a value": "src/pipeline.ts",
   "a write to another collection ('$$$.<coll> = …')": "src/out-translation.ts",
 };
@@ -475,5 +488,28 @@ export const mapMustReturnDocument = (name: string, kind: string, pos: number): 
 export const notAFieldOfTheDocument = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'.${name}(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.`,
+    pos,
+  );
+
+// ── bindings ─────────────────────────────────────────────────────────────────
+
+/** `let x = …; $$.aggregate(o => { let x = …; })` — the block runs on the same documents. */
+export const shadowsOuterBinding = (kind: string, name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `\`${kind} ${name}\` shadows the \`${name}\` declared outside this block, and both would live in the same document. Pick a different name, or assign the outer one (\`${name} = …\`).`,
+    pos,
+  );
+
+/** `const x = …; x = …;` — a constant is written once. */
+export const constReassigned = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.`,
+    pos,
+  );
+
+/** `$$ = [{ a: 1 }, 5]` — a document list holds documents. */
+export const notADocumentInList = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$ = [ … ]' lists the DOCUMENTS the stream starts from, and ${noun} is not a document. Write each as '{ … }'.`,
     pos,
   );

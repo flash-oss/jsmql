@@ -19,6 +19,7 @@ import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/voca
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import {
+  pipelineOverOf,
   bindsOf,
   callbackParamsOf,
   flattensChain,
@@ -130,6 +131,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
     case "FieldRef":
+      if (readsTheOuterDocument(env)) throw E.pendingStatement(OUTER_IN_FOREIGN, node.pos);
       return node.path === "" ? "$$ROOT" : "$" + node.path;
     case "CollectionRef":
     case "DatabaseRef":
@@ -336,6 +338,17 @@ function rootAsValue(node: Expr, env: Env): never {
   throw E.refusalFor(sel, name, "", positionIn(env), node.pos, []);
 }
 
+/**
+ * Inside a sub-pipeline over ANOTHER collection — `$lookup.pipeline`,
+ * `$unionWith.pipeline` — `$.x` is still the OUTER document (HR4) and a field-
+ * carried binding is not there at all. The server reaches the outer document only
+ * through the stage's `let`, which is the join road's work; until it lands the
+ * read is a stated pending, never the foreign document's field.
+ */
+const OUTER_IN_FOREIGN = "a read of the outer document inside a sub-pipeline over another collection";
+const readsTheOuterDocument = (env: Env): boolean =>
+  env.site.boundaries.some((b) => pipelineOverOf(b.stage) === "foreign");
+
 function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
   if (env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
@@ -345,6 +358,7 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
       case "document":
         return "$$ROOT";
       case "field":
+        if (readsTheOuterDocument(env)) throw E.pendingStatement(OUTER_IN_FOREIGN, node.pos);
         return b.ref.slot.ref;
       case "constant":
         return b.ref.value;
@@ -353,7 +367,7 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
       case "streamHandle":
         throw E.functionAsValue(node.name, node.pos);
       case "dropped":
-        throw E.droppedBinding(node.name, b.ref.by, b.ref.fix, node.pos);
+        throw E.droppedBinding(b.ref, node.pos);
     }
   }
   // A global read without a call — `Number`, `Math` — is a callable used as a value.
@@ -621,25 +635,17 @@ function applyLambda(
     bodyEnv = bound.env;
   });
   if (fnName !== null) {
-    // Recursion is refused: a MongoDB expression cannot call itself. The name is
-    // shadowed by a `dropped`-like marker for the body's own reads of it.
+    // Recursion is refused: a MongoDB expression cannot call itself. Inside the
+    // body the function's own name reads as the refusal.
     bodyEnv = bodyEnv.bind(fnName, {
-      ref: { kind: "dropped", by: fnName, fix: "recursion" },
+      ref: { kind: "dropped", message: E.recursiveFunction(fnName, pos).message, replaced: false },
       type: "unknown",
       mutable: false,
       pos,
     });
-    try {
-      return { $let: { vars, in: lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body")) } };
-    } catch (e) {
-      if (e instanceof CodegenErrorClass && e.message.includes("`" + fnName + "` is a `let` binding"))
-        throw E.recursiveFunction(fnName, pos);
-      throw e;
-    }
   }
   return { $let: { vars, in: lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body")) } };
 }
-const CodegenErrorClass = E.CodegenError;
 
 function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
   const position = positionIn(env);

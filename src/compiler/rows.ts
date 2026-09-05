@@ -363,6 +363,16 @@ export function forbiddenInOf(name: string): readonly string[] {
 }
 
 /** The extra rules a row states that no renderer implies — where a stage may stand. */
+/** Does the stage's sub-pipeline run over another collection's documents? */
+export function pipelineOverOf(name: string): "foreign" | null {
+  return (row(name) as { pipelineOver?: "foreign" } | undefined)?.pipelineOver ?? null;
+}
+
+/** Does the stage drop the input document's fields — always, only for an inclusion body, or never? */
+export function replacesDocumentOf(name: string): true | "inclusion" | false {
+  return (row(name) as { replacesDocument?: true | "inclusion" } | undefined)?.replacesDocument ?? false;
+}
+
 export function onlyOf(name: string): readonly string[] {
   return (row(name) as { only?: readonly string[] } | undefined)?.only ?? [];
 }

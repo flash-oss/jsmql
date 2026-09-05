@@ -322,7 +322,30 @@ const EVALUABLE: ReadonlySet<string> = new Set(EVALUABLE_TYPES);
  * is a `ReferenceError` in JavaScript, and answering it with the later value
  * would invent a meaning the language does not have.
  */
+/**
+ * A callback's parameters open its block: `o => { let o = 1; … }` is a
+ * SyntaxError in JavaScript. Checked before anything folds, because a constant
+ * `let` is inlined below and would otherwise vanish without a word.
+ */
+function refuseParameterRedeclaration(program: Program): void {
+  for (const node of everyNode(program as Any)) {
+    const lambda = node as Any;
+    const body = lambda.stages as Any | undefined;
+    if (lambda.type !== "Lambda" || body?.type !== "Pipeline") continue;
+    const params = new Set<string>(lambda.params as readonly string[]);
+    for (const stmt of body.stmts as readonly Any[]) {
+      if ((stmt.type === "LetDecl" || stmt.type === "FuncDecl") && params.has(stmt.name as string)) {
+        throw new ParseError(
+          `\`${stmt.type === "LetDecl" ? String(stmt.kind) : "function"} ${String(stmt.name)}\` re-declares the parameter \`${String(stmt.name)}\` of this callback, which JavaScript refuses. Pick a different name.`,
+          stmt.pos as number,
+        );
+      }
+    }
+  }
+}
+
 export function fold(program: Program): Program {
+  refuseParameterRedeclaration(program);
   // Every NESTED statement list is a scope of its own and folds in its own right:
   // `$$.aggregate(() => { const a = 2; $match({ b: a }) })` should read 2. An
   // outer constant reaches into one through the substitution below, which stops

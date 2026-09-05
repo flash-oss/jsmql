@@ -381,20 +381,32 @@ if (flag("--accept")) {
   // Stamp WHICH compiler these rows were judged against. A row accepted against one
   // reference says nothing about a different one.
   const next = { reference: refId, rows: { ...accepted.rows } };
+  // A row of THIS entry that no longer diverges is stale: the two compilers agree
+  // again, and a kept row would claim a divergence nobody can see.
+  const live = new Set(rows.map((r) => r.key));
+  let pruned = 0;
+  for (const key of Object.keys(next.rows)) {
+    if (ENTRIES.includes(next.rows[key].entry) && !live.has(key)) {
+      delete next.rows[key];
+      pruned++;
+    }
+  }
   for (const r of rows) {
     // Record what actually changed, not just that something did. A reviewer reads this
     // file to judge whether the change was right, and cannot do that from a key alone.
-    next.rows[r.key] ??= {
+    // An existing row keeps its reason and takes the CURRENT kind and outputs: a
+    // reason judges a class of change, and the row must show the change it judges.
+    next.rows[r.key] = {
       entry: r.entry,
       src: r.src,
       kind: r.kind,
       was: String(r.ref.value).replace(/\s+/g, " ").slice(0, 220),
       now: String(r.cur.value).replace(/\s+/g, " ").slice(0, 220),
-      reason: "TODO: state why this change is correct",
+      reason: next.rows[r.key]?.reason ?? "TODO: state why this change is correct",
     };
   }
   writeFileSync(ACCEPTED_PATH, `${JSON.stringify(next, null, 2)}\n`);
-  console.log(`recorded ${rows.length} divergence(s) → ${ACCEPTED_PATH}`);
+  console.log(`recorded ${rows.length} divergence(s), pruned ${pruned} stale row(s) → ${ACCEPTED_PATH}`);
   console.log("Every row needs its `reason` filled in before this counts as classified.");
   process.exit(0);
 }

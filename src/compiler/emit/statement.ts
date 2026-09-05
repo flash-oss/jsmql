@@ -11,14 +11,16 @@
 // See docs/specs/emit-pass.md § the statement target.
 
 import type { Expr, QueryDoc, Stage } from "../../registry/vocabulary.ts";
-import type { Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
+import type { LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
-import { forbiddenInOf, isStageName, onlyOf, stageBodyRuleOf } from "../rows.ts";
+import { forbiddenInOf, isStageName, onlyOf, replacesDocumentOf, stageBodyRuleOf, pipelineOverOf } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
+import { fieldSlot, type Binding } from "./names.ts";
+import { bindingSlot } from "../../namespace.ts";
 import * as E from "./errors.ts";
 import { childEnv, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
@@ -83,12 +85,14 @@ function stageBody(node: Expr, env: Env): unknown {
 /** A `[ … ]` of statements as a list of stages, under the chain `env` already carries. */
 function subPipeline(node: Expr, env: Env): Stage[] {
   if (node.type !== "ArrayLiteral") throw E.needsStageList(node.pos);
-  const inner = childEnv(env, node, "elements");
   const out: Stage[] = [];
+  let scope = childEnv(env, node, "elements").block();
   for (const el of node.elements) {
     if (el.type === "SpreadElement") throw E.spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
-    out.push(...statementStages(el as PipelineStmt, inner, out.length === 0));
+    const step = statementStages(el as PipelineStmt, scope, out.length === 0);
+    out.push(...step.stages);
+    scope = step.env;
   }
   return out;
 }
@@ -117,9 +121,14 @@ const READ = {
   reshape: lowerValue,
   /** The statements of a stage block, each as its stages, under the parameter's env. */
   block: (stages: Pipeline, env: Env): Stage[] => {
-    const inner = childEnv(env, stages, "stmts");
+    // The block was opened where its parameters were bound.
+    let scope = childEnv(env, stages, "stmts");
     const out: Stage[] = [];
-    for (const stmt of stages.stmts) out.push(...statementStages(stmt, inner, out.length === 0));
+    for (const stmt of stages.stmts) {
+      const step = statementStages(stmt, scope, out.length === 0);
+      out.push(...step.stages);
+      scope = step.env;
+    }
     return out;
   },
 };
@@ -133,7 +142,9 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
   }
   const stmts: readonly PipelineStmt[] =
     program.type === "Pipeline" ? (program as Pipeline).stmts : [program as PipelineStmt];
-  const inner = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
+  // The scope THREADS: a `let` declared in one statement is a name the next one
+  // reads, and a stage that replaced the document takes it away again.
+  let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
   for (const stmt of stmts) {
     // The stage that writes the output is FILED rather than emitted, so the
     // `__jsmql` cleanup precedes it — but it still has to be written last.
@@ -141,20 +152,109 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
       throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], (stmt as { pos: number }).pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    const stages = statementStages(stmt, inner, first);
+    const step = statementStages(stmt, scope, first);
     // A value that needed a stage of its own placed it ahead of this statement.
     env.chain.flush();
-    env.chain.emitted.push(...stages);
+    env.chain.emitted.push(...step.stages);
+    scope = step.env;
   }
   return env.chain.close();
 }
 
+/** A statement's stages, and the Env the NEXT statement is lowered under. */
+type Step = { stages: Stage[]; env: Env };
+
 /** One statement's stages. `first` says whether nothing stands ahead of it here. */
-function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Stage[] {
+function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
   if (stmt.type === "UpdateFilter") return writeStages(stmt as UpdateFilter, env, first);
-  if (stmt.type === "LetDecl") throw E.pendingStatement("a 'let' binding that is not a constant", stmt.pos);
+  if (stmt.type === "LetDecl") return letStages(stmt as LetDecl, env);
   if (stmt.type === "FuncDecl") throw E.pendingStatement("a function declaration", stmt.pos);
-  return stageStatement(stmt, env, first);
+  const stages = stageStatement(stmt, env, first);
+  return { stages, env: afterStages(stages, env) };
+}
+
+/**
+ * `let x = <expr>;` — a value carried between stages in a field of the document,
+ * `__jsmql.var.x`, which the chain's trailing cleanup drops. A constant `let`
+ * never reaches here: the fold has inlined it. The binding is `mutable` for
+ * `let` and not for `const`, and its type is what the registry can prove of the
+ * value, so a later read is checked as the value would be.
+ */
+function letStages(decl: LetDecl, env: Env): Step {
+  // JavaScript refuses a second `let x` in one block; so does this language. A
+  // binding a stage dropped is still declared: the way back is `x = …`, not `let`.
+  if (env.scope.declaredHere(decl.name)) throw E.redeclared(decl.kind, decl.name, decl.pos);
+  // A block over the SAME documents shares their fields: a shadowing `let` would
+  // write the outer binding's slot, and the outer read after the block would see it.
+  // A body over another collection has documents of its own, and shadows freely.
+  const innermost = env.site.boundaries[env.site.boundaries.length - 1];
+  const ownDocuments = innermost !== undefined && pipelineOverOf(innermost.stage) === "foreign";
+  if (!ownDocuments && env.scope.has(decl.name) && env.lookup(decl.name, decl.pos).ref.kind === "field")
+    throw E.shadowsOuterBinding(decl.kind, decl.name, decl.pos);
+  refuseUnbuiltSugar(decl.value);
+  const value = readIn(decl.value, childEnv(env, decl, "value"));
+  const slot = fieldSlot(bindingSlot(decl.name));
+  env.chain.dirty = true;
+  const bound = env.bind(decl.name, {
+    ref: { kind: "field", slot },
+    type: kindOf(decl.value, env),
+    mutable: decl.kind === "let",
+    pos: decl.pos,
+  });
+  return { stages: [{ $set: { [slot.path]: value } }], env: bound };
+}
+
+/**
+ * The Env after `stages` ran: a stage whose row says it replaces the document
+ * takes every field-carried binding with it, and the scratch namespace too, so
+ * the cleanup is not owed for what is already gone.
+ */
+function afterStages(stages: readonly Stage[], env: Env): Env {
+  let out = env;
+  for (const stage of stages) {
+    const name = Object.keys(stage)[0];
+    const fact = replacesDocumentOf(name);
+    const drops = fact === true || (fact === "inclusion" && isInclusion(stage[name]));
+    if (!drops) continue;
+    out = out.dropFields(name, E.afterReplace(name));
+    env.chain.dirty = false;
+  }
+  return out;
+}
+
+/** A `$project` body that names fields to KEEP: every value is an inclusion, `_id: 0` aside. */
+function isInclusion(body: unknown): boolean {
+  if (typeof body !== "object" || body === null) return false;
+  const entries = Object.entries(body as Record<string, unknown>).filter(([k]) => k !== "_id");
+  return entries.length > 0 && entries.every(([, v]) => v === 1 || v === true);
+}
+
+/**
+ * `$$ = [{ … }, { … }]` — the stream starts from a literal list of documents:
+ * `$documents`, a source stage that must stand first. The empty list is a
+ * stream of nothing, which needs no source stage. A list holding a `$$.reduce`
+ * is the reducer WRAP, a different road.
+ */
+function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, first: boolean): Stage[] {
+  if (holdsStreamReduce(list)) throw E.pendingStatement("the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')", list.pos);
+  if (list.elements.length === 0) return [{ $match: { $expr: false } }];
+  const call = { type: "OperatorCall", name: "$documents", args: [list], pos: list.pos } as unknown as Expr;
+  return stageStatement(call, env, first);
+}
+
+/** Does the tree hold a `.reduce(…)` on the stream anywhere? */
+function holdsStreamReduce(node: unknown): boolean {
+  if (node === null || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some(holdsStreamReduce);
+  const n = node as { type?: string; name?: string } & Record<string, unknown>;
+  if (
+    n.type === "MethodCall" &&
+    n.name === "reduce" &&
+    (chainBase(n as object) as { type: string }).type === "CollectionRef"
+  ) {
+    return true;
+  }
+  return Object.entries(n).some(([k, v]) => k !== "type" && k !== "pos" && holdsStreamReduce(v));
 }
 
 /**
@@ -186,9 +286,19 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
 const STREAM_TARGET = "$$";
 
 /** A write's destination: the field path it names, `""` for the document root. */
-function targetPath(op: UpdateOp): string {
+function targetPath(op: UpdateOp, env: Env): string {
   const t = op.target;
   if (t.type === "FieldRef") return t.path;
+  // `x = …` on a declared binding writes the field that carries it.
+  if (t.type === "Ident" && env.scope.has(t.name)) {
+    const b = env.lookup(t.name, t.pos);
+    if (b.ref.kind === "field" || (b.ref.kind === "dropped" && b.ref.replaced)) {
+      // A `let` a stage dropped is written again into its slot — see `revived`.
+      if (!b.mutable) throw E.constReassigned(t.name, op.pos);
+      return fieldSlot(bindingSlot(t.name)).path;
+    }
+    if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, t.pos);
+  }
   if (t.type === "CollectionRef") return STREAM_TARGET;
   const base = chainBase(t) as { type: string };
   if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
@@ -268,8 +378,10 @@ const touches = (x: string, y: string): boolean =>
  * A write to the document ROOT is its own stage: it replaces what the next write
  * would be written into.
  */
-function writeStages(uf: UpdateFilter, env: Env, first: boolean): Stage[] {
-  const inner = childEnv(env, uf, "ops");
+function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
+  let inner = childEnv(env, uf, "ops");
+  // `x = …` on a `let` a stage dropped carries it again: the next statement reads it.
+  let revived = env;
   const out: Stage[] = [];
   let sets: { paths: string[]; fields: Record<string, unknown> } | null = null;
   let unsets: string[] | null = null;
@@ -282,17 +394,16 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Stage[] {
   };
 
   for (const op of uf.ops) {
-    const path = targetPath(op);
+    const path = targetPath(op, inner);
     // `$$ = <chain>` replaces the STREAM: its stages stand on their own, after
     // whatever the run has grouped so far.
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw E.cannotDeleteRoot(op.pos);
-      // `$$ = [{ … }]` is the `$documents` sugar, whose elements are DOCUMENTS and
-      // not statements — a different road from a chain, and not built here yet.
-      if (op.value.type === "ArrayLiteral") {
-        throw E.pendingStatement("a literal list of documents as the stream ('$$ = [ … ]')", op.value.pos);
-      }
       flush();
+      if (op.value.type === "ArrayLiteral") {
+        out.push(...documentsStages(op.value, inner, first && out.length === 0));
+        continue;
+      }
       out.push(...streamStages(op.value, inner, first && out.length === 0));
       continue;
     }
@@ -328,9 +439,20 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Stage[] {
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     sets.fields[path] = replacesWhole(value) ? { $mergeObjects: [value] } : value;
+    if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
+      const binding: Binding = {
+        ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
+        type: kindOf(op.value, inner),
+        mutable: true,
+        pos: op.target.pos,
+      };
+      inner = inner.bind(op.target.name, binding);
+      revived = revived.bind(op.target.name, binding);
+      env.chain.dirty = true;
+    }
   }
   flush();
-  return out;
+  return { stages: out, env: afterStages(out, revived) };
 }
 
 /**

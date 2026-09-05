@@ -148,6 +148,16 @@ export class Env {
     return new Env(this.scope.declare(js, binding), this.site, this.chain);
   }
 
+  /** The Env after a stage that replaced the document: every field-carried binding is gone. */
+  dropFields(by: string, message: (js: string, mutable: boolean) => string): Env {
+    return new Env(this.scope.dropFields(by, message), this.site, this.chain);
+  }
+
+  /** Into a nested block of statements: outer names visible, a fresh set of declarations. */
+  block(): Env {
+    return new Env(this.scope.block(), this.site, this.chain);
+  }
+
   /** The developer's own variable — a lambda parameter, a `$let` var. */
   param(js: string, type: Binding["type"], pos: number): Bound {
     return this.bound(this.scope.param(js, type, pos));

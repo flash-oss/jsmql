@@ -18,6 +18,7 @@ import {
   needsPipeline,
   notAFieldOfTheDocument,
   notAnArrow,
+  unfilledParam,
   valueWhereBlockExpected,
 } from "./errors.ts";
 import { kindOf } from "./types.ts";
@@ -159,13 +160,16 @@ export function stageInputs(
    */
   const bound = (cb: Expr): Env | null => {
     if (cb.type !== "Lambda" || cb.params.length < 1 || cb.params.length > 3) return null;
-    let e = argEnv.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+    // The parameters open the callback's block: a `let` of the same name inside it collides.
+    let e = argEnv
+      .block()
+      .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
     if (cb.params.length >= 2) {
       e = e.bind(cb.params[1], {
         ref: {
           kind: "dropped",
-          by: `.${name}()`,
-          fix: "a stream has no per-document index; leave the parameter unused",
+          message: unfilledParam(cb.params[1], name, "a stream has no per-document index; leave the parameter unused."),
+          replaced: false,
         },
         type: "unknown",
         mutable: false,
@@ -176,8 +180,12 @@ export function stageInputs(
       e = e.bind(cb.params[2], {
         ref: {
           kind: "dropped",
-          by: `.${name}()`,
-          fix: "the collection is the stream itself — write '$$.length' for its size",
+          message: unfilledParam(
+            cb.params[2],
+            name,
+            "the collection is the stream itself; write '$$.length' for its size.",
+          ),
+          replaced: false,
         },
         type: "unknown",
         mutable: false,

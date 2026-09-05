@@ -31,7 +31,14 @@ import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { or, truthOf } from "./mode.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
-import { isCallable, operandPositionOf, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
+import {
+  isCallable,
+  operandPositionOf,
+  operandShapeOf,
+  pipelineOverOf,
+  positionalKeysOf,
+  productionForOperator,
+} from "../rows.ts";
 
 /**
  * A predicate's query document, `$expr` included where a leaf has no native form.
@@ -273,6 +280,12 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   // query path there, so a body that reads it takes the `$expr` road.
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
+  // Inside a sub-pipeline over ANOTHER collection, `$.x` is still the OUTER
+  // document (HR4), which the server reaches only through the stage's `let` —
+  // the join road, not built yet. It must not become the foreign document's path.
+  if (e.type === "FieldRef" && env.site.boundaries.some((b) => pipelineOverOf(b.stage) === "foreign")) {
+    throw E.pendingStatement("a read of the outer document inside a sub-pipeline over another collection", e.pos);
+  }
   if (e.type === "FieldRef") return e.path === "" || innermost !== null ? null : e.path;
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;

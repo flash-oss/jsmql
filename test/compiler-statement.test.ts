@@ -231,6 +231,125 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
   });
 });
 
+describe("compiler/emit/statement — bindings between stages", () => {
+  it("carries a `let` in a field of the document, and the cleanup drops it", () => {
+    expect(compiled("let x = $.a * 2; $.b = x;")).toEqual([
+      { $set: { "__jsmql.var.x": { $multiply: ["$a", 2] } } },
+      { $set: { b: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+    // a constant `let` is inlined by the fold and carries nothing
+    expect(compiled("let x = 1; $.b = x;")).toEqual([{ $set: { b: 1 } }]);
+    expect(compiled("let x = $.a; let y = x + 1; $.c = y;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { c: "$__jsmql.var.y" } },
+      { $unset: "__jsmql" },
+    ]);
+    // a binding read in a predicate is a field, so the comparison is field-to-field
+    expect(compiled("let t = $.a; $$.filter(d => d.x > t);")).toEqual([
+      { $set: { "__jsmql.var.t": "$a" } },
+      { $match: { $expr: { $gt: ["$x", "$__jsmql.var.t"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // `let` is written again; `const` is not
+    expect(compiled("let x = $.a; x = $.b; $.c = x;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.x": "$b" } },
+      { $set: { c: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(() => pipeline("const x = $.a; x = $.b;")).toThrow(/is a 'const' and cannot be assigned again/);
+  });
+
+  it("loses a binding at a stage that replaces the document, and says so on the next read", () => {
+    // `$group` drops every field; the cleanup is not owed for what is gone
+    expect(compiled("let x = $.a; $group({ _id: x });")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $group: { _id: "$__jsmql.var.x" } },
+    ]);
+    expect(compiled("let x = $.a; $ = { y: x };")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $replaceWith: { y: "$__jsmql.var.x" } },
+    ]);
+    // measured: `$count` and an INCLUSION `$project` drop the field; the shipped
+    // compiler emitted a read of a field that was no longer there.
+    expect(() => pipeline('let t = $.a; $count("n"); $.b = t;')).toThrow(/can't be read after `\$count`/);
+    expect(() => pipeline("let t = $.a; $project({ a: 1 }); $.b = t;")).toThrow(/can't be read after `\$project`/);
+    // an EXCLUSION `$project` keeps it
+    expect(compiled("let t = $.a; $project({ z: 0 }); $.b = t;")).toEqual([
+      { $set: { "__jsmql.var.t": "$a" } },
+      { $project: { z: 0 } },
+      { $set: { b: "$__jsmql.var.t" } },
+      { $unset: "__jsmql" },
+    ]);
+    // the cleanup precedes the stage that writes the output
+    expect(compiled('let x = $.a; $.b = x; $out("o");')).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { b: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+      { $out: "o" },
+    ]);
+  });
+
+  it("carries a dropped `let` again on assignment, and refuses the spellings JavaScript refuses", () => {
+    // `x = …` after the stage writes the slot again — the JavaScript-valid way back
+    expect(compiled("let v = $.x; $group({ _id: $.c }); v = $._id; $.w = v;")).toEqual([
+      { $set: { "__jsmql.var.v": "$x" } },
+      { $group: { _id: "$c" } },
+      { $set: { "__jsmql.var.v": "$_id" } },
+      { $set: { w: "$__jsmql.var.v" } },
+      { $unset: "__jsmql" },
+    ]);
+    // a dropped `const` has no way back but a field of the new document
+    expect(() => pipeline("const v = $.x; $group({ _id: $.c }); $.w = v;")).toThrow(
+      /`v` is a `const` binding and can't be read after `\$group`/,
+    );
+    expect(() => pipeline("const v = $.x; $group({ _id: $.c }); v = 1;")).toThrow(
+      /is a 'const' and cannot be assigned again/,
+    );
+    // a second `let v` in one block is a SyntaxError in JavaScript, dropped or not
+    expect(() => pipeline("let v = $.x; let v = $.y;")).toThrow(/already declared earlier in this block/);
+    expect(() => pipeline("let v = $.x; $group({ _id: $.c }); let v = $._id;")).toThrow(
+      /already declared earlier in this block/,
+    );
+  });
+
+  it("scopes a `let` to the block that declares it", () => {
+    // the outer binding is visible inside a block, and assignable there
+    expect(compiled("let x = $.a; $$.aggregate(o => { x = o.b; $.y = x; }); $.z = x;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.x": "$b" } },
+      { $set: { y: "$__jsmql.var.x" } },
+      { $set: { z: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+    // a block over the same documents shares their fields: a shadowing `let` is refused
+    expect(() => pipeline("let x = $.a; $$.aggregate(o => { let x = o.b; $.y = x; });")).toThrow(
+      /`let x` shadows the `x` declared outside this block/,
+    );
+    // a parameter opens the block: a `let` of its name is the SyntaxError JavaScript raises
+    expect(() => pipeline("$$.aggregate(o => { let o = 1; $.y = o; });")).toThrow(/re-declares the parameter `o`/);
+    // a name the block declares ends with the block
+    expect(() => pipeline("$$.aggregate(o => { let k = o.b; $.y = k; }); $.z = k;")).toThrow(/Unknown identifier 'k'/);
+    // a callback's index and collection parameters have no value on a stream, and say so as parameters
+    expect(() => pipeline("$$.map((d, i) => ({ n: i }));")).toThrow(/`i` has no value inside `.map\(\)`/);
+    expect(() => pipeline("$$.map((d, i, c) => ({ n: c.length }));")).toThrow(/write '\$\$.length' for its size/);
+  });
+
+  it("starts the stream from a literal list of documents", () => {
+    // `$documents` is a source stage: first, and its elements are documents
+    expect(compiled("$$ = [{ a: 1 }, { a: 2 }];")).toEqual([{ $documents: [{ a: 1 }, { a: 2 }] }]);
+    expect(compiled("$$ = [{ a: 1 }]; $.b = 2;")).toEqual([{ $documents: [{ a: 1 }] }, { $set: { b: 2 } }]);
+    // an empty list is a stream of nothing, which needs no source stage
+    expect(compiled("$$ = [];")).toEqual([{ $match: { $expr: false } }]);
+    expect(() => pipeline("$.b = 1; $$ = [{ a: 1 }];")).toThrow(/has to be the FIRST stage/);
+    expect(() => pipeline("$$ = [{ a: 1 }, 5];")).toThrow(/expects a document, but got a number/);
+    // the reducer wrap is a different road, not built yet
+    expect(() => pipeline("$$ = [{ n: $$.reduce((acc, d) => acc + 1, 0) }];")).toThrow(PendingLowering);
+  });
+});
+
 describe("compiler/emit/statement — the stream road", () => {
   const NA = { $not: { $type: "array" } };
 
@@ -370,9 +489,13 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("keeps a stage inside the body it was written in", () => {
-    expect(compiled('$lookup({ from: "o", pipeline: [$match($.a > 1)], as: "r" });')).toEqual([
-      { $lookup: { from: "o", pipeline: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }], as: "r" } },
+    // `$.` is the OUTER document at every depth, so a body over another
+    // collection can only be stated without it until the join road carries the
+    // capture; a raw query document names the foreign field directly.
+    expect(compiled('$lookup({ from: "o", pipeline: [$match({ a: { $gt: 1 } }), $limit(2)], as: "r" });')).toEqual([
+      { $lookup: { from: "o", pipeline: [{ $match: { a: { $gt: 1 } } }, { $limit: 2 }], as: "r" } },
     ]);
+    expect(() => pipeline('$lookup({ from: "o", pipeline: [$match($.a > 1)], as: "r" });')).toThrow(PendingLowering);
     expect(compiled("$facet({ a: [$limit(1)] });")).toEqual([{ $facet: { a: [{ $limit: 1 }] } }]);
   });
 
@@ -398,7 +521,6 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // road would emit a bare stage — a filter on the wrong collection.
     expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(PendingLowering);
     expect(() => pipeline("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toThrow(PendingLowering);
-    expect(() => pipeline("let x = $.a * 2; $.b = x;")).toThrow(PendingLowering);
   });
 });
 

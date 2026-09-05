@@ -317,6 +317,38 @@ lowers), `slot()` a scratch field the chain's cleanup drops. A bare `$$.<name>(�
 with one link asks the row's STATEMENT cell first — the union sugar and the
 source stages are statements spelled on the stream, and their rows say so.
 
+### Bindings between stages
+
+A `let` whose value is not a constant is carried between stages in a field of
+the document, `__jsmql.var.<name>`, and the chain's trailing cleanup drops it. A
+constant `let` never gets that far: the fold inlines it. The binding is written
+again by `x = …` when it is a `let`, and refused when it is a `const`. A second
+`let x` in the same block is refused, as JavaScript refuses it; a nested block —
+a stage's `[ … ]` body, an `o => { … }` block — declares its own names and sees
+the outer ones, so a `let` there shadows and never collides.
+
+```js
+let x = $.a * 2; $.b = x;            // → [{"$set":{"__jsmql.var.x":{"$multiply":["$a",2]}}},{"$set":{"b":"$__jsmql.var.x"}},{"$unset":"__jsmql"}]
+let t = $.a; $$.filter(d => d.x > t);  // → the binding is a FIELD, so the predicate is field-to-field: {"$expr":{"$gt":["$x","$__jsmql.var.t"]}}
+let x = $.a; $group({ _id: x });     // → the group drops every field, the cleanup is not owed, and a later `x` is refused
+```
+
+The scope THREADS through the program: each statement answers the Env the next
+one is lowered under. A stage whose row states `replacesDocument` takes every
+field-carried binding with it — `true` for `$group`, `$replaceWith`, `$count`
+and their kind, `"inclusion"` for a `$project` whose body names fields to keep
+— and a read after that is refused naming the stage, where the shipped compiler
+emitted a read of a field that was no longer there. The way back is the one
+JavaScript allows: `x = …` on a dropped `let` writes its slot again and the next
+statement reads it; a dropped `const` can only be carried as a field of the new
+document. Every name that has no value here — a dropped binding, a callback's
+index or collection parameter the stream cannot fill, a function inside its own
+body — is one `dropped` marker carrying the wording its read throws, so the
+reason is worded where the name was taken away and not guessed where it is
+read. `$$ = [ … ]` starts the
+stream from a literal list of documents (`$documents`, a source stage that must
+stand first); the empty list is a stream of nothing.
+
 What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
 `emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
 than trust one, and so the work left is countable. The list emptying is what
