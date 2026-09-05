@@ -67,17 +67,19 @@ export type Site = {
 /**
  * HR1's one gate. A string injected at runtime — a `jsmql.compile` parameter,
  * a template `${…}` — that starts with `$` is wrapped in `$literal` exactly
- * when it would otherwise be read as a field reference: in a VALUE slot, of a
- * program that is not a pipeline or an update document, outside a `$literal`
- * the developer already wrote. A query slot compares its value as written, and
- * a pipeline passes injected values through — measured on the shipped compiler:
+ * where the server would otherwise read it as a field reference: in a VALUE
+ * slot the server evaluates — an expression, a stage body, a `$set` value —
+ * outside a `$literal` the developer already wrote. Two places evaluate
+ * nothing and take the string as written: a query slot, and an update DOCUMENT
+ * (`{ $set: { x: "$b" } }` stores the string "$b"; measured).
  *
  *   jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })         → { $add: ["$a", { $literal: "$b" }] }
- *   jsmql.compile(({ s }, { $ }) => $.a === s)({ s: "$b" })            → { a: "$b" }
- *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: "$b" } }]
+ *   jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" }) → [{ $set: { x: { $literal: "$b" } } }]
+ *   jsmql.compile(({ s }, { $ }) => $.a === s)({ s: "$b" })            → { a: { $eq: "$b", $not: { $type: "array" } } }
+ *   jsmql.update.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })   → { $set: { x: "$b" } }
  */
 export const injectedNeedsLiteral = (site: Site): boolean =>
-  site.where.at === "value" && site.root !== "statement" && site.root !== "updateDoc" && site.envelope === "none";
+  site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
 
 /**
  * The (sub-)pipeline under assembly. Held by reference on purpose: two

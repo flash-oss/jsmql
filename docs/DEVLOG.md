@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — fix(compiler): an injected `"$…"` string is a literal in every slot the server evaluates
+
+`jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })` emitted `[{ $set: { x: "$b" } }]`, and the server read the field `b` — user input had become a field reference, which HR1's gate exists to prevent. The gate exempted every pipeline program because the shipped compiler did (measured, and copied as a fact); the exemption was the shipped compiler's defect. The gate now asks only where the string stands: a value slot the server evaluates — an expression, a `$set` value, a stage body, a `$group` key — wraps it (`{ $literal: "$b" }`); a query slot and an update DOCUMENT take the string as written, because they evaluate nothing (`jsmql.update` → `{ $set: { x: "$b" } }` stores the string; measured). A `"$…"` string written in the SOURCE is unchanged: it is MongoDB's field path, as HR1 states, and `docs/LANGUAGE.md` § `$literal` now says so instead of describing an automatic wrap the compiler does not do.
+
+---
+
 ## 2026-09-06 — fix(compiler): `Object.assign` on a field is a write; the refusals spell names as the source does
 
 Three defects found by probing the surface for the reference. A bare `Object.assign($.p, { a: 1 })` — no `;` — was read as a filter: the shape pass let the `;` decide for a name that lists both a value and a statement form, and a merged object is truthy, so the filter kept every document. It is now the write it is (`[{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }]`), as `$.tags.push(1)` already was; `Object.assign({}, $.a)` — a fresh object, nothing written — stays a value. Two refusals were mis-spelled: a wrong count read `'.find()'(predicate) requires exactly 1 argument` and a property refused on its receiver read `'.length()'`; `refusalFor` now starts from the bare name (`'.find(predicate)' requires …`, `'.length' is not available on …`). And a read of another collection outside a pipeline was refused with the stream-count sentence (`'$$.$$$.<coll>' (the current stream's document count) …`); it has its own (`'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage …`).

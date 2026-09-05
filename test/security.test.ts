@@ -45,6 +45,18 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
     expect(jsmql`$.a === ${"$b"}`).toEqual({ a: OWN("$b") });
     expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $add: ["$a", { $literal: "$b" }] });
     expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $add: ["$a", { $literal: "$b" }] });
+    // a pipeline evaluates its values too: a `$set` value, a stage body, a group key
+    expect(jsmql.pipeline`$.x = ${"$b"};`).toEqual([{ $set: { x: { $literal: "$b" } } }]);
+    expect(
+      jsmql.pipeline.compile(({ s }, { $ }) => {
+        $.x = s;
+      })({ s: "$b" }),
+    ).toEqual([{ $set: { x: { $literal: "$b" } } }]);
+    expect(jsmql.pipeline`$group({ _id: ${"$b"}, n: $sum(1) })`).toEqual([
+      { $group: { _id: { $literal: "$b" }, n: { $sum: 1 } } },
+    ]);
+    // an update DOCUMENT evaluates nothing: the server stores the string as written
+    expect(jsmql.update`$.x = ${"$b"}`).toEqual({ $set: { x: "$b" } });
   });
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
     const payload = { $gt: 0, $where: "this.secret" };

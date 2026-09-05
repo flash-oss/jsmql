@@ -2629,25 +2629,23 @@ $bitNot($.flags)                   // { $bitNot: "$flags" }
 
 ### `$literal` — bypass MongoDB's runtime expression evaluation
 
-Most of the time you don't need to call `$literal` yourself — jsmql wraps `"$..."`-shaped string **values** in `$literal` automatically:
+A `"$..."` string you write in the source is MongoDB's own spelling of a field path, and passes through as written — jsmql is a strict superset of MQL ([HR1](LANG_RULES.md)), so `{ a: "$b" }` means what it means in raw MQL. To store or compare the *string* `"$foo"`, say so with `$literal`:
 
 ```js
-"$foo"                             // { $literal: "$foo" }   — automatic
-[1, "$foo", "bar"]                 // [1, { $literal: "$foo" }, "bar"]
-({ x: "$foo" })                    // { x: { $literal: "$foo" } }
-$concat("$first", " ", "$last")    // { $concat: [{ $literal: "$first" }, " ", { $literal: "$last" }] }
+({ a: "$b" })                      // { a: "$b" }              — the field b, as in MQL
+$concat("$first", " ", "$last")    // { $concat: ["$first", " ", "$last"] }
+$literal("$foo")                   // { $literal: "$foo" }     — the string "$foo"
+$literal(42)                       // { $literal: 42 }         — equivalent to bare 42
+$literal({ x: "$foo" })            // { $literal: { x: "$foo" } }
 ```
 
-The same protection applies to values interpolated via the template-tag form and to bindings supplied to `jsmql.compile()` — a `"$..."` string cannot accidentally become a field reference on its way through user input. Real field references (`$.foo`) are unaffected: they come from the dedicated `$.` syntax, not from string literals.
-
-`$literal` is **not** applied to object **keys** — MongoDB doesn't auto-evaluate keys at query time, so `{ "$foo": 1 }` stays as `{ "$foo": 1 }` (which is how you'd intentionally name a field `$foo`).
-
-You can still call `$literal` explicitly; the auto-wrap detects that the subtree is already inside a `$literal` envelope and won't double-wrap:
+A value that arrives at **run time** — a template-tag `${…}` interpolation, a `jsmql.compile()` parameter — is a value, never syntax: a `"$..."` string there is wrapped in `$literal` wherever the server would evaluate it (an expression, a `$set` value, a stage body), so user input cannot become a field reference. Two places evaluate nothing and take the string as written: a query slot (`$.a === ${s}` compares against the string) and an update document (`jsmql.update`). See [Template-Tag Form](#template-tag-form-jsmql) and [Parameterised Queries](#parameterised-queries-jsmqlcompile).
 
 ```js
-$literal("$foo")                   // { $literal: "$foo" }
-$literal(42)                       // { $literal: 42 }       — equivalent to bare 42
-$literal({ x: "$foo" })            // { $literal: { x: "$foo" } }   — inner $-string not double-wrapped
+jsmql.expr`$.a + ${"$b"}`        // { $add: ["$a", { $literal: "$b" }] }
+jsmql.pipeline`$.x = ${"$b"};`   // [{ $set: { x: { $literal: "$b" } } }]
+jsmql`$.a === ${"$b"}`           // { a: { $eq: "$b", $not: { $type: "array" } } }
+jsmql.update`$.x = ${"$b"}`      // { $set: { x: "$b" } }
 ```
 
 ### `$meta` — per-document aggregation metadata

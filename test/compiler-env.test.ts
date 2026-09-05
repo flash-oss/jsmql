@@ -62,11 +62,12 @@ describe("compiler/emit/env — the HR1 gate is one predicate", () => {
     boundaries: [],
   });
 
-  it("wraps an injected `$…` only in a value slot of a non-pipeline program, outside $literal", () => {
+  it("wraps an injected `$…` in every value slot the server evaluates, outside $literal", () => {
     expect(injectedNeedsLiteral(site({ at: "value" }, "value", "none"))).toBe(true);
     expect(injectedNeedsLiteral(site({ at: "value" }, "filter", "none"))).toBe(true);
-    // a pipeline passes injected values through
-    expect(injectedNeedsLiteral(site({ at: "value" }, "statement", "none"))).toBe(false);
+    // a pipeline's `$set` value and stage bodies are evaluated too
+    expect(injectedNeedsLiteral(site({ at: "value" }, "statement", "none"))).toBe(true);
+    // an update DOCUMENT stores the string as written
     expect(injectedNeedsLiteral(site({ at: "value" }, "updateDoc", "none"))).toBe(false);
     // a $literal the developer wrote already protects it
     expect(injectedNeedsLiteral(site({ at: "value" }, "value", "$literal"))).toBe(false);
