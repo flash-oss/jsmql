@@ -1,9 +1,5 @@
 {
-  "reference": {
-    "commit": "46afc8d",
-    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
-    "dirty": false
-  },
+  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -20628,6 +20624,1094 @@
       "was": "[{\"$match\":{\"$expr\":{\"$eq\":[{\"$type\":\"$fn\"},\"function\"]}}}]",
       "now": "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
       "reason": "intended: by the developer's ruling, `typeof` compares against MongoDB's type names and nothing else. \"function\" is not one, and the shipped compiler lowered it to a test that quietly matched nothing; it is refused now with the nearest MongoDB name."
+    },
+    "pipeline\u0000$$ = $$.reject(d => { const t = d.total; return t > 5; });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reject(d => { const t = d.total; return t > 5; });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$let\":{\"vars\":{\"t\":\"$total\"},\"in\":{\"$not\":{\"$gt\":[\"$$t\",5]}}}}}}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"$expr\":{\"$let\":{\"vars\":{\"t\":\"$total\"},\"in\":{\"$gt\":[\"$$t\",5]}}}}]}}]",
+      "reason": "intended: `.reject` is the COMPLEMENT of the predicate's own clause — `$nor` of the JavaScript-faithful query, as `!p` is — where the shipped compiler emitted an `$expr` negation that orders across BSON types."
+    },
+    "pipeline\u0000$$ = $$.countBy(String)": {
+      "entry": "pipeline",
+      "src": "$$ = $$.countBy(String)",
+      "kind": "message",
+      "was": ".countBy(key) takes a field name ('.countBy(\"status\")'), a bare-path arrow ('.countBy(d => d.status)'), a computed iteratee ('.countBy(d => d.status.toLowerCase())'), or a lodash matches shorthand ('{ active: true }' / '",
+      "now": "'.countBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got the name 'String'.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}},{\"$limit\":3}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":3}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.reject({ archived: true });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reject({ archived: true });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(d => d.x === 1)": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(d => d.x === 1)",
+      "kind": "output",
+      "was": "[{\"$match\":{\"x\":1}}]",
+      "now": "[{\"$match\":{\"x\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.filter(d => d.a).$out('archive').$limit(1);": {
+      "entry": "pipeline",
+      "src": "$$.filter(d => d.a).$out('archive').$limit(1);",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline — nothing can run after it. Move it to the end of the pipeline, or remove the stage(s) that follow it.",
+      "now": "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "intended: a link after the terminal stage is refused as a statement after it is — measured, the server refuses both."
+    },
+    "pipeline\u0000$$.filter(d => d.a).$merge({ into: 't' }).take(1);": {
+      "entry": "pipeline",
+      "src": "$$.filter(d => d.a).$merge({ into: 't' }).take(1);",
+      "kind": "message",
+      "was": "'$merge' must be the last stage in a pipeline — nothing can run after it. Move it to the end of the pipeline, or remove the stage(s) that follow it.",
+      "now": "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "intended: a link after the terminal stage is refused as a statement after it is — measured, the server refuses both."
+    },
+    "pipeline\u0000$$.filter(p => p.a > 1).$sort({ b: -1 }).take(2);": {
+      "entry": "pipeline",
+      "src": "$$.filter(p => p.a > 1).$sort({ b: -1 }).take(2);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":{\"$gt\":1}}},{\"$sort\":{\"b\":-1}},{\"$limit\":2}]",
+      "now": "[{\"$match\":{\"a\":{\"$gt\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"b\":-1}},{\"$limit\":2}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.$sort({ a: 1 }).toReversed();": {
+      "entry": "pipeline",
+      "src": "$$.$sort({ a: 1 }).toReversed();",
+      "kind": "message",
+      "was": "'.toReversed(...)' isn't available on a stream — it reverses the stream, and a MongoDB stream has no order to reverse (there is no stage that reverses one; '$reverseArray' is an expression, for an array inside a document",
+      "now": "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+      "reason": "message: both refuse the method on the stream; the new text is the row's own."
+    },
+    "pipeline\u0000$$.$prject({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$.$prject({ a: 1 });",
+      "kind": "message",
+      "was": "'$prject' is not a known aggregation stage. Did you mean '$project'?",
+      "now": "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: both refuse an unknown link; the new text suggests the nearest method or stage in the chain's own spelling."
+    },
+    "pipeline\u0000$$.$abs(1);": {
+      "entry": "pipeline",
+      "src": "$$.$abs(1);",
+      "kind": "message",
+      "was": "'$abs' is an expression operator, not an aggregation stage — only stages chain as '.$abs(...)'. To use '$abs' as an expression, write it inside a stage body (e.g. '.$set({ x: $abs(...) })').",
+      "now": "'$abs' is not valid in stage position — see its 'where'.",
+      "reason": "message: both refuse an expression operator as a chain link; the row's text now names the way out."
+    },
+    "pipeline\u0000$$.$limit();": {
+      "entry": "pipeline",
+      "src": "$$.$limit();",
+      "kind": "message",
+      "was": "'.$limit(<body>)' takes exactly one argument — the stage body, got 0.",
+      "now": "'$limit'(body) requires exactly 1 argument, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$.$limit(5, 6);": {
+      "entry": "pipeline",
+      "src": "$$.$limit(5, 6);",
+      "kind": "message",
+      "was": "'.$limit(<body>)' takes exactly one argument — the stage body, got 2.",
+      "now": "'$limit'(body) requires exactly 1 argument, got 2",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$?.$match({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$?.$match({ a: 1 });",
+      "kind": "message",
+      "was": "Optional chaining ('?.') is not meaningful on the pipeline stage '$match' — a stage always runs. Write '.$match(...)' at position 4.",
+      "now": "'$$' is the stream of documents and is never null, so '?.' has nothing to guard. Write '$$.' instead.",
+      "reason": "intended: `$$?.` has nothing to guard, and the shipped compiler said so too; the new text names the plain spelling."
+    },
+    "pipeline\u0000$ = { k: $$.filter(d => d.a === 1).$limit(3) };": {
+      "entry": "pipeline",
+      "src": "$ = { k: $$.filter(d => d.a === 1).$limit(3) };",
+      "kind": "now-rejected",
+      "was": "[{\"$facet\":{\"k\":[{\"$match\":{\"a\":1}},{\"$limit\":3}]}}]",
+      "now": "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a cha",
+      "reason": "intended: a chain on the stream where a value belongs is the `$facet` road, a stated pending; the compiler says so instead of running a stream cell on a value record."
+    },
+    "pipeline\u0000$$.filter(o => o.x > 0);": {
+      "entry": "pipeline",
+      "src": "$$.filter(o => o.x > 0);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"x\":{\"$gt\":0}}}]",
+      "now": "[{\"$match\":{\"x\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(t => t.client === 156 && t.createdAt >= \"2026-01-01\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(t => t.client === 156 && t.createdAt >= \"2026-01-01\");",
+      "kind": "output",
+      "was": "[{\"$match\":{\"client\":156,\"createdAt\":{\"$gte\":\"2026-01-01\"}}}]",
+      "now": "[{\"$match\":{\"client\":{\"$eq\":156,\"$not\":{\"$type\":\"array\"}},\"createdAt\":{\"$gte\":\"2026-01-01\",\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000[ $$ = $$.filter(t => t.x > 0) ]": {
+      "entry": "pipeline",
+      "src": "[ $$ = $$.filter(t => t.x > 0) ]",
+      "kind": "output",
+      "was": "[{\"$match\":{\"x\":{\"$gt\":0}}}]",
+      "now": "[{\"$match\":{\"x\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.map(o => ({ v: $.x }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(o => ({ v: $.x }));",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '.map(o => …)' isn't supported — use the lambda parameter (e.g. 'o.x') to reference each input document. Inside this callback, the lambda parameter IS the current document.",
+      "now": "[{\"$replaceWith\":{\"v\":\"$x\"}}]",
+      "reason": "intended: `$.x` inside a stream callback names the ROOT document, which the callback's parameter also is — HR4 at every depth. The shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);": {
+      "entry": "pipeline",
+      "src": "$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);",
+      "kind": "message",
+      "was": "'$$ = <ternary>' (conditional stream branching) is not a supported form — a stream has no single condition that swaps the whole stream for A or B. The RHS of '$$ = …' must be '$$.filter(<predicate>)' (narrow the current ",
+      "now": "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+      "reason": "message: both refuse a right side that is not a chain on the stream; the new wording shows the chain form."
+    },
+    "pipeline\u0000$$ = $$.filter(t => $.x > 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(t => $.x > 5);",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '$$.filter(<predicate>)' on the RHS of '$$ = …' is not supported — use the lambda parameter (e.g. 't.x') to reference the current document. Inside this predicate, the lambda's parameter `t` IS the curr",
+      "now": "[{\"$match\":{\"x\":{\"$gt\":5,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: `$.x` inside a stream callback names the ROOT document, which the parameter also is — HR4 at every depth. The shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = $$.filter({ a: 1 })": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ a: 1 })",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ a: 1 });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$.a = 1, $$ = $$.filter({ b: 2 })": {
+      "entry": "pipeline",
+      "src": "$.a = 1, $$ = $$.filter({ b: 2 })",
+      "kind": "output",
+      "was": "[{\"$set\":{\"a\":1}},{\"$match\":{\"b\":2}}]",
+      "now": "[{\"$set\":{\"a\":1}},{\"$match\":{\"b\":{\"$eq\":2,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter({ b: 2 }), $.a = 1": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ b: 2 }), $.a = 1",
+      "kind": "output",
+      "was": "[{\"$match\":{\"b\":2}},{\"$set\":{\"a\":1}}]",
+      "now": "[{\"$match\":{\"b\":{\"$eq\":2,\"$not\":{\"$type\":\"array\"}}}},{\"$set\":{\"a\":1}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = 5": {
+      "entry": "pipeline",
+      "src": "$$ = 5",
+      "kind": "message",
+      "was": "'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSort",
+      "now": "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+      "reason": "message: both refuse a right side that is not a chain on the stream; the new wording shows the chain form."
+    },
+    "pipeline\u0000$$ = 5;": {
+      "entry": "pipeline",
+      "src": "$$ = 5;",
+      "kind": "message",
+      "was": "'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSort",
+      "now": "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+      "reason": "message: both refuse a right side that is not a chain on the stream; the new wording shows the chain form."
+    },
+    "pipeline\u0000$$.filter({ status: \"shipped\" });\n$ = {\n  topByScore: $$.toSorted({ score: -1 }).take(10),\n  recent:     $$.filter(o => o.createdAt >= new Date(\"2026-01-01\")),\n  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),\n};": {
+      "entry": "pipeline",
+      "src": "$$.filter({ status: \"shipped\" });\n$ = {\n  topByScore: $$.toSorted({ score: -1 }).take(10),\n  recent:     $$.filter(o => o.createdAt >= new Date(\"2026-01-01\")),\n  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),\n};",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}],\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"}}}],\"byStatus\":[{\"$group\":{\"_id\":\"$status\",\"n\":{\"",
+      "now": "sortSpec is not a function",
+      "reason": "intended: a chain on the stream where a value belongs is the `$facet` road, a stated pending; the compiler says so instead of running a stream cell on a value record."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, o) => acc + o.total, 0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, o) => acc + o.total, 0);",
+      "kind": "message",
+      "was": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS: • Scalar reducer: '$$ = [{ <",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.filter({ status: \"shipped\" }).countBy(\"paymentMethod\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ status: \"shipped\" }).countBy(\"paymentMethod\");",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$group\":{\"_id\":\"$paymentMethod\",\"__jsmqlTmp\":{\"$sum\":1}}},{\"$group\":{\"_id\":null,\"__jsmqlTmp\":{\"$push\":{\"k\":{\"$ifNull\":[{\"$toString\":\"$_id\"},\"null\"]},\"v\":\"$__jsmqlTmp\"}}}},{\"$replaceWith",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}},{\"$group\":{\"_id\":\"$paymentMethod\",\"__jsmqlTmp\":{\"$sum\":1}}},{\"$group\":{\"_id\":null,\"__jsmqlTmp\":{\"$push\":{\"k\":{\"$ifNull\":[{\"$toString\":\"$_id\"},\"null\"]},\"v\"",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(t => t.createdAt >= new Date(\"2026-01-01\") && t.client === 156);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"},\"client\":156}}]",
+      "now": "[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"}},\"client\":{\"$eq\":156,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$.filter(p => p.season === \"2026\" && p.score > 0)\n  .slice(40, 60)\n  .map(p => ({ player: p.name, score: p.score, rank: p.rank }));\n      ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter(p => p.season === \"2026\" && p.score > 0)\n  .slice(40, 60)\n  .map(p => ({ player: p.name, score: p.score, rank: p.rank }));\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"season\":\"2026\",\"score\":{\"$gt\":0}}},{\"$skip\":40},{\"$limit\":20},{\"$replaceWith\":{\"player\":\"$name\",\"score\":\"$score\",\"rank\":\"$rank\"}}]",
+      "now": "[{\"$match\":{\"season\":{\"$eq\":\"2026\",\"$not\":{\"$type\":\"array\"}},\"score\":{\"$gt\":0,\"$not\":{\"$type\":\"array\"}}}},{\"$skip\":40},{\"$limit\":20},{\"$replaceWith\":{\"player\":\"$name\",\"score\":\"$score\",\"rank\":\"$rank\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$.filter({ status: \"shipped\" });\n$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ status: \"shipped\" });\n$$ = $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$sort\":{\"placedAt\":-1}},{\"$skip\":25},{\"$limit\":25}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"placedAt\":-1}},{\"$skip\":25},{\"$limit\":25}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$.filter({ shipped: true });\n$$ = $$.map(o => ({\n  orderId:  o._id,\n  customer: o.userId,\n  total:    o.qty * o.unitPrice,\n  shippedAt: o.shippedAt\n}));\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ shipped: true });\n$$ = $$.map(o => ({\n  orderId:  o._id,\n  customer: o.userId,\n  total:    o.qty * o.unitPrice,\n  shippedAt: o.shippedAt\n}));\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"shipped\":true}},{\"$replaceWith\":{\"orderId\":\"$_id\",\"customer\":\"$userId\",\"total\":{\"$multiply\":[\"$qty\",\"$unitPrice\"]},\"shippedAt\":\"$shippedAt\"}}]",
+      "now": "[{\"$match\":{\"shipped\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$replaceWith\":{\"orderId\":\"$_id\",\"customer\":\"$userId\",\"total\":{\"$multiply\":[\"$qty\",\"$unitPrice\"]},\"shippedAt\":\"$shippedAt\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$ = $$.filter({ status: \"shipped\" }).flatMap(\"items\").map(\"items\");\n$sort({ price: -1 });\n$limit(50);\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$ = $$.filter({ status: \"shipped\" }).flatMap(\"items\").map(\"items\");\n$sort({ price: -1 });\n$limit(50);\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$unwind\":\"$items\"},{\"$replaceWith\":\"$items\"},{\"$sort\":{\"price\":-1}},{\"$limit\":50}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}},{\"$unwind\":\"$items\"},{\"$replaceWith\":\"$items\"},{\"$sort\":{\"price\":-1}},{\"$limit\":50}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$ = $$.reduce(\n  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),\n  []\n);\n$$$$.exports.email_contacts = $$;\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$ = $$.reduce(\n  (acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc),\n  []\n);\n$$$$.exports.email_contacts = $$;\n        ",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]},{\"$ne\":[{\"$ifNull\":[\"$contactDetails.email\",null]},null]},{\"$ne\":[\"$contactD",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.slice(0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(0);",
+      "kind": "now-rejected",
+      "was": "[]",
+      "now": "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+      "reason": "intended: a program that emits nothing is refused as a program, whichever construct emptied it — `.drop(0)` and `.slice(0)` are identities, and an identity alone is no pipeline."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.tier === 'gold').slice(0, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.tier === 'gold').slice(0, 5);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$limit\":5}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":5}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.tier === 'gold');": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.tier === 'gold');",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.slice();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice();",
+      "kind": "message",
+      "was": ".slice(start[, end]) takes 1 or 2 arguments, got 0.",
+      "now": "'.slice()'(start[, end]) requires 1 or 2 arguments, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.slice(0, 5, 10);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(0, 5, 10);",
+      "kind": "message",
+      "was": ".slice(start[, end]) takes 1 or 2 arguments, got 3.",
+      "now": "'.slice()'(start[, end]) requires 1 or 2 arguments, got 3",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.slice(-1, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(-1, 5);",
+      "kind": "message",
+      "was": ".slice(start[, end]) requires non-negative integer literals; got 'UnaryExpr'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'slice' argument 1 must be a number of 0 or more — got -1.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.slice(0, -3);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(0, -3);",
+      "kind": "message",
+      "was": ".slice(start[, end]) requires non-negative integer literals; got 'UnaryExpr'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'slice' argument 2 must be a number of 0 or more — got -3.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.slice(1.5, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(1.5, 5);",
+      "kind": "message",
+      "was": ".slice(start[, end]) requires non-negative integer literals; got 1.5. Negative indices and fractional values aren't supported on streams.",
+      "now": "'slice' expects an integer, but got a number.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.slice(10, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(10, 5);",
+      "kind": "now-accepted",
+      "was": ".slice(start, end) requires end >= start (got start=10, end=5).",
+      "now": "[{\"$skip\":10},{\"$match\":{\"$expr\":false}}]",
+      "reason": "intended: `.slice(10, 5)` is empty in JavaScript, and an always-false `$match` is that; the shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = $$.slice($.offset, 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice($.offset, 5);",
+      "kind": "message",
+      "was": ".slice(start[, end]) requires non-negative integer literals; got 'FieldRef'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'slice' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "reason": "message: both refuse a computed count; the new wording is the one every constant slot shares."
+    },
+    "pipeline\u0000$$ = $$.slice(...[0, 5]);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.slice(...[0, 5]);",
+      "kind": "message",
+      "was": ".slice(start[, end]) does not accept spread arguments.",
+      "now": "'slice' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "reason": "message: both refuse a computed count; the new wording is the one every constant slot shares."
+    },
+    "pipeline\u0000$$ = $$.take(1.5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take(1.5);",
+      "kind": "message",
+      "was": ".take(n) requires an integer >= 0; got 1.5.",
+      "now": "'take' expects an integer, but got a number.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.take(-1);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take(-1);",
+      "kind": "message",
+      "was": ".take(n) requires an integer literal; got 'UnaryExpr'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'take' argument 1 must be a number of 0 or more — got -1.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.take(\"x\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take(\"x\");",
+      "kind": "message",
+      "was": ".take(n) requires an integer literal; got 'StringLiteral'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'take' expects an integer, but got a string.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.take($.n);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take($.n);",
+      "kind": "message",
+      "was": ".take(n) requires an integer literal; got 'FieldRef'. Computed or dynamic arguments aren't supported on streams — write the literal in source.",
+      "now": "'take' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "reason": "message: both refuse a computed count; the new wording is the one every constant slot shares."
+    },
+    "pipeline\u0000$$ = $$.take(1, 2);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take(1, 2);",
+      "kind": "message",
+      "was": ".take(n) takes exactly 1 argument, got 2.",
+      "now": "'.take()'([n=1]) requires 0 or 1 arguments, got 2",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.take(...[1]);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.take(...[1]);",
+      "kind": "message",
+      "was": ".take(n) does not accept a spread argument.",
+      "now": "'take' argument 1 must be a compile-time constant — the server reads it before any document; got an expression.",
+      "reason": "message: both refuse a computed count; the new wording is the one every constant slot shares."
+    },
+    "pipeline\u0000$$ = $$.drop(0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.drop(0);",
+      "kind": "now-rejected",
+      "was": "[]",
+      "now": "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+      "reason": "intended: a program that emits nothing is refused as a program, whichever construct emptied it — `.drop(0)` and `.slice(0)` are identities, and an identity alone is no pipeline."
+    },
+    "pipeline\u0000$$ = $$.tail(2);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.tail(2);",
+      "kind": "message",
+      "was": ".tail() takes no arguments, got 1.",
+      "now": "'.tail()'() takes no arguments, got 1",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.takeRight(3);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.takeRight(3);",
+      "kind": "message",
+      "was": "'.takeRight(...)' isn't available on a stream — it counts from the END of the stream, and a MongoDB stream has no end to count back from (there is no stage that reverses one; '$reverseArray' is an expression, for an arra",
+      "now": "'.takeRight()' isn't available on '$$' — counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
+      "reason": "message: both refuse the method on the stream; the new text is the row's own."
+    },
+    "pipeline\u0000$$ = $$.toReversed();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.toReversed();",
+      "kind": "message",
+      "was": "'.toReversed(...)' isn't available on a stream — it reverses the stream, and a MongoDB stream has no order to reverse (there is no stage that reverses one; '$reverseArray' is an expression, for an array inside a document",
+      "now": "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+      "reason": "message: both refuse the method on the stream; the new text is the row's own."
+    },
+    "pipeline\u0000$$.shuffle();": {
+      "entry": "pipeline",
+      "src": "$$.shuffle();",
+      "kind": "output",
+      "was": "[{\"$addFields\":{\"__jsmql.tmp.1\":{\"$rand\":{}}}},{\"$sort\":{\"__jsmql.tmp.1\":1}},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$addFields\":{\"__jsmql.tmp.0\":{\"$rand\":{}}}},{\"$sort\":{\"__jsmql.tmp.0\":1}},{\"$unset\":\"__jsmql\"}]",
+      "reason": "intended: a shape difference inside a stream method's stage that the value or filter target already accounts for (the `.length` dispatch, the scratch namespace, or the array ruling); the stream cell only places the stage."
+    },
+    "pipeline\u0000$$ = $$.shuffle().take(3);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.shuffle().take(3);",
+      "kind": "output",
+      "was": "[{\"$addFields\":{\"__jsmql.tmp.1\":{\"$rand\":{}}}},{\"$sort\":{\"__jsmql.tmp.1\":1}},{\"$limit\":3},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$addFields\":{\"__jsmql.tmp.0\":{\"$rand\":{}}}},{\"$sort\":{\"__jsmql.tmp.0\":1}},{\"$limit\":3},{\"$unset\":\"__jsmql\"}]",
+      "reason": "intended: a shape difference inside a stream method's stage that the value or filter target already accounts for (the `.length` dispatch, the scratch namespace, or the array ruling); the stream cell only places the stage."
+    },
+    "pipeline\u0000$$ = $$.sampleSize(0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sampleSize(0);",
+      "kind": "message",
+      "was": ".sampleSize(n) requires an integer >= 1; got 0.",
+      "now": "'sampleSize' argument 1 must be a number of 1 or more — got 0.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.filter({ tier: \"gold\" }).sample();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ tier: \"gold\" }).sample();",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$sample\":{\"size\":1}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$sample\":{\"size\":1}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.sample(3);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sample(3);",
+      "kind": "message",
+      "was": ".sample() takes no arguments, got 1. For n random documents use '.sampleSize(n)'.",
+      "now": "'.sample()'() takes no arguments, got 1",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.sortBy({ age: -1 });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sortBy({ age: -1 });",
+      "kind": "message",
+      "was": ".sortBy({ … }) isn't supported — an object here is a lodash matches-shorthand, not a direction. Use '.orderBy({ field: -1 })' or '.sort({ field: -1 })' for directions.",
+      "now": ".sortBy({ … }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.orderBy(\"age\", \"up\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.orderBy(\"age\", \"up\");",
+      "kind": "message",
+      "was": ".orderBy(keys, orders) directions must be 1 / -1 / \"asc\" / \"desc\".",
+      "now": ".orderBy(keys, orders) takes 1, -1, \"asc\" or \"desc\" for each order.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.orderBy({ score: -1 }, [\"asc\"]);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.orderBy({ score: -1 }, [\"asc\"]);",
+      "kind": "message",
+      "was": ".orderBy({ … }) already carries a direction per field — drop the second 'orders' argument.",
+      "now": ".orderBy({ field: dir }) carries its directions inline; a second argument has nothing to say.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.orderBy();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.orderBy();",
+      "kind": "message",
+      "was": ".orderBy(keys[, orders] | { field: dir }) takes one or two arguments, got 0.",
+      "now": "'.orderBy()'(keys[, orders] | { field: dir }) requires 1 or 2 arguments, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.sort({ a: 2 });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sort({ a: 2 });",
+      "kind": "message",
+      "was": ".sort(...) direction for 'a' must be 1 / -1 / \"asc\" / \"desc\".",
+      "now": ".sort({ a: … }) takes a direction: 1, -1, \"asc\" or \"desc\".",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.sort(\"$x\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sort(\"$x\");",
+      "kind": "message",
+      "was": ".sort(...) requires plain field names (no leading '$'), got \"$x\".",
+      "now": ".sort() sorts by a field NAME — a plain string like \"age\", with no leading '$'.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.sort();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sort();",
+      "kind": "message",
+      "was": ".sort(<sort>) needs a sort key — MongoDB streams have no natural document ordering. Pass a field name ('.sort(\"createdAt\")'), a '{ field: 1 | -1 | \"asc\" | \"desc\" }' spec, or a comparator '(a, b) => a.x - b.x'.",
+      "now": "'.sort()'(\"field\" | [fields] | { field: dir } | comparator) requires exactly 1 argument, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$.reject(o => o.archived === true);": {
+      "entry": "pipeline",
+      "src": "$$.reject(o => o.archived === true);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.reject({ archived: true });": {
+      "entry": "pipeline",
+      "src": "$$.reject({ archived: true });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.filter(o => o.active === true).reject(o => o.hidden === true).take(5);": {
+      "entry": "pipeline",
+      "src": "$$.filter(o => o.active === true).reject(o => o.hidden === true).take(5);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$hidden\",true]}}}},{\"$limit\":5}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$match\":{\"$nor\":[{\"hidden\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}},{\"$limit\":5}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.reject(o => o.a, o => o.b);": {
+      "entry": "pipeline",
+      "src": "$$.reject(o => o.a, o => o.b);",
+      "kind": "message",
+      "was": "'$$.reject(<predicate>)' takes exactly one predicate argument, got 2.",
+      "now": "'.reject()'(predicate) requires exactly 1 argument, got 2",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$.reject(...preds);": {
+      "entry": "pipeline",
+      "src": "$$.reject(...preds);",
+      "kind": "message",
+      "was": "'$$.reject(<predicate>)' on the RHS of '$$ = …' takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('\"active\"'), or a [\"field\", value] pair.",
+      "now": "'.reject()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$.pick([\"_id\", \"name\"]);": {
+      "entry": "pipeline",
+      "src": "$$.pick([\"_id\", \"name\"]);",
+      "kind": "output",
+      "was": "[{\"$project\":{\"_id\":1,\"name\":1}}]",
+      "now": "[{\"$project\":{\"_id\":0,\"name\":1}}]",
+      "reason": "intended: a shape difference inside a stream method's stage that the value or filter target already accounts for (the `.length` dispatch, the scratch namespace, or the array ruling); the stream cell only places the stage."
+    },
+    "pipeline\u0000$$.pick(\"name\");": {
+      "entry": "pipeline",
+      "src": "$$.pick(\"name\");",
+      "kind": "message",
+      "was": ".pick([fields]) takes an array of field-name strings, e.g. '.pick([\"name\", \"email\"])'.",
+      "now": "'pick' expects an array, but got a string.",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$.omit([1, 2]);": {
+      "entry": "pipeline",
+      "src": "$$.omit([1, 2]);",
+      "kind": "now-accepted",
+      "was": ".omit([fields]) entries must be plain field-name strings (no leading '$').",
+      "now": "[{\"$project\":{\"1\":0,\"2\":0}}]",
+      "reason": "intended: `.omit`/`.pick` list field NAMES, stated as `arrayOf: fieldName`; a number is refused with what a name is, where the shipped shape projected fields called \"1\" and \"2\"."
+    },
+    "pipeline\u0000$$ = $$.groupBy({ _id: \"$dept\", n: $sum(1), total: $sum(\"$amount\") });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy({ _id: \"$dept\", n: $sum(1), total: $sum(\"$amount\") });",
+      "kind": "now-rejected",
+      "was": "[{\"$group\":{\"_id\":\"$dept\",\"n\":{\"$sum\":1},\"total\":{\"$sum\":\"$amount\"}}}]",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.groupBy({ _id: null, ids: $addToSet(\"$productId\") });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy({ _id: null, ids: $addToSet(\"$productId\") });",
+      "kind": "now-rejected",
+      "was": "[{\"$group\":{\"_id\":null,\"ids\":{\"$addToSet\":\"$productId\"}}}]",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.groupBy({ n: $sum(1) });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy({ n: $sum(1) });",
+      "kind": "message",
+      "was": ".groupBy({ … }) requires an '_id' key (the group key). Use '.groupBy(\"field\")' to group by a single field.",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.groupBy(5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy(5);",
+      "kind": "message",
+      "was": ".groupBy(key) takes a field name ('.groupBy(\"status\")'), a bare-path arrow ('.groupBy(d => d.status)'), a computed iteratee ('.groupBy(d => d.status.toLowerCase())') or a '$group' body ('{ _id: \"$dept\", n: $sum(1) }'), o",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.map(d => 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => 5);",
+      "kind": "now-accepted",
+      "was": ".map(d => …) must return a document, but this maps each document to a number — MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ … }))'; to keep a single value under a k",
+      "now": "[{\"$replaceWith\":5}]",
+      "reason": "intended: `.map` replaces each document with what the arrow returns, so it has to return a document — measured, the server refuses every non-document root; a body the registry can prove is not one is refused at compile time."
+    },
+    "pipeline\u0000$$ = $$.map(d => \"x\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => \"x\");",
+      "kind": "now-accepted",
+      "was": ".map(d => …) must return a document, but this maps each document to a string — MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ … }))'; to keep a single value under a k",
+      "now": "[{\"$replaceWith\":\"x\"}]",
+      "reason": "intended: `.map` replaces each document with what the arrow returns, so it has to return a document — measured, the server refuses every non-document root; a body the registry can prove is not one is refused at compile time."
+    },
+    "pipeline\u0000$$ = $$.map(d => true);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => true);",
+      "kind": "now-accepted",
+      "was": ".map(d => …) must return a document, but this maps each document to a boolean — MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ … }))'; to keep a single value under a ",
+      "now": "[{\"$replaceWith\":true}]",
+      "reason": "intended: `.map` replaces each document with what the arrow returns, so it has to return a document — measured, the server refuses every non-document root; a body the registry can prove is not one is refused at compile time."
+    },
+    "pipeline\u0000$$ = $$.map(d => [1, 2]);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => [1, 2]);",
+      "kind": "now-accepted",
+      "was": ".map(d => …) must return a document, but this maps each document to an array — MongoDB's '$replaceWith' requires an object root. To reshape into a new document write '.map(d => ({ … }))'; to keep a single value under a k",
+      "now": "[{\"$replaceWith\":[1,2]}]",
+      "reason": "intended: `.map` replaces each document with what the arrow returns, so it has to return a document — measured, the server refuses every non-document root; a body the registry can prove is not one is refused at compile time."
+    },
+    "pipeline\u0000$$ = $$.filter({ status: \"CLOSED\", tier: \"gold\" });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ status: \"CLOSED\", tier: \"gold\" });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"CLOSED\",\"tier\":\"gold\"}}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"CLOSED\",\"$not\":{\"$type\":\"array\"}},\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter({ status: \"CLOSED\" }).sort({ createdAt: -1 }).take(10)": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter({ status: \"CLOSED\" }).sort({ createdAt: -1 }).take(10)",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"CLOSED\"}},{\"$sort\":{\"createdAt\":-1}},{\"$limit\":10}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"CLOSED\",\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"createdAt\":-1}},{\"$limit\":10}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.map();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map();",
+      "kind": "message",
+      "was": ".map(d => <expr>) takes exactly one argument (a single-parameter arrow), got 0.",
+      "now": "'.map()'(callback) requires exactly 1 argument, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.map((d, i) => ({ id: d._id, idx: i }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((d, i) => ({ id: d._id, idx: i }));",
+      "kind": "message",
+      "was": ".map((d, i) => …) can't use the index parameter 'i' — MongoDB streams have no per-doc index. Drop it, or keep it unused (e.g. '(d, _i, coll)') only to reach the 3rd 'collection' parameter.",
+      "now": "`i` is a `let` binding and can't be read after `.map()` — a stream has no per-document index; leave the parameter unused",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));",
+      "kind": "now-rejected",
+      "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"id\":\"$_id\",\"n\":\"$__jsmql.length\"}}]",
+      "now": "`coll` is a `let` binding and can't be read after `.map()` — the collection is the stream itself — write '$$.length' for its size",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));",
+      "kind": "now-rejected",
+      "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"share\":{\"$divide\":[\"$total\",\"$__jsmql.length\"]}}}]",
+      "now": "`coll` is a `let` binding and can't be read after `.map()` — the collection is the stream itself — write '$$.length' for its size",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));",
+      "kind": "message",
+      "was": "In '.map((o, _i, coll) => …)' over a '$$$.<coll>' stream, only 'coll.length' (the sub-stream's document count) is available — there's no materialised array to index or iterate. To work with the array itself, use the mate",
+      "now": "`coll` is a `let` binding and can't be read after `.map()` — the collection is the stream itself — write '$$.length' for its size",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ all: coll }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((o, _i, coll) => ({ all: coll }));",
+      "kind": "message",
+      "was": "In '.map((o, _i, coll) => …)' over a '$$$.<coll>' stream, only 'coll.length' (the sub-stream's document count) is available — there's no materialised array to index or iterate. To work with the array itself, use the mate",
+      "now": "`coll` is a `let` binding and can't be read after `.map()` — the collection is the stream itself — write '$$.length' for its size",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map((o, i, coll) => ({ x: i, n: coll.length }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map((o, i, coll) => ({ x: i, n: coll.length }));",
+      "kind": "message",
+      "was": ".map((o, i) => …) can't use the index parameter 'i' — MongoDB streams have no per-doc index. Drop it, or keep it unused (e.g. '(o, _i, coll)') only to reach the 3rd 'collection' parameter.",
+      "now": "`i` is a `let` binding and can't be read after `.map()` — a stream has no per-document index; leave the parameter unused",
+      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
+    },
+    "pipeline\u0000$$ = $$.map(d => ({ n: $.name }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => ({ n: $.name }));",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. 'd.name') to reference each input document. Inside this callback, the lambda parameter IS the current document.",
+      "now": "[{\"$replaceWith\":{\"n\":\"$name\"}}]",
+      "reason": "intended: `$.x` inside a stream callback names the ROOT document, which the parameter also is — HR4 at every depth. The shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"archive\",\"localField\":\"_id\",\"foreignField\":\"_id\",\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$replaceWith\":{\"a\":\"$__jsmql.tmp.1\"}}]",
+      "now": "'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'.",
+      "reason": "message: a read from another collection inside a stream callback is the join road, not built yet; both compilers refuse the spelling here, with different words."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.active === true).map(d => ({ id: d._id, archived: $$$.archive.find(x => x._id === d._id) }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.active === true).map(d => ({ id: d._id, archived: $$$.archive.find(x => x._id === d._id) }));",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"active\":true}},{\"$lookup\":{\"from\":\"archive\",\"localField\":\"_id\",\"foreignField\":\"_id\",\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$first\":\"$__jsmql.tmp.1\"}}},{\"$replaceWith\":{\"id\":\"$_id\",\"archived\":\"$__j",
+      "now": "'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'.",
+      "reason": "message: a read from another collection inside a stream callback is the join road, not built yet; both compilers refuse the spelling here, with different words."
+    },
+    "pipeline\u0000$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"archive\",\"localField\":\"_id\",\"foreignField\":\"userId\",\"as\":\"__jsmql.tmp.1\"}},{\"$replaceWith\":{\"id\":\"$_id\",\"items\":\"$__jsmql.tmp.1\"}}]",
+      "now": "'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'.",
+      "reason": "message: a read from another collection inside a stream callback is the join road, not built yet; both compilers refuse the spelling here, with different words."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.active === true).toSorted((a, b) => a.age - b.age);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.active === true).toSorted((a, b) => a.age - b.age);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$sort\":{\"age\":1}}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"age\":1}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.toSorted();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.toSorted();",
+      "kind": "message",
+      "was": ".toSorted(<sort>) needs a sort key — MongoDB streams have no natural document ordering. Pass a field name ('.toSorted(\"createdAt\")'), a '{ field: 1 | -1 | \"asc\" | \"desc\" }' spec, or a comparator '(a, b) => a.x - b.x'.",
+      "now": "'.toSorted()'(\"field\" | [fields] | { field: dir } | comparator) requires exactly 1 argument, got 0",
+      "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
+    },
+    "pipeline\u0000$$ = $$.toSorted(x => x.age);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.toSorted(x => x.age);",
+      "kind": "now-accepted",
+      "was": ".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "[{\"$sort\":{\"age\":1}}]",
+      "reason": "intended: a key function, a block body with a binding, and lodash's unused index and collection parameters are all accepted now; the shipped compiler refused each, and the reader or the binding says what to write if one is READ."
+    },
+    "pipeline\u0000$$ = $$.toSorted((a, b) => a.x + b.x);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.toSorted((a, b) => a.x + b.x);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.toSorted((a, b) => a.x - b.y);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.toSorted((a, b) => a.x - b.y);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(d => ({ item: d.items }));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(d => ({ item: d.items }));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$unwind\":\"$items\"},{\"$replaceWith\":{\"item\":\"$items\"}}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$unwind\":\"$items\"},{\"$replaceWith\":{\"item\":\"$items\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.flatMap(d => 5);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.flatMap(d => 5);",
+      "kind": "now-accepted",
+      "was": ".flatMap(d => …) needs a field path — it lowers to '$unwind', which returns each element to a NAMED field, so a computed body (e.g. '.flatMap(d => d.items.map(...))') has nothing to unwind into. Build the array into a fi",
+      "now": "[{\"$unwind\":5}]",
+      "reason": "intended: `.flatMap` names the array field to unwind; a body that is not a field of the document is refused, where the shipped compiler said the same in other words."
+    },
+    "pipeline\u0000$$ = $$.flatMap((d, i) => d.items);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.flatMap((d, i) => d.items);",
+      "kind": "now-accepted",
+      "was": ".flatMap(d => d.<path>) requires a single-parameter arrow (got 2 params).",
+      "now": "[{\"$unwind\":\"$items\"}]",
+      "reason": "intended: a key function, a block body with a binding, and lodash's unused index and collection parameters are all accepted now; the shipped compiler refused each, and the reader or the binding says what to write if one is READ."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => (d.active && d.contactDetails.email ? acc.concat(d.contactDetails) : acc), []);",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]},{\"$ne\":[{\"$ifNull\":[\"$contactDetails.email\",null]},null]},{\"$ne\":[\"$contactD",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => (d.tier === 'gold' ? acc.concat(d.profile) : acc), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => (d.tier === 'gold' ? acc.concat(d.profile) : acc), []);",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$replaceWith\":\"$profile\"}]",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), []);",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":\"$contactDetails\"}]",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), []);",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"active\":true}}]",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc.concat(d), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc.concat(d), []);",
+      "kind": "now-rejected",
+      "was": "[]",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), [1, 2]);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc.concat(d.contactDetails), [1, 2]);",
+      "kind": "message",
+      "was": "'$$ = $$.reduce(<reducer>, <init>)' with an array-returning reducer requires the init to be '[]' — a non-empty seed array isn't supported (no MQL accumulator preserves the JS-faithful \"start with these elements\" semantic",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => (d.active ? acc.concat(d.contactDetails) : []), []);",
+      "kind": "message",
+      "was": "Array-returning reducer body — supported shapes: • Unconditional map: '(acc, d) => acc.concat(d.<field>)' → '$replaceWith: \"$<field>\"' • Filter + map: '(acc, d) => (<cond> ? acc.concat(d.<field>) : acc)' → '$match(<cond>",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc.push(d.contactDetails), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc.push(d.contactDetails), []);",
+      "kind": "message",
+      "was": "Array-returning reducer body — supported shapes: • Unconditional map: '(acc, d) => acc.concat(d.<field>)' → '$replaceWith: \"$<field>\"' • Filter + map: '(acc, d) => (<cond> ? acc.concat(d.<field>) : acc)' → '$match(<cond>",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc.concat([d.x, d.y]), []);",
+      "kind": "message",
+      "was": "Array-returning reducer body — supported shapes: • Unconditional map: '(acc, d) => acc.concat(d.<field>)' → '$replaceWith: \"$<field>\"' • Filter + map: '(acc, d) => (<cond> ? acc.concat(d.<field>) : acc)' → '$match(<cond>",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => ($.active ? acc.concat(d.contactDetails) : acc), []);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => ($.active ? acc.concat(d.contactDetails) : acc), []);",
+      "kind": "message",
+      "was": "'$.<field>' inside '$$.filter(<predicate>)' on the RHS of '$$ = …' is not supported — use the lambda parameter (e.g. 'd.active') to reference the current document. Inside this predicate, the lambda's parameter `d` IS the",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.reduce((acc, d) => acc + d.amount, 0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.reduce((acc, d) => acc + d.amount, 0);",
+      "kind": "message",
+      "was": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS: • Scalar reducer: '$$ = [{ <",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);",
+      "kind": "message",
+      "was": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Wrap the reduce result into a stream-shaped RHS: • Scalar reducer: '$$ = [{ <",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: both refuse `.reduce` on the stream and point at the wrap form; the new text is the row's own, with the receiver spelled '$$'."
+    },
+    "pipeline\u0000$$.filter(o => o.tier === 'gold');": {
+      "entry": "pipeline",
+      "src": "$$.filter(o => o.tier === 'gold');",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));": {
+      "entry": "pipeline",
+      "src": "$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.filter(o => o.tier === 'gold'); $$.map(d => ({ id: d._id }));": {
+      "entry": "pipeline",
+      "src": "$$.filter(o => o.tier === 'gold'); $$.map(d => ({ id: d._id }));",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$replaceWith\":{\"id\":\"$_id\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.map(d => { return { n: $.name }; });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => { return { n: $.name }; });",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '.map(d => …)' isn't supported — use the lambda parameter (e.g. 'd.name') to reference each input document. Inside this callback, the lambda parameter IS the current document.",
+      "now": "[{\"$replaceWith\":{\"n\":\"$name\"}}]",
+      "reason": "intended: `$.x` inside a stream callback names the ROOT document, which the parameter also is — HR4 at every depth. The shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = $$.groupBy({ _id: \"$dept\", n: $sum(1) });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy({ _id: \"$dept\", n: $sum(1) });",
+      "kind": "now-rejected",
+      "was": "[{\"$group\":{\"_id\":\"$dept\",\"n\":{\"$sum\":1}}}]",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.groupBy({ _id: \"$cat\" });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.groupBy({ _id: \"$cat\" });",
+      "kind": "now-rejected",
+      "was": "[{\"$group\":{\"_id\":\"$cat\"}}]",
+      "now": "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "reason": "message: both refuse an argument that is neither an arrow nor a shorthand the row accepts; the new wording says what arrived and what the method takes."
+    },
+    "pipeline\u0000$$ = $$.sortBy(d => d.cat.toLowerCase());": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sortBy(d => d.cat.toLowerCase());",
+      "kind": "now-rejected",
+      "was": "[{\"$addFields\":{\"__jsmql.tmp.1\":{\"$toLower\":\"$cat\"}}},{\"$sort\":{\"__jsmql.tmp.1\":1}},{\"$unset\":\"__jsmql\"}]",
+      "now": ".sortBy(d => …) sorts by a field of its parameter: 'd.age', or '-d.age' for descending. MongoDB sorts by names, never by a computed key.",
+      "reason": "intended: a computed sort key goes through a scratch field the chain's cleanup drops, as the shipped compiler did; the key's own lowering (`.toLowerCase`) is a value cell still pending, so the row is a verified skip until it lands."
+    },
+    "pipeline\u0000$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.orderBy(d => d.cat.toLowerCase(), -1);",
+      "kind": "now-rejected",
+      "was": "[{\"$addFields\":{\"__jsmql.tmp.1\":{\"$toLower\":\"$cat\"}}},{\"$sort\":{\"__jsmql.tmp.1\":-1}},{\"$unset\":\"__jsmql\"}]",
+      "now": ".orderBy() sorts by a field NAME — a plain string like \"age\", with no leading '$'.",
+      "reason": "message: both refuse a malformed sort argument; the new text comes from the one sort reader."
+    },
+    "pipeline\u0000$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.sortBy(d => d.cat.toLowerCase()).take(3);",
+      "kind": "now-rejected",
+      "was": "[{\"$addFields\":{\"__jsmql.tmp.1\":{\"$toLower\":\"$cat\"}}},{\"$sort\":{\"__jsmql.tmp.1\":1}},{\"$limit\":3},{\"$unset\":\"__jsmql\"}]",
+      "now": ".sortBy(d => …) sorts by a field of its parameter: 'd.age', or '-d.age' for descending. MongoDB sorts by names, never by a computed key.",
+      "reason": "intended: a computed sort key goes through a scratch field the chain's cleanup drops, as the shipped compiler did; the key's own lowering (`.toLowerCase`) is a value cell still pending, so the row is a verified skip until it lands."
+    },
+    "pipeline\u0000$$ = $$.countBy(d => $.other);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.countBy(d => $.other);",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '.countBy(d => …)' isn't supported — use the lambda parameter (e.g. 'd.other') to reference each input document. Inside this callback, the lambda parameter IS the current document.",
+      "now": "[{\"$group\":{\"_id\":\"$other\",\"__jsmqlTmp\":{\"$sum\":1}}},{\"$group\":{\"_id\":null,\"__jsmqlTmp\":{\"$push\":{\"k\":{\"$ifNull\":[{\"$toString\":\"$_id\"},\"null\"]},\"v\":\"$__jsmqlTmp\"}}}},{\"$replaceWith\":{\"$arrayToObject\":\"$__jsmqlTmp\"}}]",
+      "reason": "intended: `$.x` inside a stream callback names the ROOT document, which the parameter also is — HR4 at every depth. The shipped compiler refused the spelling."
+    },
+    "pipeline\u0000$$ = $$.uniqBy(function (d) { const y = d.x; return y; });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.uniqBy(function (d) { const y = d.x; return y; });",
+      "kind": "now-accepted",
+      "was": ".uniqBy(d => { … }) with 'let'/'const' bindings isn't supported — use a single 'return <expr>' (e.g. '.uniqBy(d => d.field)'), or hoist the bindings to a top-level 'let' before the chain.",
+      "now": "[{\"$group\":{\"_id\":{\"$let\":{\"vars\":{\"y\":\"$x\"},\"in\":\"$$y\"}},\"__jsmqlTmp\":{\"$first\":\"$$ROOT\"}}},{\"$replaceWith\":\"$__jsmqlTmp\"}]",
+      "reason": "intended: a key function, a block body with a binding, and lodash's unused index and collection parameters are all accepted now; the shipped compiler refused each, and the reader or the binding says what to write if one is READ."
+    },
+    "pipeline\u0000$$ = $$.countBy((d, i) => d.x);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.countBy((d, i) => d.x);",
+      "kind": "now-accepted",
+      "was": ".countBy(key) takes a single-parameter iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": "[{\"$group\":{\"_id\":\"$x\",\"__jsmqlTmp\":{\"$sum\":1}}},{\"$group\":{\"_id\":null,\"__jsmqlTmp\":{\"$push\":{\"k\":{\"$ifNull\":[{\"$toString\":\"$_id\"},\"null\"]},\"v\":\"$__jsmqlTmp\"}}}},{\"$replaceWith\":{\"$arrayToObject\":\"$__jsmqlTmp\"}}]",
+      "reason": "intended: a key function, a block body with a binding, and lodash's unused index and collection parameters are all accepted now; the shipped compiler refused each, and the reader or the binding says what to write if one is READ."
+    },
+    "pipeline\u0000$$ = $$.filter(t => t.a === 1)": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(t => t.a === 1)",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.indexStat()": {
+      "entry": "pipeline",
+      "src": "$$.indexStat()",
+      "kind": "message",
+      "was": "'$$.indexStat(...)' is not a known diagnostic stage. '$$' (collection reference) supports the collection-scoped system stages: .collStats(), .indexStats(), .listSearchIndexes(), .planCacheStats(). Did you mean '$$.indexS",
+      "now": "'.indexStat()' is not a method of the stream '$$'. Did you mean '.$indexStats()'? A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: both refuse an unknown link; the new text suggests the nearest method or stage in the chain's own spelling."
+    },
+    "pipeline\u0000$$ = $$.push({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$ = $$.push({ a: 1 });",
+      "kind": "message",
+      "was": "'.push(...)' isn't a chain method. To append documents mid-chain use '.concat(...)', which emits the same '$unionWith' — e.g. '$$.filter(<pred>).concat({ … })'. ('$$.push(...)' does work as a top-level statement of its o",
+      "now": "'.push()' isn't available on '$$' — appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'.",
+      "reason": "message: both refuse the method on the stream; the new text is the row's own."
+    },
+    "pipeline\u0000$$ = $$.filter(d => d.a > 1);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(d => d.a > 1);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":{\"$gt\":1}}}]",
+      "now": "[{\"$match\":{\"a\":{\"$gt\":1,\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.map(d => \"$sub\");": {
+      "entry": "pipeline",
+      "src": "$$ = $$.map(d => \"$sub\");",
+      "kind": "now-rejected",
+      "was": "[{\"$replaceWith\":\"$sub\"}]",
+      "now": "'.map(d => …)' replaces each document with what the arrow returns, so it has to return a document — a string is not one. Return '({ value: … })' to keep it under a field.",
+      "reason": "message: both refuse; the new wording says what arrived and what the method takes."
     }
   }
 }

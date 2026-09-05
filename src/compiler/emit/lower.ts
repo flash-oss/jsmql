@@ -367,13 +367,15 @@ function pathOf(node: Expr, env: Env): string | null {
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
     if (b.ref.kind === "var") return b.ref.ref;
-    if (b.ref.kind === "document") return "$$CURRENT";
+    if (b.ref.kind === "document") return "$$ROOT";
     if (b.ref.kind === "field") return b.ref.slot.ref;
     return null;
   }
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
     const base = pathOf(node.object, env);
-    return base === null ? null : `${base}.${node.name}`;
+    // A field of the DOCUMENT is a root path, spelled as `$.x` spells it: `d.x` in
+    // `$$.map(d => d.x)` is "$x", not "$$ROOT.x".
+    return base === null ? null : base === "$$ROOT" ? `$${node.name}` : `${base}.${node.name}`;
   }
   return null;
 }
@@ -468,6 +470,13 @@ function dispatchOn(
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
   const receiver = receiverOf(recvNode, recvEnv);
+  // A METHOD on the stream where a value belongs — `$ = { k: $$.filter(…) }` — is
+  // the `$facet` road, not built yet. A stream cell must never run on a value
+  // record, which has none of the readings a stream cell asks for; a property of
+  // the stream (`$$.length`) is a value of its own and passes.
+  if (node.type === "MethodCall" && receiver.kind === "stream" && position !== "stream" && position !== "statement") {
+    throw E.pendingStatement("a read of the stream ('$$.filter(…)') as a value", node.pos);
+  }
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
   const spelled = spelledMethod(name, recvNode);

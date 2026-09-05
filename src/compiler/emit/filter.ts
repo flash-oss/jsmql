@@ -281,10 +281,11 @@ export function pathOfIn(e: Expr, env: Env): string | null {
       env.scope.has(e.object.name) &&
       env.lookup(e.object.name, e.object.pos).ref.kind === "document"
     ) {
-      // Only the INNERMOST element's fields are paths here: an outer `.some`'s
-      // parameter read inside a nested one has no query form (`$elemMatch` sees
-      // its own element only), so the body takes the `$expr` road.
-      return innermost !== null && innermost.element === e.object.name ? e.name : null;
+      // A name bound as the DOCUMENT — a stream callback's parameter, or a `.some`
+      // element — has its fields as paths. Inside an `$elemMatch` only the
+      // INNERMOST element's do: an outer parameter read there has no query form
+      // (`$elemMatch` sees its own element only), so the body takes the `$expr` road.
+      return innermost === null || innermost.element === e.object.name ? e.name : null;
     }
     const base = pathOfIn(e.object, env);
     return base === null ? null : `${base}.${e.name}`;

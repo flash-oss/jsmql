@@ -16,12 +16,12 @@ import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { forbiddenInOf, isStageName, onlyOf, stageBodyRuleOf } from "../rows.ts";
-import { consult, everyName } from "./consult.ts";
+import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { childEnv, stageInputs } from "./inputs.ts";
-import { lowerFilter, lowerNativeFilter } from "./filter.ts";
+import { lowerFilter } from "./filter.ts";
 import { lowerValue } from "./lower.ts";
 import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
@@ -112,8 +112,16 @@ function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath): Stag
 /** The services a stage cell reads: each reading of an argument this file can give. */
 const READ = {
   value: readIn,
-  predicate: (cb: Expr, env: Env): QueryDoc | null => lowerNativeFilter(cb, env.at(FILTER)),
+  /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
+  predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER)),
   reshape: lowerValue,
+  /** The statements of a stage block, each as its stages, under the parameter's env. */
+  block: (stages: Pipeline, env: Env): Stage[] => {
+    const inner = childEnv(env, stages, "stmts");
+    const out: Stage[] = [];
+    for (const stmt of stages.stmts) out.push(...statementStages(stmt, inner, out.length === 0));
+    return out;
+  },
 };
 
 /** A program to the pipeline it means. */
@@ -143,7 +151,7 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
 
 /** One statement's stages. `first` says whether nothing stands ahead of it here. */
 function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Stage[] {
-  if (stmt.type === "UpdateFilter") return writeStages(stmt as UpdateFilter, env);
+  if (stmt.type === "UpdateFilter") return writeStages(stmt as UpdateFilter, env, first);
   if (stmt.type === "LetDecl") throw E.pendingStatement("a 'let' binding that is not a constant", stmt.pos);
   if (stmt.type === "FuncDecl") throw E.pendingStatement("a function declaration", stmt.pos);
   return stageStatement(stmt, env, first);
@@ -174,11 +182,14 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
 
 // ── the writes ───────────────────────────────────────────────────────────────
 
+/** The destination of `$$ = …`: not a path — the stream itself. */
+const STREAM_TARGET = "$$";
+
 /** A write's destination: the field path it names, `""` for the document root. */
 function targetPath(op: UpdateOp): string {
   const t = op.target;
   if (t.type === "FieldRef") return t.path;
-  if (t.type === "CollectionRef") throw E.pendingStatement("a write to the stream ('$$ = …')", op.pos);
+  if (t.type === "CollectionRef") return STREAM_TARGET;
   const base = chainBase(t) as { type: string };
   if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
     throw E.pendingStatement("a write to another collection ('$$$.<coll> = …')", op.pos);
@@ -257,7 +268,7 @@ const touches = (x: string, y: string): boolean =>
  * A write to the document ROOT is its own stage: it replaces what the next write
  * would be written into.
  */
-function writeStages(uf: UpdateFilter, env: Env): Stage[] {
+function writeStages(uf: UpdateFilter, env: Env, first: boolean): Stage[] {
   const inner = childEnv(env, uf, "ops");
   const out: Stage[] = [];
   let sets: { paths: string[]; fields: Record<string, unknown> } | null = null;
@@ -272,6 +283,19 @@ function writeStages(uf: UpdateFilter, env: Env): Stage[] {
 
   for (const op of uf.ops) {
     const path = targetPath(op);
+    // `$$ = <chain>` replaces the STREAM: its stages stand on their own, after
+    // whatever the run has grouped so far.
+    if (path === STREAM_TARGET) {
+      if (op.type === "DeleteStmt") throw E.cannotDeleteRoot(op.pos);
+      // `$$ = [{ … }]` is the `$documents` sugar, whose elements are DOCUMENTS and
+      // not statements — a different road from a chain, and not built here yet.
+      if (op.value.type === "ArrayLiteral") {
+        throw E.pendingStatement("a literal list of documents as the stream ('$$ = [ … ]')", op.value.pos);
+      }
+      flush();
+      out.push(...streamStages(op.value, inner, first && out.length === 0));
+      continue;
+    }
     if (op.type === "DeleteStmt") {
       if (path === "") throw E.cannotDeleteRoot(op.pos);
       if (sets !== null) flush();
@@ -327,6 +351,56 @@ function refuseUnbuiltSugar(value: Expr): void {
   }
 }
 
+// ── the stream road ──────────────────────────────────────────────────────────
+
+/**
+ * A chain on the stream, `$$.filter(…).sortBy("k").take(3)`, as the stages it
+ * means — one row's `stream` cell per link, base first. A stage is a link too
+ * (`$$.$match(…)`), through the same cell its statement form uses. Each link's
+ * stages take the placement its row states, exactly as a statement's do.
+ */
+function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
+  const links: Extract<Expr, { type: "MethodCall" }>[] = [];
+  let cur: Expr = chain;
+  while (cur.type === "MethodCall") {
+    links.unshift(cur);
+    cur = cur.object;
+  }
+  // `$$ = $$$.orders.…` switches the stream to another collection — the join road.
+  const root = chainBase(cur) as { type: string };
+  if (root.type === "DatabaseRef" || root.type === "ClusterRef") {
+    throw E.pendingStatement("a switch of the stream to another collection ('$$ = $$$.<coll>.…')", chain.pos);
+  }
+  if (cur.type !== "CollectionRef") throw E.notAStreamChain(chain.pos);
+  const out: Stage[] = [];
+  for (const link of links) {
+    // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
+    if (link.optional) throw E.optionalOnStream(link.pos);
+    // A link after the stage that writes the output has nowhere to run, exactly
+    // as a statement after it has not — measured, the server refuses both.
+    if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
+    const name = namedRow(link) ?? link.name;
+    const verdict = consult(name, "stream", "stream");
+    if (verdict.kind === "unknown" || verdict.kind === "noCell") {
+      throw E.notAStreamLink(
+        link.name,
+        everyName().filter((n) => listedIn(n, "stream")),
+        link.pos,
+      );
+    }
+    const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
+    if (sel.kind !== "rule") {
+      if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
+      throw E.refusalFor(sel, `'.${link.name}()'`, "'$$'", "stream", link.pos, []);
+    }
+    const args = link.args as readonly Expr[];
+    checkSlots(name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
+    const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ)) as Stage[];
+    for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
+  }
+  return out;
+}
+
 // ── the stage calls ──────────────────────────────────────────────────────────
 
 /**
@@ -347,8 +421,16 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     // yet, and without this the chain's last LINK would be found in the registry
     // and emitted as a bare stage — measured: `$$$.orders.$match({ a: 1 });` gave
     // `[{ "$match": { "a": 1 } }]`, a filter on the wrong collection.
+    // A bare `$$.<name>(…)` with ONE link asks the row's STATEMENT cell first: the
+    // union sugar (`$$.push(…)`) and the source stages (`$$.indexStats()`) are
+    // statements that happen to be spelled on the stream, and their rows say so.
+    // Everything else is `$$ = $$.<chain>;` — the same chain, the same stages.
     if (base.type === "CollectionRef") {
-      throw E.pendingStatement("a stream chain as a statement ('$$.filter(…);')", node.pos);
+      if (node.optional) throw E.optionalOnStream(node.pos);
+      const says = node.object.type === "CollectionRef" ? consult(namedRow(node) ?? node.name, "statement") : null;
+      if (says === null || says.kind === "refused" || says.kind === "noCell" || says.kind === "unknown") {
+        return streamStages(node, env, first);
+      }
     }
     if (base.type === "DatabaseRef" || base.type === "ClusterRef") {
       throw E.pendingStatement("a read from another collection ('$$$.<coll>.find(…)')", node.pos);

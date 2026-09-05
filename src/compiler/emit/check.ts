@@ -372,6 +372,14 @@ export function checkSlots(
   if (args.elementType !== undefined) {
     for (const e of operands) checkType(name, "", e, args.elementType);
   }
+  for (const [i, t] of Object.entries(args.arrayOf ?? {})) {
+    const e = operands[Number(i)];
+    if (e === undefined || e.type !== "ArrayLiteral") continue;
+    for (const el of e.elements) {
+      if (el.type === "SpreadElement") continue;
+      checkType(name, `element ${e.elements.indexOf(el) + 1}`, el as Expr, t as ArgType);
+    }
+  }
   for (const [i, [lo, hi]] of Object.entries(args.slotRange ?? {})) {
     const e = operands[Number(i)];
     const n = e === undefined ? null : numberOf(e);

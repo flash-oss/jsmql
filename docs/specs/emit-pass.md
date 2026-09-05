@@ -283,6 +283,40 @@ that NAMES a field to write, where a `$`-led string is the error rather than a
 runtime value — the one place the literal gate is bypassed, because
 `{ $count: "$n" }` is refused by the server.
 
+### The stream road
+
+`$$ = $$.filter(d => d.x > 1).sortBy("k").take(3);` and its bare spelling
+`$$.filter(…).sortBy("k").take(3);` are one program: a chain on the stream, one
+row's `stream` cell per link, base first. A stage is a link too (`$$.$match(…)`),
+through the very cell its statement form uses, and each link's stages take the
+placement its row states — a link after `$out` is refused exactly as a statement
+after it is.
+
+```js
+$$ = $$.filter(d => d.x > 1);          // → [{"$match":{"x":{"$gt":1,"$not":{"$type":"array"}}}}]
+$$ = $$.map(d => ({ a: d.x }));        // → [{"$replaceWith":{"a":"$x"}}]
+$$ = $$.sortBy("x").take(2);           // → [{"$sort":{"x":1}},{"$limit":2}]
+$$ = $$.toSorted((a, b) => b.x - a.x); // → [{"$sort":{"x":-1}}]
+$$ = $$.reject(d => d.x > 1);          // → [{"$match":{"$nor":[{"x":{"$gt":1,…}}]}}]   the complement, as `!p` is
+$$ = $$.uniqBy("k");                   // → [{"$group":{"_id":"$k","__jsmqlTmp":{"$first":"$$ROOT"}}},{"$replaceWith":"$__jsmqlTmp"}]
+$$ = $$.take(0);                       // → [{"$match":{"$expr":false}}]           `$limit: 0` is refused by the server
+```
+
+A callback's FIRST parameter IS the stream's document: `d.x` is the path "x" in a
+predicate and `"$x"` in a reshape, and the bare `d` is `"$$ROOT"`. `$.x` inside the
+callback names the same document — the root — as HR4 says it does everywhere. The
+index and collection parameters lodash allows are bound, and a READ of either says
+what to write instead (a stream has no per-document index; `$$.length` is its size).
+
+A stream cell receives its arguments as SOURCE and asks for the reading it wants:
+`predicate(cb)` a query document (total — a body with no native form arrives as
+`$expr`), `reshape(cb)` a value, `block(cb)` the stages of a `{ … }` body,
+`sortSpec(e)` and `orderBy(keys, orders)` the `{ field: 1 | -1 }` document from
+any of the sort spellings (`emit/sort-spec.ts`, a reader over the tree that never
+lowers), `slot()` a scratch field the chain's cleanup drops. A bare `$$.<name>(…)`
+with one link asks the row's STATEMENT cell first — the union sugar and the
+source stages are statements spelled on the stream, and their rows say so.
+
 What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
 `emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
 than trust one, and so the work left is countable. The list emptying is what

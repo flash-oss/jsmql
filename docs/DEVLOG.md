@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the stream road — a chain on `$$` as the stages it means
+
+`$$ = $$.filter(d => d.x > 1).sortBy("k").take(3);` and its bare spelling are one program: one row's `stream` cell per link, base first, each link's stages placed as a statement's are. Twenty-five array methods that pointed at `pending` now state their stream cell — `filter`, `reject`, `map`, `flatMap`, the four sort spellings, `take`, `drop`, `tail`, `slice`, `sample`, `sampleSize`, `pick`, `omit`, the four `uniq` forms, `shuffle`, `groupBy`, `countBy`, `keyBy`, `aggregate` — and every one was measured against the shipped compiler's output before it was written. The pending ratchet fell from 408 to 377.
+
+**A callback's first parameter IS the document.** `d.x` is the path "x" in a predicate and `"$x"` in a reshape; the bare `d` is `"$$ROOT"`, where the shipped compiler refused it. `$.x` inside the callback is the same document — HR4, at every depth. The value road had answered `"$$CURRENT.x"` for a document-bound name's field; it answers the root path now, so `.map(d => d.x)` is `{ $replaceWith: "$x" }` and not a spelling the developer never wrote.
+
+**The sort spellings share one reader.** `emit/sort-spec.ts` turns a name, a list of names, a `{ field: dir }` document, a key function `x => -x.age` or a comparator `(a, b) => b.age - a.age` — `||` joining keys — into the `{ field: 1 | -1 }` document a `$sort` takes. It reads the tree and never lowers, because MongoDB sorts by names. `.sortBy` refuses the object form by the reader's `objects: false`, since lodash reads an object there as a matcher. The shipped reader could not be reused: it is written against the tree the shipped parser builds.
+
+**What a stream cell may ask for grew.** `predicate` is total now (a body with no native form arrives as `$expr`); `block` gives the stages of an `o => { … }` body; `sortSpec`, `orderBy` and `slot` are new. The `GROUP_SLOT` name a group's scratch takes is stated in the registry beside `QueryDoc`, the twin of `GROUP_TMP` in `src/namespace.ts`, because the registry imports nothing outside itself.
+
+**Three things the differential harness caught.** `$$.filter(d => d.a).$out("x").$limit(1)` was accepted — a link after the terminal stage — and is refused now as a statement after it is. `$$?.$match(…)` was accepted; the stream is never null, so the `?.` is refused with the plain spelling. And `$$.push(…)` / `$$.indexStats()` went down the stream road and hit a chain-link refusal, where each is a STATEMENT spelled on the stream: a bare `$$.<name>(…)` with one link asks the row's statement cell first, and the union sugar and the source stages stay verified pendings until their roads land.
+
+Three constructs join the pending list: a switch of the stream to another collection (`$$ = $$$.orders.…`), a literal list of documents as the stream (`$$ = [ … ]`), and the join reads already listed. Two left it: a write to the stream and a stream chain as a statement. Gates: pipeline fully classified again.
+
+---
+
 ## 2026-09-05 — fix(compiler): `typeof` speaks MongoDB's type names, and nothing else
 
 The developer's ruling on the type vocabulary: MongoDB's types only, no JavaScript ones. `typeof $.a === "bool"` is the test; `"boolean"`, `"function"`, `"symbol"` and every other spelling MongoDB's `$type` does not know is refused with the nearest name — `'typeof' compares against one of MongoDB's type names, and "boolean" is not one. Did you mean "bool"?` — where before it lowered to a test that quietly matched nothing. Both roads refuse it at the one site they share.

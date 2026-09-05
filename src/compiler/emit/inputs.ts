@@ -8,9 +8,19 @@
 // record with a service missing.
 
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth } from "../../registry/vocabulary.ts";
+import type { Pipeline } from "../../registry/ast.ts";
+import { orderBySpec, sortSpecOf } from "./sort-spec.ts";
 import { constantIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
-import { needsPipeline } from "./errors.ts";
+import {
+  blockWhereValueExpected,
+  mapMustReturnDocument,
+  needsPipeline,
+  notAFieldOfTheDocument,
+  notAnArrow,
+  valueWhereBlockExpected,
+} from "./errors.ts";
+import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { edge } from "../passes/position.ts";
 
@@ -120,8 +130,10 @@ export function filterInputs(
 /** The three readings a STAGE cell asks of an argument, supplied by statement.ts. */
 export type StageReader = {
   value: (node: Expr, env: Env) => unknown;
-  predicate: (cb: Expr, env: Env) => QueryDoc | null;
-  reshape: (node: Expr, env: Env) => unknown;
+  predicate: (body: Expr, env: Env) => QueryDoc;
+  reshape: (body: Expr, env: Env) => unknown;
+  /** The statements of a stage-block callback, under the env the parameter is bound in. */
+  block: (stages: Pipeline, env: Env) => Stage[];
 };
 
 /**
@@ -139,25 +151,89 @@ export function stageInputs(
   read: StageReader,
 ): StageIn & { keys: readonly string[] } {
   const argEnv = childEnv(env, node, "args");
-  /** A callback's one parameter IS the stream's document, so its fields are top-level paths. */
-  const bound = (cb: Expr): Env | null =>
-    cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== 1
-      ? null
-      : argEnv.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+  /**
+   * A callback's FIRST parameter IS the stream's document, so its fields are
+   * top-level paths. lodash lets a callback name an index and the collection too;
+   * a stream has no per-document index and the collection is the stream itself,
+   * so each is bound as a name whose READ says what to write instead.
+   */
+  const bound = (cb: Expr): Env | null => {
+    if (cb.type !== "Lambda" || cb.params.length < 1 || cb.params.length > 3) return null;
+    let e = argEnv.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+    if (cb.params.length >= 2) {
+      e = e.bind(cb.params[1], {
+        ref: {
+          kind: "dropped",
+          by: `.${name}()`,
+          fix: "a stream has no per-document index; leave the parameter unused",
+        },
+        type: "unknown",
+        mutable: false,
+        pos: cb.pos,
+      });
+    }
+    if (cb.params.length === 3) {
+      e = e.bind(cb.params[2], {
+        ref: {
+          kind: "dropped",
+          by: `.${name}()`,
+          fix: "the collection is the stream itself — write '$$.length' for its size",
+        },
+        type: "unknown",
+        mutable: false,
+        pos: cb.pos,
+      });
+    }
+    return e;
+  };
+  /**
+   * A callback's body and the env it is lowered under — the parameter IS the
+   * document. Not an arrow at all — `.countBy(String)` — is the developer's
+   * mistake, worded; the shorthands a row accepts have been rewritten to arrows
+   * by then, so what arrives here is the arrow or the error.
+   */
+  const body = (cb: Expr, what: string): { body: Expr; env: Env } => {
+    const e = bound(cb);
+    if (e === null) throw notAnArrow(name, what, cb);
+    const b = (cb as { body?: Expr }).body;
+    if (b === undefined) throw blockWhereValueExpected(name, cb.pos);
+    return { body: b, env: childEnv(e, cb, "body") };
+  };
   return {
     name,
     args,
     keys,
     value: (e) => read.value(e, argEnv),
     predicate: (cb) => {
-      const e = bound(cb);
-      return e === null ? null : read.predicate((cb as { body: Expr }).body, childEnv(e, cb, "body"));
+      const b = body(cb, "a predicate");
+      return read.predicate(b.body, b.env);
     },
     reshape: (cb) => {
-      const e = bound(cb);
-      if (e === null) internalError("a stage cell asked to reshape an argument that is not a one-parameter arrow");
-      return read.reshape((cb as { body: Expr }).body, childEnv(e, cb, "body"));
+      const b = body(cb, "a reshape");
+      return read.reshape(b.body, b.env);
     },
+    document: (cb) => {
+      const b = body(cb, "a document");
+      const kind = b.body.type === "NullLiteral" ? "null" : kindOf(b.body, b.env);
+      if (kind !== "unknown" && kind !== "object") throw mapMustReturnDocument(name, kind, b.body.pos);
+      return read.reshape(b.body, b.env);
+    },
+    fieldPath: (cb) => {
+      const b = body(cb, "a field");
+      const v = read.reshape(b.body, b.env);
+      if (typeof v !== "string" || !v.startsWith("$") || v.startsWith("$$")) throw notAFieldOfTheDocument(name, cb.pos);
+      return v;
+    },
+    block: (cb) => {
+      const e = bound(cb);
+      if (e === null) throw notAnArrow(name, "a block of stages", cb);
+      const stages = (cb as { stages?: Pipeline }).stages;
+      if (stages === undefined) throw valueWhereBlockExpected(name, cb.pos);
+      return read.block(stages, e);
+    },
+    sortSpec: (e, objects = true) => sortSpecOf(e, name, objects),
+    orderBy: (keys, orders) => orderBySpec(keys, orders, name),
+    slot: () => env.chain.slot().path,
     prevStages: env.chain.emitted,
     bind: (hint) => {
       const b = env.fresh(hint);

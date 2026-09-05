@@ -354,10 +354,10 @@ export const spreadInStageList = (pos: number): CodegenError =>
 export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
   "a 'let' binding that is not a constant": "src/pipeline.ts",
   "a function declaration": "src/codegen.ts",
-  "a write to the stream ('$$ = …')": "src/pipeline.ts",
   "a read from another collection ('$$$.<coll>.find(…)')": "src/lookup-translation.ts",
+  "a switch of the stream to another collection ('$$ = $$$.<coll>.…')": "src/pipeline.ts",
+  "a literal list of documents as the stream ('$$ = [ … ]')": "src/pipeline.ts",
   "a read of the stream ('$$.filter(…)') as a value": "src/pipeline.ts",
-  "a stream chain as a statement ('$$.filter(…);')": "src/stream-methods.ts",
   "a write to another collection ('$$$.<coll> = …')": "src/out-translation.ts",
 };
 
@@ -419,3 +419,61 @@ export const notAMongoType = (spelling: string, aliases: readonly string[], pos:
     pos,
   );
 };
+
+// ── the stream road ──────────────────────────────────────────────────────────
+
+/** `$$ = <something that is not a chain on the stream>`. */
+export const notAStreamChain = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+    pos,
+  );
+
+/** A link in a stream chain whose name is not a method the stream has, nor a stage. */
+export const notAStreamLink = (name: string, candidates: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' is not a method of the stream '$$'.${didYouMean(name, candidates, (s) => `.${s}()`)} A stage is a link too: '$$.$match(…)'.`,
+    pos,
+  );
+
+/** A stage cell asked for a callback and the argument is not an arrow. */
+export const notAnArrow = (name: string, what: string, got: { type: string; pos: number }): CodegenError =>
+  new CodegenError(
+    `'.${name}()' takes ${what} as a one-parameter arrow here — 'd => …' — and got ${got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : "something else"}.`,
+    got.pos,
+  );
+
+/** An arrow with a `{ … }` body of stages where a VALUE body was wanted. */
+export const blockWhereValueExpected = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' takes an arrow that returns a value — 'd => d.x', or 'd => { …; return d.x; }'. A body of pipeline stages belongs to '.aggregate(o => { … })'.`,
+    pos,
+  );
+
+/** An arrow with a value body where a block of STAGES was wanted. */
+export const valueWhereBlockExpected = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' takes an arrow whose body is a block of stages — 'o => { $match(…); $limit(1); }' — or a bracketed list of them.`,
+    pos,
+  );
+
+/** `$$?.filter(…)` — the stream is never null, so the `?.` says nothing true. */
+export const optionalOnStream = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$' is the stream of documents and is never null, so '?.' has nothing to guard. Write '$$.' instead.",
+    pos,
+  );
+
+/** `.map(d => 5)` — the server refuses every non-document root. */
+export const mapMustReturnDocument = (name: string, kind: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}(d => …)' replaces each document with what the arrow returns, so it has to return a document — ${kind === "null" ? "null" : `a ${kind}`} is not one. Return '({ value: … })' to keep it under a field.`,
+    pos,
+  );
+
+/** `.flatMap(d => 5)` — an unwind names a field of the document. */
+export const notAFieldOfTheDocument = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.`,
+    pos,
+  );

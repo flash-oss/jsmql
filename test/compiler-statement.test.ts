@@ -231,6 +231,103 @@ describe("compiler/emit/statement — a stage body is checked from the facts its
   });
 });
 
+describe("compiler/emit/statement — the stream road", () => {
+  const NA = { $not: { $type: "array" } };
+
+  it("lowers a chain on the stream one link at a time, and the bare spelling the same way", () => {
+    expect(compiled("$$ = $$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1, ...NA } } }]);
+    expect(compiled("$$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1, ...NA } } }]);
+    expect(compiled('$$ = $$.filter(d => d.x > 1).sortBy("k").take(2);')).toEqual([
+      { $match: { x: { $gt: 1, ...NA } } },
+      { $sort: { k: 1 } },
+      { $limit: 2 },
+    ]);
+    // a stage is a link too, through the very cell its statement form uses
+    expect(compiled("$$ = $$.$match({ a: 1 }).$limit(1);")).toEqual([{ $match: { a: 1 } }, { $limit: 1 }]);
+    // the parameter IS the document: a path in a predicate, a root path in a reshape
+    expect(compiled("$$ = $$.map(d => ({ a: d.x, w: d }));")).toEqual([{ $replaceWith: { a: "$x", w: "$$ROOT" } }]);
+    // `sub.deep` is a document in EVERY fixture document: the server refuses a
+    // reshape to anything else, and the suite's server section runs this one.
+    expect(compiled("$$ = $$.map(d => d.sub.deep);")).toEqual([{ $replaceWith: "$sub.deep" }]);
+    // `$.x` inside the callback is the same document — HR4 at every depth
+    expect(compiled("$$ = $$.filter(d => d.x > $.y);")).toEqual([{ $match: { $expr: { $gt: ["$x", "$y"] } } }]);
+    // the lodash shorthands are arrows by the time a cell sees them
+    expect(compiled("$$ = $$.filter({ k: 1 });")).toEqual([{ $match: { k: { $eq: 1, ...NA } } }]);
+    expect(compiled('$$ = $$.map("sub");')).toEqual([{ $replaceWith: "$sub" }]);
+  });
+
+  it("reads every sort spelling through one reader", () => {
+    expect(compiled('$$ = $$.sortBy("x");')).toEqual([{ $sort: { x: 1 } }]);
+    expect(compiled('$$ = $$.sortBy(["x", "y"]);')).toEqual([{ $sort: { x: 1, y: 1 } }]);
+    expect(compiled('$$ = $$.sort({ x: -1, y: "asc" });')).toEqual([{ $sort: { x: -1, y: 1 } }]);
+    expect(compiled("$$ = $$.toSorted((a, b) => b.x - a.x || a.y - b.y);")).toEqual([{ $sort: { x: -1, y: 1 } }]);
+    expect(compiled('$$ = $$.orderBy(["x", "y"], ["asc", "desc"]);')).toEqual([{ $sort: { x: 1, y: -1 } }]);
+    expect(compiled("$$ = $$.sortBy(d => -d.age);")).toEqual([{ $sort: { age: -1 } }]);
+    // a key MongoDB cannot sort by goes through a scratch field the chain's cleanup drops
+    expect(compiled("$$ = $$.sortBy(d => d.a + d.b);")).toEqual([
+      { $addFields: { "__jsmql.tmp.0": { $add: ["$a", "$b"] } } },
+      { $sort: { "__jsmql.tmp.0": 1 } },
+      { $unset: "__jsmql" },
+    ]);
+    // lodash reads an object here as a matcher, not as directions
+    expect(() => pipeline("$$ = $$.sortBy({ k: -1 });")).toThrow(/reads an object as a lodash matcher/);
+    expect(() => pipeline("$$ = $$.sort({ a: 2 });")).toThrow(/takes a direction: 1, -1/);
+  });
+
+  it("emits each method's own stage, and nothing for an identity", () => {
+    expect(compiled("$$ = $$.take(2);")).toEqual([{ $limit: 2 }]);
+    // `$limit: 0` is refused by the server; a take of nothing is a stream of nothing
+    expect(compiled("$$ = $$.take(0);")).toEqual([{ $match: { $expr: false } }]);
+    expect(compiled("$$ = $$.slice(1, 3);")).toEqual([{ $skip: 1 }, { $limit: 2 }]);
+    expect(compiled("$$ = $$.tail();")).toEqual([{ $skip: 1 }]);
+    expect(compiled("$$ = $$.sampleSize(3);")).toEqual([{ $sample: { size: 3 } }]);
+    expect(compiled("$$ = $$.flatMap(d => d.items);")).toEqual([{ $unwind: "$items" }]);
+    expect(compiled('$$ = $$.pick(["a", "b"]);')).toEqual([{ $project: { a: 1, b: 1, _id: 0 } }]);
+    expect(compiled('$$ = $$.omit(["a"]);')).toEqual([{ $project: { a: 0 } }]);
+    expect(compiled('$$ = $$.uniqBy("k");')).toEqual([
+      { $group: { _id: "$k", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+    expect(compiled('$$ = $$.countBy("k");')).toEqual([
+      { $group: { _id: "$k", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    // `.reject` is the complement of the predicate's own clause, as `!p` is
+    expect(compiled("$$ = $$.reject(d => d.x > 1);")).toEqual([{ $match: { $nor: [{ x: { $gt: 1, ...NA } }] } }]);
+    // the block's statements ARE the chain's stages
+    expect(compiled("$$.aggregate((o) => { $match(o.a > 1); $limit(2); });")).toEqual([
+      { $match: { a: { $gt: 1, ...NA } } },
+      { $limit: 2 },
+    ]);
+  });
+
+  it("refuses what the server would, and says what to write", () => {
+    // a link after the terminal stage, as a statement after it
+    expect(() => pipeline('$$.filter(d => d.a).$out("x").$limit(1);')).toThrow(/Nothing can follow '\$out'/);
+    // the stream is never null
+    expect(() => pipeline("$$?.$match({ a: 1 });")).toThrow(/never null/);
+    // a reshape has to return a document; the server refuses every other root
+    expect(() => pipeline("$$ = $$.map(d => 5);")).toThrow(/has to return a document/);
+    // an unwind names a field
+    expect(() => pipeline("$$ = $$.flatMap(d => 5);")).toThrow(/names the ARRAY FIELD/);
+    // a projection lists field names
+    expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/names a field to WRITE/);
+    // an argument that is neither an arrow nor a shorthand
+    expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/one-parameter arrow/);
+    // an unknown link, with the nearest one in the chain's own spelling
+    expect(() => pipeline("$$.$prject({ a: 1 });")).toThrow(/Did you mean '\.\$project\(\)'/);
+    // a read of the index or collection parameter says what to write instead
+    expect(() => pipeline("$$ = $$.map((d, i) => ({ n: i }));")).toThrow(/no per-document index/);
+    expect(compiled("$$ = $$.map((d, _i, _coll) => ({ id: d._id }));")).toEqual([{ $replaceWith: { id: "$_id" } }]);
+  });
+});
+
 describe("compiler/emit/statement — the refusals name the way out", () => {
   it("tells a value what to do instead of standing as a statement", () => {
     expect(() => pipeline("$.a > 1;")).toThrow(/A pipeline statement writes something/);
@@ -296,8 +393,6 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
   });
 
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
-    expect(() => pipeline("$$ = $$.filter(d => d.x);")).toThrow(PendingLowering);
-    expect(() => pipeline("$$.filter(d => d.x).take(2);")).toThrow(PendingLowering);
     expect(() => pipeline("$.r = $$$.orders.find(o => o.id === $._id);")).toThrow(PendingLowering);
     // A chain's last LINK is a name the registry knows, so without this the join
     // road would emit a bare stage — a filter on the wrong collection.
@@ -321,8 +416,10 @@ beforeAll(async () => {
     coll = c.db("jsmql_compiler_statement").collection("t");
     await coll.deleteMany({});
     await coll.insertMany([
-      { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1 }, items: [1, 2] },
-      { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2 }, items: [] },
+      // `a.b` and `k` hold documents: a reshape to a field that is not one is
+      // refused by the server, and two asserted reshapes read them.
+      { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1, deep: { v: 1 } }, items: [1, 2] },
+      { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2, deep: { v: 2 } }, items: [] },
     ]);
   } catch {
     client = null;

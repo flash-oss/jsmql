@@ -29,6 +29,15 @@ export type Node = AstNode;
 export type QueryDoc = Record<string, unknown>;
 
 /**
+ * The one flat scratch field a `$group` may write. An accumulator's output key
+ * cannot hold a dot, so scratch produced INSIDE a group cannot live under the
+ * `__jsmql` object like every other temporary; it takes this reserved name and
+ * the very next stage consumes it. The twin of `GROUP_TMP` in `src/namespace.ts`
+ * — the registry imports nothing outside itself, and a test holds the two equal.
+ */
+export const GROUP_SLOT = "__jsmqlTmp";
+
+/**
  * A JavaScript SPELLING compares the field's OWN value.
  *
  * MongoDB's query language satisfies a field comparison when ANY ELEMENT of an
@@ -517,6 +526,12 @@ export type Arity = {
    */
   slotType?: Readonly<Record<number, ArgType | readonly ArgType[]>>;
   /**
+   * Slots holding an ARRAY LITERAL whose every element must be of one type:
+   * `.pick(["name", "email"])` lists field names, and `.pick([1, 2])` would
+   * project fields called "1" and "2". Checked only on a literal array.
+   */
+  arrayOf?: Readonly<Record<number, ArgType>>;
+  /**
    * Slots whose literal must fall in a closed numeric range — `$sampleRate` takes
    * a rate in [0, 1]; the server refuses 2 ("must be in [0, 1]"). Checked only on
    * a literal number.
@@ -871,15 +886,52 @@ export type ExprIn = {
  */
 export type MongoExprIn = Pick<ExprIn, "name" | "recv" | "args" | "keys" | "value" | "bind">;
 
+/**
+ * What a sort argument asks for: keys by NAME, or a key COMPUTED from the document
+ * (`d => d.cat.toLowerCase()`), which MongoDB cannot sort by directly — the cell
+ * writes it to a scratch field and sorts by that.
+ */
+export type SortAsk =
+  | { readonly kind: "keys"; readonly spec: Readonly<Record<string, 1 | -1>> }
+  | { readonly kind: "computed"; readonly key: Expr; readonly dir: 1 | -1 };
+
 export type StageIn = {
   /** This entry's own key. See FilterIn.name. */
   name: string;
   args: readonly Expr[];
-  /** A callback body as a query document against the stream's own fields. */
-  predicate: (cb: Expr) => QueryDoc | null;
-  /** A callback body as a document reshape, for $replaceWith / $set. */
+  /**
+   * A callback body as a query document against the stream's own fields —
+   * the parameter IS the document. Total: a body with no native query form
+   * arrives as `{ $expr: … }`.
+   */
+  predicate: (cb: Expr) => QueryDoc;
+  /** A callback body as a value — a group key, an unwind path. */
   reshape: (cb: Expr) => unknown;
+  /**
+   * A callback body that must BE a document — the value `$replaceWith` takes.
+   * A body the registry can prove is not one (`d => 5`) is refused with the
+   * way to write it, because the server refuses every non-document root.
+   */
+  document: (cb: Expr) => unknown;
+  /** A callback body that names a FIELD of the document — `d => d.items` — as its root path, `"$items"`. */
+  fieldPath: (cb: Expr) => string;
+  /**
+   * A callback whose `{ … }` body is a list of STAGES — `.aggregate(o => { … })`
+   * — as those stages, the parameter bound as the document.
+   */
+  block: (cb: Expr) => Stage[];
   value: (e: Expr) => unknown;
+  /**
+   * A sort argument as the `{ field: 1 | -1 }` document a `$sort` takes: a name,
+   * a list of names, a `{ field: dir }` spec, a key function or a comparator.
+   * `objects: false` refuses the spec form, where the method reads an object as
+   * a lodash matcher (`.sortBy`).
+   */
+  sortSpec: (e: Expr, objects?: boolean) => SortAsk;
+  /** lodash's `orderBy(keys, orders)`, the two arguments as one ask. */
+  orderBy: (keys: Expr, orders: Expr | undefined) => SortAsk;
+  /** A fresh `__jsmql.tmp.<n>` scratch field path; the chain's cleanup drops it. */
+  slot: () => string;
   /** What the chain has already emitted — `sort().take(1)` reads this. */
   prevStages: readonly Stage[];
   bind: (hint: string) => { as: string; ref: string };

@@ -21,6 +21,7 @@
 // where a fact still lives in code, the row says `pending(<file>)`.
 
 import type {
+  Expr,
   Binds,
   CallbackParams,
   Arity,
@@ -49,6 +50,7 @@ import type {
   Refusal,
   Returns,
   Rule,
+  SortAsk,
   Stage,
   StageIn,
   TokenName,
@@ -59,6 +61,7 @@ import {
   because,
   escapeForRegex,
   FIELD_VALUE,
+  GROUP_SLOT,
   objectBody,
   OWN_VALUE,
   queryOwnValue,
@@ -464,6 +467,37 @@ const WEEKDAY = [
   "sun",
 ] as const;
 
+/**
+ * A sort ask as its stages: a `$sort` by name, or — for a key COMPUTED from the
+ * document, which MongoDB cannot sort by — a scratch field holding the key, a
+ * `$sort` by it, and the chain's own cleanup dropping the field.
+ */
+const sortStages = (ask: SortAsk, slot: () => string, reshape: (cb: Expr) => unknown): Stage[] => {
+  if (ask.kind === "keys") return [{ $sort: ask.spec }];
+  const key = slot();
+  return [{ $addFields: { [key]: reshape(ask.key) } }, { $sort: { [key]: ask.dir } }];
+};
+
+/** A literal count, as a stream cell reads it; the row's `args` have refused anything else. */
+const n = (e: Expr): number => (e.type === "NumberLiteral" ? e.value : 1);
+
+/**
+ * lodash's collapse of a stream to ONE document keyed by a value: a `$group` per
+ * key with `acc` as the value, a second `$group` gathering `{ k, v }` pairs into
+ * the group's scratch slot, and `$arrayToObject` to build the object. A key that
+ * is not a string is stringified, and a null key spells "null".
+ */
+const collapse = (key: unknown, acc: Record<string, unknown>): Stage[] => [
+  { $group: { _id: key, [GROUP_SLOT]: acc } },
+  {
+    $group: {
+      _id: null,
+      [GROUP_SLOT]: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: `$${GROUP_SLOT}` } },
+    },
+  },
+  { $replaceWith: { $arrayToObject: `$${GROUP_SLOT}` } },
+];
+
 export const NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -475,7 +509,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$abs' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$abs' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$abs' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$abs' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $abs(…);'",
+    ),
     statement: unsupported(
       "'$abs' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $abs(…);'",
     ),
@@ -495,7 +531,9 @@ export const NAMES = {
     },
     group: unsupported("'$add' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$add' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$add' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$add' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $add(…);'",
+    ),
     statement: unsupported(
       "'$add' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $add(…);'",
     ),
@@ -512,7 +550,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$ceil' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ceil' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$ceil' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$ceil' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $ceil(…);'",
+    ),
     statement: unsupported(
       "'$ceil' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ceil(…);'",
     ),
@@ -532,7 +572,9 @@ export const NAMES = {
     },
     group: unsupported("'$divide' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$divide' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$divide' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$divide' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $divide(…);'",
+    ),
     statement: unsupported(
       "'$divide' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $divide(…);'",
     ),
@@ -549,7 +591,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$exp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$exp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$exp' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$exp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $exp(…);'",
+    ),
     statement: unsupported(
       "'$exp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $exp(…);'",
     ),
@@ -566,7 +610,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$floor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$floor' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$floor' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$floor' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $floor(…);'",
+    ),
     statement: unsupported(
       "'$floor' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $floor(…);'",
     ),
@@ -583,7 +629,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$ln' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ln' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$ln' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$ln' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $ln(…);'",
+    ),
     statement: unsupported(
       "'$ln' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ln(…);'",
     ),
@@ -603,7 +651,9 @@ export const NAMES = {
     },
     group: unsupported("'$log' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$log' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$log' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $log(…);'",
+    ),
     statement: unsupported(
       "'$log' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $log(…);'",
     ),
@@ -620,7 +670,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$log10' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$log10' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$log10' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$log10' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $log10(…);'",
+    ),
     statement: unsupported(
       "'$log10' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $log10(…);'",
     ),
@@ -640,7 +692,9 @@ export const NAMES = {
     },
     group: unsupported("'$mod' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$mod' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$mod' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$mod' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $mod(…);'",
+    ),
     statement: unsupported(
       "'$mod' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $mod(…);'",
     ),
@@ -660,7 +714,9 @@ export const NAMES = {
     },
     group: unsupported("'$multiply' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$multiply' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$multiply' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$multiply' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $multiply(…);'",
+    ),
     statement: unsupported(
       "'$multiply' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $multiply(…);'",
     ),
@@ -680,7 +736,9 @@ export const NAMES = {
     },
     group: unsupported("'$pow' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$pow' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$pow' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$pow' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $pow(…);'",
+    ),
     statement: unsupported(
       "'$pow' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $pow(…);'",
     ),
@@ -700,7 +758,9 @@ export const NAMES = {
     },
     group: unsupported("'$round' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$round' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$round' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$round' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $round(…);'",
+    ),
     statement: unsupported(
       "'$round' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $round(…);'",
     ),
@@ -718,7 +778,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sigmoid' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sigmoid' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sigmoid' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sigmoid' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sigmoid(…);'",
+    ),
     statement: unsupported(
       "'$sigmoid' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sigmoid(…);'",
     ),
@@ -735,7 +797,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sqrt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sqrt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sqrt' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sqrt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sqrt(…);'",
+    ),
     statement: unsupported(
       "'$sqrt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sqrt(…);'",
     ),
@@ -755,7 +819,9 @@ export const NAMES = {
     },
     group: unsupported("'$subtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$subtract' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$subtract' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$subtract' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $subtract(…);'",
+    ),
     statement: unsupported(
       "'$subtract' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $subtract(…);'",
     ),
@@ -775,7 +841,9 @@ export const NAMES = {
     },
     group: unsupported("'$trunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trunc' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$trunc' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$trunc' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $trunc(…);'",
+    ),
     statement: unsupported(
       "'$trunc' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $trunc(…);'",
     ),
@@ -795,7 +863,9 @@ export const NAMES = {
     },
     group: unsupported("'$bitAnd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitAnd' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$bitAnd' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bitAnd' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bitAnd(…);'",
+    ),
     statement: unsupported(
       "'$bitAnd' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitAnd(…);'",
     ),
@@ -812,7 +882,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "int-or-long" } }, emit: single },
     group: unsupported("'$bitNot' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitNot' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$bitNot' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bitNot' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bitNot(…);'",
+    ),
     statement: unsupported(
       "'$bitNot' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitNot(…);'",
     ),
@@ -832,7 +904,9 @@ export const NAMES = {
     },
     group: unsupported("'$bitOr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitOr' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$bitOr' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bitOr' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bitOr(…);'",
+    ),
     statement: unsupported(
       "'$bitOr' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitOr(…);'",
     ),
@@ -852,7 +926,9 @@ export const NAMES = {
     },
     group: unsupported("'$bitXor' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bitXor' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$bitXor' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bitXor' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bitXor(…);'",
+    ),
     statement: unsupported(
       "'$bitXor' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bitXor(…);'",
     ),
@@ -869,7 +945,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sin' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sin' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sin' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sin(…);'",
+    ),
     statement: unsupported(
       "'$sin' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sin(…);'",
     ),
@@ -886,7 +964,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$cos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cos' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$cos' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$cos' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $cos(…);'",
+    ),
     statement: unsupported(
       "'$cos' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cos(…);'",
     ),
@@ -903,7 +983,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$tan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tan' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$tan' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$tan' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $tan(…);'",
+    ),
     statement: unsupported(
       "'$tan' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tan(…);'",
     ),
@@ -920,7 +1002,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$asin' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asin' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$asin' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$asin' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $asin(…);'",
+    ),
     statement: unsupported(
       "'$asin' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $asin(…);'",
     ),
@@ -937,7 +1021,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$acos' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acos' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$acos' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$acos' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $acos(…);'",
+    ),
     statement: unsupported(
       "'$acos' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $acos(…);'",
     ),
@@ -954,7 +1040,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$atan' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$atan' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$atan' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $atan(…);'",
+    ),
     statement: unsupported(
       "'$atan' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atan(…);'",
     ),
@@ -974,7 +1062,9 @@ export const NAMES = {
     },
     group: unsupported("'$atan2' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atan2' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$atan2' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$atan2' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $atan2(…);'",
+    ),
     statement: unsupported(
       "'$atan2' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atan2(…);'",
     ),
@@ -991,7 +1081,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$sinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sinh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sinh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sinh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sinh(…);'",
+    ),
     statement: unsupported(
       "'$sinh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sinh(…);'",
     ),
@@ -1008,7 +1100,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$cosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cosh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$cosh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$cosh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $cosh(…);'",
+    ),
     statement: unsupported(
       "'$cosh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cosh(…);'",
     ),
@@ -1025,7 +1119,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$tanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tanh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$tanh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$tanh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $tanh(…);'",
+    ),
     statement: unsupported(
       "'$tanh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tanh(…);'",
     ),
@@ -1042,7 +1138,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$asinh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$asinh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$asinh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$asinh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $asinh(…);'",
+    ),
     statement: unsupported(
       "'$asinh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $asinh(…);'",
     ),
@@ -1059,7 +1157,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$acosh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$acosh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$acosh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$acosh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $acosh(…);'",
+    ),
     statement: unsupported(
       "'$acosh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $acosh(…);'",
     ),
@@ -1076,7 +1176,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$atanh' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$atanh' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$atanh' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$atanh' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $atanh(…);'",
+    ),
     statement: unsupported(
       "'$atanh' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $atanh(…);'",
     ),
@@ -1093,7 +1195,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$degreesToRadians' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$degreesToRadians' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$degreesToRadians' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$degreesToRadians' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $degreesToRadians(…);'",
+    ),
     statement: unsupported(
       "'$degreesToRadians' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $degreesToRadians(…);'",
     ),
@@ -1110,7 +1214,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
     group: unsupported("'$radiansToDegrees' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$radiansToDegrees' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$radiansToDegrees' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$radiansToDegrees' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $radiansToDegrees(…);'",
+    ),
     statement: unsupported(
       "'$radiansToDegrees' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $radiansToDegrees(…);'",
     ),
@@ -1127,7 +1233,9 @@ export const NAMES = {
     expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$cmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cmp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$cmp' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$cmp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $cmp(…);'",
+    ),
     statement: unsupported(
       "'$cmp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cmp(…);'",
     ),
@@ -1147,7 +1255,9 @@ export const NAMES = {
     },
     group: unsupported("'$eq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$eq' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$eq' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$eq' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $eq(…);'",
+    ),
     statement: unsupported(
       "'$eq' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $eq(…);'",
     ),
@@ -1167,7 +1277,9 @@ export const NAMES = {
     },
     group: unsupported("'$ne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ne' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$ne' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$ne' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $ne(…);'",
+    ),
     statement: unsupported(
       "'$ne' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ne(…);'",
     ),
@@ -1187,7 +1299,9 @@ export const NAMES = {
     },
     group: unsupported("'$gt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$gt' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$gt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $gt(…);'",
+    ),
     statement: unsupported(
       "'$gt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $gt(…);'",
     ),
@@ -1207,7 +1321,9 @@ export const NAMES = {
     },
     group: unsupported("'$gte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$gte' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$gte' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$gte' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $gte(…);'",
+    ),
     statement: unsupported(
       "'$gte' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $gte(…);'",
     ),
@@ -1227,7 +1343,9 @@ export const NAMES = {
     },
     group: unsupported("'$lt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$lt' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$lt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $lt(…);'",
+    ),
     statement: unsupported(
       "'$lt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lt(…);'",
     ),
@@ -1247,7 +1365,9 @@ export const NAMES = {
     },
     group: unsupported("'$lte' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$lte' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$lte' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$lte' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $lte(…);'",
+    ),
     statement: unsupported(
       "'$lte' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lte(…);'",
     ),
@@ -1267,7 +1387,9 @@ export const NAMES = {
     },
     group: unsupported("'$and' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$and' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$and' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$and' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $and(…);'",
+    ),
     statement: unsupported(
       "'$and' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $and(…);'",
     ),
@@ -1287,7 +1409,9 @@ export const NAMES = {
     },
     group: unsupported("'$or' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$or' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$or' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$or' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $or(…);'",
+    ),
     statement: unsupported(
       "'$or' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $or(…);'",
     ),
@@ -1304,7 +1428,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$not' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$not' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$not' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$not' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $not(…);'",
+    ),
     statement: unsupported(
       "'$not' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $not(…);'",
     ),
@@ -1323,7 +1449,9 @@ export const NAMES = {
     expr: { args: { sig: "if, then, else", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$cond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$cond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$cond' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$cond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $cond(…);'",
+    ),
     statement: unsupported(
       "'$cond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $cond(…);'",
     ),
@@ -1343,7 +1471,9 @@ export const NAMES = {
     },
     group: unsupported("'$ifNull' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ifNull' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$ifNull' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$ifNull' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $ifNull(…);'",
+    ),
     statement: unsupported(
       "'$ifNull' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ifNull(…);'",
     ),
@@ -1362,7 +1492,9 @@ export const NAMES = {
     expr: { args: { sig: "branches, default", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$switch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$switch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$switch' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$switch' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $switch(…);'",
+    ),
     statement: unsupported(
       "'$switch' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $switch(…);'",
     ),
@@ -1382,7 +1514,9 @@ export const NAMES = {
     },
     group: unsupported("'$concat' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$concat' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$concat' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$concat' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $concat(…);'",
+    ),
     statement: unsupported(
       "'$concat' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $concat(…);'",
     ),
@@ -1402,7 +1536,9 @@ export const NAMES = {
     },
     group: unsupported("'$indexOfBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$indexOfBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$indexOfBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $indexOfBytes(…);'",
+    ),
     statement: unsupported(
       "'$indexOfBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfBytes(…);'",
     ),
@@ -1422,7 +1558,9 @@ export const NAMES = {
     },
     group: unsupported("'$indexOfCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$indexOfCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$indexOfCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $indexOfCP(…);'",
+    ),
     statement: unsupported(
       "'$indexOfCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfCP(…);'",
     ),
@@ -1439,7 +1577,9 @@ export const NAMES = {
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$ltrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$ltrim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$ltrim' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$ltrim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $ltrim(…);'",
+    ),
     statement: unsupported(
       "'$ltrim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $ltrim(…);'",
     ),
@@ -1456,7 +1596,9 @@ export const NAMES = {
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$rtrim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rtrim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$rtrim' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$rtrim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $rtrim(…);'",
+    ),
     statement: unsupported(
       "'$rtrim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rtrim(…);'",
     ),
@@ -1473,7 +1615,9 @@ export const NAMES = {
     expr: { args: { sig: "input, chars", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$trim' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$trim' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$trim' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$trim' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $trim(…);'",
+    ),
     statement: unsupported(
       "'$trim' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $trim(…);'",
     ),
@@ -1498,7 +1642,9 @@ export const NAMES = {
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexFind' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFind' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$regexFind' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$regexFind' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $regexFind(…);'",
+    ),
     statement: unsupported(
       "'$regexFind' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexFind(…);'",
     ),
@@ -1523,7 +1669,9 @@ export const NAMES = {
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexFindAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexFindAll' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$regexFindAll' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$regexFindAll' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $regexFindAll(…);'",
+    ),
     statement: unsupported(
       "'$regexFindAll' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexFindAll(…);'",
     ),
@@ -1548,7 +1696,9 @@ export const NAMES = {
     expr: { args: { sig: "input, regex, options", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$regexMatch' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$regexMatch' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$regexMatch' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$regexMatch' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $regexMatch(…);'",
+    ),
     statement: unsupported(
       "'$regexMatch' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $regexMatch(…);'",
     ),
@@ -1572,7 +1722,9 @@ export const NAMES = {
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceAll' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceAll' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$replaceAll' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$replaceAll' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $replaceAll(…);'",
+    ),
     statement: unsupported(
       "'$replaceAll' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $replaceAll(…);'",
     ),
@@ -1596,7 +1748,9 @@ export const NAMES = {
     expr: { args: { sig: "input, find, replacement", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$replaceOne' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$replaceOne' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$replaceOne' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$replaceOne' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $replaceOne(…);'",
+    ),
     statement: unsupported(
       "'$replaceOne' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $replaceOne(…);'",
     ),
@@ -1616,7 +1770,9 @@ export const NAMES = {
     },
     group: unsupported("'$split' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$split' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$split' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$split' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $split(…);'",
+    ),
     statement: unsupported(
       "'$split' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $split(…);'",
     ),
@@ -1633,7 +1789,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$strLenBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$strLenBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$strLenBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $strLenBytes(…);'",
+    ),
     statement: unsupported(
       "'$strLenBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strLenBytes(…);'",
     ),
@@ -1650,7 +1808,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$strLenCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strLenCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$strLenCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$strLenCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $strLenCP(…);'",
+    ),
     statement: unsupported(
       "'$strLenCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strLenCP(…);'",
     ),
@@ -1667,7 +1827,9 @@ export const NAMES = {
     expr: { args: { sig: "expr1, expr2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$strcasecmp' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$strcasecmp' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$strcasecmp' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$strcasecmp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $strcasecmp(…);'",
+    ),
     statement: unsupported(
       "'$strcasecmp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $strcasecmp(…);'",
     ),
@@ -1687,7 +1849,9 @@ export const NAMES = {
     },
     group: unsupported("'$substr' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substr' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$substr' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$substr' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $substr(…);'",
+    ),
     statement: unsupported(
       "'$substr' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substr(…);'",
     ),
@@ -1707,7 +1871,9 @@ export const NAMES = {
     },
     group: unsupported("'$substrBytes' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrBytes' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$substrBytes' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$substrBytes' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $substrBytes(…);'",
+    ),
     statement: unsupported(
       "'$substrBytes' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substrBytes(…);'",
     ),
@@ -1727,7 +1893,9 @@ export const NAMES = {
     },
     group: unsupported("'$substrCP' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$substrCP' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$substrCP' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$substrCP' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $substrCP(…);'",
+    ),
     statement: unsupported(
       "'$substrCP' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $substrCP(…);'",
     ),
@@ -1744,7 +1912,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toLower' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLower' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toLower' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toLower' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toLower(…);'",
+    ),
     statement: unsupported(
       "'$toLower' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toLower(…);'",
     ),
@@ -1761,7 +1931,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toUpper' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUpper' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toUpper' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toUpper' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toUpper(…);'",
+    ),
     statement: unsupported(
       "'$toUpper' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toUpper(…);'",
     ),
@@ -1780,7 +1952,9 @@ export const NAMES = {
     expr: { args: { sig: "input, substring", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrContains' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrContains' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$encStrContains' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$encStrContains' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $encStrContains(…);'",
+    ),
     statement: unsupported(
       "'$encStrContains' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrContains(…);'",
     ),
@@ -1797,7 +1971,9 @@ export const NAMES = {
     expr: { args: { sig: "input, suffix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrEndsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrEndsWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$encStrEndsWith' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$encStrEndsWith' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $encStrEndsWith(…);'",
+    ),
     statement: unsupported(
       "'$encStrEndsWith' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrEndsWith(…);'",
     ),
@@ -1814,7 +1990,9 @@ export const NAMES = {
     expr: { args: { sig: "input, string", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrNormalizedEq' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrNormalizedEq' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$encStrNormalizedEq' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$encStrNormalizedEq' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $encStrNormalizedEq(…);'",
+    ),
     statement: unsupported(
       "'$encStrNormalizedEq' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrNormalizedEq(…);'",
     ),
@@ -1831,7 +2009,9 @@ export const NAMES = {
     expr: { args: { sig: "input, prefix", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$encStrStartsWith' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$encStrStartsWith' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$encStrStartsWith' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$encStrStartsWith' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $encStrStartsWith(…);'",
+    ),
     statement: unsupported(
       "'$encStrStartsWith' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $encStrStartsWith(…);'",
     ),
@@ -1848,7 +2028,9 @@ export const NAMES = {
     expr: { args: { sig: "array, index", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$arrayElemAt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayElemAt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$arrayElemAt' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$arrayElemAt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $arrayElemAt(…);'",
+    ),
     statement: unsupported(
       "'$arrayElemAt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $arrayElemAt(…);'",
     ),
@@ -1865,7 +2047,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$arrayToObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$arrayToObject' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$arrayToObject' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$arrayToObject' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $arrayToObject(…);'",
+    ),
     statement: unsupported(
       "'$arrayToObject' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $arrayToObject(…);'",
     ),
@@ -1886,7 +2070,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$concatArrays' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$concatArrays' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $concatArrays(…);'",
+    ),
     statement: unsupported(
       "'$concatArrays' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $concatArrays(…);'",
     ),
@@ -1912,7 +2098,9 @@ export const NAMES = {
     expr: { args: { sig: "input, as, cond, limit", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$filter' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$filter' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$filter' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$filter' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $filter(…);'",
+    ),
     statement: unsupported(
       "'$filter' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $filter(…);'",
     ),
@@ -1929,7 +2117,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$first' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$first' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $first(…);'",
+    ),
     statement: unsupported(
       "'$first' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $first(…);'",
     ),
@@ -1946,7 +2136,9 @@ export const NAMES = {
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$firstN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$firstN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $firstN(…);'",
+    ),
     statement: unsupported(
       "'$firstN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $firstN(…);'",
     ),
@@ -1966,7 +2158,9 @@ export const NAMES = {
     },
     group: unsupported("'$in' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$in' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$in' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$in' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $in(…);'",
+    ),
     statement: unsupported(
       "'$in' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $in(…);'",
     ),
@@ -1986,7 +2180,9 @@ export const NAMES = {
     },
     group: unsupported("'$indexOfArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$indexOfArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$indexOfArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$indexOfArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $indexOfArray(…);'",
+    ),
     statement: unsupported(
       "'$indexOfArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $indexOfArray(…);'",
     ),
@@ -2003,7 +2199,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$isArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$isArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$isArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $isArray(…);'",
+    ),
     statement: unsupported(
       "'$isArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isArray(…);'",
     ),
@@ -2020,7 +2218,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$last' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$last' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $last(…);'",
+    ),
     statement: unsupported(
       "'$last' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $last(…);'",
     ),
@@ -2037,7 +2237,9 @@ export const NAMES = {
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$lastN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$lastN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $lastN(…);'",
+    ),
     statement: unsupported(
       "'$lastN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $lastN(…);'",
     ),
@@ -2055,7 +2257,9 @@ export const NAMES = {
     expr: { args: { sig: "input, as, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$map' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$map' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$map' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$map' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $map(…);'",
+    ),
     statement: unsupported(
       "'$map' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $map(…);'",
     ),
@@ -2072,7 +2276,9 @@ export const NAMES = {
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$maxN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$maxN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $maxN(…);'",
+    ),
     statement: unsupported(
       "'$maxN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $maxN(…);'",
     ),
@@ -2089,7 +2295,9 @@ export const NAMES = {
     expr: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, n", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$minN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$minN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $minN(…);'",
+    ),
     statement: unsupported(
       "'$minN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $minN(…);'",
     ),
@@ -2106,7 +2314,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "object" } }, emit: single },
     group: unsupported("'$objectToArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$objectToArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$objectToArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$objectToArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $objectToArray(…);'",
+    ),
     statement: unsupported(
       "'$objectToArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $objectToArray(…);'",
     ),
@@ -2126,7 +2336,9 @@ export const NAMES = {
     },
     group: unsupported("'$range' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$range' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$range' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$range' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $range(…);'",
+    ),
     statement: unsupported(
       "'$range' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $range(…);'",
     ),
@@ -2152,7 +2364,9 @@ export const NAMES = {
     expr: { args: { sig: "input, initialValue, in", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$reduce' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reduce' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$reduce' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$reduce' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $reduce(…);'",
+    ),
     statement: unsupported(
       "'$reduce' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $reduce(…);'",
     ),
@@ -2169,7 +2383,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" } }, emit: single },
     group: unsupported("'$reverseArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$reverseArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$reverseArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$reverseArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $reverseArray(…);'",
+    ),
     statement: unsupported(
       "'$reverseArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $reverseArray(…);'",
     ),
@@ -2186,7 +2402,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "array" }, nullRefused: [0] }, emit: single },
     group: unsupported("'$size' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$size' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$size' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$size' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $size(…);'",
+    ),
     statement: unsupported(
       "'$size' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $size(…);'",
     ),
@@ -2207,7 +2425,9 @@ export const NAMES = {
     },
     group: unsupported("'$slice' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$slice' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$slice' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$slice' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $slice(…);'",
+    ),
     statement: unsupported(
       "'$slice' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $slice(…);'",
     ),
@@ -2224,7 +2444,9 @@ export const NAMES = {
     expr: { args: { sig: "input, sortBy", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$sortArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sortArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sortArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sortArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sortArray(…);'",
+    ),
     statement: unsupported(
       "'$sortArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sortArray(…);'",
     ),
@@ -2248,7 +2470,9 @@ export const NAMES = {
     expr: { args: { sig: "inputs, useLongestLength, defaults", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$zip' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$zip' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$zip' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$zip' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $zip(…);'",
+    ),
     statement: unsupported(
       "'$zip' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $zip(…);'",
     ),
@@ -2265,7 +2489,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, nullRefused: [0] }, emit: single },
     group: unsupported("'$allElementsTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$allElementsTrue' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$allElementsTrue' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$allElementsTrue' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $allElementsTrue(…);'",
+    ),
     statement: unsupported(
       "'$allElementsTrue' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $allElementsTrue(…);'",
     ),
@@ -2282,7 +2508,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$anyElementTrue' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$anyElementTrue' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$anyElementTrue' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$anyElementTrue' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $anyElementTrue(…);'",
+    ),
     statement: unsupported(
       "'$anyElementTrue' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $anyElementTrue(…);'",
     ),
@@ -2299,7 +2527,9 @@ export const NAMES = {
     expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setDifference' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setDifference' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$setDifference' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setDifference' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setDifference(…);'",
+    ),
     statement: unsupported(
       "'$setDifference' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setDifference(…);'",
     ),
@@ -2319,7 +2549,9 @@ export const NAMES = {
     },
     group: unsupported("'$setEquals' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setEquals' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$setEquals' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setEquals' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setEquals(…);'",
+    ),
     statement: unsupported(
       "'$setEquals' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setEquals(…);'",
     ),
@@ -2339,7 +2571,9 @@ export const NAMES = {
     },
     group: unsupported("'$setIntersection' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIntersection' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$setIntersection' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setIntersection' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setIntersection(…);'",
+    ),
     statement: unsupported(
       "'$setIntersection' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setIntersection(…);'",
     ),
@@ -2356,7 +2590,9 @@ export const NAMES = {
     expr: { args: { sig: "set1, set2", exact: 2 }, emit: ({ name, args, value }) => ({ [name]: args.map(value) }) },
     group: unsupported("'$setIsSubset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setIsSubset' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$setIsSubset' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setIsSubset' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setIsSubset(…);'",
+    ),
     statement: unsupported(
       "'$setIsSubset' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setIsSubset(…);'",
     ),
@@ -2376,7 +2612,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$setUnion' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setUnion' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setUnion(…);'",
+    ),
     statement: unsupported(
       "'$setUnion' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setUnion(…);'",
     ),
@@ -2393,7 +2631,9 @@ export const NAMES = {
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$getField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$getField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$getField' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$getField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $getField(…);'",
+    ),
     statement: unsupported(
       "'$getField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $getField(…);'",
     ),
@@ -2414,7 +2654,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: unsupported("'$mergeObjects' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$mergeObjects' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$mergeObjects' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $mergeObjects(…);'",
+    ),
     statement: unsupported(
       "'$mergeObjects' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $mergeObjects(…);'",
     ),
@@ -2438,7 +2680,9 @@ export const NAMES = {
     expr: { args: { sig: "field, input, value", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$setField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$setField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$setField' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$setField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $setField(…);'",
+    ),
     statement: unsupported(
       "'$setField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $setField(…);'",
     ),
@@ -2455,7 +2699,9 @@ export const NAMES = {
     expr: { args: { sig: "field, input", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$unsetField' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unsetField' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$unsetField' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$unsetField' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $unsetField(…);'",
+    ),
     statement: unsupported(
       "'$unsetField' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $unsetField(…);'",
     ),
@@ -2481,7 +2727,9 @@ export const NAMES = {
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateAdd' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateAdd' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateAdd' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateAdd' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateAdd(…);'",
+    ),
     statement: unsupported(
       "'$dateAdd' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateAdd(…);'",
     ),
@@ -2511,7 +2759,9 @@ export const NAMES = {
     },
     group: unsupported("'$dateDiff' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateDiff' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateDiff' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateDiff' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateDiff(…);'",
+    ),
     statement: unsupported(
       "'$dateDiff' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateDiff(…);'",
     ),
@@ -2570,7 +2820,9 @@ export const NAMES = {
     },
     group: unsupported("'$dateFromParts' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateFromParts' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateFromParts' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateFromParts' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateFromParts(…);'",
+    ),
     statement: unsupported(
       "'$dateFromParts' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateFromParts(…);'",
     ),
@@ -2597,7 +2849,9 @@ export const NAMES = {
     },
     group: unsupported("'$dateFromString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateFromString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateFromString' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateFromString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateFromString(…);'",
+    ),
     statement: unsupported(
       "'$dateFromString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateFromString(…);'",
     ),
@@ -2623,7 +2877,9 @@ export const NAMES = {
     expr: { args: { sig: "startDate, unit, amount, timezone", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateSubtract' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateSubtract' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateSubtract' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateSubtract' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateSubtract(…);'",
+    ),
     statement: unsupported(
       "'$dateSubtract' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateSubtract(…);'",
     ),
@@ -2648,7 +2904,9 @@ export const NAMES = {
     expr: { args: { sig: "date, timezone, iso8601", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$dateToParts' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToParts' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateToParts' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateToParts' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateToParts(…);'",
+    ),
     statement: unsupported(
       "'$dateToParts' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateToParts(…);'",
     ),
@@ -2673,7 +2931,9 @@ export const NAMES = {
     expr: { args: { sig: "date, format, timezone, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$dateToString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateToString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateToString' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateToString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateToString(…);'",
+    ),
     statement: unsupported(
       "'$dateToString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateToString(…);'",
     ),
@@ -2700,7 +2960,9 @@ export const NAMES = {
     expr: { args: { sig: "date, unit, binSize, timezone, startOfWeek", allowed: [1, 2, 3, 4, 5] }, emit: objectBody },
     group: unsupported("'$dateTrunc' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dateTrunc' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dateTrunc' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dateTrunc' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dateTrunc(…);'",
+    ),
     statement: unsupported(
       "'$dateTrunc' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dateTrunc(…);'",
     ),
@@ -2717,7 +2979,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfMonth' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfMonth' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dayOfMonth' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dayOfMonth' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dayOfMonth(…);'",
+    ),
     statement: unsupported(
       "'$dayOfMonth' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfMonth(…);'",
     ),
@@ -2734,7 +2998,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dayOfWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dayOfWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dayOfWeek(…);'",
+    ),
     statement: unsupported(
       "'$dayOfWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfWeek(…);'",
     ),
@@ -2751,7 +3017,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$dayOfYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$dayOfYear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$dayOfYear' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$dayOfYear' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $dayOfYear(…);'",
+    ),
     statement: unsupported(
       "'$dayOfYear' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $dayOfYear(…);'",
     ),
@@ -2768,7 +3036,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$hour' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hour' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$hour' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$hour' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $hour(…);'",
+    ),
     statement: unsupported(
       "'$hour' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hour(…);'",
     ),
@@ -2785,7 +3055,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoDayOfWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoDayOfWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$isoDayOfWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$isoDayOfWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $isoDayOfWeek(…);'",
+    ),
     statement: unsupported(
       "'$isoDayOfWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoDayOfWeek(…);'",
     ),
@@ -2802,7 +3074,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoWeek' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeek' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$isoWeek' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$isoWeek' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $isoWeek(…);'",
+    ),
     statement: unsupported(
       "'$isoWeek' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoWeek(…);'",
     ),
@@ -2819,7 +3093,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$isoWeekYear' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isoWeekYear' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$isoWeekYear' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$isoWeekYear' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $isoWeekYear(…);'",
+    ),
     statement: unsupported(
       "'$isoWeekYear' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isoWeekYear(…);'",
     ),
@@ -2836,7 +3112,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$millisecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$millisecond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$millisecond' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$millisecond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $millisecond(…);'",
+    ),
     statement: unsupported(
       "'$millisecond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $millisecond(…);'",
     ),
@@ -2853,7 +3131,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$minute' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$minute' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$minute' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$minute' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $minute(…);'",
+    ),
     statement: unsupported(
       "'$minute' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $minute(…);'",
     ),
@@ -2870,7 +3150,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$month' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$month' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$month' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$month' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $month(…);'",
+    ),
     statement: unsupported(
       "'$month' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $month(…);'",
     ),
@@ -2887,7 +3169,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$second' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$second' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$second' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$second' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $second(…);'",
+    ),
     statement: unsupported(
       "'$second' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $second(…);'",
     ),
@@ -2904,7 +3188,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDate' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toDate' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toDate' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toDate(…);'",
+    ),
     statement: unsupported(
       "'$toDate' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDate(…);'",
     ),
@@ -2921,7 +3207,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$week' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$week' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$week' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$week' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $week(…);'",
+    ),
     statement: unsupported(
       "'$week' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $week(…);'",
     ),
@@ -2938,7 +3226,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "date" } }, emit: single },
     group: unsupported("'$year' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$year' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$year' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$year' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $year(…);'",
+    ),
     statement: unsupported(
       "'$year' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $year(…);'",
     ),
@@ -2955,7 +3245,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
     group: unsupported("'$tsIncrement' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsIncrement' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$tsIncrement' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$tsIncrement' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $tsIncrement(…);'",
+    ),
     statement: unsupported(
       "'$tsIncrement' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tsIncrement(…);'",
     ),
@@ -2972,7 +3264,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "timestamp" } }, emit: single },
     group: unsupported("'$tsSecond' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$tsSecond' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$tsSecond' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$tsSecond' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $tsSecond(…);'",
+    ),
     statement: unsupported(
       "'$tsSecond' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $tsSecond(…);'",
     ),
@@ -3021,7 +3315,9 @@ export const NAMES = {
     expr: { args: { sig: "input, to, onError, onNull", allowed: [1, 2, 3, 4] }, emit: objectBody },
     group: unsupported("'$convert' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$convert' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$convert' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$convert' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $convert(…);'",
+    ),
     statement: unsupported(
       "'$convert' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $convert(…);'",
     ),
@@ -3038,7 +3334,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$isNumber' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$isNumber' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$isNumber' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$isNumber' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $isNumber(…);'",
+    ),
     statement: unsupported(
       "'$isNumber' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $isNumber(…);'",
     ),
@@ -3055,7 +3353,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toArray' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toArray' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toArray' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toArray' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toArray(…);'",
+    ),
     statement: unsupported(
       "'$toArray' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toArray(…);'",
     ),
@@ -3072,7 +3372,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toBool' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toBool' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toBool' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toBool' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toBool(…);'",
+    ),
     statement: unsupported(
       "'$toBool' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toBool(…);'",
     ),
@@ -3089,7 +3391,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDecimal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDecimal' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toDecimal' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toDecimal' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toDecimal(…);'",
+    ),
     statement: unsupported(
       "'$toDecimal' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDecimal(…);'",
     ),
@@ -3106,7 +3410,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toDouble' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toDouble' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toDouble' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toDouble' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toDouble(…);'",
+    ),
     statement: unsupported(
       "'$toDouble' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toDouble(…);'",
     ),
@@ -3123,7 +3429,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toInt' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toInt' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toInt' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toInt' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toInt(…);'",
+    ),
     statement: unsupported(
       "'$toInt' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toInt(…);'",
     ),
@@ -3140,7 +3448,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toLong' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toLong' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toLong' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toLong' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toLong(…);'",
+    ),
     statement: unsupported(
       "'$toLong' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toLong(…);'",
     ),
@@ -3157,7 +3467,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toObject' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObject' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toObject' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toObject' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toObject(…);'",
+    ),
     statement: unsupported(
       "'$toObject' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toObject(…);'",
     ),
@@ -3174,7 +3486,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toObjectId' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toObjectId' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toObjectId(…);'",
+    ),
     statement: unsupported(
       "'$toObjectId' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toObjectId(…);'",
     ),
@@ -3191,7 +3505,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toString' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toString' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toString' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toString' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toString(…);'",
+    ),
     statement: unsupported(
       "'$toString' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toString(…);'",
     ),
@@ -3208,7 +3524,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toUUID' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toUUID' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toUUID' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toUUID' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toUUID(…);'",
+    ),
     statement: unsupported(
       "'$toUUID' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toUUID(…);'",
     ),
@@ -3225,7 +3543,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$type' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$type' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$type' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$type' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $type(…);'",
+    ),
     statement: unsupported(
       "'$type' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $type(…);'",
     ),
@@ -3242,7 +3562,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
     group: unsupported("'$literal' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$literal' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$literal' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$literal' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $literal(…);'",
+    ),
     statement: unsupported(
       "'$literal' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $literal(…);'",
     ),
@@ -3262,7 +3584,9 @@ export const NAMES = {
     expr: { args: { sig: "vars, in", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$let' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$let' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$let' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$let' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $let(…);'",
+    ),
     statement: unsupported(
       "'$let' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $let(…);'",
     ),
@@ -3296,7 +3620,9 @@ export const NAMES = {
       emit: objectBody,
     },
     window: unsupported("'$accumulator' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$accumulator' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$accumulator' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $accumulator(…);'",
+    ),
     statement: unsupported(
       "'$accumulator' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $accumulator(…);'",
     ),
@@ -3321,7 +3647,9 @@ export const NAMES = {
     expr: { args: { sig: "body, args, lang", allowed: [1, 2, 3] }, emit: objectBody },
     group: unsupported("'$function' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$function' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$function' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$function' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $function(…);'",
+    ),
     statement: unsupported(
       "'$function' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $function(…);'",
     ),
@@ -3338,7 +3666,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$binarySize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$binarySize' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$binarySize' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$binarySize' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $binarySize(…);'",
+    ),
     statement: unsupported(
       "'$binarySize' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $binarySize(…);'",
     ),
@@ -3355,7 +3685,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$bsonSize' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$bsonSize' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$bsonSize' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bsonSize' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bsonSize(…);'",
+    ),
     statement: unsupported(
       "'$bsonSize' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bsonSize(…);'",
     ),
@@ -3372,7 +3704,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$meta' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$meta' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$meta' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$meta' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $meta(…);'",
+    ),
     statement: unsupported(
       "'$meta' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $meta(…);'",
     ),
@@ -3389,7 +3723,9 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$createObjectId' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$createObjectId' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$createObjectId' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$createObjectId' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $createObjectId(…);'",
+    ),
     statement: unsupported(
       "'$createObjectId' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $createObjectId(…);'",
     ),
@@ -3409,7 +3745,9 @@ export const NAMES = {
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hash' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$hash' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$hash' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $hash(…);'",
+    ),
     statement: unsupported(
       "'$hash' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hash(…);'",
     ),
@@ -3429,7 +3767,9 @@ export const NAMES = {
     expr: { args: { sig: "input, algorithm", allowed: [1, 2] }, emit: objectBody },
     group: unsupported("'$hexHash' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$hexHash' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$hexHash' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$hexHash' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $hexHash(…);'",
+    ),
     statement: unsupported(
       "'$hexHash' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $hexHash(…);'",
     ),
@@ -3446,7 +3786,9 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
     group: unsupported("'$rand' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$rand' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$rand' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$rand' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $rand(…);'",
+    ),
     statement: unsupported(
       "'$rand' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rand(…);'",
     ),
@@ -3469,7 +3811,9 @@ export const NAMES = {
     ),
     group: unsupported("'$sampleRate' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$sampleRate' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$sampleRate' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sampleRate' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sampleRate(…);'",
+    ),
     statement: unsupported(
       "'$sampleRate' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sampleRate(…);'",
     ),
@@ -3486,7 +3830,9 @@ export const NAMES = {
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$toHashedIndexKey' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$toHashedIndexKey' is not valid in a $setWindowFields output position — see its 'where'."),
-    stream: unsupported("'$toHashedIndexKey' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$toHashedIndexKey' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $toHashedIndexKey(…);'",
+    ),
     statement: unsupported(
       "'$toHashedIndexKey' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $toHashedIndexKey(…);'",
     ),
@@ -3507,7 +3853,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$addToSet' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$addToSet' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $addToSet(…);'",
+    ),
     statement: unsupported(
       "'$addToSet' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $addToSet(…);'",
     ),
@@ -3527,7 +3875,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$avg' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$avg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $avg(…);'",
+    ),
     statement: unsupported(
       "'$avg' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $avg(…);'",
     ),
@@ -3579,7 +3929,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$max' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$max' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $max(…);'",
+    ),
     statement: unsupported(
       "'$max' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $max(…);'",
     ),
@@ -3604,7 +3956,9 @@ export const NAMES = {
     expr: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     group: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "input, method", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$median' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$median' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $median(…);'",
+    ),
     statement: unsupported(
       "'$median' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $median(…);'",
     ),
@@ -3625,7 +3979,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$min' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$min' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $min(…);'",
+    ),
     statement: unsupported(
       "'$min' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $min(…);'",
     ),
@@ -3650,7 +4006,9 @@ export const NAMES = {
     expr: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     group: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "input, p, method", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported("'$percentile' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$percentile' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $percentile(…);'",
+    ),
     statement: unsupported(
       "'$percentile' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $percentile(…);'",
     ),
@@ -3671,7 +4029,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$push' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$push' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $push(…);'",
+    ),
     statement: unsupported(
       "'$push' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $push(…);'",
     ),
@@ -3691,7 +4051,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$stdDevPop' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$stdDevPop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $stdDevPop(…);'",
+    ),
     statement: unsupported(
       "'$stdDevPop' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $stdDevPop(…);'",
     ),
@@ -3711,7 +4073,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$stdDevSamp' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$stdDevSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $stdDevSamp(…);'",
+    ),
     statement: unsupported(
       "'$stdDevSamp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $stdDevSamp(…);'",
     ),
@@ -3731,7 +4095,9 @@ export const NAMES = {
     },
     group: { args: { sig: "operand", exact: 1 }, emit: accumulated },
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$sum' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$sum' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $sum(…);'",
+    ),
     statement: unsupported(
       "'$sum' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $sum(…);'",
     ),
@@ -3752,7 +4118,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$bottom' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bottom' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bottom(…);'",
+    ),
     statement: unsupported(
       "'$bottom' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bottom(…);'",
     ),
@@ -3780,7 +4148,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported("'$bottomN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$bottomN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $bottomN(…);'",
+    ),
     statement: unsupported(
       "'$bottomN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $bottomN(…);'",
     ),
@@ -3801,7 +4171,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
     window: { args: { sig: "output, sortBy", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$top' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$top' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $top(…);'",
+    ),
     statement: unsupported(
       "'$top' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $top(…);'",
     ),
@@ -3829,7 +4201,9 @@ export const NAMES = {
     ),
     group: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
     window: { args: { sig: "output, sortBy, n", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported("'$topN' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$topN' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $topN(…);'",
+    ),
     statement: unsupported(
       "'$topN' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $topN(…);'",
     ),
@@ -3853,7 +4227,9 @@ export const NAMES = {
       args: { sig: "expression1, expression2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
-    stream: unsupported("'$covariancePop' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$covariancePop' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $covariancePop(…);'",
+    ),
     statement: unsupported(
       "'$covariancePop' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $covariancePop(…);'",
     ),
@@ -3877,7 +4253,9 @@ export const NAMES = {
       args: { sig: "expression1, expression2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
-    stream: unsupported("'$covarianceSamp' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$covarianceSamp' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $covarianceSamp(…);'",
+    ),
     statement: unsupported(
       "'$covarianceSamp' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $covarianceSamp(…);'",
     ),
@@ -3898,7 +4276,9 @@ export const NAMES = {
     ),
     group: unsupported("'$denseRank' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: unsupported("'$denseRank' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$denseRank' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $denseRank(…);'",
+    ),
     statement: unsupported(
       "'$denseRank' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $denseRank(…);'",
     ),
@@ -3927,7 +4307,9 @@ export const NAMES = {
     ),
     group: unsupported("'$derivative' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$derivative' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$derivative' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $derivative(…);'",
+    ),
     statement: unsupported(
       "'$derivative' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $derivative(…);'",
     ),
@@ -3948,7 +4330,9 @@ export const NAMES = {
     ),
     group: unsupported("'$documentNumber' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: unsupported("'$documentNumber' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$documentNumber' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $documentNumber(…);'",
+    ),
     statement: unsupported(
       "'$documentNumber' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $documentNumber(…);'",
     ),
@@ -3977,7 +4361,9 @@ export const NAMES = {
     ),
     group: unsupported("'$expMovingAvg' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "input, N, alpha", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported("'$expMovingAvg' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$expMovingAvg' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $expMovingAvg(…);'",
+    ),
     statement: unsupported(
       "'$expMovingAvg' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $expMovingAvg(…);'",
     ),
@@ -4006,7 +4392,9 @@ export const NAMES = {
     ),
     group: unsupported("'$integral' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "input, unit", allowed: [1, 2] }, emit: objectBody },
-    stream: unsupported("'$integral' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$integral' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $integral(…);'",
+    ),
     statement: unsupported(
       "'$integral' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $integral(…);'",
     ),
@@ -4027,7 +4415,9 @@ export const NAMES = {
     ),
     group: unsupported("'$linearFill' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$linearFill' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$linearFill' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $linearFill(…);'",
+    ),
     statement: unsupported(
       "'$linearFill' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $linearFill(…);'",
     ),
@@ -4048,7 +4438,9 @@ export const NAMES = {
     ),
     group: unsupported("'$locf' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "operand", exact: 1 }, emit: accumulated },
-    stream: unsupported("'$locf' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$locf' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $locf(…);'",
+    ),
     statement: unsupported(
       "'$locf' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $locf(…);'",
     ),
@@ -4069,7 +4461,9 @@ export const NAMES = {
     ),
     group: unsupported("'$rank' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "", none: true }, emit: ({ name }) => ({ [name]: {} }) },
-    stream: unsupported("'$rank' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$rank' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $rank(…);'",
+    ),
     statement: unsupported(
       "'$rank' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $rank(…);'",
     ),
@@ -4097,7 +4491,9 @@ export const NAMES = {
     ),
     group: unsupported("'$shift' is not valid in a $group output position — see its 'where'."),
     window: { args: { sig: "output, by, default", allowed: [1, 2, 3] }, emit: objectBody },
-    stream: unsupported("'$shift' is not valid in stage position — see its 'where'."),
+    stream: unsupported(
+      "'$shift' is an expression operator, not a stage. A chain link is a stage ('$$.$match(…)') or a method ('.filter(…)'); to use its value, assign it to a field: '$.<field> = $shift(…);'",
+    ),
     statement: unsupported(
       "'$shift' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $shift(…);'",
     ),
@@ -5771,7 +6167,24 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "start[, end]", allowed: [0, 1, 2] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: {
+        sig: "start[, end]",
+        allowed: [1, 2],
+        slotType: { 0: "int", 1: "int" },
+        constant: [0, 1],
+        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER], 1: [0, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ args }) => {
+        const start = n(args[0]);
+        const stages: Stage[] = start === 0 ? [] : [{ $skip: start }];
+        if (args.length === 2) {
+          const length = n(args[1]) - start;
+          stages.push(length <= 0 ? { $match: { $expr: false } } : { $limit: length });
+        }
+        return stages;
+      },
+    },
     statement: unsupported(
       "'.slice()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.slice();'",
     ),
@@ -5853,7 +6266,10 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
+      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape),
+    },
     statement: unsupported(
       "'.toSorted()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toSorted();'",
     ),
@@ -5882,7 +6298,11 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: '"field" | [fields] | keyFn', exact: 1 },
+      // An object here is a lodash matcher, not directions — the reader refuses it.
+      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0], false), slot, reshape),
+    },
     statement: unsupported(
       "'.sortBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortBy();'",
     ),
@@ -5909,7 +6329,10 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape),
+    },
     statement: unsupported(
       "'.orderBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.orderBy();'",
     ),
@@ -5983,7 +6406,11 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "callback", exact: 1 },
+      // The array field to unwind, named through the parameter: `d => d.items` is "$items".
+      emit: ({ args, fieldPath }) => [{ $unwind: fieldPath(args[0]) }],
+    },
     statement: unsupported(
       "'.flatMap()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flatMap();'",
     ),
@@ -6005,7 +6432,10 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "callback", exact: 1 },
+      emit: ({ args, document }) => [{ $replaceWith: document(args[0]) }],
+    },
     statement: unsupported(
       "'.map()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.map();'",
     ),
@@ -6029,7 +6459,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
-    stream: pending("src/pipeline.ts"),
+    stream: { args: { sig: "predicate", exact: 1 }, emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }] },
     statement: unsupported(
       "'.filter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.filter();'",
     ),
@@ -6212,7 +6642,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: pending("src/codegen.ts", { sig: "lambda, initialValue", exact: 2 }),
     stream: unsupported(
-      "'.reduce(...)' is not a chain method on '$' \u2014 in JS '.reduce' collapses an array to a single value, but '$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
     ),
     statement: unsupported(
       "'.reduce()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.reduce();'",
@@ -6284,7 +6714,8 @@ export const NAMES = {
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    // The stream too: nothing to mutate, `.sort` and `.toSorted` both reorder the flow.
+    on: ["array", "stream"],
     immutableTwin: "toSorted",
     params: { statement: ["value"], stream: ["value", "value"] },
     iterateeSlots: {
@@ -6292,8 +6723,12 @@ export const NAMES = {
         sortSpec:
           '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, and no argument is the natural order — as a statement, writing the field back',
       },
+      stream: {
+        sortSpec:
+          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, and `(a, b) => a.k - b.k` is the comparator; a stream has no natural order, so a key is required',
+      },
     },
-    returns: "unknown",
+    returns: { array: "unknown", stream: "stream" },
     where: ["stream", "statement"],
     filter: unsupported(
       "'.sort()' writes a field; it is not a filter predicate. Call it as a statement in a pipeline: '$.<field>.sort(…);'.",
@@ -6301,7 +6736,10 @@ export const NAMES = {
     expr: unsupported(
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
+      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape),
+    },
     statement: pending("src/pipeline.ts"),
     group: unsupported("'.sort()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sort()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -7299,7 +7737,13 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "", none: true },
+      emit: () => [
+        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+        { $replaceWith: `$${GROUP_SLOT}` },
+      ],
+    },
     statement: unsupported(
       "'.uniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniq();'",
     ),
@@ -7321,7 +7765,14 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "iteratee", exact: 1 },
+      // "First" follows the stream's current order; sort first when it matters.
+      emit: ({ args, reshape }) => [
+        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
+        { $replaceWith: `$${GROUP_SLOT}` },
+      ],
+    },
     statement: unsupported(
       "'.uniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.uniqBy();'",
     ),
@@ -7337,7 +7788,13 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "", none: true },
+      emit: () => [
+        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+        { $replaceWith: `$${GROUP_SLOT}` },
+      ],
+    },
     statement: unsupported(
       "'.sortedUniq()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniq();'",
     ),
@@ -7361,7 +7818,13 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ args, reshape }) => [
+        { $group: { _id: reshape(args[0]), [GROUP_SLOT]: { $first: "$$ROOT" } } },
+        { $replaceWith: `$${GROUP_SLOT}` },
+      ],
+    },
     statement: unsupported(
       "'.sortedUniqBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortedUniqBy();'",
     ),
@@ -7541,7 +8004,20 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: {
+        sig: "[n=1]",
+        allowed: [0, 1],
+        slotType: { 0: "int" },
+        constant: [0],
+        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
+      },
+      // `$limit: 0` is refused by the server; a take of nothing is a stream of nothing.
+      emit: ({ args }) => {
+        const count = args.length === 0 ? 1 : n(args[0]);
+        return count === 0 ? [{ $match: { $expr: false } }] : [{ $limit: count }];
+      },
+    },
     statement: unsupported(
       "'.take()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.take();'",
     ),
@@ -7557,7 +8033,20 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: {
+        sig: "[n=1]",
+        allowed: [0, 1],
+        slotType: { 0: "int" },
+        constant: [0],
+        slotRange: { 0: [0, Number.MAX_SAFE_INTEGER] },
+      },
+      // `$skip: 0` is the identity, and a stage that does nothing is no stage.
+      emit: ({ args }) => {
+        const count = args.length === 0 ? 1 : n(args[0]);
+        return count === 0 ? [] : [{ $skip: count }];
+      },
+    },
     statement: unsupported(
       "'.drop()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.drop();'",
     ),
@@ -7611,7 +8100,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: pending("src/stream-methods.ts"),
+    stream: { args: { sig: "", none: true }, emit: () => [{ $skip: 1 }] },
     statement: unsupported(
       "'.tail()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tail();'",
     ),
@@ -7819,7 +8308,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "", none: true }),
-    stream: pending("src/stream-methods.ts"),
+    stream: { args: { sig: "", none: true }, emit: () => [{ $sample: { size: 1 } }] },
     statement: unsupported(
       "'.sample()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sample();'",
     ),
@@ -7835,7 +8324,16 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: {
+        sig: "[n=1]",
+        allowed: [0, 1],
+        slotType: { 0: "int" },
+        constant: [0],
+        slotRange: { 0: [1, Number.MAX_SAFE_INTEGER] },
+      },
+      emit: ({ args }) => [{ $sample: { size: args.length === 0 ? 1 : n(args[0]) } }],
+    },
     statement: unsupported(
       "'.sampleSize()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sampleSize();'",
     ),
@@ -7958,7 +8456,11 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "iteratee", exact: 1 },
+      // Last wins, as lodash's does; "last" follows the stream's current order.
+      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" }),
+    },
     statement: unsupported(
       "'.keyBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.keyBy();'",
     ),
@@ -7992,7 +8494,11 @@ export const NAMES = {
         Object: pending("src/codegen.ts", { sig: "items, x => key", exact: 2 }),
       },
     },
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "iteratee", exact: 1 },
+      // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
+      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" }),
+    },
     statement: unsupported(
       "'.groupBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.groupBy();'",
     ),
@@ -8014,7 +8520,10 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 }),
+    },
     statement: unsupported(
       "'.countBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.countBy();'",
     ),
@@ -8056,7 +8565,11 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
-    stream: pending("src/pipeline.ts"),
+    stream: {
+      args: { sig: "predicate", exact: 1 },
+      // The COMPLEMENT of the predicate's own clause — `$nor`, as `!p` is.
+      emit: ({ args, predicate }) => [{ $match: { $nor: [predicate(args[0])] } }],
+    },
     statement: unsupported(
       "'.reject()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.reject();'",
     ),
@@ -8118,7 +8631,13 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
+      // Keeps ONLY the named fields: `_id` goes too unless named, as lodash's does.
+      emit: ({ args, value }) => [
+        { $project: Object.fromEntries([...(value(args[0]) as string[]).map((k) => [k, 1]), ["_id", 0]]) },
+      ],
+    },
     statement: unsupported(
       "'.pick()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pick();'",
     ),
@@ -8134,7 +8653,10 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "[keys]", exact: 1 }),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
+      emit: ({ args, value }) => [{ $project: Object.fromEntries((value(args[0]) as string[]).map((k) => [k, 0])) }],
+    },
     statement: unsupported(
       "'.omit()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.omit();'",
     ),
@@ -9526,7 +10048,14 @@ export const NAMES = {
     expr: unsupported(
       "'.shuffle()' reorders a stream of documents, which is not a value. To shuffle an array use '.sampleSize(n)'.",
     ),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "", none: true },
+      // A random key per document, a sort by it, and the chain's own cleanup drops the key.
+      emit: ({ slot }) => {
+        const key = slot();
+        return [{ $addFields: { [key]: { $rand: {} } } }, { $sort: { [key]: 1 } }];
+      },
+    },
     statement: unsupported("'.shuffle()' is a chain link. Write '$ = $.shuffle();'."),
     group: unsupported("'.shuffle()' is not an accumulator."),
     window: unsupported("'.shuffle()' is not a window function."),
@@ -9548,7 +10077,11 @@ export const NAMES = {
     blockBody: "stages",
     filter: unsupported("'.aggregate()' splices stages; it is not a filter predicate."),
     expr: unsupported("'.aggregate()' produces pipeline stages, not a value."),
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "stages | (o) => { …stages }", exact: 1 },
+      // The block's statements ARE the chain's stages; a bracketed list is the same list.
+      emit: ({ args, value, block }) => (args[0].type === "Lambda" ? block(args[0]) : (value(args[0]) as Stage[])),
+    },
     statement: unsupported("'.aggregate()' is a chain link. Write '$ = $.aggregate([…]);'."),
     group: unsupported("'.aggregate()' is not an accumulator."),
     window: unsupported("'.aggregate()' is not a window function."),
