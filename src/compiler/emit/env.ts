@@ -43,6 +43,8 @@ export type Boundary = {
    * of the outer document there is refused rather than silently misread.
    */
   readonly capture?: Capture | null;
+  /** The chain the body was entered FROM — the enclosing pipeline. */
+  readonly outer?: Chain;
 };
 
 /** Does this boundary start a new LEVEL of documents — a body over another collection? */
@@ -227,8 +229,18 @@ export class Env {
 
   /** Into a sub-pipeline: a new chain, the boundary recorded, statement position. */
   enter(boundary: Boundary, chain: Chain): Env {
-    const site: Site = { ...this.site, where: { at: "statement" }, boundaries: [...this.site.boundaries, boundary] };
+    const site: Site = {
+      ...this.site,
+      where: { at: "statement" },
+      boundaries: [...this.site.boundaries, { ...boundary, outer: this.chain }],
+    };
     return new Env(this.scope, site, chain);
+  }
+
+  /** The TOP-MOST pipeline's chain: `$$` is the root stream at every depth (HR4). */
+  get rootChain(): Chain {
+    const first = this.site.boundaries[0];
+    return first === undefined || first.outer === undefined ? this.chain : first.outer;
   }
 
   /** What a JavaScript name means here, or the developer's positioned error. */

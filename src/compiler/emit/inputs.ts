@@ -80,11 +80,33 @@ export function exprInputs(
       return { as: b.as, ref: b.ref };
     },
     hoist: (stages: readonly Stage[], reads: string) => {
-      if (!env.chain.isPipeline) throw needsPipeline(name, (node as { pos: number }).pos);
-      return env.chain.hoist(stages, reads);
+      // `$$` is the TOP-MOST stream at every depth: the count is materialised on the
+      // root pipeline, ahead of the statement that holds this read, and reaches a
+      // body over another collection through its `let` like any outer field. The
+      // body's OWN stream is its callback's third parameter, whose chain is this one.
+      const source = (node as { object?: Expr }).object ?? null;
+      const own = onOwnStream(source, env);
+      const chain = own ? env.chain : env.rootChain;
+      if (!chain.isPipeline) throw needsPipeline(name, (node as { pos: number }).pos);
+      chain.hoist(stages, reads);
+      const level = own ? env.level : 0;
+      return env.render(
+        { kind: "s", level, path: reads, hint: reads.slice(reads.lastIndexOf(".") + 1) },
+        (node as { pos: number }).pos,
+      );
     },
     slot: () => env.chain.slot().path,
   };
+}
+
+/** Is `recv` the body's OWN stream — a callback's collection parameter — rather than `$$`, the root stream? */
+export function onOwnStream(recv: Expr | null, env: Env): boolean {
+  return (
+    recv !== null &&
+    recv.type === "Ident" &&
+    env.scope.has(recv.name) &&
+    env.lookup(recv.name, recv.pos).ref.kind === "streamHandle"
+  );
 }
 
 /** The two query readings, supplied by filter.ts. */
@@ -178,17 +200,11 @@ export function stageInputs(
       });
     }
     if (cb.params.length === 3) {
+      // The collection parameter IS the stream the callback runs over — at the top
+      // the same as `$$`, inside a body over another collection that body's stream.
       e = e.bind(cb.params[2], {
-        ref: {
-          kind: "dropped",
-          message: unfilledParam(
-            cb.params[2],
-            name,
-            "the collection is the stream itself; write '$$.length' for its size.",
-          ),
-          replaced: false,
-        },
-        type: "unknown",
+        ref: { kind: "streamHandle", source: cb },
+        type: "stream",
         mutable: false,
         pos: cb.pos,
       });

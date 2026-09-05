@@ -414,9 +414,13 @@ outer document is merged into the developer's own `let`. `$unionWith` has no `le
 with the way out.
 
 **Inside the body.** The callback's parameter IS the body's document: `o.x` reads
-it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `$$` is the body's stream
-(`$$.filter(…)` is a `$match` there). `$.` is the OUTER document at every depth
-(HR4) and is read-only from inside — `$.x = …` is refused naming `o.x = …`. A nested
+it, `o.x = …` / `delete o.x` write it (`$set` / `$unset`), `o = { … }` replaces it.
+The callback's THIRD parameter is the body's own stream: `coll.filter(…)` is a
+`$match` there and `coll.length` its count (a `$setWindowFields` inside the body).
+`$.` is the OUTER document and `$$` the ROOT stream at every depth (HR4): `$.x` is
+read-only from inside — `$.x = …` is refused naming `o.x = …` — `$$.length` is the
+root count, materialised on the root pipeline and carried in by `let`, and
+`$$.filter(…)` inside a body is refused naming `coll`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own chain,
 whose close runs its own cleanup, so no scratch leaks into the joined array (the
 shipped compiler leaked `__jsmql.tmp` there).

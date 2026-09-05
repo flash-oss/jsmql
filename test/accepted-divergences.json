@@ -20361,28 +20361,12 @@
       "now": "`i` has no value inside `.map()` — a stream has no per-document index; leave the parameter unused.",
       "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
     },
-    "pipeline\u0000$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));": {
-      "entry": "pipeline",
-      "src": "$$ = $$.map((d, _i, coll) => ({ id: d._id, n: coll.length }));",
-      "kind": "now-rejected",
-      "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"id\":\"$_id\",\"n\":\"$__jsmql.length\"}}]",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
-      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
-    },
-    "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));": {
-      "entry": "pipeline",
-      "src": "$$ = $$.map((o, _i, coll) => ({ share: o.total / coll.length }));",
-      "kind": "now-rejected",
-      "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"share\":{\"$divide\":[\"$total\",\"$__jsmql.length\"]}}}]",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
-      "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
-    },
     "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));": {
       "entry": "pipeline",
       "src": "$$ = $$.map((o, _i, coll) => ({ first: coll[0] }));",
       "kind": "message",
       "was": "In '.map((o, _i, coll) => …)' over a '$$$.<coll>' stream, only 'coll.length' (the sub-stream's document count) is available — there's no materialised array to index or iterate. To work with the array itself, use the mate",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "'coll' is a reusable function — call it with 'coll(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead.",
       "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
     },
     "pipeline\u0000$$ = $$.map((o, _i, coll) => ({ all: coll }));": {
@@ -20390,7 +20374,7 @@
       "src": "$$ = $$.map((o, _i, coll) => ({ all: coll }));",
       "kind": "message",
       "was": "In '.map((o, _i, coll) => …)' over a '$$$.<coll>' stream, only 'coll.length' (the sub-stream's document count) is available — there's no materialised array to index or iterate. To work with the array itself, use the mate",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "'coll' is a reusable function — call it with 'coll(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead.",
       "reason": "message: a read of the index or collection parameter is refused on both sides; the new text says what to write instead."
     },
     "pipeline\u0000$$ = $$.map((o, i, coll) => ({ x: i, n: coll.length }));": {
@@ -21529,14 +21513,6 @@
       "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$group\":{\"_id\":\"$productId\"}}],\"as\":\"__jsmql.tmp.0\"}},{\"$set\":{\"n\":{\"$size\":\"$__jsmql.tmp",
       "reason": "intended: a read of the outer document inside a body over another collection — `$.x`, `$[\"ext-code\"]`, an outer `let`, a raw `$match({ f: $.x })` — is captured into the stage's `let` and read as `$$jsmql_…`; the shipped compiler read some of these as the FOREIGN document's field (HR4). See docs/specs/emit-pass.md § The join road; every shape runs on mongod 8.3.7 with its documents compared in test/compiler-join.test.ts."
     },
-    "pipeline\u0000$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.length }); });": {
-      "entry": "pipeline",
-      "src": "$$ = $$$.products.aggregate((o, _i, coll) => { $set({ n: coll.length }); });",
-      "kind": "now-rejected",
-      "was": "[{\"$match\":{\"$expr\":false}},{\"$unionWith\":{\"coll\":\"products\",\"pipeline\":[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$set\":{\"n\":\"$__jsmql.length\"}},{\"$unset\":\"__jsmql\"}]}}]",
-      "now": "`coll` has no value inside `.aggregate()` — the collection is the stream itself; write '$$.length' for its size.",
-      "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
-    },
     "pipeline\u0000$.top = $$$.orders.sort({ createdAt: -1 }).take(1000).aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); });": {
       "entry": "pipeline",
       "src": "$.top = $$$.orders.sort({ createdAt: -1 }).take(1000).aggregate((o) => { $group({ _id: o.status, n: $sum(1) }); });",
@@ -21604,9 +21580,9 @@
     "pipeline\u0000$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.length }); });": {
       "entry": "pipeline",
       "src": "$.r = $$$.orders.sort({ t: -1 }).take(3).aggregate((o, _i, coll) => { $addFields({ n: coll.length }); });",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$sort\":{\"t\":-1}},{\"$limit\":3},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$addFields\":{\"n\":\"$__jsmql.length\"}},{\"$unset\":\"__jsmql\"}],\"as\":\"__jsmql.tmp.1\"}",
-      "now": "`coll` has no value inside `.aggregate()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$sort\":{\"t\":-1}},{\"$limit\":3},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$addFields\":{\"n\":\"$__jsmql.length\"}},{\"$unset\":\"__jsmql\"}],\"as\":\"r\"}}]",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000$.n = $$$.orders.sort({ t: -1 }).aggregate((o) => { $group({ _id: o.status }); }).length;": {
@@ -21694,7 +21670,7 @@
       "src": "$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });",
       "kind": "message",
       "was": "In '.aggregate((o, _i, coll) => { … })', only 'coll.length' (the sub-stream count) is available — there's no materialised array to index or iterate inside the pipeline.",
-      "now": "`coll` has no value inside `.aggregate()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "'coll' is a reusable function — call it with 'coll(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead.",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000$.x = $$$.c.aggregate([{ $sort: { a: 1 } }, ...$.more]);": {
@@ -21940,9 +21916,9 @@
     "pipeline\u0000$.x = $$$.orders.filter((o, i, c) => c.length > 0);": {
       "entry": "pipeline",
       "src": "$.x = $$$.orders.filter((o, i, c) => c.length > 0);",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "'c' (the array parameter) has no meaning on a '.filter' predicate — the filtered sub-stream doesn't exist yet while the predicate runs. For its count, use `.aggregate` and its 3rd param, e.g. `$$$.orders.aggregate((o, _i",
-      "now": "`c` has no value inside `.filter()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$gt\":[\"$__jsmql.length\",0]}}},{\"$unset\":\"__jsmql\"}],\"as\":\"x\"}}]",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000\n      let nOrders = $$$.orders.filter(o => o.userId === $._id).length;\n      let nTx = $$$.tx.filter(t => t.userId === $._id).length;\n    ": {
@@ -22348,9 +22324,9 @@
     "pipeline\u0000\n$match($.createdAt >= new Date(2026, 1, 1));\n$$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {\n  return {\n    totalShipments: $$$.shipments.filter({ orderId: o._id }).length,\n    totalOrders: ordersColl.length,\n    totalUsers: $$.length,\n  };\n});\n          ": {
       "entry": "pipeline",
       "src": "\n$match($.createdAt >= new Date(2026, 1, 1));\n$$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {\n  return {\n    totalShipments: $$$.shipments.filter({ orderId: o._id }).length,\n    totalOrders: ordersColl.length,\n    totalUsers: $$.length,\n  };\n});\n          ",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_s0_length\":\"$__jsmql.length\",\"jsmql_f0__id\":",
-      "now": "`ordersColl` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"}}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\",\"jsm",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000\n$$.filter({ status: \"active\" });\n$.monthlySpend = $$$.orders.aggregate((o) => {\n  $match(o.customerId === $._id);\n  $group({ _id: { $month: o.placedAt }, spent: $sum(o.total) });\n  $sort({ _id: 1 });\n});\n$.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }]);\n      ": {
@@ -22433,14 +22409,6 @@
       "now": "[{\"$set\":{\"__jsmql.var.minSpend\":{\"$cond\":{\"if\":{\"$eq\":[\"$tier\",\"gold\"]},\"then\":500,\"else\":100}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\",\"jsmql_v0_minSpend\":\"$__jsmql.var.minSpend\"},\"pipeline\":[{\"$matc",
       "reason": "intended: a read of the outer document inside a body over another collection — `$.x`, `$[\"ext-code\"]`, an outer `let`, a raw `$match({ f: $.x })` — is captured into the stage's `let` and read as `$$jsmql_…`; the shipped compiler read some of these as the FOREIGN document's field (HR4). See docs/specs/emit-pass.md § The join road; every shape runs on mongod 8.3.7 with its documents compared in test/compiler-join.test.ts."
     },
-    "pipeline\u0000$.peers = $$$.users.filter(u => u.n === $$.length);": {
-      "entry": "pipeline",
-      "src": "$.peers = $$$.users.filter(u => u.n === $$.length);",
-      "kind": "output",
-      "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"users\",\"let\":{\"jsmql_s0_length\":\"$__jsmql.length\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$n\",\"$$jsmql_s0_length\"]}}}],\"as\":\"peers\"}}",
-      "now": "[{\"$lookup\":{\"from\":\"users\",\"pipeline\":[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$eq\":[\"$n\",\"$__jsmql.length\"]}}},{\"$unset\":\"__jsmql\"}],\"as\":\"peers\"}}]",
-      "reason": "intended: `$$` is the CURRENT stream (HR4); inside a body over another collection that is the body's stream, so `$$.length` there counts it — the shipped compiler captured the root count here and the sub-stream count in a block."
-    },
     "pipeline\u0000$.x = $$$.s.filter((s, i, c) => s.k === $.k);": {
       "entry": "pipeline",
       "src": "$.x = $$$.s.filter((s, i, c) => s.k === $.k);",
@@ -22452,17 +22420,17 @@
     "pipeline\u0000\n        $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {\n          return {\n            totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,\n            totalOrders: ordersColl.length,\n            totalUsers: $$.length,\n          };\n        });\n      ": {
       "entry": "pipeline",
       "src": "\n        $$ = $$$.orders.filter(o => $._id === o.userId).map((o, i, ordersColl) => {\n          return {\n            totalShipments: $$$.shipments.filter((s, i, shipmntsColl) => s.orderId === o._id).length,\n            totalOrders: ordersColl.length,\n            totalUsers: $$.length,\n          };\n        });\n      ",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_s0_length\":\"$__jsmql.length\",\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$$jsmql_f0__id\",\"$us",
-      "now": "`ordersColl` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\",\"jsmql_s0_length\":\"$__jsmql.length\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$$jsmql_f0__id\",\"$us",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000\n        const length = $.length + 1;\n        $$ = $$$.orders.filter(o => o.userId === $._id).map((o, i, coll) => {\n          return { l0: $$.length, l1: $.length, l2: length, l3: coll.length };\n        });\n      ": {
       "entry": "pipeline",
       "src": "\n        const length = $.length + 1;\n        $$ = $$$.orders.filter(o => o.userId === $._id).map((o, i, coll) => {\n          return { l0: $$.length, l1: $.length, l2: length, l3: coll.length };\n        });\n      ",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$set\":{\"__jsmql.var.length\":{\"$add\":[\"$length\",1]}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_s0_length\":\"$__jsmql.length\",\"jsmql_f0__id\":\"$_id\",\"jsmql",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$set\":{\"__jsmql.var.length\":{\"$add\":[\"$length\",1]}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\",\"jsmql_s0_length\":\"$__jsmql.length\",\"jsmql",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000$$ = $$$.archive.filter(o => o.tier === 'gold').slice(0, 10);": {
@@ -22500,9 +22468,9 @@
     "pipeline\u0000$$ = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, n: coll.length }));": {
       "entry": "pipeline",
       "src": "$$ = $$$.orders.filter(o => o.userId === $._id).map((o, _i, coll) => ({ id: o._id, n: coll.length }));",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"id\":\"$_i",
-      "now": "`coll` has no value inside `.map()` — the collection is the stream itself; write '$$.length' for its size.",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$replaceWith\":{\"id\":\"$_i",
       "reason": "message: the index and collection parameters of a callback have no value on a stream (`$$.length` is the stream's size); same refusals, reworded."
     },
     "pipeline\u0000$$ = $$$.users.filter(u => u.active === true).map(d => ({ a: $$$.archive.find(x => x._id === d._id) }));": {

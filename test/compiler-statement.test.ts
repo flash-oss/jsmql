@@ -334,7 +334,11 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(() => pipeline("$$.aggregate(o => { let k = o.b; $.y = k; }); $.z = k;")).toThrow(/Unknown identifier 'k'/);
     // a callback's index and collection parameters have no value on a stream, and say so as parameters
     expect(() => pipeline("$$.map((d, i) => ({ n: i }));")).toThrow(/`i` has no value inside `.map\(\)`/);
-    expect(() => pipeline("$$.map((d, i, c) => ({ n: c.length }));")).toThrow(/write '\$\$.length' for its size/);
+    // the collection parameter IS the stream the callback runs over: at the top, `$$`
+    expect(compiled("$$.map((d, i, c) => ({ n: c.length }));")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $replaceWith: { n: "$__jsmql.length" } },
+    ]);
   });
 
   it("starts the stream from a literal list of documents", () => {

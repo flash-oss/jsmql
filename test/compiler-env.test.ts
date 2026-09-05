@@ -23,7 +23,8 @@ describe("compiler/emit/env — a transition changes one thing and keeps the res
       .at({ at: "value" });
     const body = outer.param("x", "unknown", 3).env;
     expect(body.site.envelope).toBe("$literal");
-    expect(body.site.boundaries).toEqual([{ stage: "$lookup", path: ["pipeline"] }]);
+    // the boundary remembers the chain it was entered FROM — how `$$` reaches the root stream from inside
+    expect(body.site.boundaries).toEqual([{ stage: "$lookup", path: ["pipeline"], outer: chain }]);
     expect(body.site.where).toEqual({ at: "value" });
     expect(body.site.root).toBe("statement");
     expect(body.chain).toBe(chain); // the SAME chain, by reference

@@ -309,15 +309,73 @@ describe("compiler/emit/join — inside the body", () => {
     ]);
     // the outer document cannot be written from inside
     expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $.x = 1; });")).toThrow(/outer document can't be written/);
-    // `$$` inside is the body's stream
+    // the callback's THIRD parameter is the body's own stream; `$$` is the ROOT stream at every depth (HR4)
     expect(
-      compiled("$.o = $$$.orders.aggregate(o => { $$.filter(d => d.userId === $._id).take(1); });", [
+      compiled("$.o = $$$.orders.aggregate((o, _i, coll) => { coll.filter(d => d.userId === $._id).take(1); });", [
         { _id: 1, o: [101] },
         { _id: 2, o: [103] },
         { _id: 3, o: [] },
         { _id: 4, o: [] },
       ]),
     ).toEqual([{ $lookup: { from: "orders", let: LET, pipeline: [byUser, { $limit: 1 }], as: "o" } }]);
+    expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $$.filter(d => d.a > 1); });")).toThrow(
+      /'\$\$' is the root stream/,
+    );
+    // `coll.length` counts the body's stream where it stands; `$$.length` counts the ROOT stream,
+    // materialised on the root pipeline and carried in through `let`
+    expect(
+      compiled("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });", [
+        {
+          _id: 1,
+          o: [
+            { _id: 101, n: 4 },
+            { _id: 102, n: 4 },
+          ],
+        },
+        { _id: 2, o: [{ _id: 103, n: 4 }] },
+        { _id: 3, o: [] },
+        { _id: 4, o: [] },
+      ]),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: LET,
+          pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            byUser,
+            { $set: { n: "$__jsmql.length" } },
+            { $unset: "__jsmql" },
+          ],
+          as: "o",
+        },
+      },
+    ]);
+    expect(
+      compiled("$.o = $$$.orders.aggregate(o => { $match(o.userId === $._id); o.n = $$.length; });", [
+        {
+          _id: 1,
+          o: [
+            { _id: 101, n: 4 },
+            { _id: 102, n: 4 },
+          ],
+        },
+        { _id: 2, o: [{ _id: 103, n: 4 }] },
+        { _id: 3, o: [] },
+        { _id: 4, o: [] },
+      ]),
+    ).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
+          pipeline: [byUser, { $set: { n: "$$jsmql_s0_length" } }],
+          as: "o",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
   });
 
   it("nests: a root read is captured once, at the outermost join, and read by name below", () => {
@@ -508,6 +566,14 @@ const idsOf = (v: unknown, top: boolean): unknown => {
   return v;
 };
 
+/** JSON with every object's keys sorted, so two documents that differ only in key order compare equal. */
+const canonical = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) =>
+    x !== null && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : x,
+  );
+
 describe("compiler/emit/join — the server runs every pipeline this file asserts, and answers as JavaScript would", () => {
   it("ran each one, or none", async () => {
     if (coll === null) {
@@ -524,9 +590,10 @@ describe("compiler/emit/join — the server runs every pipeline this file assert
         continue;
       }
       if (expected === undefined) continue;
-      const got = docs.map((d) => idsOf(d, true));
-      const want = JSON.stringify(expected);
-      if (JSON.stringify(got) !== want) problems.push(`${src}\n  got  ${JSON.stringify(got)}\n  want ${want}`);
+      // a `$group` answers its keys in no promised order, so documents compare with keys sorted
+      const got = canonical(docs.map((d) => idsOf(d, true)));
+      const want = canonical(expected);
+      if (got !== want) problems.push(`${src}\n  got  ${got}\n  want ${want}`);
     }
     expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
   });

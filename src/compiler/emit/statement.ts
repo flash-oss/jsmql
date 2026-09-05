@@ -22,7 +22,7 @@ import { Chain, Env } from "./env.ts";
 import { Capture, fieldSlot, type Declared } from "./names.ts";
 import { bindingSlot } from "../../namespace.ts";
 import * as E from "./errors.ts";
-import { childEnv, stageInputs } from "./inputs.ts";
+import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
@@ -543,7 +543,10 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
   }
   // `$$ = $$$.orders.…` switches the stream to another collection — the join road.
   if (readsAnotherCollection(cur)) return joinStream(chain, env, first, JOIN);
-  if (cur.type !== "CollectionRef") throw E.notAStreamChain(chain.pos);
+  // `$$` is the ROOT stream at every depth; a body over another collection cannot
+  // reach it, and names its own stream through the callback's third parameter.
+  if (cur.type === "CollectionRef" && env.level > 0) throw E.rootStreamInForeign(chain.pos);
+  if (cur.type !== "CollectionRef" && !onOwnStream(cur, env)) throw E.notAStreamChain(chain.pos);
   const out: Stage[] = [];
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
@@ -624,13 +627,14 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     // union sugar (`$$.push(…)`) and the source stages (`$$.indexStats()`) are
     // statements that happen to be spelled on the stream, and their rows say so.
     // Everything else is `$$ = $$.<chain>;` — the same chain, the same stages.
-    const onRef = ["CollectionRef", "DatabaseRef", "ClusterRef"].includes(base.type);
+    const ownStream = onOwnStream(base as Expr, env);
+    const onRef = ["CollectionRef", "DatabaseRef", "ClusterRef"].includes(base.type) || ownStream;
     if (onRef) {
       if (node.optional) throw E.optionalOnStream(node.pos);
       const says = isContextRef(node.object) ? consult(namedRow(node) ?? node.name, "statement") : null;
       const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown";
       if (!asStatement) {
-        if (base.type === "CollectionRef") return streamStages(node, env, first);
+        if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
         throw E.noDestination(node.pos);
       }
     }

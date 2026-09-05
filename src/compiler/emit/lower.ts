@@ -38,7 +38,7 @@ import { operandShapeOf, bodyRuleOf } from "../rows.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
-import { childEnv, exprInputs, type Reader } from "./inputs.ts";
+import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
@@ -482,7 +482,7 @@ function receiverOf(recv: Expr, env: Env): Receiver {
   const src = sourceFamily(recv);
   if (src !== null && NAMESPACES.has(src))
     return { kind: "namespace", name: src as Receiver extends { name: infer N } ? N : never };
-  if (recv.type === "CollectionRef") return { kind: "stream" };
+  if (recv.type === "CollectionRef" || onOwnStream(recv, env)) return { kind: "stream" };
   // A regex has no value of its own: its row reads the pattern and flags off the
   // source node, so the node itself is handed over.
   if (src === "regexp") return { kind: "value", family: "regexp", lowered: recv };

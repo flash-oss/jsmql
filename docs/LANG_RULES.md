@@ -47,7 +47,7 @@ $round($.x)             // → { $round: "$x" } — because $round supports a si
 
 HR3 governs both: the raw MQL given to it and the MQL it emits by compiling JS to MQL.
 
-**HR4 — the four sigils each mean exactly one scope, always.** `$` = the **root document**, `$$` = the current collection/stream, `$$$` = the current database, `$$$$` = the current server. They never mean anything else. Each is used either as a source/destination (`$$ = …`, `$$$.coll = $$`) or to call its methods (`$$$.coll.find(…)`, `$$.filter(…)`). Known as context references.
+**HR4 — the four sigils each mean exactly one scope, always.** `$` = the **root document**, `$$` = the **root stream** (the pipeline's own documents), `$$$` = the current database, `$$$$` = the current server. They never mean anything else, at any depth: inside a body over another collection (`$$$.orders.aggregate(o => { … })`) `$` is still the outer document and `$$` still the root stream; the body's own document is its callback parameter (`o`), and its own stream the callback's third parameter (`(o, _i, coll) => { coll.length }`). Each is used either as a source/destination (`$$ = …`, `$$$.coll = $$`) or to call its methods (`$$$.coll.find(…)`, `$$.filter(…)`). Known as context references.
 
 `$` is the root document *of the pipeline you are writing*, and it keeps that meaning at every depth. Inside a sub-pipeline — a `$$$.<coll>` chain, an `.aggregate((o) => { … })` block, a `.filter((o) => …)` predicate — `$.x` still reads the **outer** document (jsmql threads it in through `$lookup.let`); the sub-pipeline's own document is the callback parameter, or a raw `"$x"` MQL path string. So in one stage body the two spellings address two different documents:
 
