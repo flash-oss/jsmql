@@ -16837,20 +16837,12 @@
       "now": "[{\"$fill\":{\"output\":{\"x\":{\"method\":\"locf\"}}}}]",
       "reason": "intended: the row's stated body fact is applied to BOTH spellings of a stage — the call and the raw document — because a shape no deployment accepts is not a round-trip. Each fact is measured on the server."
     },
-    "pipeline\u0000[ $geoNear({ distanceField: 'd' }) ]": {
-      "entry": "pipeline",
-      "src": "[ $geoNear({ distanceField: 'd' }) ]",
-      "kind": "now-accepted",
-      "was": "'$geoNear' requires the 'near' field, but it is missing.",
-      "now": "[{\"$geoNear\":{\"distanceField\":\"d\"}}]",
-      "reason": "intended: the row's stated body fact is applied to BOTH spellings of a stage — the call and the raw document — because a shape no deployment accepts is not a round-trip. Each fact is measured on the server."
-    },
     "pipeline\u0000[ $merge({ into: 'c', whenMatched: 'replce' }) ]": {
       "entry": "pipeline",
       "src": "[ $merge({ into: 'c', whenMatched: 'replce' }) ]",
       "kind": "message",
       "was": "'$merge' whenMatched must be one of: replace, keepExisting, merge, fail — got 'replce'. Did you mean 'replace'?",
-      "now": "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+      "now": "'$merge' whenMatched must be one of: replace, keepExisting, merge, fail, pipeline — got 'replce'. Did you mean 'replace'?",
       "reason": "message: both refuse a sub-pipeline body that is not a bracketed stage list; the new wording shows the spelling."
     },
     "pipeline\u0000[ $graphLookup({ from: 'c', startWith: $.x, connectFromField: 'a', connectToField: 'b', as: 'r', maxDepth: -1 }) ]": {

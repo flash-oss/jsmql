@@ -533,6 +533,33 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     );
   });
 
+  it("holds the body facts of every stage the server refuses a shape of", () => {
+    // each refusal is the server's own (measured on 8.3.7), stated on the row
+    expect(() => pipeline('$densify({ field: "t", range: { step: 1, bounds: "full" }, zzz: 1 });')).toThrow(
+      /'\$densify' has no parameter 'zzz'/,
+    );
+    expect(() => pipeline('$densify({ range: { step: 1, bounds: "full" } });')).toThrow(/requires the 'field' field/);
+    expect(() =>
+      pipeline(
+        '$fill({ sortBy: { t: 1 }, partitionBy: "$k", partitionByFields: ["k"], output: { a: { method: "locf" } } });',
+      ),
+    ).toThrow(/takes 'partitionBy' or 'partitionByFields', not both/);
+    expect(() => pipeline('$setWindowFields({ partitionBy: "$k" });')).toThrow(/requires the 'output' field/);
+    expect(() => pipeline('$merge({ into: "c", whenMatched: "zzz" });')).toThrow(/must be one of: replace/);
+    expect(() => pipeline("$changeStreamSplitLargeEvent({ zzz: 1 });")).toThrow(/has no parameter 'zzz'/);
+    expect(() => pipeline('{ $out: { db: "d", coll: "c", zzz: 1 } };')).toThrow(/has no parameter 'zzz'/);
+    expect(() => pipeline('$geoNear({ near: [0, 0], distanceField: "d", zzz: 1 });')).toThrow(/has no parameter 'zzz'/);
+    expect(pipeline('$fill({ sortBy: { t: 1 }, output: { a: { method: "locf" } } });')).toEqual([
+      { $fill: { sortBy: { t: 1 }, output: { a: { method: "locf" } } } },
+    ]);
+    expect(pipeline('$densify({ field: "t", range: { step: 1, bounds: "full" } });')).toEqual([
+      { $densify: { field: "t", range: { step: 1, bounds: "full" } } },
+    ]);
+    expect(pipeline('$merge({ into: "c", whenMatched: [{ $set: { a: 1 } }] });')).toEqual([
+      { $merge: { into: "c", whenMatched: [{ $set: { a: 1 } }] } },
+    ]);
+  });
+
   it("says which forms this compiler has not built yet, so nothing looks supported", () => {
     // A chain's last LINK is a name the registry knows, so without this the join
     // road would emit a bare stage — a filter on the wrong collection.

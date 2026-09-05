@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — feat(compiler): every stage states its body facts
+
+The twenty-eight stage rows whose `body` was still pending state it now, each fact read off mongod 8.3.7 where a standalone server can answer (`// MEASURED:` beside it) and off the manual where only Atlas or a sharded cluster can (`$search`, `$vectorSearch`, `$listSearchIndexes`, `$rankFusion`, `$scoreFusion`, `$shardedDataDistribution`, `$listSampledQueries`). The object-form stages are closed key sets with their required keys, key types and enumerations — `$densify`, `$fill` (`partitionBy` and `partitionByFields` never together), `$setWindowFields` (`output` required), `$merge` (its two enumerations; an update pipeline passes), `$geoNear`, `$changeStream`, `$out`'s document form, `$changeStreamSplitLargeEvent` and `$shardedDataDistribution` (an empty document). The single-operand stages — `$count`, `$limit`, `$skip`, `$match`, `$project`, `$set`, `$unset`, `$replaceWith`, `$redact`, `$sortByCount`, `$documents`, `$addFields` — state an open rule, since their operand's shape is the statement cell's `args`; the server's answer to each wrong operand is recorded beside it. A nested key set (`$densify.range`, `$fill.output.<f>.method`) is not stated: the rule is flat, and the measurement notes it. Ratchet 62.
+
+---
+
 ## 2026-09-06 — feat(compiler): the query operators' call forms are their clauses
 
 The filter target's pending list is empty: the thirty-eight `filter` cells of the query operators are stated. A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$all($.tags, ["a"])`, `$geoWithin($.loc, $box(…))`, `$expr(e)`, `$text("foo")` — writes the clause its document form spells, the first argument the field. An operator that also has an expression form (`$gt`, `$in`, `$type`, `$mod`, …) answers the clause when the field is a path and the operand a constant, and takes the expression road otherwise. The shipped compiler wrapped every one of the query-only calls in a truthiness test under `$expr` — `{ $expr: { $and: [{ $ne: [{ $exists: "$a" }, null] }, …] } }` — which the server refuses as an unknown expression operator.

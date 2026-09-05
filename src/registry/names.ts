@@ -4055,7 +4055,8 @@ export const NAMES = {
     replacesDocument: true,
     where: ["group", "window", "stream", "statement"],
     shape: "none",
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $count: "" } → the count field must be a non-empty string (the operand rule is in `args`)
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4666,7 +4667,8 @@ export const NAMES = {
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement"],
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4759,7 +4761,30 @@ export const NAMES = {
     doc: "Returns a Change Stream cursor for the collection or database. This stage can only occur once in an aggregation pipeline and it must occur as the first stage.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $changeStream: { zzz: 1 } } → BSON field '$changeStream.zzz' is an unknown field
+    body: {
+      required: [],
+      optional: [
+        "allChangesForCluster",
+        "fullDocument",
+        "fullDocumentBeforeChange",
+        "resumeAfter",
+        "showExpandedEvents",
+        "startAfter",
+        "startAtOperationTime",
+      ],
+      closed: true,
+      enums: {
+        fullDocument: ["default", "updateLookup", "whenAvailable", "required"],
+        fullDocumentBeforeChange: ["off", "whenAvailable", "required"],
+      },
+      keyTypes: {
+        allChangesForCluster: "bool",
+        showExpandedEvents: "bool",
+        startAfter: "object",
+        resumeAfter: "object",
+      },
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4779,7 +4804,8 @@ export const NAMES = {
     doc: "Splits large change stream events that exceed 16 MB into smaller fragments returned in a change stream cursor.",
     where: ["stream", "statement"],
     only: ["stageLast"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $changeStreamSplitLargeEvent: { zzz: 1 } } → $changeStreamSplitLargeEvent spec should be an empty object
+    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
@@ -4888,7 +4914,15 @@ export const NAMES = {
   $densify: mongo({
     doc: "Creates new documents in a sequence of documents where certain values in a field are missing.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $densify: { field: "t", range: {…}, zzz: 1 } } → BSON field '$densify.zzz' is an unknown field
+    // MEASURED: range.bounds: "everything" → Bounds string must either be 'full' or 'partition' (a nested key; not stated here)
+    body: {
+      required: ["field", "range"],
+      optional: ["partitionByFields"],
+      closed: true,
+      keyTypes: { field: "string", range: "object", partitionByFields: "array" },
+      constantKeys: ["field", "partitionByFields"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4908,7 +4942,8 @@ export const NAMES = {
     doc: "Returns literal documents from input values.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $documents: { a: 1 } } → '$documents' can only be run with database or cluster-level aggregation
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
@@ -4959,7 +4994,16 @@ export const NAMES = {
   $fill: mongo({
     doc: "Populates null and missing field values within documents.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $fill: { output: {…}, zzz: 1 } } → BSON field '$fill.zzz' is an unknown field
+    // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
+    // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
+    body: {
+      required: ["output"],
+      optional: ["partitionBy", "partitionByFields", "sortBy"],
+      closed: true,
+      keyTypes: { output: "object", sortBy: "object", partitionByFields: "array" },
+      notTogether: [[["partitionBy"], ["partitionByFields"]]],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -4979,7 +5023,31 @@ export const NAMES = {
     doc: "Returns an ordered stream of documents based on the proximity to a geospatial point. Incorporates the functionality of $match, $sort, and $limit for geospatial data.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $geoNear: { near: [0, 0], distanceField: "d", zzz: 1 } } → Unknown argument to $geoNear: zzz
+    body: {
+      required: ["near"],
+      optional: [
+        "distanceField",
+        "distanceMultiplier",
+        "includeLocs",
+        "key",
+        "maxDistance",
+        "minDistance",
+        "query",
+        "spherical",
+      ],
+      closed: true,
+      keyTypes: {
+        distanceField: "string",
+        distanceMultiplier: "number",
+        includeLocs: "string",
+        key: "string",
+        maxDistance: "number",
+        minDistance: "number",
+        query: "object",
+        spherical: "bool",
+      },
+    },
     bodyPositions: { "": "value", query: "filter" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -5081,7 +5149,8 @@ export const NAMES = {
   $limit: mongo({
     doc: "Passes the first n documents unmodified to the pipeline where n is the specified limit.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $limit: 0 } → the limit must be positive (the operand rule is in `args`)
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5151,7 +5220,8 @@ export const NAMES = {
     doc: "Lists sampled queries for all collections or a specific collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: not supported on a standalone mongod; the key set is the manual's
+    body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5171,7 +5241,8 @@ export const NAMES = {
     doc: "Returns information about existing Atlas Search indexes on a specified collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the key set is the manual's
+    body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5257,7 +5328,8 @@ export const NAMES = {
   $match: mongo({
     doc: "Filters the document stream to allow only matching documents to pass unmodified into the next pipeline stage.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $match: [1] } → the match filter must be an expression in an object
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5277,7 +5349,19 @@ export const NAMES = {
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     where: ["stream", "statement"],
     only: ["stageLast"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
+    // MEASURED: whenMatched: "zzz" → Enumeration value 'zzz' for field 'whenMatched' is not a valid value (an array is an update pipeline and passes)
+    // MEASURED: whenNotMatched: "zzz" → Enumeration value 'zzz' for field '$merge.whenNotMatched' is not a valid value
+    body: {
+      required: ["into"],
+      optional: ["on", "let", "whenMatched", "whenNotMatched"],
+      closed: true,
+      keyTypes: { let: "object" },
+      enums: {
+        whenMatched: ["replace", "keepExisting", "merge", "fail", "pipeline"],
+        whenNotMatched: ["insert", "discard", "fail"],
+      },
+    },
     bodyPositions: { "": "value", whenMatched: "statement" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
@@ -5303,7 +5387,14 @@ export const NAMES = {
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
     where: ["stream", "statement"],
     only: ["stageLast"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $out: { db: "d", coll: "c", zzz: 1 } } → BSON field '$out.zzz' is an unknown field; { $out: 1 } → $out only supports a string or object argument
+    body: {
+      required: ["coll"],
+      optional: ["db", "timeseries"],
+      closed: true,
+      keyTypes: { db: "string", coll: "string", timeseries: "object" },
+      constantKeys: ["db", "coll"],
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
@@ -5362,7 +5453,8 @@ export const NAMES = {
     replacesDocument: "inclusion",
     where: ["stream", "statement"],
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $project: {} } → projection specification must have at least one field
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5388,7 +5480,13 @@ export const NAMES = {
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the key set is the manual's
+    body: {
+      required: ["input"],
+      optional: ["combination", "scoreDetails"],
+      closed: true,
+      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" },
+    },
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5407,7 +5505,8 @@ export const NAMES = {
   $redact: mongo({
     doc: "Reshapes each document in the stream by restricting the content for each document based on information stored in the documents themselves.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $redact: "$KEEP" } → accepted
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5463,7 +5562,8 @@ export const NAMES = {
     where: ["stream", "statement"],
     replacesDocument: true,
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $replaceWith: 1 } → 'replacement document' must evaluate to an object
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5514,7 +5614,13 @@ export const NAMES = {
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the key set is the manual's
+    body: {
+      required: ["input"],
+      optional: ["combination", "scoreDetails"],
+      closed: true,
+      keyTypes: { input: "object", combination: "object", scoreDetails: "bool" },
+    },
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5534,7 +5640,8 @@ export const NAMES = {
     doc: "Performs a full-text search of the field or fields in an Atlas collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the operators inside a $search body are its own language and pass through
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -5554,7 +5661,8 @@ export const NAMES = {
     doc: "Returns different types of metadata result documents for the Atlas Search query against an Atlas collection.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the operators inside a $searchMeta body are its own language and pass through
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
@@ -5574,7 +5682,8 @@ export const NAMES = {
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $set: {} } → accepted, the stage is a no-op
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5599,7 +5708,14 @@ export const NAMES = {
   $setWindowFields: mongo({
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
+    // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
+    body: {
+      required: ["output"],
+      optional: ["partitionBy", "sortBy"],
+      closed: true,
+      keyTypes: { output: "object", sortBy: "object" },
+    },
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5625,7 +5741,8 @@ export const NAMES = {
     doc: "Provides data and size distribution information on sharded collections.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: sharded clusters only; the manual takes an empty document
+    body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5646,7 +5763,8 @@ export const NAMES = {
   $skip: mongo({
     doc: "Skips the first n documents where n is the specified skip number and passes the remaining documents unmodified to the pipeline.",
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $skip: -1 } → Expected a non-negative number; { $skip: 1.5 } → Expected an integer (the operand rule is in `args`)
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5717,7 +5835,8 @@ export const NAMES = {
     doc: "Groups incoming documents based on the value of a specified expression, then computes the count of documents in each distinct group.",
     replacesDocument: true,
     where: ["stream", "statement"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $sortByCount: 1 } → the sortByCount field must be specified as a string or as an object
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5771,7 +5890,8 @@ export const NAMES = {
     doc: "Removes or excludes fields from documents.",
     where: ["stream", "statement", "updateDoc"],
     only: ["update"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: { $unset: 1 } → $unset specification must be a string or an array; { $unset: [] } → … with at least one field
+    body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5828,7 +5948,20 @@ export const NAMES = {
     doc: "Performs an ANN or ENN search on a vector in the specified field.",
     where: ["stream", "statement"],
     only: ["stageFirst"],
-    body: pending("src/stage-validation.ts"),
+    // MEASURED: Atlas only; the key set is the manual's
+    body: {
+      required: ["index", "path", "queryVector", "limit"],
+      optional: ["numCandidates", "exact", "filter"],
+      closed: true,
+      keyTypes: {
+        index: "string",
+        path: "string",
+        limit: "int",
+        numCandidates: "int",
+        exact: "bool",
+        filter: "object",
+      },
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
