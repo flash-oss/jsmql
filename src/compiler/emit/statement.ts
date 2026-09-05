@@ -662,7 +662,7 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
   for (const link of links) {
     // `$$?.filter(…)` — the stream is never null; the `?.` is a misreading of `$$`.
     if (link.optional) throw E.optionalOnStream(link.pos);
-    const stages = streamLink(link, env, first && out.length === 0);
+    const stages = streamLink(link, env, first && out.length === 0, undefined, out);
     if (stages === null) {
       throw E.notAStreamLink(
         link.name,
@@ -716,6 +716,7 @@ function streamLink(
   env: Env,
   first: boolean,
   row: string = namedRow(link) ?? link.name,
+  soFar: readonly Stage[] = [],
 ): Stage[] | null {
   if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
   const name = row;
@@ -730,7 +731,7 @@ function streamLink(
   }
   const args = link.args as readonly Expr[];
   checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
-  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ)) as Stage[];
+  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar)) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
   return out;

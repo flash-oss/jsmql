@@ -11,11 +11,12 @@
 import { parse, parseExpression } from "./parse/parser.ts";
 import { fold } from "./passes/fold.ts";
 import { desugar } from "./passes/desugar.ts";
-import { FILTER, STATEMENT, VALUE } from "./passes/position.ts";
+import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./passes/position.ts";
 import { Env } from "./emit/env.ts";
 import { lowerValue } from "./emit/lower.ts";
 import { lowerFilter } from "./emit/filter.ts";
 import { lowerProgram } from "./emit/statement.ts";
+import { lowerUpdate } from "./emit/update.ts";
 import { shapeOf } from "./passes/shape.ts";
 import { noStages, notAPipeline } from "./emit/errors.ts";
 
@@ -48,4 +49,10 @@ export function pipeline(source: string): unknown[] {
   const stages = lowerProgram(program, Env.root(program, "statement"));
   if (stages.length === 0) throw noStages((program as { pos: number }).pos);
   return stages;
+}
+
+/** The object form of an update — `updateOne(filter, { $set: { … }, $inc: { … } })` — from writes and update operators. */
+export function update(source: string): Record<string, unknown> {
+  const program = desugar(fold(parse(source)), UPDATE_DOC);
+  return lowerUpdate(program, Env.root(program, "updateDoc"));
 }

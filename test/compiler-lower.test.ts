@@ -6,8 +6,7 @@
 // the `jsmql`-prefixed mint). The wider net is scripts/diff-compilers.mjs --cur.
 
 import { describe, expect, it } from "vitest";
-import { expr, pipeline } from "../src/compiler/index.ts";
-import { PendingLowering } from "../src/compiler/emit/errors.ts";
+import { expr } from "../src/compiler/index.ts";
 
 const TRUTHY = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],
@@ -204,10 +203,6 @@ describe("compiler/emit/lower — calls", () => {
       $let: { vars: {}, in: { $let: { vars: { y: { $multiply: ["$a", 2] } }, in: { $add: ["$$y", 1] } } } },
     });
     expect(expr("((x) => x * $.a)(2)")).toEqual({ $let: { vars: { x: 2 }, in: { $multiply: ["$$x", "$a"] } } });
-  });
-
-  it("throws a typed PendingLowering for a row still marked pending", () => {
-    expect(() => pipeline("$$.takeWhile((x) => x.a > 1);")).toThrow(PendingLowering);
   });
 
   it("refuses a name from a closed set with a suggestion", () => {

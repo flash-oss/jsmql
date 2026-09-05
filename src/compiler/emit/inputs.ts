@@ -28,6 +28,7 @@ import {
   needsFieldPath,
   needsLiteral,
   elementNeedsQuery,
+  needsPrecedingSort,
 } from "./errors.ts";
 import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
@@ -404,8 +405,11 @@ export function stageInputs(
   env: Env,
   node: object,
   read: StageReader,
+  /** The stages the current chain has produced before this link — not yet emitted, but before it in the pipeline. */
+  soFar: readonly Stage[] = [],
 ): StageIn & { keys: readonly string[] } {
   const argEnv = childEnv(env, node, "args");
+  const before: readonly Stage[] = [...env.chain.emitted, ...soFar];
   /**
    * A callback's FIRST parameter IS the stream's document, so its fields are
    * top-level paths. lodash lets a callback name an index and the collection too;
@@ -470,6 +474,17 @@ export function stageInputs(
       const b = body(cb, "a reshape");
       return read.reshape(b.body, b.env);
     },
+    condition: (cb) => {
+      const b = body(cb, "a predicate");
+      return read.truth(b.body, b.env);
+    },
+    sortedBy: () => {
+      for (let k = before.length - 1; k >= 0; k--) {
+        const spec = (before[k] as Record<string, unknown>).$sort;
+        if (spec !== undefined) return spec as Record<string, unknown>;
+      }
+      throw needsPrecedingSort(name, (node as { pos: number }).pos);
+    },
     document: (cb) => {
       const b = body(cb, "a document");
       const kind = b.body.type === "NullLiteral" ? "null" : kindOf(b.body, b.env);
@@ -492,7 +507,7 @@ export function stageInputs(
     sortSpec: (e, objects = true) => sortSpecOf(e, name, objects),
     orderBy: (keys, orders) => orderBySpec(keys, orders, name),
     slot: () => env.chain.slot().path,
-    prevStages: env.chain.emitted,
+    prevStages: before,
     bind: (hint) => {
       const b = env.fresh(hint);
       return { as: b.as, ref: b.ref };

@@ -322,6 +322,12 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
         internalError("a non-static entry reached the static path");
       // `{ $setUnion: $.x }` — a list-only operator with a lone non-array operand is the
       // shape the server refuses, on this spelling as on the call.
+      // In an update document an operator key is that operator's own cell: `{ $each: [...], $slice: -3 }` under `$push`.
+      if (e.key.name.startsWith("$") && positionIn(inner) === "updateDoc") {
+        const doc = lowerValue({ type: "OperatorCall", name: e.key.name, args: [e.value], pos: e.pos }, inner);
+        if (doc !== null && typeof doc === "object") Object.assign(out, doc as Record<string, unknown>);
+        continue;
+      }
       if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
         throw E.listOperand(e.key.name, e.value.pos);
       }
@@ -431,6 +437,10 @@ function isPropertyRow(node: Extract<Expr, { type: "MemberAccess" }>): boolean {
 }
 
 function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): unknown {
+  // `Math.abs` on its own names a function; only a call or a callback slot gives it a value.
+  if (node.object.type === "Ident" && namespaceNames().has(node.object.name) && isCallable(node.name)) {
+    throw E.unappliedReference(node.object.name, node.name, node.pos);
+  }
   if (isPropertyRow(node)) return dispatchOn(node, node.name, node.object, [], env, node.optional);
   const path = pathOf(node, env);
   if (path !== null) return path;
@@ -696,7 +706,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
   // server refuses, and is refused here in the same words.
-  const shape = operandShapeOf(node.name);
+  // The operand shape is the EXPRESSION form's; in an update document the row's updateDoc cell states its own.
+  const shape = position === "updateDoc" ? undefined : operandShapeOf(node.name);
   const first = node.args[0];
   const lone = node.args.length === 1 && first.type === "ArrayLiteral" ? first : null;
   // HR2: one array literal IS the operand list, as written — `$eq([$.n, 4])` is

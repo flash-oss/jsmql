@@ -9138,7 +9138,7 @@
       "src": "$.x = Math.floor",
       "kind": "message",
       "was": "'Math.floor' used as a value is only valid as a callback to a higher-order array method (e.g. $.items.map(Math.floor)). To compute on a single value, write Math.floor(value).",
-      "now": "Math.floor(value) requires exactly 1 argument, got 0",
+      "now": "'Math.floor' is a function, not a value. Call it ('Math.floor(…)'), or hand it to a callback slot ('.map(Math.floor)').",
       "reason": "message: both refuse the argument count; the new wording names the parameter from the row's own signature."
     },
     "pipeline\u0000Math.sin($.angle)": {
@@ -29532,6 +29532,70 @@
       "was": "{\"$expr\":{\"$eq\":[\"$url\",\"https://example.com\"]}}",
       "now": "{\"url\":{\"$eq\":\"https://example.com\"}}",
       "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "pipeline\u0000$$.$sort({ t: 1 }).takeWhile(o => o.ok);": {
+      "entry": "pipeline",
+      "src": "$$.$sort({ t: 1 }).takeWhile(o => o.ok);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[\"$ok\",0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$ok\",null]},null]},{\"$ne\":[\"$ok\",false]},{\"$ne\":[\"$ok\",\"\"]},{\"$ne\":[\"$ok\",0]}]},0,1]},\"wi",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000\n$$.filter({ deviceId: \"dev-7\" });\n$$.toSorted({ readAt: 1 }).takeWhile({ status: \"ok\" });\n$group({ _id: null, lastGood: { $max: \"$readAt\" }, readings: { $sum: 1 } });\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ deviceId: \"dev-7\" });\n$$.toSorted({ readAt: 1 }).takeWhile({ status: \"ok\" });\n$group({ _id: null, lastGood: { $max: \"$readAt\" }, readings: { $sum: 1 } });\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"deviceId\":\"dev-7\"}},{\"$sort\":{\"readAt\":1}},{\"$setWindowFields\":{\"sortBy\":{\"readAt\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$status\",\"ok\"]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}",
+      "now": "[{\"$match\":{\"deviceId\":{\"$eq\":\"dev-7\",\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"readAt\":1}},{\"$setWindowFields\":{\"sortBy\":{\"readAt\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$status\",\"ok\"]},0,1]},\"window\":{\"do",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.toSorted({ t: 1 }).takeWhile(o => o.ok);": {
+      "entry": "pipeline",
+      "src": "$$.toSorted({ t: 1 }).takeWhile(o => o.ok);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[\"$ok\",0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$ok\",null]},null]},{\"$ne\":[\"$ok\",false]},{\"$ne\":[\"$ok\",\"\"]},{\"$ne\":[\"$ok\",0]}]},0,1]},\"wi",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.toSorted({ t: 1 }).dropWhile(o => o.ok);": {
+      "entry": "pipeline",
+      "src": "$$.toSorted({ t: 1 }).dropWhile(o => o.ok);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[\"$ok\",0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":1}},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$ok\",null]},null]},{\"$ne\":[\"$ok\",false]},{\"$ne\":[\"$ok\",\"\"]},{\"$ne\":[\"$ok\",0]}]},0,1]},\"wi",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.sortBy(\"t\").takeWhile(o => o.ok === true);": {
+      "entry": "pipeline",
+      "src": "$$.sortBy(\"t\").takeWhile(o => o.ok === true);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.0\":0}},{\"$unset\":",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.sortBy(\"t\").takeWhile({ ok: true });": {
+      "entry": "pipeline",
+      "src": "$$.sortBy(\"t\").takeWhile({ ok: true });",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.0\":0}},{\"$unset\":",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.sortBy(\"t\").takeWhile([\"ok\", true]);": {
+      "entry": "pipeline",
+      "src": "$$.sortBy(\"t\").takeWhile([\"ok\", true]);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$eq\":[\"$ok\",true]},0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.0\":0}},{\"$unset\":",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
+    },
+    "pipeline\u0000$$.sortBy(\"t\").take(9).takeWhile(o => o.ok);": {
+      "entry": "pipeline",
+      "src": "$$.sortBy(\"t\").take(9).takeWhile(o => o.ok);",
+      "kind": "output",
+      "was": "[{\"$sort\":{\"t\":1}},{\"$limit\":9},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.1\":{\"$max\":{\"$cond\":[\"$ok\",0,1]},\"window\":{\"documents\":[\"unbounded\",\"current\"]}}}}},{\"$match\":{\"__jsmql.tmp.1\":0}},{\"$unset\":\"_",
+      "now": "[{\"$sort\":{\"t\":1}},{\"$limit\":9},{\"$setWindowFields\":{\"sortBy\":{\"t\":1},\"output\":{\"__jsmql.tmp.0\":{\"$max\":{\"$cond\":[{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$ok\",null]},null]},{\"$ne\":[\"$ok\",false]},{\"$ne\":[\"$ok\",\"\"]},{\"$ne\":[\"$ok\",0]",
+      "reason": "intended: `.takeWhile` / `.dropWhile` keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`; without a sort they are refused, as the shipped compiler did."
     }
   }
 }

@@ -2592,7 +2592,10 @@ export const NAMES = {
     statement: unsupported(
       "'$slice' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $slice(…);'",
     ),
-    updateDoc: pending("src/operator-validation.ts"),
+    updateDoc: {
+      args: { sig: "count", exact: 1, slotType: { 0: "int" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $sortArray: mongo({
@@ -4020,7 +4023,10 @@ export const NAMES = {
     statement: unsupported(
       "'$addToSet' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $addToSet(…);'",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $avg: mongo({
@@ -4098,7 +4104,10 @@ export const NAMES = {
     statement: unsupported(
       "'$max' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $max(…);'",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $median: mongo({
@@ -4148,7 +4157,10 @@ export const NAMES = {
     statement: unsupported(
       "'$min' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $min(…);'",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $percentile: mongo({
@@ -4198,7 +4210,10 @@ export const NAMES = {
     statement: unsupported(
       "'$push' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $push(…);'",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $stdDevPop: mongo({
@@ -5702,7 +5717,10 @@ export const NAMES = {
       args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $setWindowFields: mongo({
@@ -5828,7 +5846,7 @@ export const NAMES = {
       args: { sig: "body", exact: 1, constant: [0], slotType: { 0: "object" } },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
-    updateDoc: pending("src/operator-validation.ts"),
+    updateDoc: { args: { sig: "spec", exact: 1 }, emit: ({ name, args, value }) => ({ [name]: value(args[0]) }) },
   }),
 
   $sortByCount: mongo({
@@ -5910,7 +5928,10 @@ export const NAMES = {
       args: { sig: "body", exact: 1, constant: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $unwind: mongo({
@@ -9658,7 +9679,27 @@ export const NAMES = {
         return takeDropWhile(recv, p, false, bind);
       },
     },
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "predicate", exact: 1 },
+      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      emit: ({ args, condition, sortedBy, slot }) => {
+        const flag = slot();
+        return [
+          {
+            $setWindowFields: {
+              sortBy: sortedBy(),
+              output: {
+                [flag]: {
+                  $max: { $cond: [condition(args[0]), 0, 1] },
+                  window: { documents: ["unbounded", "current"] },
+                },
+              },
+            },
+          },
+          { $match: { [flag]: 0 } },
+        ];
+      },
+    },
     statement: unsupported(
       "'.takeWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.takeWhile();'",
     ),
@@ -9691,7 +9732,27 @@ export const NAMES = {
         return takeDropWhile(recv, p, true, bind);
       },
     },
-    stream: pending("src/stream-methods.ts"),
+    stream: {
+      args: { sig: "predicate", exact: 1 },
+      // a running flag over the sorted stream: 0 while every document so far passed, 1 from the first that did not
+      emit: ({ args, condition, sortedBy, slot }) => {
+        const flag = slot();
+        return [
+          {
+            $setWindowFields: {
+              sortBy: sortedBy(),
+              output: {
+                [flag]: {
+                  $max: { $cond: [condition(args[0]), 0, 1] },
+                  window: { documents: ["unbounded", "current"] },
+                },
+              },
+            },
+          },
+          { $match: { [flag]: 1 } },
+        ];
+      },
+    },
     statement: unsupported(
       "'.dropWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.dropWhile();'",
     ),
@@ -10950,7 +11011,10 @@ export const NAMES = {
     statement: unsupported(
       "'$inc' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   // ── names that are valid ONLY inside another operator's body. Each was proven
@@ -11157,7 +11221,10 @@ export const NAMES = {
     statement: unsupported(
       "'$each' is only valid inside $push / $addToSet, and only in an update document — never as a statement.",
     ),
-    updateDoc: pending("src/operator-validation.ts"),
+    updateDoc: {
+      args: { sig: "values", exact: 1, slotType: { 0: "array" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $position: mongo({
@@ -11180,7 +11247,10 @@ export const NAMES = {
     statement: unsupported(
       "'$position' is only valid inside $push, and only in an update document — never as a statement.",
     ),
-    updateDoc: pending("src/operator-validation.ts"),
+    updateDoc: {
+      args: { sig: "index", exact: 1, slotType: { 0: "int" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $case: mongo({
@@ -11234,7 +11304,10 @@ export const NAMES = {
     statement: unsupported(
       "'$currentDate' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $mul: mongo({
@@ -11258,7 +11331,10 @@ export const NAMES = {
     statement: unsupported(
       "'$mul' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $rename: mongo({
@@ -11282,7 +11358,10 @@ export const NAMES = {
     statement: unsupported(
       "'$rename' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $setOnInsert: mongo({
@@ -11306,7 +11385,10 @@ export const NAMES = {
     statement: unsupported(
       "'$setOnInsert' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $pop: mongo({
@@ -11330,7 +11412,10 @@ export const NAMES = {
     statement: unsupported(
       "'$pop' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $pull: mongo({
@@ -11354,7 +11439,10 @@ export const NAMES = {
     statement: unsupported(
       "'$pull' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $pullAll: mongo({
@@ -11378,7 +11466,10 @@ export const NAMES = {
     statement: unsupported(
       "'$pullAll' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   $bit: mongo({
@@ -11402,7 +11493,10 @@ export const NAMES = {
     statement: unsupported(
       "'$bit' is an update-document operator. It is valid only in the update argument of updateOne / updateMany, not as a statement.",
     ),
-    updateDoc: pending("src/index.ts"),
+    updateDoc: {
+      args: { sig: "fields", exact: 1, slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => ({ [name]: value(args[0]) }),
+    },
   }),
 
   // ── the query language: operators with a filter form and no expression form.

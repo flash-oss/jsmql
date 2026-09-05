@@ -970,6 +970,10 @@ export type StageIn = {
   block: (cb: Expr) => Stage[];
   value: (e: Expr) => unknown;
   truth: (e: Expr) => Truth;
+  /** A callback's body as a TRUTH over the stream's document — `.takeWhile(o => o.ok)`'s test inside a window expression. */
+  condition: (cb: Expr) => Truth;
+  /** The sort the stream carries — the last `$sort` emitted before this link — or the refusal that says to sort first. */
+  sortedBy: () => Readonly<Record<string, unknown>>;
   /**
    * A sort argument as the `{ field: 1 | -1 }` document a `$sort` takes: a name,
    * a list of names, a `{ field: dir }` spec, a key function or a comparator.

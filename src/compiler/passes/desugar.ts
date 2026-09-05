@@ -106,7 +106,9 @@ function refuseNonScalarTarget(target: object, op: AssignOp): void {
 
 const compoundAssign: Rule = {
   name: "fieldAssignment",
-  apply: (node) => {
+  apply: (node, where) => {
+    // a write in an update document is a field of the document, spelled as it stands
+    if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; value?: Expr; pos?: number };
     if (n.type !== "AssignExpr" || n.op === undefined) return node;
     const binop = COMPOUND.get(n.op);
@@ -135,7 +137,9 @@ const compoundAssign: Rule = {
  */
 const incDec: Rule = {
   name: "increment",
-  apply: (node) => {
+  apply: (node, where) => {
+    // a write in an update document is a field of the document, spelled as it stands
+    if (where.at === "updateDoc") return node;
     const n = node as { type: string; op?: AssignOp; target?: object; pos?: number };
     if (n.type !== "AssignExpr") return node;
     if (n.op !== "++" && n.op !== "--") return node;

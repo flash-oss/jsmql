@@ -893,6 +893,13 @@ class Parser {
     this.c.expect("RParen");
     // Parenthesising is what makes an otherwise-refused combination legal, so the
     // group deliberately forgets which rule produced it.
+    // `({ a }) => …` / `([a]) => …`: a pattern where a parameter name belongs
+    if (this.c.is("Arrow") && (inner.type === "ObjectLiteral" || inner.type === "ArrayLiteral")) {
+      throw new ParseError(
+        `Destructuring a parameter is not supported — name it and read its fields: 'x => x.a' at position ${inner.pos}`,
+        inner.pos,
+      );
+    }
     return inner;
   }
 

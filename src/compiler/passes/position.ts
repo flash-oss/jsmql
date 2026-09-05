@@ -72,11 +72,13 @@ export function edge(node: object, key: string, here: Where): Where {
   const n = node as Any;
 
   // A `;`-separated program: every element is a statement, whatever it looks like.
-  if (n.type === "Pipeline" && key === "stmts") return STATEMENT;
+  // The statements of an UPDATE DOCUMENT stay in its position: a write there is a
+  // field of the document, not a pipeline stage, so no statement sugar rewrites it.
+  if (n.type === "Pipeline" && key === "stmts") return here.at === "updateDoc" ? here : STATEMENT;
 
   // The writes of a `,`-joined run. Each is a statement in its own right — the
   // run groups them into one stage, it does not make them values.
-  if (n.type === "UpdateFilter" && key === "ops") return STATEMENT;
+  if (n.type === "UpdateFilter" && key === "ops") return here.at === "updateDoc" ? here : STATEMENT;
 
   // `[ $match(…), … ]` is a pipeline only where a statement may stand. The very
   // same shape one step further in is an array value.
@@ -152,6 +154,11 @@ export function edge(node: object, key: string, here: Where): Where {
       return receiver.type === "DatabaseRef" || receiver.type === "ClusterRef" ? VALUE : STREAM;
     }
   }
+
+  // Inside an update document everything below a statement stays in its position: the
+  // operators' arguments, the documents and lists under them, so `$each` inside `$push`
+  // is read by its update-document cell.
+  if (here.at === "updateDoc") return here;
 
   return VALUE;
 }

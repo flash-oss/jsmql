@@ -592,6 +592,41 @@ $group({ _id: $.tag, q: $.items.sumBy(i => i.q) });
   → [{"$group":{"_id":"$tag","q":{"$sum":{"$sum":{"$map":{"input":"$items","as":"i","in":"$i.q"}}}}}}]
 ```
 
+## The update-document target
+
+`update(source)` is the OBJECT form of an update — what `updateOne(filter, …)`
+takes when it is not a pipeline. Its root position is `updateDoc`, and every
+statement under it stays there (`edge` keeps the position below a `Pipeline` and an
+`UpdateFilter` at that root), so no statement sugar rewrites a write: `$.n += 2` IS
+`{ $inc: { n: 2 } }`, and `$.tags.push(x)` IS `{ $push: { tags: x } }`. A document-form
+update takes CONSTANTS — the server reads `"$b"` there as the string — so a read of
+the document anywhere in a value is refused (`Env.render` at this root), naming the
+pipeline form as the way to compute.
+
+| Write | Document |
+|---|---|
+| `$.a = c` / `delete $.a` | `$set` / `$unset: { a: "" }` |
+| `$.n += c`, `-= c`, `++`, `--` | `$inc` (negated for `-=`) |
+| `$.n *= c`, `/= c` | `$mul` (`1 / c` for `/=`) |
+| `$.n = Math.min($.n, c)` / `Math.max` | `$min` / `$max` (the same path on both sides) |
+| `$.t = new Date()` | `$currentDate: { t: true }` |
+| `$.b = $.a; delete $.a;` (either order) | `$rename: { a: "b" }` — a copy without the delete is refused |
+| `$.tags.push(x[, y])`, `.unshift(x)` | `$push`, with `$each` for several and `$position: 0` for unshift |
+| `$.tags.pop()` / `.shift()` | `$pop: 1` / `$pop: -1` |
+| `$inc({ n: 2 })`, `{ $inc: { n: 2 } }` | the row's `updateDoc` cell, as written |
+
+A field written twice in one document is refused as the conflict the server would
+raise. The update operators' `updateDoc` cells pass their document through; the
+fragments (`$each`, `$slice`, `$sort`, `$position`) are valid only inside `$push` /
+`$addToSet`, which `onlyInside` enforces.
+
+```
+$.n += 2; $.tags.push(3, 4); $.b = $.a; delete $.a;
+  → {"$inc":{"n":2},"$push":{"tags":{"$each":[3,4]}},"$rename":{"a":"b"}}
+$.a = $.b + 1
+  → refused: a document-form update takes constants — use the pipeline form
+```
+
 ## What has no value
 
 `undefined` (compare with it instead), a regex outside its methods, a lambda

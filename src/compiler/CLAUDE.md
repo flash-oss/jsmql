@@ -88,6 +88,9 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
   union.ts     the union road: `$$.push(…)` and `.concat(…)` as `$unionWith`, one
                stage per source, JavaScript's spread rule kept.
   join.ts      the join road: `$$$.<coll>.<chain>` as `$lookup` in every position
+  update.ts    the update-document target: the object form of an update from writes and
+               update operators, constants only — a document read is refused with the pipeline
+               form as the way out. See docs/specs/emit-pass.md § The update-document target.
                — the peel, the slot, the four destinations. Lent to lower.ts at
                load (`provideJoin`), since it needs the statement target's link
                walker and the statement target imports lower.ts.

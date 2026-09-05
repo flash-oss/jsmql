@@ -824,3 +824,68 @@ export const onlyInside = (name: string, hosts: readonly string[], pos: number):
     `'${name}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own — write it as that operator's operand: '${hosts[0]}(…, ${name}(…))'.`,
     pos,
   );
+
+/** `$$.takeWhile(p)` with no sort before it — a MongoDB stream has no order until it is given one. */
+export const needsPrecedingSort = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}(predicate)' keeps the ${name === "takeWhile" ? "LEADING" : "TRAILING"} run of the stream, and a MongoDB stream has no order until you give it one. Sort first, then '.${name}(…)': '$$.toSorted({ t: 1 }).${name}(o => o.ok)' — any sort spelling works ('.sort', '.toSorted', '.sortBy', '.orderBy', '.$sort({ … })').`,
+    pos,
+  );
+
+// ── the update-document target ───────────────────────────────────────────────
+
+/** `$set({ a: $.b })` in a document-form update — the server would store the string "$b". */
+export const readInUpdateDocument = (pos: number): CodegenError =>
+  new CodegenError(
+    "A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form ('jsmql.pipeline(\"$.a = $.b + 1;\")'), which 'updateOne' accepts as well.",
+    pos,
+  );
+
+export const updateCopyNeedsPipeline = (from: string, to: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$.${to} = $.${from}' copies a field, which a document-form update cannot do. To MOVE it, delete the source as well ('$.${to} = $.${from}; delete $.${from};' is a $rename); to copy it, use the pipeline form.`,
+    pos,
+  );
+
+export const updateConflict = (path: string, held: string, op: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${path}' is written twice in one update ('${held}' and '${op}'), which the server refuses as a conflict. Write each field once.`,
+    pos,
+  );
+
+export const updateHasNoDocumentForm = (what: string, pos: number): CodegenError =>
+  new CodegenError(
+    `${what} has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.`,
+    pos,
+  );
+
+export const updateNeedsNumber = (op: string, what: string, pos: number): CodegenError =>
+  new CodegenError(`'${op}' in a document-form update takes ${what} as a compile-time constant.`, pos);
+
+export const updateKeyNotOperator = (key: string | null, pos: number): CodegenError =>
+  new CodegenError(
+    `An update document's keys are update operators ('$set', '$inc', …)${key === null ? "" : `, and '${key}' is not one`}. To set a field, write '$.${key ?? "field"} = …' or '{ $set: { ${key ?? "field"}: … } }'.`,
+    pos,
+  );
+
+export const updateNeedsFields = (op: string, pos: number): CodegenError =>
+  new CodegenError(`'${op}' takes a document of fields to write ('${op}({ field: value })').`, pos);
+
+export const updateTargetNeedsField = (pos: number): CodegenError =>
+  new CodegenError(
+    "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+    pos,
+  );
+
+export const notAnUpdate = (pos: number): CodegenError =>
+  new CodegenError(
+    "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+    pos,
+  );
+
+/** `Math.abs` as a value — a function, not a number. */
+export const unappliedReference = (ns: string, name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${ns}.${name}' is a function, not a value. Call it ('${ns}.${name}(…)'), or hand it to a callback slot ('.map(${ns}.${name})').`,
+    pos,
+  );

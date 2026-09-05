@@ -26,7 +26,7 @@ import { Capture, Scope, scratchSlot } from "./names.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
 import { pipelineOverOf } from "../rows.ts";
-import { noCorrelationSlot } from "./errors.ts";
+import { noCorrelationSlot, readInUpdateDocument } from "./errors.ts";
 
 /**
  * A boundary crossed on the way here: a sub-pipeline (the stage whose body it
@@ -179,6 +179,7 @@ export class Env {
    */
   render(loc: Located, pos: number): string {
     if (loc.kind === "var") return loc.ref;
+    if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
     if (loc.level === this.level) return value;
     // The boundary whose `let` evaluates against level-`loc.level` documents.

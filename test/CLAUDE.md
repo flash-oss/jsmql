@@ -80,6 +80,10 @@ The other agreement suites compare two of our own lowerings; this one compares o
 
 The sources JavaScript answers differently live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row instead of landing silently. Two reasons cover almost all of them, and neither is an array bug: JavaScript COERCES under a relational operator (`[2] > 1` is true), and it THROWS when a path walks through a missing intermediate. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row whenever you give a name or a production a query cell.
 
+### `compiler-update.test.ts` — the NEW compiler's update-document target
+
+Each update document — writes (`$.n += 2`, `$.tags.push(x)`, `delete $.a`) and the update operators — is asserted as MQL and, on a live mongod, applied with `updateMany` to one fixture document and the result compared with what JavaScript leaves behind. Self-skips (green) without a server, with the all-or-nothing guard. Add a case whenever you touch `src/compiler/emit/update.ts`.
+
 ### `compiler-join.test.ts` — the NEW compiler's join road, against the server's answers
 
 Every `$$$.<coll>.<chain>` shape the road emits, asserted as MQL AND run on a live mongod over one fixture, with the documents that come back compared to what JavaScript would answer (ids, and the fields the pipeline added). A join is where a wrong shape hides best — the basic `localField` form and the `let`/`$expr` form both run and return different documents for a null or an array — so the data comparison, not the `toEqual`, is the gate here. Self-skips (green) when no mongod is reachable, with the all-or-nothing guard. Add a case whenever you touch `src/compiler/emit/join.ts` or the capture in `env.ts`.
