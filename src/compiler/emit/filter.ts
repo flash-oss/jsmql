@@ -31,7 +31,14 @@ import { lowerTruth, lowerValue } from "./lower.ts";
 import { matchExpr } from "./mql.ts";
 import { or, truthOf } from "./mode.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
-import { isCallable, operandPositionOf, operandShapeOf, positionalKeysOf, productionForOperator } from "../rows.ts";
+import {
+  isCallable,
+  operandPositionOf,
+  operandShapeOf,
+  positionalKeysOf,
+  productionForOperator,
+  onlyInsideOf,
+} from "../rows.ts";
 
 /**
  * A predicate's query document, `$expr` included where a leaf has no native form.
@@ -150,6 +157,9 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
   return out;
 }
 
+/** The top-level query operators whose operand is a list of query documents. */
+const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
+
 /** The query operators whose expression twin takes `[field, operand]`. */
 const LIFTABLE: ReadonlySet<string> = new Set(["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"]);
 
@@ -185,6 +195,14 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     }
     // A key whose row states a different position for its operand takes that
     // language instead of the query one — `$expr`'s operand is an expression.
+    // `$and` / `$or` / `$nor` hold a LIST of query documents: each element is a filter of its own.
+    if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
+      out[key] = e.value.elements.map((el) => {
+        if (el.type === "SpreadElement") throw E.spreadInOperatorBody(el.pos);
+        return lowerFilter(el as Expr, env);
+      });
+      continue;
+    }
     out[key] = operandPositionOf(key) === "value" ? lowerValue(e.value, env) : rawValue(e.value, env);
   }
   return out;
@@ -243,6 +261,8 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   } else if (node.type === "OperatorCall") {
     name = node.name;
     args = node.args.filter(isExpr);
+    const hosts = onlyInsideOf(name, "filter");
+    if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(name, hosts, node.pos);
   } else return null;
   if (name === undefined) return null;
   const verdict = consult(name, "filter");
@@ -270,7 +290,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
   if (sel.kind !== "rule") return null;
   checkSlots(name, sel.rule.args, args);
   const out = sel.rule.emit(
-    filterInputs(name, recv, args, positionalKeysOf(name), env, node, { lowerFilter, lowerNativeFilter }),
+    filterInputs(name, recv, args, positionalKeysOf(name), env, node, { lowerValue, lowerFilter, lowerNativeFilter }),
   );
   return (out as QueryDoc | null) ?? null;
 }
@@ -366,6 +386,38 @@ export function pathOfIn(e: Expr, env: Env): string | null {
 }
 
 /** A constant the query language compares as written, boxed; null for a value it would reinterpret. */
+/**
+ * A LITERAL the raw query language takes as written — a constant, or a list or
+ * document of literals (`[1, 2]`, `{ $search: "x" }`) — boxed; null otherwise. Apart
+ * from `constantIn` on purpose: a JavaScript spelling reads an array or document
+ * literal by reference (`$.tags === [1, 2]` is never true in JavaScript), and takes
+ * the expression road, where `$eq` compares the whole value.
+ */
+export function literalIn(e: Expr): { value: unknown } | null {
+  if (e.type === "ArrayLiteral") {
+    const out: unknown[] = [];
+    for (const el of e.elements) {
+      if (el.type === "SpreadElement") return null;
+      const c = literalIn(el as Expr);
+      if (c === null) return null;
+      out.push(c.value);
+    }
+    return { value: out };
+  }
+  if (e.type === "ObjectLiteral") {
+    const out: Record<string, unknown> = {};
+    for (const entry of e.entries) {
+      const key = staticKey(entry);
+      if (entry.type !== "KeyValueEntry" || key === null) return null;
+      const c = literalIn(entry.value);
+      if (c === null) return null;
+      out[key] = c.value;
+    }
+    return { value: out };
+  }
+  return constantIn(e);
+}
+
 export function constantIn(e: Expr): { value: unknown } | null {
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, new Map());

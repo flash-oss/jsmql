@@ -796,3 +796,31 @@ export const mutatorNeedsField = (name: string, pos: number): CodegenError =>
     `'.${name}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name}(…);'. For a value, use its immutable form.`,
     pos,
   );
+
+/** `$exists(1)` — a query operator's call form tests a FIELD. */
+export const needsFieldPath = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}(field, …)' tests a field: its first argument is a field path ('$.a'), as in '${name}($.a, …)' or the document form '{ a: ${name}(…) }'.`,
+    pos,
+  );
+
+/** `$all($.tags, $.other)` — a query operator compares against a constant. */
+export const needsLiteral = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' compares against a compile-time constant in a query document, and this argument is read at run time. Give it a literal, or write the test as an expression ('$expr(…)').`,
+    pos,
+  );
+
+/** `$elemMatch($.items, x => x.q > $.min)` — the element predicate must have a query form. */
+export const elementNeedsQuery = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}(field, predicate)' takes a one-parameter arrow over the element whose body is a query test of the element alone ('x => x.q > 1'); a body that reads the outer document or computes a value has no query form here.`,
+    pos,
+  );
+
+/** `$box([[0, 0], [1, 1]])` on its own — a fragment of another operator's operand. */
+export const onlyInside = (name: string, hosts: readonly string[], pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is a fragment of ${hosts.map((h) => `'${h}'`).join(" / ")} and has no meaning on its own — write it as that operator's operand: '${hosts[0]}(…, ${name}(…))'.`,
+    pos,
+  );

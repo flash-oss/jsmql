@@ -140,6 +140,38 @@ JavaScript, which this language does not model, so an arithmetic expression over
 a field of mixed type can fail on either shape. The per-branch rule stands: a
 predicate that means one thing alone means the same thing beside a sibling.
 
+### A query operator's call form is its clause
+
+A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$gt($.a, 1)` —
+is the row's `filter` cell, and it writes the clause the document form spells:
+the first argument is the field, the rest the operand. An operator that also has an
+expression form answers the clause when the field is a path and the operand a
+constant (a literal list or document of constants is one), and null otherwise, so
+`$gt($.a, $.b)` takes the expression road; a query-only operator must answer, so a
+first argument that is not a field path and an operand read at run time are refused
+by name. The raw spelling keeps MongoDB's own reading — no own-value clause is
+added — while an `$elemMatch` ARROW is a JavaScript spelling over the element and
+reads it as one. `$and` / `$or` / `$nor` list their predicates, each a filter of
+its own, as a call and as a key of a raw document; `$not` negates one raw clause on
+one field and otherwise takes the expression form, whose negation of a JavaScript
+spelling is exact. `$expr(e)` is `{ $expr: <expression> }`; `$text`, `$comment`,
+`$where` and `$jsonSchema` take their literal.
+
+A FRAGMENT — `$box` inside `$geoWithin`, `$case` inside `$switch`, the row's
+`onlyInside` — is valid only as an argument of the operator it names: the Env's
+site records the operator whose arguments are being lowered (`inside`), any other
+call boundary clears it, and a fragment met elsewhere is refused by name in both
+the filter and the value target. A literal list or document of constants is a
+literal for the raw operators alone (`literalIn`): a JavaScript spelling reads it
+by reference — `$.tags === [1, 2]` is never true in JavaScript — and takes the
+expression road, where `$eq` compares the whole value.
+
+```
+$exists($.a)                          → {"a":{"$exists":true}}
+$and([{ a: 1 }, $.b < 2])             → {"$and":[{"a":1},{"b":{"$lt":2,"$not":{"$type":"array"}}}]}
+$geoWithin($.loc, $box([[0,0],[1,1]])) → {"loc":{"$geoWithin":{"$box":[[0,0],[1,1]]}}}
+```
+
 ### A JavaScript spelling reads the field's own value
 
 MongoDB's query language satisfies a field comparison when ANY ELEMENT of an

@@ -60,6 +60,8 @@ export type Site = {
   readonly envelope: "none" | "$literal";
   /** The sub-pipeline boundaries crossed to reach here, outermost first. */
   readonly boundaries: readonly Boundary[];
+  /** The operator whose ARGUMENT this is — what a fragment like `$case` or `$box` is only valid inside of — or null. */
+  readonly inside: string | null;
 };
 
 /**
@@ -154,7 +156,7 @@ export class Env {
    * bound deeper in.
    */
   static root(program: object, root: Position, chain: Chain = new Chain(root === "statement")): Env {
-    const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [] };
+    const site: Site = { where: { at: root }, root, envelope: "none", boundaries: [], inside: null };
     return new Env(Scope.root(namesIn(program)), site, chain);
   }
 
@@ -208,6 +210,11 @@ export class Env {
   /** Move to where phase 4 says a child stands. */
   at(where: Where): Env {
     return new Env(this.scope, { ...this.site, where }, this.chain);
+  }
+
+  /** Under the arguments of operator `name` — or of none, at a call boundary that is not an operator's. */
+  inside(name: string | null): Env {
+    return new Env(this.scope, { ...this.site, inside: name }, this.chain);
   }
 
   /** Inside `$literal(…)`. */

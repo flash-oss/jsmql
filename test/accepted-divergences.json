@@ -3018,7 +3018,7 @@
       "src": "$gt($.x)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$gt\":\"$x\"}}",
-      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 1",
+      "now": "$gt(field, value) requires exactly 2 arguments, got 1",
       "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
     },
     "filter\u0000$eq(5)": {
@@ -3026,7 +3026,7 @@
       "src": "$eq(5)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$eq\":5}}",
-      "now": "$eq(expr1, expr2) requires exactly 2 arguments, got 1",
+      "now": "$eq(field, value) requires exactly 2 arguments, got 1",
       "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
     },
     "filter\u0000$lte($.score)": {
@@ -3034,7 +3034,7 @@
       "src": "$lte($.score)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$lte\":\"$score\"}}",
-      "now": "$lte(expr1, expr2) requires exactly 2 arguments, got 1",
+      "now": "$lte(field, value) requires exactly 2 arguments, got 1",
       "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
     },
     "filter\u0000$gt($.a)": {
@@ -3042,7 +3042,7 @@
       "src": "$gt($.a)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$gt\":\"$a\"}}",
-      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 1",
+      "now": "$gt(field, value) requires exactly 2 arguments, got 1",
       "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
     },
     "filter\u0000$gt($.a, $.b, $.c)": {
@@ -3050,7 +3050,7 @@
       "src": "$gt($.a, $.b, $.c)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$gt\":[\"$a\",\"$b\",\"$c\"]}}",
-      "now": "$gt(expr1, expr2) requires exactly 2 arguments, got 3",
+      "now": "$gt(field, value) requires exactly 2 arguments, got 3",
       "reason": "shippedBug: a comparison operator with one operand at the top of a filter became {$expr:{$gt:\"$x\"}}, which the server refuses ($gt takes two operands); inside a raw query document the one-operand spelling still passes through as the query operator."
     },
     "filter\u0000$dateDiff({ startDate: $.a, endDate: $.b, unit: \"day\", startOfWeek: \"funday\" })": {
@@ -29444,6 +29444,102 @@
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
       "now": "'.reverse()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.reverse(…);'. For a value, use its immutable form.",
       "reason": "message: a mutator on a receiver that is neither a field nor a binding is refused with the place to write."
+    },
+    "filter\u0000$eq($.age, 18)": {
+      "entry": "filter",
+      "src": "$eq($.age, 18)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[\"$age\",18]}}",
+      "now": "{\"age\":{\"$eq\":18}}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$gt($.age, 18)": {
+      "entry": "filter",
+      "src": "$gt($.age, 18)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$gt\":[\"$age\",18]}}",
+      "now": "{\"age\":{\"$gt\":18}}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$in([1, 2, 3])": {
+      "entry": "filter",
+      "src": "$in([1, 2, 3])",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$in\":[1,2,3]}}",
+      "now": "$in(field, value) requires exactly 2 arguments, got 1",
+      "reason": "intended: a standalone `$in` call in a filter is the clause form `$in(field, values)`; the document form `{ a: $in([…]) }` is unchanged."
+    },
+    "filter\u0000$and(true)": {
+      "entry": "filter",
+      "src": "$and(true)",
+      "kind": "now-accepted",
+      "was": "$and operates on a list of operands — pass two or more ($and(a, b)) or a single array ($and([a, b])).",
+      "now": "{\"$and\":[{\"$expr\":true}]}",
+      "reason": "intended: `$and` / `$or` list their predicates as filters of their own — a raw document element (`{ a: 1 }`) inside `$expr` was a literal object, always true."
+    },
+    "filter\u0000$and($gt($.age, 18), $eq($.status, \"active\"))": {
+      "entry": "filter",
+      "src": "$and($gt($.age, 18), $eq($.status, \"active\"))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$gt\":[\"$age\",18]},{\"$eq\":[\"$status\",\"active\"]}]}}",
+      "now": "{\"$and\":[{\"age\":{\"$gt\":18}},{\"status\":{\"$eq\":\"active\"}}]}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$or($eq($.a, 1), $eq($.b, 2))": {
+      "entry": "filter",
+      "src": "$or($eq($.a, 1), $eq($.b, 2))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$or\":[{\"$eq\":[\"$a\",1]},{\"$eq\":[\"$b\",2]}]}}",
+      "now": "{\"$or\":[{\"a\":{\"$eq\":1}},{\"b\":{\"$eq\":2}}]}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$in($.status, [\"active\", \"pending\"])": {
+      "entry": "filter",
+      "src": "$in($.status, [\"active\", \"pending\"])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$in\":[\"$status\",[\"active\",\"pending\"]]}}",
+      "now": "{\"status\":{\"$in\":[\"active\",\"pending\"]}}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$and([])": {
+      "entry": "filter",
+      "src": "$and([])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[]}}",
+      "now": "{\"$and\":[]}",
+      "reason": "intended: `$and` / `$or` list their predicates as filters of their own — a raw document element (`{ a: 1 }`) inside `$expr` was a literal object, always true."
+    },
+    "filter\u0000$or([])": {
+      "entry": "filter",
+      "src": "$or([])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$or\":[]}}",
+      "now": "{\"$or\":[]}",
+      "reason": "intended: `$and` / `$or` list their predicates as filters of their own — a raw document element (`{ a: 1 }`) inside `$expr` was a literal object, always true."
+    },
+    "filter\u0000$in($.x, [1, 2, 3])": {
+      "entry": "filter",
+      "src": "$in($.x, [1, 2, 3])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$in\":[\"$x\",[1,2,3]]}}",
+      "now": "{\"x\":{\"$in\":[1,2,3]}}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
+    },
+    "filter\u0000$and($.age > 18, $.status === 'active')": {
+      "entry": "filter",
+      "src": "$and($.age > 18, $.status === 'active')",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$gt\":[\"$age\",18]},{\"$eq\":[\"$status\",\"active\"]}]}}",
+      "now": "{\"$and\":[{\"age\":{\"$gt\":18,\"$not\":{\"$type\":\"array\"}}},{\"status\":{\"$eq\":\"active\",\"$not\":{\"$type\":\"array\"}}}]}",
+      "reason": "intended: `$and` / `$or` list their predicates as filters of their own — a raw document element (`{ a: 1 }`) inside `$expr` was a literal object, always true."
+    },
+    "filter\u0000$eq($.url, \"https://example.com\")": {
+      "entry": "filter",
+      "src": "$eq($.url, \"https://example.com\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$eq\":[\"$url\",\"https://example.com\"]}}",
+      "now": "{\"url\":{\"$eq\":\"https://example.com\"}}",
+      "reason": "intended: a query operator with an expression form answers the query clause when the field is a path and the operand a constant — indexable, MongoDB's own reading — and the expression form otherwise."
     }
   }
 }

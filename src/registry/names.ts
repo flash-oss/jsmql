@@ -607,6 +607,31 @@ function identity(bind: (hint: string) => Minted): { as: string; ref: string; in
   return { as: x.as, ref: x.ref, in: x.ref };
 }
 
+/**
+ * The call form of a query operator that also has an expression form —
+ * `$gt($.a, 1)` — as the QUERY clause `{ a: { $gt: 1 } }` when the first argument is
+ * a field path and the second a constant; null otherwise, so the expression form
+ * takes it (`{ $expr: { $gt: ["$a", 1] } }`). The raw spelling keeps MongoDB's own
+ * reading: no own-value clause is added.
+ */
+const fieldClause = ({ name, args, pathOf, literalOf }: FilterIn): QueryDoc | null => {
+  const path = pathOf(args[0]);
+  const value = literalOf(args[1]);
+  return path === null || value === null ? null : { [path]: { [name]: value.value } };
+};
+
+/** The call form of a query-ONLY field operator — `$all($.tags, ["a"])` — which must answer: the field, the literal. */
+const queryOnlyClause = ({ name, args, fieldPath, literal }: FilterIn): QueryDoc => ({
+  [fieldPath(args[0])]: { [name]: literal(args[1]) },
+});
+
+/** `$and([p, q])` / `$and(p, q)` — each predicate as a filter of its own. */
+const logicalList = ({ name, args, query }: FilterIn): QueryDoc => {
+  const list = args.length === 1 && args[0].type === "ArrayLiteral" ? args[0].elements.filter(isExprNode) : args;
+  return { [name]: list.map(query) };
+};
+const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement";
+
 /** lodash's `groupBy` as a value: `{ <key>: [elements whose key is <key>] }`, one entry per distinct key. */
 function groupedByKey(
   input: unknown,
@@ -807,7 +832,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "filter"],
     shape: "array",
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "field, [divisor, remainder]", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "dividend, divisor", exact: 2, slotType: { 0: "number" }, elementType: "number", nonZero: [1] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1370,7 +1395,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/index.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1392,7 +1417,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1414,7 +1439,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1436,7 +1461,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1458,7 +1483,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1480,7 +1505,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts", { sig: "value", exact: 1 }),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "expr1, expr2", exact: 2 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -1502,7 +1527,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "array",
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1524,7 +1549,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "array",
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
     expr: {
       args: { sig: "operands", atLeast: 1, emptyList: true },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
@@ -1546,7 +1571,21 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "single",
-    filter: pending("src/match-translation.ts"),
+    filter: {
+      args: { sig: "predicate", exact: 1 },
+      // `{ a: { $not: <clause> } }` when the predicate is one clause on one field; the expression form otherwise
+      emit: ({ args, nativeQuery }) => {
+        const q = nativeQuery(args[0]);
+        if (q === null) return null;
+        const keys = Object.keys(q);
+        if (keys.length !== 1 || keys[0].startsWith("$")) return null;
+        const clause = q[keys[0]];
+        if (clause === null || typeof clause !== "object" || Array.isArray(clause)) return null;
+        const ops = Object.keys(clause);
+        if (ops.length !== 1 || !ops[0].startsWith("$") || ops[0] === "$not") return null;
+        return { [keys[0]]: { $not: clause } };
+      },
+    },
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$not' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$not' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -2273,7 +2312,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value", "filter"],
     shape: "flex",
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
       args: { sig: "operands", atLeast: 1 },
       emit: ({ name, args, value }) => ({ [name]: args.length === 1 ? value(args[0]) : args.map(value) }),
@@ -3661,7 +3700,7 @@ export const NAMES = {
     returns: "string",
     where: ["value", "filter"],
     shape: "single",
-    filter: pending("src/match-translation.ts"),
+    filter: { args: { sig: "field, type", exact: 2 }, emit: fieldClause },
     expr: { args: { sig: "operand", exact: 1 }, emit: single },
     group: unsupported("'$type' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$type' is not valid in a $setWindowFields output position — see its 'where'."),
@@ -10787,7 +10826,10 @@ export const NAMES = {
     doc: "A rectangle, by its bottom-left and top-right corners.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$box' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
     ),
@@ -10806,7 +10848,10 @@ export const NAMES = {
     doc: "A circle on a flat plane, by centre and radius.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$center' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
     ),
@@ -10825,7 +10870,10 @@ export const NAMES = {
     doc: "A circle on a sphere, by centre and radius in radians.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$centerSphere' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
     ),
@@ -10850,7 +10898,10 @@ export const NAMES = {
     doc: "A polygon, by its list of points.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$polygon' is only valid inside $geoWithin, and only in a filter — never as an aggregation expression.",
     ),
@@ -10871,7 +10922,10 @@ export const NAMES = {
     doc: "A GeoJSON shape.",
     where: ["filter"],
     onlyInside: { filter: ["$geoWithin", "$geoIntersects", "$near", "$nearSphere"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$geometry' is only valid inside $geoWithin / $geoIntersects / $near / $nearSphere, and only in a filter — never as an aggregation expression.",
     ),
@@ -10896,7 +10950,10 @@ export const NAMES = {
     doc: "The furthest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere", "$geoWithin"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$maxDistance' is only valid inside $near / $nearSphere / $geoWithin, and only in a filter — never as an aggregation expression.",
     ),
@@ -10921,7 +10978,10 @@ export const NAMES = {
     doc: "The nearest a match may be, in metres or radians.",
     where: ["filter"],
     onlyInside: { filter: ["$near", "$nearSphere"] },
-    filter: pending("src/operator-validation.ts"),
+    filter: {
+      args: { sig: "shape", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$minDistance' is only valid inside $near / $nearSphere, and only in a filter — never as an aggregation expression.",
     ),
@@ -11219,7 +11279,7 @@ export const NAMES = {
   $all: mongo({
     doc: "Matches arrays that contain all elements specified in the query.",
     where: ["filter"],
-    filter: pending("src/predicate-ir.ts"),
+    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$all' is a query operator with no aggregation-expression form. '$all' is a field-level query operator: write it under a field, e.g. '{ <field>: $all(…) }'.",
     ),
@@ -11233,7 +11293,7 @@ export const NAMES = {
   $bitsAllClear: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$bitsAllClear' is a query operator with no aggregation-expression form. '$bitsAllClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllClear(…) }'.",
     ),
@@ -11247,7 +11307,7 @@ export const NAMES = {
   $bitsAllSet: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$bitsAllSet' is a query operator with no aggregation-expression form. '$bitsAllSet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAllSet(…) }'.",
     ),
@@ -11261,7 +11321,7 @@ export const NAMES = {
   $bitsAnyClear: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$bitsAnyClear' is a query operator with no aggregation-expression form. '$bitsAnyClear' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnyClear(…) }'.",
     ),
@@ -11275,7 +11335,7 @@ export const NAMES = {
   $bitsAnySet: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$bitsAnySet' is a query operator with no aggregation-expression form. '$bitsAnySet' is a field-level query operator: write it under a field, e.g. '{ <field>: $bitsAnySet(…) }'.",
     ),
@@ -11289,7 +11349,10 @@ export const NAMES = {
   $comment: mongo({
     doc: "Adds a comment to a query predicate.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "text", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$comment' is a query operator with no aggregation-expression form. '$comment' is a top-level query operator: write it as the whole filter, e.g. '{ $comment: … }'.",
     ),
@@ -11303,7 +11366,13 @@ export const NAMES = {
   $elemMatch: mongo({
     doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
     where: ["filter"],
-    filter: pending("src/predicate-ir.ts"),
+    filter: {
+      args: { sig: "field, query", exact: 2 },
+      // a query document over the element as written, or an arrow whose body is that test
+      emit: ({ args, fieldPath, query, element }) => ({
+        [fieldPath(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element(args[1]) : query(args[1]) },
+      }),
+    },
     expr: unsupported(
       "'$elemMatch' is a query operator with no aggregation-expression form. '$elemMatch' is a field-level query operator: write it under a field, e.g. '{ <field>: $elemMatch(…) }'.",
     ),
@@ -11317,7 +11386,12 @@ export const NAMES = {
   $exists: mongo({
     doc: "Matches documents that have the specified field.",
     where: ["filter"],
-    filter: pending("src/predicate-ir.ts"),
+    filter: {
+      args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
+      emit: ({ args, fieldPath, literal }) => ({
+        [fieldPath(args[0])]: { $exists: args[1] === undefined ? true : literal(args[1]) },
+      }),
+    },
     expr: unsupported(
       "'$exists' is a query operator with no aggregation-expression form. '$exists' is a field-level query operator: write it under a field, e.g. '{ <field>: $exists(…) }'.",
     ),
@@ -11332,7 +11406,7 @@ export const NAMES = {
     doc: "Allows use of aggregation expressions within the query language.",
     where: ["filter"],
     operandPosition: "value",
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "expression", exact: 1 }, emit: ({ args, value }) => ({ $expr: value(args[0]) }) },
     expr: unsupported(
       "'$expr' is a query operator with no aggregation-expression form. '$expr' is a top-level query operator: write it as the whole filter, e.g. '{ $expr: … }'.",
     ),
@@ -11346,7 +11420,10 @@ export const NAMES = {
   $geoIntersects: mongo({
     doc: "Selects geometries that intersect with a GeoJSON geometry. The 2dsphere index supports $geoIntersects.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "field, geometry", exact: 2 },
+      emit: ({ name, args, fieldPath, query }) => ({ [fieldPath(args[0])]: { [name]: query(args[1]) } }),
+    },
     expr: unsupported(
       "'$geoIntersects' is a query operator with no aggregation-expression form. '$geoIntersects' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoIntersects(…) }'.",
     ),
@@ -11360,7 +11437,10 @@ export const NAMES = {
   $geoWithin: mongo({
     doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "field, geometry", exact: 2 },
+      emit: ({ name, args, fieldPath, query }) => ({ [fieldPath(args[0])]: { [name]: query(args[1]) } }),
+    },
     expr: unsupported(
       "'$geoWithin' is a query operator with no aggregation-expression form. '$geoWithin' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoWithin(…) }'.",
     ),
@@ -11374,7 +11454,10 @@ export const NAMES = {
   $jsonSchema: mongo({
     doc: "Validate documents against the given JSON Schema.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "schema", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$jsonSchema' is a query operator with no aggregation-expression form. '$jsonSchema' is a top-level query operator: write it as the whole filter, e.g. '{ $jsonSchema: … }'.",
     ),
@@ -11388,7 +11471,10 @@ export const NAMES = {
   $near: mongo({
     doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "field, geometry", exact: 2 },
+      emit: ({ name, args, fieldPath, query }) => ({ [fieldPath(args[0])]: { [name]: query(args[1]) } }),
+    },
     expr: unsupported(
       "'$near' is a query operator with no aggregation-expression form. '$near' is a field-level query operator: write it under a field, e.g. '{ <field>: $near(…) }'.",
     ),
@@ -11402,7 +11488,10 @@ export const NAMES = {
   $nearSphere: mongo({
     doc: "Returns geospatial objects in proximity to a point on a sphere. Requires a geospatial index. The 2dsphere and 2d indexes support $nearSphere.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "field, geometry", exact: 2 },
+      emit: ({ name, args, fieldPath, query }) => ({ [fieldPath(args[0])]: { [name]: query(args[1]) } }),
+    },
     expr: unsupported(
       "'$nearSphere' is a query operator with no aggregation-expression form. '$nearSphere' is a field-level query operator: write it under a field, e.g. '{ <field>: $nearSphere(…) }'.",
     ),
@@ -11416,7 +11505,7 @@ export const NAMES = {
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$nin' is a query operator with no aggregation-expression form. '$nin' is a field-level query operator: write it under a field, e.g. '{ <field>: $nin(…) }'.",
     ),
@@ -11430,7 +11519,7 @@ export const NAMES = {
   $nor: mongo({
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
     expr: unsupported(
       "'$nor' is a query operator with no aggregation-expression form. '$nor' is a top-level query operator: write it as the whole filter, e.g. '{ $nor: … }'.",
     ),
@@ -11444,7 +11533,16 @@ export const NAMES = {
   $regex: mongo({
     doc: "Selects documents where values match a specified regular expression.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "field, pattern[, options]", allowed: [2, 3] },
+      emit: ({ args, fieldPath, literal }) => {
+        const path = fieldPath(args[0]);
+        if (args[1].type === "RegexLiteral") return { [path]: { $regex: literal(args[1]) } };
+        const clause: QueryDoc = { $regex: literal(args[1]) };
+        if (args[2] !== undefined) clause.$options = literal(args[2]);
+        return { [path]: clause };
+      },
+    },
     expr: unsupported(
       "'$regex' is a query operator with no aggregation-expression form. '$regex' is a field-level query operator: write it under a field, e.g. '{ <field>: $regex(…) }'.",
     ),
@@ -11458,7 +11556,13 @@ export const NAMES = {
   $text: mongo({
     doc: "Performs text search.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "search", exact: 1, constant: [0] },
+      emit: ({ args, literal }) => {
+        const v = literal(args[0]);
+        return { $text: typeof v === "string" ? { $search: v } : v };
+      },
+    },
     expr: unsupported(
       "'$text' is a query operator with no aggregation-expression form. '$text' is a top-level query operator: write it as the whole filter, e.g. '{ $text: … }'.",
     ),
@@ -11472,7 +11576,10 @@ export const NAMES = {
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
     where: ["filter"],
-    filter: pending("src/index.ts"),
+    filter: {
+      args: { sig: "code", exact: 1, constant: [0] },
+      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
+    },
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: … }'.",
     ),

@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — feat(compiler): the query operators' call forms are their clauses
+
+The filter target's pending list is empty: the thirty-eight `filter` cells of the query operators are stated. A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$all($.tags, ["a"])`, `$geoWithin($.loc, $box(…))`, `$expr(e)`, `$text("foo")` — writes the clause its document form spells, the first argument the field. An operator that also has an expression form (`$gt`, `$in`, `$type`, `$mod`, …) answers the clause when the field is a path and the operand a constant, and takes the expression road otherwise. The shipped compiler wrapped every one of the query-only calls in a truthiness test under `$expr` — `{ $expr: { $and: [{ $ne: [{ $exists: "$a" }, null] }, …] } }` — which the server refuses as an unknown expression operator.
+
+**Three services join `FilterIn`**, each a refusal by name when its argument is wrong: `fieldPath` (the field a query operator tests), `literal` (a compile-time constant, a regex literal becoming a RegExp with the server's flags), `element` (an `$elemMatch` arrow as the query over one element). `constantIn` reads a literal list or document of constants as a constant, which `$in($.a, [1, 2])` and `$text({ $search: … })` need. **`$and` / `$or` / `$nor` list their predicates** as filters of their own — as a call and as a key of a raw document, where `{ $and: [{ a: $gt(1) }] }` had reached the expression form's count rule; a raw document element and a JavaScript spelling may sit side by side in one list. `$not` negates one raw clause on one field and otherwise takes the expression form, whose negation of a JavaScript spelling is exact. Every shape ran on mongod 8.3.7.
+
+**A fragment is refused on its own.** The rows had long stated `onlyInside` (`$box` inside `$geoWithin`, `$case` inside `$switch`) and nothing read it: `$case($.a, 1)` lowered to a bare `{ case, then }` and `$box(…)` to a whole filter of `{ $box: … }`. The Env's site now records the operator whose arguments are being lowered, and both targets refuse a fragment met anywhere else, naming its host.
+
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+
+**Conventions.**
+- Newest entry on top.
+- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
+- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
+- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+
+---
+
+## 2026-09-06 — feat(compiler): the query operators' call forms are their clauses
+
+The filter target's pending list is empty: the thirty-eight `filter` cells of the query operators are stated. A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$all($.tags, ["a"])`, `$geoWithin($.loc, $box(…))`, `$expr(e)`, `$text("foo")` — writes the clause its document form spells, the first argument the field. An operator that also has an expression form (`$gt`, `$in`, `$type`, `$mod`, …) answers the clause when the field is a path and the operand a constant, and takes the expression road otherwise. The shipped compiler wrapped every one of the query-only calls in a truthiness test under `$expr` — `{ $expr: { $and: [{ $ne: [{ $exists: "$a" }, null] }, …] } }` — which the server refuses as an unknown expression operator.
+
+**Three services join `FilterIn`**, each a refusal by name when its argument is wrong: `fieldPath` (the field a query operator tests), `literal` (a compile-time constant, a regex literal becoming a RegExp with the server's flags), `element` (an `$elemMatch` arrow as the query over one element). `constantIn` reads a literal list or document of constants as a constant, which `$in($.a, [1, 2])` and `$text({ $search: … })` need. **`$and` / `$or` / `$nor` list their predicates** as filters of their own — as a call and as a key of a raw document, where `{ $and: [{ a: $gt(1) }] }` had reached the expression form's count rule; a raw document element and a JavaScript spelling may sit side by side in one list. `$not` negates one raw clause on one field and otherwise takes the expression form, whose negation of a JavaScript spelling is exact. Every shape ran on mongod 8.3.7.
+
+**A fragment is refused on its own.** The rows had long stated `onlyInside` (`$box` inside `$geoWithin`, `$case` inside `$switch`) and nothing read it: `$case($.a, 1)` lowered to a bare `{ case, then }` and `$box(…)` to a whole filter of `{ $box: … }`. The Env's site now records the operator whose arguments are being lowered, -keyed value as written: on the stream it is the `$match`, on an array it is refused.
+
+---
+
 ## 2026-09-05 — feat(compiler): the statement mutators state their write form; `assert` and `Object.assign` as statements
 
 The statement target's pending list is empty. `.pop()`, `.shift()`, `.fill()` and `.copyWithin()` — the mutators with no same-argument twin — state their WRITE FORM on the row (`mutatorForm`): JSMQL source by argument count, `_r` the receiver, `_0`… the arguments. A new desugar rule parses the form with the compiler's own parser and writes it back to the receiver, so `$.a.pop();` IS `$.a = $.a.slice(0, -1);` and reaches the same value cells a developer's spelling would — negative indices included, which the shipped direct lowerings did not honour (`.fill(9, -1)`, `.copyWithin(-1, 0)`). The form spreads the receiver into an array literal (`[..._r]`), which lowers to the bare field path and proves the receiver an array — `.pop()` exists on an array alone — so the value cells take the array branch without the runtime type dispatch an unproven receiver otherwise gets. Each form is compared with JavaScript's own answer over the fixture on mongod in `test/compiler-sugars.test.ts`. A count the row does not state is the arity error, worded from the row's `sig`.

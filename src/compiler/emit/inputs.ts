@@ -10,7 +10,7 @@
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
 import { orderBySpec, sortSpecOf } from "./sort-spec.ts";
-import { constantIn, pathOfIn } from "./filter.ts";
+import { constantIn, literalIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
 import {
   blockWhereValueExpected,
@@ -25,18 +25,31 @@ import {
   valueWhereBlockExpected,
   reducerShape,
   elementsShape,
+  needsFieldPath,
+  needsLiteral,
+  elementNeedsQuery,
 } from "./errors.ts";
 import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
-import { indexedPairs } from "../../registry/mql.ts";
+import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
 /** The two readings of an expression, supplied by lower.ts. */
 export type Reader = { value: (node: Expr, env: Env) => unknown; truth: (node: Expr, env: Env) => Truth };
 
 /** The Env a child at property `key` of `node` is lowered under — phase 4's answer, applied. */
-export const childEnv = (env: Env, node: object, key: string): Env => env.at(edge(node, key, env.site.where));
+export const childEnv = (env: Env, node: object, key: string): Env => {
+  const at = env.at(edge(node, key, env.site.where));
+  const n = node as { type?: string; name?: string };
+  // An operator's arguments are INSIDE it — what a fragment like `$case` or `$box` is valid only within;
+  // any other call boundary is inside nothing.
+  if (n.type === "OperatorCall" && key === "args") return at.inside(n.name ?? null);
+  if (n.type === "MethodCall" || n.type === "CallExpression" || n.type === "NewExpression" || n.type === "Lambda") {
+    return at.inside(null);
+  }
+  return at;
+};
 
 /**
  * A callback bound for a body: the one element parameter is a variable, and the
@@ -304,6 +317,7 @@ export function onOwnStream(recv: Expr | null, env: Env): boolean {
 
 /** The two query readings, supplied by filter.ts. */
 export type QueryReader = {
+  lowerValue: (node: Expr, env: Env) => unknown;
   lowerFilter: (node: Expr, env: Env) => QueryDoc;
   lowerNativeFilter: (node: Expr, env: Env) => QueryDoc | null;
 };
@@ -339,6 +353,30 @@ export function filterInputs(
         .element(cb.params[0])
         .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
+    },
+    value: (e) => read.lowerValue(e, argEnv),
+    fieldPath: (e) => {
+      const path = pathOfIn(e, env);
+      if (path === null) throw needsFieldPath(name, (e as { pos: number }).pos);
+      return path;
+    },
+    literal: (e) => {
+      if (e.type === "RegexLiteral") return new RegExp(e.pattern, mongoRegexOptions(e.flags));
+      const c = literalIn(e);
+      if (c === null) throw needsLiteral(name, (e as { pos: number }).pos);
+      return c.value;
+    },
+    literalOf: literalIn,
+    element: (cb) => {
+      if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== 1) {
+        throw elementNeedsQuery(name, (cb as { pos: number }).pos);
+      }
+      const bodyEnv = argEnv
+        .element(cb.params[0])
+        .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+      const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
+      if (q === null) throw elementNeedsQuery(name, cb.pos);
+      return q;
     },
   };
 }

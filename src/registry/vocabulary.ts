@@ -774,6 +774,16 @@ export type FilterIn = {
    * part of it has no native form.
    */
   elementQuery: (cb: Expr) => QueryDoc | null;
+  /** The argument as an aggregation expression — `$expr(e)`'s operand. */
+  value: (e: Expr) => unknown;
+  /** The FIELD a query operator tests — `$exists($.a)` — or the refusal that names the form; a service, so it may throw. */
+  fieldPath: (e: Expr) => string;
+  /** A compile-time constant the operator compares against (a regex literal becomes a RegExp) — or the refusal. */
+  literal: (e: Expr) => unknown;
+  /** The same literal, boxed, or null when the argument is read at run time — for a cell that then takes the expression road. */
+  literalOf: (e: Expr) => { value: unknown } | null;
+  /** An `$elemMatch` predicate arrow as the query document over one element — or the refusal when the body has no query form. */
+  element: (cb: Expr) => QueryDoc;
 };
 
 // ═════════════════════════════════════════════════════════════════════════════

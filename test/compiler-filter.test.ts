@@ -164,6 +164,80 @@ describe("compiler/emit/filter — a raw query document", () => {
   });
 });
 
+describe("compiler/emit/filter — the query operators' call forms", () => {
+  it("writes the query clause when the field is a path and the operand a constant, else the expression form", () => {
+    expect(filter("$gt($.a, 1)")).toEqual({ a: { $gt: 1 } });
+    expect(filter("$in($.a, [1, 2])")).toEqual({ a: { $in: [1, 2] } });
+    expect(filter('$type($.a, "string")')).toEqual({ a: { $type: "string" } });
+    expect(filter("$mod($.n, [2, 0])")).toEqual({ n: { $mod: [2, 0] } });
+    expect(filter("$gt($.a, $.b)")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
+    expect(filter("$in($.a, [1, $.b])")).toEqual({ $expr: { $in: ["$a", [1, "$b"]] } });
+  });
+
+  it("negates one raw clause with $not, and a JavaScript spelling through the expression form", () => {
+    expect(filter("$not($gt($.a, 1))")).toEqual({ a: { $not: { $gt: 1 } } });
+    expect(filter("$not($.a > 1)")).toEqual({ $expr: { $not: { $gt: ["$a", 1] } } });
+  });
+
+  it("lists the predicates of $and / $or / $nor, each a filter of its own", () => {
+    expect(filter("$and([{ a: 1 }, $.b < 2])")).toEqual({
+      $and: [{ a: 1 }, { b: { $lt: 2, $not: { $type: "array" } } }],
+    });
+    expect(filter("$or($.a > 1, $.b < 2)")).toEqual({
+      $or: [{ a: { $gt: 1, $not: { $type: "array" } } }, { b: { $lt: 2, $not: { $type: "array" } } }],
+    });
+    expect(filter("$nor([$.a > 1])")).toEqual({ $nor: [{ a: { $gt: 1, $not: { $type: "array" } } }] });
+    expect(filter("{ $and: [{ a: $gt(1) }, $.b < 2] }")).toEqual({
+      $and: [{ a: { $gt: 1 } }, { b: { $lt: 2, $not: { $type: "array" } } }],
+    });
+  });
+
+  it("lowers the query-only field operators to their clause", () => {
+    expect(filter("$exists($.a)")).toEqual({ a: { $exists: true } });
+    expect(filter("$exists($.a, false)")).toEqual({ a: { $exists: false } });
+    expect(filter('$regex($.s, "x", "i")')).toEqual({ s: { $regex: "x", $options: "i" } });
+    expect(filter("$regex($.s, /x/i)")).toEqual({ s: { $regex: /x/i } });
+    expect(filter("$nin($.a, [1])")).toEqual({ a: { $nin: [1] } });
+    expect(filter('$all($.tags, ["a"])')).toEqual({ tags: { $all: ["a"] } });
+    expect(filter("$elemMatch($.items, { q: $gt(1) })")).toEqual({ items: { $elemMatch: { q: { $gt: 1 } } } });
+    expect(filter("$elemMatch($.items, x => x.q > 1)")).toEqual({
+      items: { $elemMatch: { q: { $gt: 1, $not: { $type: "array" } } } },
+    });
+    expect(filter("$bitsAllSet($.a, 5)")).toEqual({ a: { $bitsAllSet: 5 } });
+    expect(filter("$geoWithin($.loc, $box([[0, 0], [1, 1]]))")).toEqual({
+      loc: {
+        $geoWithin: {
+          $box: [
+            [0, 0],
+            [1, 1],
+          ],
+        },
+      },
+    });
+    expect(filter('$near($.loc, { $geometry: { type: "Point", coordinates: [0, 0] }, $maxDistance: 10 })')).toEqual({
+      loc: { $near: { $geometry: { type: "Point", coordinates: [0, 0] }, $maxDistance: 10 } },
+    });
+  });
+
+  it("lowers the top-level query operators", () => {
+    expect(filter("$expr($.a > $.b)")).toEqual({ $expr: { $gt: ["$a", "$b"] } });
+    expect(filter('$text("foo")')).toEqual({ $text: { $search: "foo" } });
+    expect(filter('$text({ $search: "foo", $language: "en" })')).toEqual({
+      $text: { $search: "foo", $language: "en" },
+    });
+    expect(filter('$comment("c")')).toEqual({ $comment: "c" });
+    expect(filter('$jsonSchema({ required: ["a"] })')).toEqual({ $jsonSchema: { required: ["a"] } });
+    expect(filter('$where("this.n > 3")')).toEqual({ $where: "this.n > 3" });
+  });
+
+  it("refuses a non-field first argument, a run-time operand, and an element predicate with no query form", () => {
+    expect(() => filter("$exists(1)")).toThrow(/tests a field: its first argument is a field path/);
+    expect(() => filter("$all($.tags, $.other)")).toThrow(/must be a compile-time constant/);
+    expect(() => filter("$elemMatch($.items, x => x.q > $.min)")).toThrow(/query test of the element alone/);
+    expect(() => filter("$box([[0, 0], [1, 1]])")).toThrow(/\$geoWithin/);
+  });
+});
+
 describe("compiler/emit/filter — methods and operators", () => {
   it("lowers the boolean methods to their indexable forms", () => {
     // Containment for an array value, substring for a string one — JavaScript reads

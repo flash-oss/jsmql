@@ -31,6 +31,7 @@ import {
   productionForNode,
   productionForOperator,
   rowForNodeType,
+  onlyInsideOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
@@ -690,6 +691,8 @@ function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): 
   const position = positionIn(env);
   const verdict = consult(node.name, position);
   if (verdict.kind === "unknown") return unknownOperator(node, node.args.filter(isExpr), env);
+  const hosts = onlyInsideOf(node.name, position);
+  if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(node.name, hosts, node.pos);
   // The operand LIST of a list-only operator may be written as one array literal:
   // `$setUnion([a, b])` is `$setUnion(a, b)`. A lone scalar there is the shape the
   // server refuses, and is refused here in the same words.
