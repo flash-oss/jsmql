@@ -20,7 +20,7 @@ a `$setWindowFields` with a full-partition `$count` stamps the count onto every
 document under the reserved system slot `__jsmql.length` (see
 [`src/namespace.ts`](../../src/namespace.ts)), after which codegen reads it back
 as the field path `"$__jsmql.length"` (`generateStreamLength` in
-[`src/codegen.ts`](../../src/codegen.ts)).
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts)).
 
 ```json
 { "$setWindowFields": { "output": { "__jsmql.length": { "$count": {} } } } }
@@ -29,7 +29,7 @@ as the field path `"$__jsmql.length"` (`generateStreamLength` in
 `$setWindowFields` adds a field without collapsing the stream, so the documents
 flow on unchanged. Requires **MongoDB 5.0+**. The materialise stage (and the
 trailing `{ $unset: "__jsmql" }`) are emitted by the pipeline lowerers in
-[`src/pipeline.ts`](../../src/pipeline.ts).
+[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts).
 
 ## Compute-once / reuse / recompute
 
@@ -96,7 +96,7 @@ callback param) names the **filtered foreign sub-stream**, and `coll.length` is
 its document count — materialised by the *same* `streamLengthStage()`
 (`$setWindowFields` `$count` → `__jsmql.length`, the single shape in
 [`src/namespace.ts`](../../src/namespace.ts)) one level down, stamped immediately
-before the `.map`'s `$replaceWith`. `MAP.lower` (stream-methods.ts) prepends it
+before the `.map`'s `$replaceWith`. `MAP.lower` (src/registry/names.ts) prepends it
 when `coll.length` is read, and binds the handle via
 `GenerateCtx.substreamLengthHandles` (`coll → "$__jsmql.length"`), which
 `generateLengthAccess` resolves directly (no `$size` — the count field is always
@@ -134,7 +134,7 @@ including inside the sub-pipeline, so the top-level materialiser fires), then th
 lookup **captures** the root field into its `$lookup.let` as a depth-stamped
 `jsmql_s0_length: "$__jsmql.length"`, and codegen reads `$$.length` back as `$$jsmql_s0_length`
 (via `GenerateCtx.rootStreamLengthVar`, set by `captureRootStreamLength` in
-lookup-translation.ts). This is wired into every top-level lookup body — the
+src/compiler/emit/join.ts). This is wired into every top-level lookup body — the
 expression-body predicate (`translatePredicate`), the `$.x =` chained pivot
 (`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts) —
 so `$$.length` works in all three. Verified on mongod (counts correct, no leak).
@@ -142,15 +142,14 @@ so `$$.length` works in all three. Verified on mongod (counts correct, no leak).
 Distinct paths, no collision: the root count rides a `$$`-**variable**
 (`jsmql_s0_length`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a
 `.map` body can read both at once (`totalUsers: $$.length`, `totalOrders:
-coll.length`). The detection keys on node type — `$$.length` is a
-`CollectionRef.length`, a handle is a `ParamRef.length` — so the outer scan only
-ever fires for the root sigil, never for a handle.
+coll.length`). The two are different source spellings — `$$.length` is the root
+stream's `length`, `coll.length` is the callback parameter's — so the root capture
+never fires for a handle.
 
-**Depth limit (`[DEF-033]`).** Capture is gated to `depth === 0` (the top-level
-lookup, where `$__jsmql.length` lives on the input docs). A `$$.length` *deeper*
-than one lookup level, or inside a `$facet`/`$unionWith` sub-pipeline or a
-reusable function body, is not captured and stays rejected — there the root field
-isn't reachable by a single `let` hop.
+**Every depth.** `$$` is the root stream wherever it is written (see
+[LANG_RULES.md](../LANG_RULES.md)). A `$facet` branch and a declared function body
+run over the stamped documents, so they read the field directly; a `$lookup` body
+reads it through the `let` capture, one hop per lookup level.
 
 **Empty sub-stream + `assert`.** An in-block `assert(coll.length > 0, …)` is a
 per-document `$match` *inside* the `$lookup.pipeline`; on a foreign sub-stream
@@ -162,21 +161,14 @@ level instead — `$.orders = $$$.orders.filter(p); assert($.orders.length > 0, 
 
 ## Scope & rejections
 
-`$$.length` resolves at the top level (the `topLevelStream` ctx flag, set by the
-two pipeline lowerers) and, via the `$lookup.let` capture above, inside a
-top-level `$lookup` (`rootStreamLengthVar`). Rejected:
+`$$.length` resolves in every pipeline position: a top-level statement, a
+`$lookup` body (through the `let` capture above), a `$facet` branch, a declared
+function body. Rejected:
 
 | Context | Why |
 |---|---|
 | Filter / `jsmql.expr` (no pipeline) | there is no stream to count — needs Pipeline mode |
-| inside a `$facet` / `$unionWith` sub-pipeline | the root field isn't reachable by a `$lookup.let` hop there — not supported yet, **[DEF-033]** |
-| a `$$.length` *deeper* than one `$lookup` level | capture is gated to `depth === 0`; deeper nesting needs let-chaining — **[DEF-033]** |
-| inside a reusable function body (`const f = () => $$.length`) | the body inlines at the call site but isn't in the per-statement scan's AST — **[DEF-033]** |
-
-A top-level `$lookup` body (predicate, block, `.map` chain) **is** supported — the
-root count is captured into `$lookup.let` (see the section above). A top-level
-`.map`/`.filter` lambda over the same document is likewise fine (the stamped field
-is on the document).
+| a `$$.push(…)` (`$unionWith`) body | the stage has no `let`, so no outer value reaches it — the refusal names the join form (`$.<field> = $$$.<coll>.filter(…)`) whose `$lookup` carries the value |
 
 ## Empty stream
 
@@ -194,7 +186,3 @@ trailing `{ $unset: "__jsmql" }` that already cleans `let` bindings and lookup
 slots removes it too — no separate cleanup. The trailing `$unset` is emitted
 whenever `$$.length` was materialised (peephole-skipped after a reshape stage).
 
-## Deferred
-
-Sub-pipeline and reusable-function-body uses are tracked as **[DEF-033]** in
-[`docs/DEFERRED.md`](../DEFERRED.md).

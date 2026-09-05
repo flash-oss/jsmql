@@ -12,10 +12,10 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 > **runtime** path, taken when the RHS reads document/environment state. When
 > the RHS is a **compile-time constant**, the declaration instead folds to a
 > value that is inlined at every reference (no stage, and the preamble does not
-> force Pipeline mode) — owned by [const-folding.md](const-folding.md). Folding
+> force Pipeline mode) — owned by [desugar-pass.md](desugar-pass.md). Folding
 > is a post-parse pre-pass; everything below applies to the runtime fallback.
 
-> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let).
+> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [emit-pass.md → Block-body arrows](emit-pass.md#block-body-arrows--nested-let).
 
 ## Why it exists
 
@@ -35,7 +35,7 @@ no MongoDB-side feature is being added.
 
 ## AST
 
-One new node type in [src/ast.ts](../../src/ast.ts):
+One new node type in [src/registry/ast.ts](../../src/registry/ast.ts):
 
 ```ts
 type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const" };
@@ -56,7 +56,7 @@ bracketed `[…]` pipeline.
 
 ## Lexer
 
-Two keywords in [src/lexer.ts](../../src/lexer.ts):
+Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 
 | Token | Source | Notes |
 |-------|--------|-------|
@@ -65,7 +65,7 @@ Two keywords in [src/lexer.ts](../../src/lexer.ts):
 
 ## Parser
 
-Three production-level changes in [src/parser.ts](../../src/parser.ts):
+Three production-level changes in [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts):
 
 1. **`collectStatement()`** dispatches on a leading `Let` token to
    `parseLetDecl()` before the existing `Delete` / `++` / `--` checks.
@@ -107,7 +107,7 @@ runtime `$cond` on `$isArray`. A `let` is left untracked on purpose: a later
 reassignment can change its type, so the recorded one would be a lie and the
 conservative runtime dispatch is the honest lowering. Both the type and the
 read-only flag come from the same `kind` argument, which is why the two travel
-together. See [method-dispatch.md § `bindingTypes`](method-dispatch.md) for the
+together. See [emit-pass.md § `bindingTypes`](emit-pass.md) for the
 consumers and [lookup-stage.md § Correlation-var types](lookup-stage.md) for how a
 type crosses into a `$lookup.pipeline`.
 
@@ -118,7 +118,7 @@ in-scope `let`. Because the name has no `$.` prefix, the parser cannot tell at
 parse time whether it's an assignable `let`, a read-only `const`, or undeclared —
 so `validateUpdateTarget()` **accepts any bare-identifier (`ParamRef`) target**
 and defers the decision to codegen. `tryLowerAssignSugar()`
-([src/pipeline.ts](../../src/pipeline.ts)) — the shared `AssignExpr` chokepoint
+([src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)) — the shared `AssignExpr` chokepoint
 for every top-level pipeline form — dispatches on a `ParamRef` target first:
 
 - **in-scope `let`** → flush the pending update-op buffer, then emit one
@@ -143,7 +143,7 @@ scope, so a bare-identifier assignment never reaches `tryLowerAssignSugar`;
 
 `Object.assign(<name>, ...sources)` at statement position is JS's *mutating*
 merge of a binding — the value twin is `<name> = { ...<name>, ...sources }`.
-`classifyObjectAssignStmt` (in `src/pipeline.ts`) detects it before the generic
+`classifyObjectAssignStmt` (in `src/compiler/emit/statement.ts`) detects it before the generic
 statement path and emits one `{ $set: { "__jsmql.var.<name>": <gen(ObjectCall)> } }`
 stage; because the call's first argument *is* `<name>`, that generates
 `$mergeObjects["$__jsmql.var.<name>", ...sources]`. Unlike `=` reassignment it is
@@ -161,7 +161,7 @@ declaration.
 
 ## Codegen
 
-The let scope lives on `GenerateCtx` ([src/codegen.ts](../../src/codegen.ts)):
+The let scope lives on `GenerateCtx` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)):
 
 ```ts
 type GenerateCtx = {
@@ -194,7 +194,7 @@ standard JS lexical-scoping intuition.
 
 ## Pipeline lowering
 
-[src/pipeline.ts](../../src/pipeline.ts) is the orchestrator. Both pipeline
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) is the orchestrator. Both pipeline
 forms (`[...]` and `;`-separated) walk their statements left-to-right with a
 threaded `GenerateCtx`:
 
@@ -309,9 +309,9 @@ a `.uniq()`-terminated chain is an array.
 Outer lets **are** visible inside a `$facet` branch. Each branch operates on the
 same input documents that arrived at the outer `$facet` stage, so they still carry
 the `__jsmql.var.<name>` fields the outer lets materialised into. `freshFacetCtx`
-(in `src/codegen.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
+(in `src/compiler/emit/lower.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
 sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering in
-`src/facet-translation.ts` uses it. `test/let-bindings.test.ts` covers the
+`src/compiler/emit/statement.ts` uses it. `test/let-bindings.test.ts` covers the
 let-into-facet shape.
 
 ## Tests

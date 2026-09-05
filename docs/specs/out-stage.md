@@ -59,7 +59,7 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 
 ## Detection
 
-`detectOutAssign(op)` (in `src/out-translation.ts`) recognises the LHS
+`detectOutAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the LHS
 shape on an `AssignExpr.target`:
 
 ```ts
@@ -89,7 +89,7 @@ The walk:
    bracket) throws the "literal collection name" error with a hint
    pointing at `jsmql.compile` for parameterised destinations.
 
-The detector is called from three sites in `src/pipeline.ts`, mirroring
+The detector is called from three sites in `src/compiler/emit/statement.ts`, mirroring
 the `isReplaceRootAssign` pattern:
 
 - `generatePipeline` (the bracketed `[ … ]` form) — line ~228.
@@ -121,7 +121,7 @@ through the pipeline lowerer.
 | RHS not rooted at `$$` (e.g. `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
 | Chain method in neither the stream-method registry nor the stage-link form | `'$$.<method>(...)' isn't a recognised chain method for a '\$out' RHS.[ Did you mean '.<near-miss>()'?] <workaround>` — the workaround is the method's entry in `STAGE_EQUIVALENT_HINT` when it has one (a JS method a stream chain deliberately lacks, e.g. `.reduce` → `$group({ … })`), else the generic "add the equivalent stage call, chained or as its own statement". A method the registry *does* carry must never be listed in that table: the table is only reached when `lookupStreamMethod` returns null, so an entry for a working method is unreachable. |
 | `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
-| `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [pipeline-validation.md](pipeline-validation.md)) |
+| `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [emit-pass.md](emit-pass.md)) |
 | `$.x` reference inside the `$$.filter` predicate | Shared message from `localRefInPredicateMessage`: names the lambda's own parameter for an arrow spelling, and redirects a shorthand spelling to the arrow form (a shorthand has no parameter the user could write). |
 | Statement appears after the `$out` sugar in the same pipeline | `'\$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position N), or remove it.` |
 | Two `$$$.<coll> = …` statements in one pipeline | Same as above — caught by the shared `sawOut` guard. |
@@ -137,7 +137,7 @@ errors, RHS node's `pos` for chain errors, offending later statement's
 The chain dispatch in `lowerChainMethod` handles `.filter(<predicate>)`
 inline (it reuses the index-friendly `$match` translator), and routes every
 other method through the shared `STREAM_METHODS` registry from
-[`src/stream-methods.ts`](../../src/stream-methods.ts): `.slice`, `.map`,
+[`src/registry/names.ts`](../../src/registry/names.ts): `.slice`, `.map`,
 `.toSorted`, `.flatMap`, `.concat`. The chain walker in `lowerOutChain`
 recurses into `MethodCall.object` first, then emits the current layer's
 stage, so source order is preserved. Chained pipeline stages
@@ -151,7 +151,7 @@ stage in the chain.
 `.filter`'s and `.reject`'s **argument** first goes through `requireStreamPredicate`
 — the shared local-`$$` predicate gate — so a `$out` chain accepts exactly the
 predicate spellings the `$$ =` stream and a `$facet` branch do, and lowers each to
-the same MQL. See [pipeline-validation.md](pipeline-validation.md) § the local-`$$`
+the same MQL. See [emit-pass.md](emit-pass.md) § the local-`$$`
 predicate gate.
 
 `.reject` is `.filter` negated (via the shared `negateStreamPredicate`), so the two
@@ -162,9 +162,9 @@ in a `$$ =` chain: `$$$.live = $$.reject(p)` emits the same `$match: { $expr: { 
 The normalised lambda then reuses the same predicate translator that `$match`, the
 `$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
 use (`extractLetsFromExpr` / `extractLetsFromPipeline` from
-[`src/lookup-translation.ts`](../src/lookup-translation.ts) +
+[`src/compiler/emit/join.ts`](../src/compiler/emit/join.ts) +
 `translateMatchBody` from
-[`src/match-translation.ts`](../src/match-translation.ts)). Two body
+[`src/compiler/emit/filter.ts`](../src/compiler/emit/filter.ts)). Two body
 shapes:
 
 - **Expression body** (`d => d.active`): translatable conjuncts emit
@@ -185,7 +185,7 @@ a user who wrote a shorthand.
 ### Adding more chain methods
 
 A new chain method is **not** a `$out`-specific branch — it goes in the shared
-`STREAM_METHODS` registry ([`src/stream-methods.ts`](../../src/stream-methods.ts),
+`STREAM_METHODS` registry ([`src/registry/names.ts`](../../src/registry/names.ts),
 which owns the vocabulary and its lowering), and `lowerChainMethod` picks it up with
 no change here. That is what makes a `$out` chain accept the same methods a `$$ =`
 chain does. `lowerChainMethod` keeps its own branch only for the three shapes the
@@ -214,7 +214,7 @@ stream chain deliberately lacks.
 
 ## Parser interaction
 
-Two small changes in [`src/parser.ts`](../src/parser.ts):
+Two small changes in [`src/compiler/parse/parser.ts`](../src/compiler/parse/parser.ts):
 
 1. **`validateUpdateTarget`** now also accepts the `$out` LHS shape via a
    new `isOutTarget(target)` helper — chains of `MemberAccess` /
@@ -236,8 +236,7 @@ src/
                       thrown CodegenErrors inside detectOutAssign),
                       lowerOutChain, lowerOut, containsOutAssign.
                       Reuses extractLetsFromExpr / extractLetsFromPipeline
-                      from lookup-translation and translateMatchBody from
-                      match-translation.
+                      from the join road (`src/compiler/emit/join.ts`) and the filter road (`src/compiler/emit/filter.ts`).
   parser.ts           Updated. validateUpdateTarget accepts the $out LHS
                       shape via the new isOutTarget helper.
                       parseContextRef allows bare `$$`.

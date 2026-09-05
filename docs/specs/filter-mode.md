@@ -25,7 +25,7 @@ The previous default for the last bucket was `generateWithCtx(ast)`, which emitt
 
 ## `generateFilter`
 
-Lives in [src/index.ts](../../src/index.ts). Reuses [`translateMatchBody`](../../src/match-translation.ts) — the same translator the `$match` stage already runs — so the Filter and `$match` paths produce the same shapes for the same input.
+Lives in [src/index.ts](../../src/index.ts). Reuses [`translateMatchBody`](../../src/compiler/emit/filter.ts) — the same translator the `$match` stage already runs — so the Filter and `$match` paths produce the same shapes for the same input.
 
 ```ts
 function generateFilter(ast: Expr, ctx: GenerateCtx): object {
@@ -68,7 +68,7 @@ Without this auto-wrap, the bare expression would silently produce `{ $expr: { $
 
 ## Function form
 
-[`Parser.parseFunctionInput`](../../src/parser.ts) already classifies the arrow's body shape:
+[`Parser.parseFunctionInput`](../../src/compiler/parse/parser.ts) already classifies the arrow's body shape:
 
 - **Expression-body arrow** (`({ $ }) => <expr>`) → returns a single `Expr` program → routes to `generateFilter`.
 - **Block-body arrow** (`({ $ }) => { stmt; stmt; }`) → returns a `Pipeline` program → routes to `generateImplicitPipeline`.
@@ -77,7 +77,7 @@ No additional wiring in this module — the body-shape split already mirrored th
 
 ## Pipeline-mode stage-call requirement
 
-Pipeline mode rejects bare expressions as statements with an actionable error. Owned by [src/pipeline.ts](../../src/pipeline.ts) `formatNotAStageError` + the `looksLikePredicate` heuristic: when the offending element is a comparison/logical/unary-`!` `Expr`, the error names `$match` as the wrapper:
+Pipeline mode rejects bare expressions as statements with an actionable error. Owned by [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) `formatNotAStageError` + the `looksLikePredicate` heuristic: when the offending element is a comparison/logical/unary-`!` `Expr`, the error names `$match` as the wrapper:
 
 ```text
 Element <i> of Pipeline is not a stage call. To filter documents on a
@@ -91,8 +91,8 @@ The error carries the offending node's `.pos`, so `.validate()` consumers can un
 
 - **`$expr` in Filters is legal.** MongoDB accepts `{ $expr: <aggExpr> }` at the top level of a Filter, so the residual wrapping is always safe; no separate "strict Filter" mode is needed.
 - **Source `$`-strings pass through; no auto-`$literal` (HR1).** A `"$x"` typed in source is the field ref `$x` everywhere — query-doc slot (`$.x === "$y"` → `{ x: "$y" }`) **and** the `$expr` residual (`$concat($.a, "$b") === $.c` → `{ $expr: { $eq: [{ $concat: ["$a", "$b"] }, "$c"] } }`) alike. The only wrap is HR1's runtime-injected exception (`jsmql.compile` params / template-tag `${…}`), applied by `safeBoundValue` in expression position. See [docs/LANG_RULES.md](../LANG_RULES.md) (HR1).
-- **`new Date(<static-args>)` is compile-time folded** in query-doc position. `$.createdAt >= new Date("2026-01-01")` lowers to `{ createdAt: { $gte: <Date instance> } }`, not `{ createdAt: { $gte: { $toDate: "2026-01-01" } } }`. The latter would NOT work — MongoDB's query language treats `{ $toDate: "..." }` as a literal subdocument, never matching anything. The fold only fires when all `new Date(...)` (and any nested `Date.UTC(...)`) arguments are themselves compile-time literals; otherwise the comparison falls back to `$expr` (which DOES evaluate `$toDate`). The full rule lives in [match-query-translation.md](match-query-translation.md).
-- **`$.field.length`-style "method-as-property" access** is currently treated as a static field path by the match translator's `asFieldPath()` walk, so `$.tags.length < 5` translates to `{ "tags.length": { $lt: 5 } }`. That's a pre-existing edge case in the match translator (it predates this change) and is documented in [match-query-translation.md](match-query-translation.md).
+- **`new Date(<static-args>)` is compile-time folded** in query-doc position. `$.createdAt >= new Date("2026-01-01")` lowers to `{ createdAt: { $gte: <Date instance> } }`, not `{ createdAt: { $gte: { $toDate: "2026-01-01" } } }`. The latter would NOT work — MongoDB's query language treats `{ $toDate: "..." }` as a literal subdocument, never matching anything. The fold only fires when all `new Date(...)` (and any nested `Date.UTC(...)`) arguments are themselves compile-time literals; otherwise the comparison falls back to `$expr` (which DOES evaluate `$toDate`). The full rule lives in [emit-pass.md](emit-pass.md).
+- **`$.field.length`-style "method-as-property" access** is currently treated as a static field path by the match translator's `asFieldPath()` walk, so `$.tags.length < 5` translates to `{ "tags.length": { $lt: 5 } }`. That's a pre-existing edge case in the match translator (it predates this change) and is documented in [emit-pass.md](emit-pass.md).
 - **Update filters stay update ops.** Top-level `$.x = …` and `delete $.x` still route to `generateUpdateFilter`. They aren't Filters or Pipeline stages; the dispatch leaves them untouched.
 
 ## Compile and validate

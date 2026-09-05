@@ -1,122 +1,27 @@
 # src/ — implementation notes
 
-## Pipeline
+## Layout
 
 ```
-string  →  Lexer  →  Token[]  →  Parser  →  AST  →  generate()  →  MQL JSON
+string  →  compiler/lex  →  compiler/parse  →  compiler/passes (fold, desugar, position, shape, inject)  →  compiler/emit  →  MQL JSON
+                                                              ↑ every fact read from  src/registry/
 ```
 
-Each stage has a single responsibility. Do not leak concerns across boundaries:
+- [`registry/`](registry/CLAUDE.md) is the single source of truth: one row per name, production and lexeme, in one vocabulary. It imports nothing outside itself and builds no MQL for a construct that needs its neighbours.
+- [`compiler/`](compiler/CLAUDE.md) is the five phases over the registry. A phase asks a row; it never lists names of its own.
+- `index.ts` is the public API (the `jsmql` callable and its properties). It turns the caller's input — a string, an arrow, a template tag — into source and injected values, picks the root position (a Filter, a Pipeline, an expression, an update document — see docs/specs/position-pass.md), and maps the compiler's errors to `validate()` results. It lowers nothing itself.
+- `cli.ts` and `mongoose.ts` call `jsmql` and nothing below it.
+- `errors.ts`, `namespace.ts`, `objectid.ts`, `levenshtein.ts` are leaves both the registry and the compiler share.
+- `operators.ts` and `stages.ts` hold the operator and stage shapes the globals generator reads; `globals.ts` is GENERATED from them and from the registry (`scripts/generate-globals.mjs`) — never edit it by hand.
 
-- The **lexer** only produces tokens — no meaning, no structure.
-- The **parser** only builds the AST — no MQL knowledge, no operator lookup.
-- The **codegen** calls the operator registry and produces output — no parsing logic.
+## Invariants
 
-## Key invariants
-
-- `src/operators.ts` is the **only** place that knows about individual operator shapes and result types. `OPERATOR_RETURNS` there is the single source of truth for "what category does this operator return", and codegen's string/array/bool inference sets are derived from it via `operatorsReturning(cat)` — never re-list a category in codegen. If you find yourself writing `if (name === '$trim')` in the parser or codegen, that logic belongs in the registry instead. Each entry carries `shape`, `category` (from `OPERATOR_CATEGORIES`), and `description` (lifted from `vendor/mql-specifications/definitions/`). The drift-protection test in `test/operator-spec-coverage.test.ts` keeps the registry aligned with the official spec on every `npm test`. Registry entries mirror **real** MongoDB operators only — jsmql never invents its own `$`-prefixed operators or pseudo-stages (e.g. a convenience `$drop()` will never be added); see the rule in the root [`CLAUDE.md`](../CLAUDE.md) § "Things the user did not explicitly ask for but matter".
-- `src/globals.ts` is **generated** by `scripts/generate-globals.mjs` from `OPERATORS` + `STAGES` + the vendored MQL spec, and emits ambient `declare global` types shipped at the `@koresar/jsmql/globals` subpath. Do not edit it by hand — the drift test in `test/operator-spec-coverage.test.ts` byte-compares the committed file against fresh generator output and will fail. Run `npm run generate:globals` (or just `npm test` / `npm run build`) to refresh. See [`docs/specs/globals-generation.md`](../docs/specs/globals-generation.md).
-- `src/stages.ts` is the parallel single source of truth for **aggregation pipeline stages** (the elements of a top-level pipeline array, distinct from value-position expression operators). Detection and lowering live in `src/pipeline.ts`, which `src/index.ts:compile()` invokes when the parsed root AST is a pipeline-shaped array. Stage-specific behaviour (currently only the `$match` `$expr`-wrap rule and per-stage sub-pipeline fields) lives there too — never branch on stage names from `codegen.ts`. See `docs/specs/aggregation-stages.md`.
-- **Pre-flight validation** rejects pipeline mistakes the server would reject. Two kinds, two homes: *structural placement* (must-be-first / must-be-last / forbidden-in-sub-pipeline) is declared in `stages.ts` (`position` / `forbiddenIn`) and applied by the `makePipelineValidator` closure in `pipeline.ts` (it needs the assembly-loop position); *body shape* (types, bounds, enums, required/exclusive keys) lives in `src/stage-validation.ts`, invoked from `generateStageBody`. The one placement rule that needs no container label — a stage forbidden in *every* container (`$out` / `$merge`) — is checked twice: on the ctx flag as the stage lowers, and on the assembled output by `assertNoWriteStageInSubPipeline`, so a container added later can't emit one whatever ctx it builds. **The literal-gating invariant:** body validators inspect only fully-static literal shapes and no-op on any field/expression/spread/computed-key slot, so only 100%-certain violations throw and probable ones still emit MQL. See `docs/specs/pipeline-validation.md`.
-- The parser's object-style detection rule: if an operator call has **exactly one argument and that argument is an object literal**, it is `style: 'object'`. If there are multiple args (even if the first is an object), it is `style: 'positional'`. Do not change this rule without updating `docs/specs/grammar.md`.
-- Field refs (`$.field`) always serialise to the string `"$field"` in MQL output. Nested paths (`$.a.b`) become `"$a.b"`.
-- **`$`-string literals: source passes through, injected wraps (HR1 — see [docs/LANG_RULES.md](../docs/LANG_RULES.md)).** A `"$items"` typed in *source* IS the field ref `$items` and passes through verbatim in **every** context (pipeline, stage, `jsmql.expr`, Filter `$expr` residual) — the `StringLiteral` codegen case emits it unchanged; jsmql adds no `$literal` of its own. The only auto-wrap is HR1's runtime-injected exception: a `"$x"` arriving via `jsmql.compile` params or a template-tag `${…}` is wrapped by `literalSafeInjectedString` (via `safeBoundValue`) in expression position so untrusted input can't silently become a field ref. `GenerateCtx.pipelineContext` (seeded at the pipeline entrypoints) now gates only that injected-value wrap — injected values pass through in a pipeline. Injected `$`-strings reach `safeBoundValue` because the template-tag path routes them through a synthesized `ParamRef` binding (`needsBindingRoute` / `substituteRoutedValues` in `index.ts`), not source-text inlining. `$literal(...)` (which sets `insideLiteral`) forces a literal anywhere.
-- **All compiler-generated temporary fields live under the single `__jsmql.` object, bucketed by kind — single source of truth: [`src/namespace.ts`](namespace.ts).** When jsmql stashes a value on the document to thread it between stages, it writes a sub-field of the one top-level `__jsmql` object (never a new top-level field), and a single trailing `{ $unset: "__jsmql" }` (peephole-skipped after a reshape stage) clears them all — so developers never see jsmql's scratch space. The buckets: `__jsmql.var.<name>` for `let`/`const` bindings (`bindingSlot()`); `__jsmql.tmp.<n>` for anonymous scratch — lookup result slots, fan-out/`$unwind` slots, stream-method intermediates (`createSlotAllocator()` in `lookup-translation.ts`, which builds its path via `tmpSlot()`); and `__jsmql.<reservedName>` for named system values (e.g. the stream length `__jsmql.length`, added with that feature). Bucketing makes collisions impossible — a user `let length` lands at `__jsmql.var.length`, distinct from the system `__jsmql.length` — so no user name needs reserving. **The one exception:** `$group`/`$bucket` accumulator output keys can't contain dots, so scratch produced *inside* a group uses the flat reserved name `GROUP_TMP` (`__jsmqlTmp`) and **must** be consumed by the immediately-following stage (so it never reaches output or the trailing `$unset`). Add a new temporary via the `src/namespace.ts` helpers; never invent a fresh top-level `__`-prefixed field.
-- **A compiler-emitted MongoDB *variable* name comes from `internalVar(ctx, base)`, never a string literal.** This is the third namespace `src/namespace.ts` owns (after the `__jsmql` document fields above and the `jsmql_` `$lookup.let` correlation vars): the `$let` / `$map` / `$filter` `vars`/`as` names a lowering mints for itself. Unlike document fields, these share ONE flat scope with the developer's lambda params, so a bare name is a capture hazard the moment the lowering also splices outer-scope codegen into the same `$let` — which is most of them. `exprVar(base)` owns the spelling (`"arr"` → `jsmqlArr`) and `internalVar` adds the gensym that makes the "never collides with a user-named param" invariant in [`docs/specs/method-dispatch.md`](../docs/specs/method-dispatch.md) actually hold; it returns the base untouched unless the name is really in scope, so normal output is unaffected and only OUR binding ever moves. Gensym against a ctx that includes any name bound *between* your `$let` and its body — an iteratee's `it.as` needs `extendCtx(ctx, [it.as])`. The narrow exception is a helper with no `GenerateCtx` (`wordsExpr`, the AST-level `.fill()` rewrite): call `exprVar` directly, and only where the body is fixed MQL or the construct is unreachable from expression position.
-- Unknown operators (not in the registry) fall through gracefully — see `codegen.ts:generateUnknownOperator`. This is intentional: it future-proofs the tool against new MongoDB operators.
-- **Never guard raw MQL — escape-hatch passthrough is by design.** When the developer writes the **raw** form — a `$op(...)` / direct-operator call, or a literal stage body like `$lookup({ from: { db, coll }, … })` / `$unionWith({ coll: { db, coll } })` — jsmql emits it **faithfully and unguarded**, even when a *particular* deployment would reject the result. The canonical example: a cross-database `$lookup`/`$unionWith` `{ db, coll }` namespace is rejected by a standalone/replica-set/sharded server but **valid on Atlas Data Federation** — so jsmql must pass a hand-written one through (the developer may be targeting Atlas DF, and "paste raw MQL → it round-trips" is a core property). Do **not** add jsmql-invented validators that reject raw-form shapes. This does **not** weaken HR3: HR3 governs jsmql's *own* lowering of its sugar/idiomatic surface (which is why the `$$$.<coll>` / `$$$$.<db>.<coll>` lookup *sugar* DOES reject cross-DB reads at `requireSameDbColl` — jsmql minted that surface, so it owns the shape), but the raw operator/stage form is the developer's own MQL and is outside that scope. The one allowed exception is the literal-gated pre-flight validators (`stage-validation.ts` / `operator-validation.ts`), which reject only shapes that are **universally** invalid on *every* deployment (`$limit: 0`, bad enums, out-of-range bounds) — never a shape that some deployment accepts.
-- **jsmql is a strict subset of JavaScript syntax.** Every expression the parser accepts must also parse as JS (`node --check`). Before adding a new lexer token or parser production, write a representative input and run it through `node --check`; if JS rejects it, the construct is off-limits — find a JS-syntax-equivalent surface or expose the feature via `$op(...)`. See root `CLAUDE.md` for the full rule; the dropped numeric-segment case (`$.items.0`) is the canonical example of what this excludes.
-- **`src/` stays in TypeScript's strippable subset** — the source must run on Node 22.18+ / 24.3+ via native type-stripping (no flag, no transpiler — unflagged in Node 22.18.0 LTS and in 24.3.0; stable in 25.2.0), and on Deno and Bun. Concretely: no `enum` (use `as const` objects + derived unions like `TokenType`), no `namespace`, no parameter properties in constructors (declare fields explicitly and assign in the body — see `LexError` for the canonical pattern), no decorators, no `<T>x` casts (use `x as T`), no `import =` / `export =`. Internal imports use `.ts` extensions. To smoke-check: `node src/index.ts` must execute without errors. `cli.ts` follows the same rule (it ships as the `jsmql` bin) and additionally carries a `#!/usr/bin/env node` shebang as its first line — TS and esbuild both preserve it — so `node src/cli.ts` (the strippable smoke check) and the bundled `dist/cjs/cli.cjs` both run directly. See `docs/specs/cli.md`.
-- **Public-API shape: a callable with attached properties, built via `Object.assign`.** `src/index.ts` exports a single `jsmql` value that is both callable (`jsmql(input)`) and carries `jsmql.compile` and `jsmql.validate` as methods. The shape is intentionally not a `namespace` — that's banned by the strippable-TS rule above. The pattern lives at [src/index.ts:271-284](index.ts): declare an explicit intersection type (`typeof dispatch & { compile: …; validate: … }`) and assemble the value with `Object.assign(dispatch, { compile, validate })`. When you add a new top-level entry point, extend it the same way; don't add a top-level named `export` for what should be a property on `jsmql`.
-
-## Extending the lexer
-
-New token types go in the `TokenType` `as const` object (and the derived `TokenType` type union picks them up automatically). The tokeniser is a single-pass character scanner — keep it that way. Do not add backtracking.
-
-## Extending the parser
-
-New syntax forms add a branch in `parseExpression()` and a dedicated `parseXxx()` method. Keep each method focused on a single grammar rule.
-
-## Adding a JS method — the declaration grid
-
-A method migrated to `src/methods/` is ONE declaration: its receiver family, its argument
-rule, and its lowering per cell. The arity check reads that same rule, so a method cannot
-disagree with itself. Add a new method to its family file, never to the switch.
-
-```ts
-getUTCHours: { receiver: "date", returns: "number", args: { sig: "", none: true },
-               value: ({ recv }) => ({ $hour: recv }) }
-```
-
-Applicability is derived from `receiver`: only an array receiver can have a Stage cell,
-because the stream is a sequence of documents. `test/methods-grid.test.ts` asserts every
-family file reaches the assembly, that no name is declared twice, and that the grid agrees
-with codegen's receiver gate.
-
-A method JavaScript put on more than one prototype declares one cell **per receiver family**
-and lets dispatch pick — declaration order is probe order, and the not-provable case is
-DERIVED as `cond($isArray, …)` rather than hand-written per method:
-
-```ts
-indexOf: { receiver: ["array", "string"], returns: "number", args: { sig: "searchValue", exact: 1 },
-           value: byReceiver({ array: ({ recv, args, gen }) => ({ $indexOfArray: [recv, gen(args[0])] }),
-                               string: ({ recv, args, gen }) => ({ $indexOfCP: [recv, gen(args[0])] }) }) }
-```
-
-**The grid is consulted before the switch**, so a declared method never reaches it and the
-switch is the fallback for what has not moved. A ratchet in that test file fails if the
-un-migrated count RISES — adding a method to the switch instead of the grid is the habit
-this exists to break. Lower `MAX_UNMIGRATED` with each family you move; delete the ratchet
-when it reaches zero. What is still in the switch, and why each case resists a declaration,
-is tabulated in the spec — read that before concluding a new method belongs there.
-
-What a lowering needs from the compiler arrives through `LowerInput` as a **service**
-(`gen`, `internalVar`, `err`, `iteratee`, `predicate`, `objIteratee`, `callback`), never as
-an import: a family file that reaches back into `codegen.ts` closes a cycle, the registry
-then assembles before the family initialises, and every method in that file falls silently
-through to the switch with no error anywhere. Before adding a service, check whether the
-helper only needs ONE function out of the context — the index resolvers take a `Gen` and
-live at leaf level for exactly that reason.
-
-The registry is a null-prototype object on purpose: `METHODS` contains names that collide
-with `Object.prototype` (`toString`, `valueOf`, `toLocaleString`), and a plain `{}` would
-resolve those to inherited functions.
-
-See [`docs/specs/lowering-grid.md`](../docs/specs/lowering-grid.md).
-
-## Extending the codegen
-
-New AST node types add a case in the `_generate(expr, ctx)` switch. The public export is `generate(expr)` which calls `_generate` with `EMPTY_CTX`. All recursive calls must pass `ctx` through — never call `_generate` without it. Helper functions for specific shapes stay private and file-local.
-
-`GenerateCtx` carries the lexical scope plus the position and service state a lowering needs. Use `extendCtx(ctx, params)` to add lambda params; never mutate ctx directly.
-
-**Never enumerate a `GenerateCtx` literal — always spread.** 21 of its 23 fields are optional, so a literal that omits one still type-checks, and the omission is invisible both where it is written and in review. Every context bug found so far has this shape: `.reduce` and `Object.groupBy` listed eight fields and lost `bindings`, so a `jsmql.compile` parameter resolved in `.map` and threw in `.reduce`; `extendCtx` listed nineteen and lost `sourceSwitch`, so a `let` tombstone survived one lambda level and not two. A lambda body is inside everything its surroundings are inside, so the default is that every field carries through. A field that genuinely must stop somewhere is written as an explicit `field: undefined` with a `// why`, which reads as a decision instead of an accident.
-
-## Extending the pipeline sugar
-
-`pipeline.ts` is the sugar-dispatch hub: per-element lowering is shared across all pipeline forms (`[ … ]`, `;`-separated, and the `,`-grouped update-filter op chain) through two helpers. Add a new `$ =`-rooted / lookup sugar in `tryLowerAssignSugar` (replace-stream, `$facet`, `$replaceWith`, `$out`, `$lookup`); add a new statement-style sugar (`$$.push` → `$unionWith`, system source stages, `assert(...)` → conditional-error `$match`, the generic stage-call path) in `lowerStatementTail`. Touch either helper and both pipeline forms pick it up at once. Each sugar's behaviour is owned by its spec in `docs/specs/` — keep the lowering rules there, not in comments here. A statement-style sugar that should also work without a trailing `;` (as a lone top-level call) needs a clause in `isStageCandidate` (`pipeline.ts`) **and** the auto-wrap sites in `index.ts` (`lowerWithCtx` / `lowerToPipelineStages`) — `assert` is the worked example.
-
-## Chained stage calls
-
-`<stream>.$match(<body>)` is the chain-position spelling of the `$match(<body>);` statement. It parses to an ordinary `MethodCall` whose `method` starts with `$` (no new AST node — that's what lets `collectStreamChain` and every chain walker handle it unchanged). Five containers lower it, and each **delegates** rather than reimplementing: the `$$` stream, a `$facet` branch, and the `$unionWith` source-switch all reach `lowerStageLink` → `generateStageBody` (the statement path); the `$out` write chain runs `stageLinkBlock` through its own `SubPipelineLowerer`; the `$lookup` sub-pipeline calls `lowerCallbackBlock` (the engine `.aggregate((o) => { … })` uses). One shape short-circuits ahead of all of them: `detectLookupCall` normalises `.$match(<plain equality map>)` to `filter`, so `$$$.<coll>.$match({ f: $.x })` takes the indexed `localField`/`foreignField` route.
-
-Name resolution, arity, and the sub-pipeline placement rules live in the leaf module [`stage-link.ts`](stage-link.ts) — a leaf because `lookup-translation.ts` sits *below* `pipeline.ts` and can't import back. When you add a container that assembles stages from a chain, call into `stage-link.ts` rather than re-deriving the rules. Behaviour is owned by [`docs/specs/aggregation-stages.md`](../docs/specs/aggregation-stages.md).
+- **`src/` stays in TypeScript's strippable subset** — the source runs on Node 22.18+ / 24.3+ via native type-stripping (no flag, no transpiler), and on Deno and Bun. No `enum` (use `as const` objects + derived unions), no `namespace`, no parameter properties in constructors, no decorators, no `<T>x` casts (use `x as T`), no `import =` / `export =`. Internal imports use `.ts` extensions. `node src/index.ts` must execute without errors; `test/smoke.test.ts` holds the line.
+- **Public-API shape: a callable with attached properties, built via `Object.assign`.** `index.ts` exports one `jsmql` value that is callable and carries `compile`, `validate`, `expr`, `filter`, `pipeline`, `update` (each strict entry with its own `.compile`). Not a `namespace` — that is banned above. Extend it the same way; never add a top-level named export for what should be a property on `jsmql`.
+- **An injected value is a VALUE (HR1).** A `jsmql.compile` parameter or a template slot becomes a literal node when the source could have spelled it, and an `Injected` node otherwise (`compiler/passes/inject.ts`): a `"$b"` stays the string `"$b"` in a query and `{ $literal: "$b" }` in an expression. Nothing a caller supplies is ever parsed as syntax.
+- **The three compiler namespaces** live in `namespace.ts`: `__jsmql.<bucket>.<name>` document fields for what a stage threads to the next, `jsmql_<f|v|s><level>_<hint>` correlation variables in `$lookup.let`, and `jsmql<Hint>` expression variables minted through the Env so they never collide with a developer's parameter. Add a temporary through those helpers, never as a fresh top-level `__` field.
+- **Never guard raw MQL.** A hand-written `$op(...)` call, stage document or query document passes through as written (HR2), even where a particular deployment would refuse it; only a shape every deployment refuses is refused, and that refusal is a fact on the row.
 
 ## Error classes
 
-The classes live in [`errors.ts`](errors.ts), a LEAF — `codegen.ts` re-exports them, so the
-existing import path still works. They are declared apart from the compiler on purpose:
-rejecting something is not a compiler service, and every validator that merely throws would
-otherwise depend on the whole of `codegen.ts` and close an import cycle with the modules
-`codegen.ts` imports back. `checkArity` and its one `MethodArgs` rule sit in
-[`arity.ts`](arity.ts) for the same reason.
-
-| Class          | Where thrown | Has `.pos`                                                              |
-| -------------- | ------------ | ----------------------------------------------------------------------- |
-| `LexError`     | `lexer.ts`   | yes (offending character)                                               |
-| `ParseError`   | `parser.ts`  | yes (offending token)                                                   |
-| `CodegenError` | thrown from `codegen.ts` and every validator; declared in `errors.ts` | yes (forwarded from the AST node that triggered the error — every node carries `pos` populated by the parser) |
-| `FunctionInputError` | `parser.ts` | yes (offset in the stringified arrow source)                       |
-| `JsmqlInterpolationError` | `index.ts` | no (use `.slot` / `.key` — the template-tag source is split across the `strings`/`values` arrays) |
-
-`src/index.ts` catches all these and maps them to `ValidationError` objects for `validate()`. See [docs/specs/architecture.md](../docs/specs/architecture.md#error-types) for the full mapping table.
+The classes live in `errors.ts`, a leaf: `CodegenError` (with `.pos`), `UnknownIdentifierError` (a `CodegenError`), and `internalError(detail)` for an invariant a phase must uphold (its message says "please report"). `compiler/lex` throws `LexError`, `compiler/parse` throws `ParseError` — both with `.pos`. `index.ts` maps all of them to `ValidationError` objects for `validate()`, and adds `JsmqlInterpolationError` (`.slot` / `.key`, `.pos = 0`) for a template slot or parameter with no MQL representation.

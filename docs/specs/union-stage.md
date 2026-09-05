@@ -49,7 +49,7 @@ still ride in `$expr`, side-by-side with the translated portion:
 
 Block-body predicates pass through verbatim — each statement is lowered to a
 stage exactly as it would be at the top level. The same `lowerBlock`
-`SubPipelineLowerer` callback that `lookup-translation` uses is shared with
+sub-pipeline lowering the join road (`src/compiler/emit/join.ts`) uses is shared with
 `union-translation`.
 
 ### `$unionWith` has no `let`
@@ -60,7 +60,7 @@ throws a precise error pointing the user at the documented fix: move the
 local filter to a `$match(...)` stage *before* `$$.push(...)`.
 
 Concretely, the union predicate translator (`translateUnionPredicate` in
-[`src/union-translation.ts`](../../src/union-translation.ts)):
+[`src/compiler/emit/union.ts`](../../src/compiler/emit/union.ts)):
 
 1. Calls `extractLetsFromExpr` / `extractLetsFromPipeline` to get the
    rewritten body and the let-variable map.
@@ -88,7 +88,7 @@ src/
                            lowers args to $unionWith stages with
                            inline-doc batching, source-order-preserving,
                            and JS-faithful spread rules.
-  lookup-translation.ts    Existing. `extractLookupTarget`,
+  src/compiler/emit/join.ts    Existing. `extractLookupTarget`,
                            `extractLetsFromExpr`, `extractLetsFromPipeline`,
                            `validateLookupShape` are exported and reused by
                            union-translation.
@@ -132,7 +132,7 @@ argument, the inline doc, or the entire push call as appropriate).
 | `$$.push(...$$$.coll.find(p))` (spurious `...`) | `$$.push(...arg) was given ...$$$.<coll>.find(pred) — .find returns a single document, not an array, so spreading isn't meaningful (JS would TypeError). Drop the ... to append the matched document, or switch to ...$$$.<coll>.filter(pred) to append every match.` |
 | `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | `$$.push(...) argument must be a document literal ({…}), a $$$.<coll>.find(pred) scalar, or a spread of $$$.<coll>[.filter(pred)]. Got a number/string/null literal — collections only hold documents.` |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (correlated) | `$$.push(...$$$.<coll>.filter(pred)) — predicate references the local document ($.<field>), but MongoDB's $unionWith has no let slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a $match(...) stage before $$.push(...).` |
-| `$$.push(...$$$$.<db>.<coll>[.filter(p)])` / `$$.push($$$$.<db>.<coll>.find(p))` (cross-database) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` — thrown at the shared `requireSameDbColl` choke point in `lookup-translation.ts`. |
+| `$$.push(...$$$$.<db>.<coll>[.filter(p)])` / `$$.push($$$$.<db>.<coll>.find(p))` (cross-database) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` — thrown at the shared `requireSameDbColl` choke point in `src/compiler/emit/join.ts`. |
 | `$$.push(...)` inside a lookup `.aggregate` block | `'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.` |
 | `$$.push(...)` inside a `$facet.*` / `$lookup.pipeline` / `$unionWith.pipeline` sub-pipeline | `'$$.push(...)' inside a sub-pipeline (…) is not supported — $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.` |
 | `jsmql.filter("$$.push(...)")` / `jsmql.expr(...)` | `<apiName>() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.` |

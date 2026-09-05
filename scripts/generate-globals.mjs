@@ -33,9 +33,19 @@ import yaml from "js-yaml";
 
 import { OPERATORS } from "../src/operators.ts";
 import { STAGES } from "../src/stages.ts";
-import { streamMethodNames, VALUE_TERMINAL_METHODS } from "../src/stream-methods.ts";
-import { NATIVE_DATE_METHODS, requiredReceiverFamily, valueMethodNames, valueMethodReturns } from "../src/codegen.ts";
-import { TIME_UNIT } from "../src/operator-validation.ts";
+import {
+  argCountOf,
+  nativeDateMethodNames,
+  requiredReceiverFamily,
+  streamMethodNames,
+  valueMethodNames,
+  valueMethodReturns,
+  valueTerminalMethodNames,
+} from "../src/compiler/rows.ts";
+import { TIME_UNIT } from "../src/registry/names.ts";
+
+const VALUE_TERMINAL_METHODS = valueTerminalMethodNames();
+const NATIVE_DATE_METHODS = nativeDateMethodNames();
 
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = resolve(HERE, "..");
@@ -278,6 +288,11 @@ function stageLinkMembers(spec, returnType) {
 // registry in src/stream-methods.ts; the return types are `any` because the
 // result is a document or a field of one, except the numeric aggregates.
 const VALUE_TERMINAL_RETURNS = { size: "number", sum: "number", mean: "number", sumBy: "number", meanBy: "number" };
+/** A stated signature wins; else the registry's arity: a no-argument terminal is `()`, anything else is typed loosely. */
+function terminalParams(name) {
+  return VALUE_TERMINAL_PARAMS[name] ?? (argCountOf(name, "array")?.none === true ? "()" : "(...args: any[])");
+}
+
 const VALUE_TERMINAL_PARAMS = {
   nth: "(n?: number)",
   every: "(predicate: ((doc: any) => any) | Record<string, any> | string)",
@@ -293,7 +308,7 @@ function valueTerminalMembers() {
   const members = [];
   for (const name of [...VALUE_TERMINAL_METHODS].sort()) {
     members.push(`/** Ends the chain with a value — valid in value position (\`$.f = …\`, \`const x = …\`). */`);
-    members.push(`${name}${VALUE_TERMINAL_PARAMS[name] ?? "()"}: ${VALUE_TERMINAL_RETURNS[name] ?? "any"};`);
+    members.push(`${name}${terminalParams(name)}: ${VALUE_TERMINAL_RETURNS[name] ?? "any"};`);
   }
   return members;
 }
@@ -396,9 +411,19 @@ const VALUE_METHOD_SKIP = {
   // Object-receiver — no safe interface (Object is the base of everything).
   object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),
   // Set-receiver (intercepted on `new Set(...)`; native/ES-proposal Set methods).
-  set: new Set(["intersection", "union", "difference", "isSubsetOf", "isSupersetOf"]),
+  set: new Set([
+    "intersection",
+    "union",
+    "difference",
+    "isSubsetOf",
+    "isSupersetOf",
+    "isDisjointFrom",
+    "symmetricDifference",
+  ]),
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
+  // `Array.from` is a static the row spells on any receiver; TypeScript's lib types it
+  statics: new Set(["from"]),
   // Shimmed to a tailored error — not a real completable method.
   shimmed: new Set(["unzipWith"]),
 };
@@ -648,6 +673,7 @@ function valueMethodAugmentationBlock() {
     ...VALUE_METHOD_SKIP.object,
     ...VALUE_METHOD_SKIP.set,
     ...VALUE_METHOD_SKIP.regex,
+    ...VALUE_METHOD_SKIP.statics,
     ...VALUE_METHOD_SKIP.shimmed,
   ]);
   const registry = new Set(valueMethodNames());
@@ -683,12 +709,13 @@ function valueMethodAugmentationBlock() {
   // the receiver/args — `.head` → element `T`, `.groupBy` value-vs-stream, …) are
   // skipped: there's no invariant to enforce.
   const registryReturns = valueMethodReturns();
+  // keyed by the Kind the registry states; each tests the ambient signature's TypeScript return type
   const inCategory = {
     string: (r) => r === "string",
     number: (r) => r === "number",
     bool: (r) => r === "boolean",
-    object: (r) => r.startsWith("Record<"),
-    // T[] / any[] / any[][] / string[] — and the `.partition` tuple `[T[], T[]]`.
+    date: (r) => r === "Date",
+    object: (r) => r.startsWith("Record<") || r === "object",
     array: (r) => r.endsWith("[]") || (r.startsWith("[") && r.endsWith("]")),
   };
   // Receiver drift guard. The METHODS registry already declares which receiver
@@ -723,7 +750,8 @@ function valueMethodAugmentationBlock() {
   const drift = [];
   for (const name of augmentable) {
     const category = registryReturns[name];
-    if (category === undefined) continue;
+    // "same" / "element" / "unknown" depend on the receiver — nothing a fixed signature can be held to
+    if (category === undefined || !(category in inCategory)) continue;
     const entry = VALUE_METHOD_SIGNATURES[name];
     for (const recv of recvsOf(entry)) {
       const sig = sigFor(entry, recv);

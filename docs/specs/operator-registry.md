@@ -41,7 +41,7 @@ $add($.x)               →  ✗ error  ("$add operates on a list of operands �
 
 Operators with a *valid* single-value form (the comparison operators, `$in`) are `flex`, not `array`. The JS spread (`$add(...arr)`) is not accepted on any operator-call form — pass a single array literal instead. (Spread stays supported in JS-method position: `Math.max(...arr)`, `Object.assign(...docs)`.)
 
-The same rejection applies to the **raw-object form** — HR3 governs raw MQL too, so `{ $setUnion: $.x }` (a list-only operator key with a non-array value) throws exactly like `$setUnion($.x)`. The check is in `generateStaticObjectEntries` ([src/codegen.ts](../../src/codegen.ts)): it fires only when the key is a registry `array`-shape operator and the value is not an array literal, so a valid `{ $setUnion: [$.a, $.b] }` passes through untouched (HR1).
+The same rejection applies to the **raw-object form** — HR3 governs raw MQL too, so `{ $setUnion: $.x }` (a list-only operator key with a non-array value) throws exactly like `$setUnion($.x)`. The check is in `generateStaticObjectEntries` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)): it fires only when the key is a registry `array`-shape operator and the value is not an array literal, so a valid `{ $setUnion: [$.a, $.b] }` passes through untouched (HR1).
 
 ### `object` → `{ $op: { k1: a, k2: b } }`
 The operator's MQL form takes an object. The registry entry stores an ordered `keys` array that maps positional argument positions to named keys.
@@ -63,7 +63,7 @@ $trim({ input: $.name, chars: " " })   →  { $trim: { input: "$name", chars: " 
 ```
 **Object-style keys are validated against the registry's closed key set** when the
 operator declares `args` rules (`required ∪ optional`; see
-[operator-validation.md](operator-validation.md)). A missing required key throws,
+[emit-pass.md](emit-pass.md)). A missing required key throws,
 and an unrecognised key throws with a `didYouMean` suggestion
 (`$dateAdd({ startdate, … })` → "has no parameter 'startdate'. Did you mean
 'startDate'?"). This catches the common typo/omission footguns the server would
@@ -105,7 +105,7 @@ Current flex operators — see entries with `shape: FLEX` in `src/operators.ts`.
 
 ## `$literal` and the auto-wrap policy
 
-`$literal` is the one operator with a fast-path branch in `generateOperatorCall` ([src/codegen.ts](../../src/codegen.ts)). Two things make it special:
+`$literal` is the one operator with a fast-path branch in `generateOperatorCall` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)). Two things make it special:
 
 1. **Direct codegen.** `$literal(arg)` always emits `{ $literal: <generated arg> }` regardless of registry shape. The fast path sits *ahead* of the `style === "object"` branch because the parser tags `$literal({ x: 1 })` as object-style, but we still want to treat the inner object as `$literal`'s argument rather than as named-key wire format.
 2. **`insideLiteral` ctx flag.** The fast path recurses with `{ ...ctx, insideLiteral: true }`. This suppresses the auto-`$literal` safety net described below for the whole subtree, so `$literal({ x: "$foo" })` produces `{ $literal: { x: "$foo" } }` — a literal of a literal would otherwise emit `{ $literal: { x: { $literal: "$foo" } } }`.
@@ -114,7 +114,7 @@ The flag is propagated through `extendCtx`, so it survives lambda bodies and oth
 
 ### Auto-`$literal` for `"$..."`-shaped string values
 
-The codegen emits any `StringLiteral` in a value position via `literalSafeString` ([src/codegen.ts](../../src/codegen.ts)): a string starting with `$` is wrapped in `{ $literal: value }` so MongoDB doesn't read it as a field reference at runtime. Plain strings pass through unchanged. The same `safeBoundValue` helper applies the policy recursively to `jsmql.compile()` parameter bindings (so a `"$foo"` value supplied at call time gets the same protection) — template-tag interpolation already routes through the parser and produces `StringLiteral` nodes, picking up the wrap automatically.
+The codegen emits any `StringLiteral` in a value position via `literalSafeString` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)): a string starting with `$` is wrapped in `{ $literal: value }` so MongoDB doesn't read it as a field reference at runtime. Plain strings pass through unchanged. The same `safeBoundValue` helper applies the policy recursively to `jsmql.compile()` parameter bindings (so a `"$foo"` value supplied at call time gets the same protection) — template-tag interpolation already routes through the parser and produces `StringLiteral` nodes, picking up the wrap automatically.
 
 Object **keys** are deliberately *not* wrapped. Keys are part of the JSON wire format, never evaluated by MongoDB as expressions, so `{ "$foo": 1 }` stays verbatim — that's how the user names a field `$foo`. The auto-wrap only fires on `StringLiteral` nodes generated through `_generate`, and key paths go through `entry.key.name` rather than `_generate(entry.key.value, ctx)`.
 
@@ -141,7 +141,7 @@ This makes jsmql forward-compatible with new MongoDB operators that are not yet 
 6. Add the entry to `OPERATORS` in `src/operators.ts`.
 7. For an `object`-shape operator, add an `OPERATOR_ARG_RULES` row (`required` /
    `optional` — the closed key set; plus `enums` / `keyTypes` where they apply)
-   so its keys are validated. See [operator-validation.md](operator-validation.md).
+   so its keys are validated. See [emit-pass.md](emit-pass.md).
    Verify any new throw against a running `mongod` (HR3).
 8. If the operator's result type is **invariant** — the same category whatever its arguments are — add an `OPERATOR_RETURNS` row. Read the category off a running `mongod` (`{ $type: { <op>: <args> } }`), never from the YAML's `type:` field; see § Operator return types below. Leave it out when the type depends on the arguments.
 9. Add a test case in `test/codegen.test.ts`.
@@ -149,7 +149,7 @@ This makes jsmql forward-compatible with new MongoDB operators that are not yet 
 
 ## Operator return types (`OPERATOR_RETURNS`)
 
-`OPERATOR_RETURNS` maps an operator to the one category its result always falls in — `string`, `number`, `bool`, `array`, `object` or `date`. It is the single source of truth for the three type-inference passes in codegen, which derive their name sets from it through `operatorsReturning(cat)` rather than keeping copies of their own: `STRING_OUTPUT_OPS` (string context, `+` → `$concat`), `ARRAY_OUTPUT_OPS` (`isArrayProducing`, which also drives `.length` → `$size` and the `$ = <array>` fan-out) and `BOOL_OUTPUT_OPS` (`isProvablyBool`, which elides a truthiness wrap). The chain type-check in [method-dispatch.md](method-dispatch.md) reads the table directly.
+`OPERATOR_RETURNS` maps an operator to the one category its result always falls in — `string`, `number`, `bool`, `array`, `object` or `date`. It is the single source of truth for the three type-inference passes in codegen, which derive their name sets from it through `operatorsReturning(cat)` rather than keeping copies of their own: `STRING_OUTPUT_OPS` (string context, `+` → `$concat`), `ARRAY_OUTPUT_OPS` (`isArrayProducing`, which also drives `.length` → `$size` and the `$ = <array>` fan-out) and `BOOL_OUTPUT_OPS` (`isProvablyBool`, which elides a truthiness wrap). The chain type-check in [emit-pass.md](emit-pass.md) reads the table directly.
 
 **The vendored spec is not the authority for this field.** `definitions/expression/trunc.yaml` declares `type: [resolvesToString]`, and mongod returns a **double** — so a generated map would have made `$trunc(…)` string-producing and turned `$trunc($.n, 1) + 1` into a `$concat`. Every row is therefore verified with `{ $type: { <op>: <args> } }` against a running server.
 
@@ -186,7 +186,7 @@ with *Unrecognized expression '$sampleRate'* — an HR3 violation on the very ex
 
 `matchOnly: true` on the `OperatorDef` is the single source of truth. Two readers:
 
-- **`match-translation.ts`** lowers it to its bare query form, `{ $sampleRate: 0.1 }`,
+- **The filter road** (`src/compiler/emit/filter.ts`) lowers it to its bare query form, `{ $sampleRate: 0.1 }`,
   ahead of every other rule. It composes with ordinary predicates, so
   `$.age > 18 && $sampleRate(0.1)` merges into one query document and works in `find()`
   as well as `$match`.

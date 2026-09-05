@@ -177,24 +177,24 @@ function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                   intercepts the identifier by value. *)
 
 math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
-MATH_METHOD    = (* see `MathMethod` in src/ast.ts *)
+MATH_METHOD    = (* see `MathMethod` in src/registry/ast.ts *)
 
 math_const     = "Math" "." MATH_CONST
-MATH_CONST     = (* see `MathConstant` in src/ast.ts *)
+MATH_CONST     = (* see `MathConstant` in src/registry/ast.ts *)
 
 object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
-OBJECT_METHOD  = (* see `ObjectMethod` in src/ast.ts *)
+OBJECT_METHOD  = (* see `ObjectMethod` in src/registry/ast.ts *)
 
 type_cast      = TYPE_CAST_NAME "(" expression ","? ")"      (* exactly one arg; a lone trailing comma is allowed *)
-TYPE_CAST_NAME = (* see `TypeCastOp` in src/ast.ts *)
+TYPE_CAST_NAME = (* see `TypeCastOp` in src/registry/ast.ts *)
 
 type_cast_ref  = BARE_CAST_NAME                              (* bare callback shorthand, no `(` *)
-BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/ast.ts *)
+BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/registry/ast.ts *)
 
 objectid_ref   = "ObjectId"                                  (* bare callback shorthand, no `(` *)
 
 number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
-NUMBER_STATIC  = (* see `NumberStaticMethod` in src/ast.ts *)
+NUMBER_STATIC  = (* see `NumberStaticMethod` in src/registry/ast.ts *)
 
 new_date_or_set = "new" ("Date" | "Set") "(" (expression ("," expression)* ","?)? ")"
 objectid_literal = "new"? "ObjectId" "(" (expression ","?)? ")"
@@ -236,7 +236,7 @@ The two top-level separators have distinct roles:
   (`$.a = 1;` → `[{ $set: { a: 1 } }]`).
 - `,` is the **in-stage update op separator**. Comma-grouped update ops
   share one stage and coalesce through the existing kind / read-after-write
-  rules in `src/codegen.ts`.
+  rules in `src/compiler/emit/lower.ts`.
 
 Mixed forms compose naturally: in `$.a = 1, $.b = 2; $match(…)`, the `,`
 keeps `a` and `b` in one `$set` stage, and the `;` adds the `$match` as
@@ -245,7 +245,7 @@ syntax) and adjacent update op elements coalesce — that is the
 documented difference between the two pipeline forms.
 
 Implemented in `Parser.parse()` (top-level `;` loop) and
-`generateImplicitPipeline` in `src/pipeline.ts`. `generatePipeline` (for
+`generateImplicitPipeline` in `src/compiler/emit/statement.ts`. `generatePipeline` (for
 `[…]`) keeps coalescing across elements; `generateImplicitPipeline` (for
 `;`-separated) does not.
 
@@ -255,7 +255,7 @@ Every expression accepted by this grammar is also valid JavaScript syntax. Addin
 
 ## Trailing commas
 
-Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` `(params, { $, … })` signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/parser.ts` enforce this uniformly.
+Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` `(params, { $, … })` signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/compiler/parse/parser.ts` enforce this uniformly.
 
 ## Function-form input is not part of the grammar
 
@@ -357,8 +357,8 @@ A lambda appearing anywhere else (e.g. as a standalone expression) is a codegen 
 
 A lambda body is either an expression (`x => x * 2`) or a **statement-laden block** (`x => { … }`). jsmql follows JavaScript exactly: `=> {` **always** opens a block, so an object return must be parenthesised — `x => ({ k: v })`, never `x => { k: v }` (the latter is a labeled-statement block in JS). Two block grammars exist, selected by position:
 
-- **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE, `Object.groupBy`, `Array.from`). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [method-dispatch.md → Block-body arrows](method-dispatch.md#block-body-arrows--nested-let)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
-- **Statement block** (`block_body`, the `$lookup`/facet sub-pipeline form) — parsed inside a stream-rooted callback whose method is in `STREAM_BLOCK_METHODS`, e.g. `$$$.<coll>.aggregate((o) => { … })` and `$$.filter(...)`. Its statements are stages/update ops, not a single `return`. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [method-dispatch.md](method-dispatch.md#callback-block-bodies).
+- **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE, `Object.groupBy`, `Array.from`). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [emit-pass.md → Block-body arrows](emit-pass.md#block-body-arrows--nested-let)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
+- **Statement block** (`block_body`, the `$lookup`/facet sub-pipeline form) — parsed inside a stream-rooted callback whose method is in `STREAM_BLOCK_METHODS`, e.g. `$$$.<coll>.aggregate((o) => { … })` and `$$.filter(...)`. Its statements are stages/update ops, not a single `return`. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [emit-pass.md](emit-pass.md#callback-block-bodies).
 
 The parser threads a `BlockArgCtx` (`{ kind: "expr" }` default, `kind: "pipeline"` for the lookup positions) from the method-call dispatch to decide which to parse. It also carries the receiver context — the `method` name and whether it was `streamRooted` — so a **statement block in an expression-block position** can be diagnosed for what it is. When `parseExprBlockBody` reaches its missing-`return` check and the next token is `$` (a stage call), `subPipelineBlockError` reports the real mistake instead of demanding a `return` the user never wanted: a `didYouMean` over `STREAM_BLOCK_METHODS` when the receiver was a stream (so the method name is the error — `.aggregat(o => { $group(…); })`), or "stage calls need a stream receiver" when it wasn't (`$.items.map(d => { $group(…); })`). A block with no stage call keeps the original message. `return` is a reserved keyword (lexed as its own token; still usable as a property name / object key, matching JS).
 
@@ -369,7 +369,7 @@ The parser threads a `BlockArgCtx` (`{ kind: "expr" }` default, `kind: "pipeline
 $let({ d: $.price * 0.1 }, (d) => $.price - d)
 → { $let: { vars: { d: ... }, in: { $subtract: ["$price", "$$d"] } } }
 ```
-A name mismatch (`$let({ x: ... }, (d) => ...)`) compiles, but emits a `$$d` reference with no `vars.d` binding — which MongoDB rejects at runtime. See `generateOperatorCall`'s `$let` intercept in `src/codegen.ts`.
+A name mismatch (`$let({ x: ... }, (d) => ...)`) compiles, but emits a `$$d` reference with no `vars.d` binding — which MongoDB rejects at runtime. See `generateOperatorCall`'s `$let` intercept in `src/compiler/emit/lower.ts`.
 
 ## IIFE → `$let`
 
@@ -409,14 +409,14 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 
 ## String-context `+`
 
-When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions: string and template literals, `String(x)` casts, `typeof x`, any `OperatorCall` in `STRING_OUTPUT_OPS`, any `MethodCall` to a method in `STRING_RETURNING_METHODS` — both sets are defined in `src/codegen.ts` — and recursively, a nested `+` chain with at least one string-producing operand.
+When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions: string and template literals, `String(x)` casts, `typeof x`, any `OperatorCall` in `STRING_OUTPUT_OPS`, any `MethodCall` to a method in `STRING_RETURNING_METHODS` — both sets are defined in `src/compiler/emit/lower.ts` — and recursively, a nested `+` chain with at least one string-producing operand.
 
 ## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
 
-The codegen helpers `jsBool(value)`, `isProvablyBool(expr)`, and `generateBool(expr, ctx)` (in `src/codegen.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
+The codegen helpers `jsBool(value)`, `isProvablyBool(expr)`, and `generateBool(expr, ctx)` (in `src/compiler/emit/lower.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
 
 - `jsBool(value)` emits `{ $and: [{$ne:[{$ifNull:[v,null]},null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)` so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing → null first, matching JS where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing") and rely on type-bracketed comparison for the cross-type checks (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
-- `generateBool(expr, ctx)` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `method-dispatch.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `match-query-translation.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
+- `generateBool(expr, ctx)` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `emit-pass.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `emit-pass.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
 - A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. Same answer (`jsBool(a && b)` is "a truthy AND b truthy"), but the `$cond` is invisible where nothing reads the returned operand, and wrapping it instead would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
 - `isProvablyBool(expr)` returns true when an AST node always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
 - `isBoolValued(value)` asks the same of the **generated** value, for constructs that are boolean only after lowering and so have no bool-shaped AST to inspect: an inlined reusable function or IIFE (a `$let` whose body is a comparison), and a `jsmql.compile` parameter bound to a boolean. A sole key in `BOOL_OUTPUT_OPS`, a JS boolean, or a `$let` whose `in` is itself bool-valued all elide the wrap.

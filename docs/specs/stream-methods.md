@@ -2,13 +2,13 @@
 
 ## Overview
 
-`STREAM_METHODS` ([src/stream-methods.ts](../../src/stream-methods.ts)) is the
+`STREAM_METHODS` ([src/registry/names.ts](../../src/registry/names.ts)) is the
 single source of truth for the chainable JS-array-shaped methods that may
 appear after a stream / collection receiver inside a `$$ = …` statement. One
 entry per method, each declaring its arg-shape validator and its lowering
 to MQL stages.
 
-The chain walker in [src/pipeline.ts](../../src/pipeline.ts) (`lowerChainOnStream` /
+The chain walker in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) (`lowerChainOnStream` /
 `lowerChainOnCollection`) reads from the registry — adding a method here
 makes it usable in both contexts the walker covers.
 
@@ -24,7 +24,7 @@ the receiver.
 ## Where the chain walker runs
 
 Three contexts share the same registry. The per-method loop is the single
-helper `applyStreamMethods` in [src/pipeline.ts](../../src/pipeline.ts); the
+helper `applyStreamMethods` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts); the
 first two contexts reach it through `lowerChainOnStream` / `lowerReplaceStream`,
 the third through `lowerStatementTail`:
 
@@ -82,8 +82,8 @@ export type StreamMethodResult = {
 |---|---|---|
 | **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLowerCase()` (materialised — see below) | `fieldKeyArg` + `SortKeySink` |
 | **Unwind path** — `.flatMap` | the property string `"items"`, or the equivalent bare-path arrow `d => d.items`. No computed form | `fieldKeyArg` |
-| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) | `keyExpr` (`src/stream-methods.ts`) |
-| **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair | `shorthandToLambda` (`src/codegen.ts`), reached at the lookup head via `detectLookupCall` — see [lookup-stage.md](lookup-stage.md) § Module layout |
+| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) | `keyExpr` (`src/registry/names.ts`) |
+| **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair | `shorthandToLambda` (`src/compiler/emit/lower.ts`), reached at the lookup head via `detectLookupCall` — see [lookup-stage.md](lookup-stage.md) § Module layout |
 
 Everything downstream must ask the resolver what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring trap: it makes `.groupBy(d => d.cat)` skip the collapsing `$first` unwrap that `.groupBy("cat")` gets (`isCollapsingTerminal`), and rejects `.find({ … })` outright while `.filter({ … })` sails through — two spellings of one meaning, diverging on the AST node that happened to carry it.
 
@@ -132,7 +132,7 @@ shorthand `.map("<field>")` (≡ `.map(d => d.<field>)`), lowering to
 `{ $replaceWith: "$<field>" }`.
 
 Note: `.keyBy` / `.groupBy` / `.countBy` build their object keys through the shared
-`stringKeyExpr` helper (`src/codegen.ts`) — `{ $ifNull: [{ $toString: <key> }, "null"] }`
+`stringKeyExpr` helper (`src/compiler/emit/lower.ts`) — `{ $ifNull: [{ $toString: <key> }, "null"] }`
 — so a missing/null grouping field coerces to the string `"null"` (matching
 `String(null)`) instead of feeding `$arrayToObject` a null key, which the server
 rejects. The identical helper is used by the value-mode forms, so both modes agree.
@@ -142,7 +142,7 @@ on it must cast it to the field's own type first — see the `keyBy`/`groupBy`/`
 footgun in [LANGUAGE.md](../LANGUAGE.md#lodash-array-methods) for the `ObjectId` case.
 
 **`.map` body must be a document.** `.map` lowers to `$replaceWith: <body>`, which
-MongoDB requires to be an object root. `rejectNonDocumentMapBody` literal-gates the
+MongoDB requires to be an object root. the `map` row's `streamBody: "document"` fact gates the
 body exactly like the `$ = <expr>` guard (`rejectNonDocumentReplaceRoot` in
 pipeline.ts): a **provably** non-document body — a `Number`/`String`/`Boolean`/
 `Null`/`RegExp`/`Array` literal — is rejected at compile time (parity with `$ = 5`),
@@ -195,7 +195,7 @@ $$ = [$$.reduce((acc, d) => ({ ...acc, <key>: <expr>, … }), { <key>: <init>, �
 ```
 
 Both forms are recognised by `detectReduceWrap` (exported from
-[src/stream-methods.ts](../../src/stream-methods.ts)) and produce:
+[src/registry/names.ts](../../src/registry/names.ts)) and produce:
 
 ```js
 [
@@ -299,8 +299,8 @@ $$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), []);
 ```
 
 This form is detected by `detectArrayReducerWrap` and lowered by
-`lowerArrayReducerWrap` in [src/pipeline.ts](../../src/pipeline.ts). The
-lowering lives in pipeline.ts (not in stream-methods.ts) because it reuses
+`lowerArrayReducerWrap` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts). The
+lowering lives in pipeline.ts (not in src/registry/names.ts) because it reuses
 `lowerStreamFilterPredicate` — the same predicate translator `.filter`
 uses — to handle the condition. `$.<field>` references inside the condition
 are rejected with the standard "use the lambda parameter" hint.
@@ -360,7 +360,7 @@ method names not in the registry. Two branches:
 
 To add a new method:
 
-1. Define the `StreamMethodDef` in [src/stream-methods.ts](../../src/stream-methods.ts).
+1. Define the `StreamMethodDef` in [src/registry/names.ts](../../src/registry/names.ts).
 2. Add it to the `STREAM_METHODS` map.
 3. Add a row to the table above with the args / lowering.
 4. Add tests in [test/stream-methods.test.ts](../../test/stream-methods.test.ts) for
@@ -392,7 +392,7 @@ $$.toSorted((a, b) => b.age - a.age).take(10);
 ```
 
 The assignment form `$$ = $$.<chain>;` is the same program with an explicit head, and lowers identically; it is never the default spelling.
-The detection lives in `lowerStatementTail` ([src/pipeline.ts](../../src/pipeline.ts)):
+The detection lives in `lowerStatementTail` ([src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)):
 after the `$$.push(...)` / diagnostic-source-stage checks, a `collectStreamChain`
 rooted at a bare `$$` (`CollectionRef`) with at least one method is handed to
 the shared `applyStreamMethods` engine. Because `push` / `indexStats` are not
@@ -430,7 +430,7 @@ the JS methods are not and, with no `$sort` in front, silently orders by `_id` r
 than erroring. `.toSorted(c).toReversed()` is in any case a longer spelling of writing
 the comparator descending.
 
-`fromTheEndRejection` (`src/stream-methods.ts`) owns the rejection and is called from
+`fromTheEndRejection` (`src/registry/names.ts`) owns the rejection and is called from
 all three places a stream chain is assembled — `unknownStreamMethod` (bare `$$` and
 `$$ =` contexts), `validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop
 in `tryExtractChainedLookup`. The last one matters: without it a foreign chain would
@@ -465,7 +465,7 @@ carry an answer. There are four, and no fifth:
 
 | Answer | Where |
 |---|---|
-| a lowering | `STREAM_METHODS` in `src/stream-methods.ts` |
+| a lowering | `STREAM_METHODS` in `src/registry/names.ts` |
 | a tailored value-position message | `VALUE_TERMINAL_METHODS` — the method collapses the stream to one value, and the message says where it *does* work |
 | a written reason | `STREAM_UNSUPPORTED` — why this one cannot work on a stream, and what to write instead |
 | handled outside this registry | `STREAM_HANDLED_ELSEWHERE` — `.filter` / `.reject` / `.find` / `.reduce`, each named with its real home |

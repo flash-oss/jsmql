@@ -2176,32 +2176,8 @@ declare global {
     find(predicate: ((doc: any) => any) | Record<string, any> | string): any;
     /** Take a window of the stream → `$skip` / `$limit`. */
     slice(start: number, end?: number): JsmqlForeignRef;
-    /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
-    sample(): JsmqlForeignRef;
-    /** First `n` documents → `$limit`. */
-    take(n: number): JsmqlForeignRef;
-    /** Skip the first `n` documents → `$skip`. */
-    drop(n: number): JsmqlForeignRef;
-    /** All but the first document → `$skip: 1` (lodash `_.tail`). */
-    tail(): JsmqlForeignRef;
-    /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
-    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlForeignRef;
-    /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
-    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlForeignRef;
-    /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
-    shuffle(): JsmqlForeignRef;
-    /** `n` random documents → `$sample`. */
-    sampleSize(n: number): JsmqlForeignRef;
     /** Append documents / union collections → `$unionWith`. */
     concat(...sources: any[]): JsmqlForeignRef;
-    /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
-    map(transform: ((doc: any) => any) | string): JsmqlForeignRef;
-    /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
-    sort(
-      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
-    ): JsmqlForeignRef;
-    /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
-    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlForeignRef;
     /** Order the stream → `$sort` (equivalent to `.sort` on a stream). */
     toSorted(
       sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
@@ -2213,26 +2189,54 @@ declare global {
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlForeignRef;
-    /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
-    groupBy(spec: string | Record<string, any>): JsmqlForeignRef;
-    /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
-    countBy(field: string): JsmqlForeignRef;
-    /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
-    keyBy(field: string): JsmqlForeignRef;
-    /** One document per distinct key → `$group` + `$replaceWith`. */
-    uniqBy(field: string): JsmqlForeignRef;
+    /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
+    flatMap(transform: ((doc: any) => any) | string): JsmqlForeignRef;
+    /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
+    map(transform: ((doc: any) => any) | string): JsmqlForeignRef;
+    /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
+    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlForeignRef;
+    /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
+    sort(
+      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
+    ): JsmqlForeignRef;
     /** One document per distinct WHOLE document → `$group` + `$replaceWith`. */
     uniq(): JsmqlForeignRef;
+    /** One document per distinct key → `$group` + `$replaceWith`. */
+    uniqBy(field: string): JsmqlForeignRef;
     /** Alias of `.uniq()` — MongoDB's `$group` needs no sorted input. */
     sortedUniq(): JsmqlForeignRef;
     /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
     sortedUniqBy(field: string): JsmqlForeignRef;
+    /** First `n` documents → `$limit`. */
+    take(n: number): JsmqlForeignRef;
+    /** Skip the first `n` documents → `$skip`. */
+    drop(n: number): JsmqlForeignRef;
+    /** All but the first document → `$skip: 1` (lodash `_.tail`). */
+    tail(): JsmqlForeignRef;
+    /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
+    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlForeignRef;
+    /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
+    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlForeignRef;
+    /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
+    sample(): JsmqlForeignRef;
+    /** `n` random documents → `$sample`. */
+    sampleSize(n: number): JsmqlForeignRef;
+    /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
+    keyBy(field: string): JsmqlForeignRef;
+    /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
+    groupBy(spec: string | Record<string, any>): JsmqlForeignRef;
+    /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
+    countBy(field: string): JsmqlForeignRef;
+    /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
+    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlForeignRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
     pick(fields: string[]): JsmqlForeignRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
     omit(fields: string[]): JsmqlForeignRef;
-    /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
-    flatMap(transform: ((doc: any) => any) | string): JsmqlForeignRef;
+    /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
+    shuffle(): JsmqlForeignRef;
+    /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
+    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlForeignRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
     filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlForeignRef;
     /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
@@ -2456,15 +2460,67 @@ declare global {
     /** The stream's document count. Always the ROOT stream, at any nesting depth. */
     readonly length: number;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    at(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    chunk(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    compact(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    concat(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    difference(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    differenceBy(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    dropRight(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    dropRightWhile(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    entries(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     every(predicate: ((doc: any) => any) | Record<string, any> | string): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    find(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    findIndex(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    findLast(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    findLastIndex(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     first(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    flat(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    flatten(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    fromPairs(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     head(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     includes(value: any): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    indexOf(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    initial(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    intersection(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    intersectionBy(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    isDisjointFrom(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    isSubsetOf(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    isSupersetOf(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    join(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    keys(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     last(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    lastIndexOf(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     max(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
@@ -2482,6 +2538,10 @@ declare global {
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     partition(predicate: ((doc: any) => any) | Record<string, any> | string): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    reduce(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    reduceRight(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     size(): number;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     some(predicate: ((doc: any) => any) | Record<string, any> | string): any;
@@ -2489,6 +2549,38 @@ declare global {
     sum(): number;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     sumBy(iteratee: ((doc: any) => any) | string): number;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    symmetricDifference(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    takeRight(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    takeRightWhile(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    toReversed(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    toSpliced(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    union(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    unionBy(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    unzip(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    values(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    with(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    without(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    xor(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    xorBy(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    zip(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    zipObject(...args: any[]): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    zipWith(...args: any[]): any;
     [Symbol.iterator](): Iterator<any>;
     [key: string]: any;
   }
@@ -2530,32 +2622,8 @@ declare global {
     push(...docs: any[]): JsmqlCollectionRef;
     /** Take a window of the stream → `$skip` / `$limit`. */
     slice(start: number, end?: number): JsmqlCollectionRef;
-    /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
-    sample(): JsmqlCollectionRef;
-    /** First `n` documents → `$limit`. */
-    take(n: number): JsmqlCollectionRef;
-    /** Skip the first `n` documents → `$skip`. */
-    drop(n: number): JsmqlCollectionRef;
-    /** All but the first document → `$skip: 1` (lodash `_.tail`). */
-    tail(): JsmqlCollectionRef;
-    /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
-    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
-    /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
-    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
-    /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
-    shuffle(): JsmqlCollectionRef;
-    /** `n` random documents → `$sample`. */
-    sampleSize(n: number): JsmqlCollectionRef;
     /** Append documents / union collections → `$unionWith`. */
     concat(...sources: any[]): JsmqlCollectionRef;
-    /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
-    map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
-    /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
-    sort(
-      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
-    ): JsmqlCollectionRef;
-    /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
-    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlCollectionRef;
     /** Order the stream → `$sort` (equivalent to `.sort` on a stream). */
     toSorted(
       sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
@@ -2567,26 +2635,54 @@ declare global {
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlCollectionRef;
-    /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
-    groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
-    /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
-    countBy(field: string): JsmqlCollectionRef;
-    /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
-    keyBy(field: string): JsmqlCollectionRef;
-    /** One document per distinct key → `$group` + `$replaceWith`. */
-    uniqBy(field: string): JsmqlCollectionRef;
+    /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
+    flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
+    map(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
+    filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
+    /** Order the stream → `$sort`. Field name, `[fields]`, `{ field: 1|-1|"asc"|"desc" }`, or a comparator. */
+    sort(
+      sort: string | string[] | Record<string, 1 | -1 | "asc" | "desc"> | ((a: any, b: any) => number),
+    ): JsmqlCollectionRef;
     /** One document per distinct WHOLE document → `$group` + `$replaceWith`. */
     uniq(): JsmqlCollectionRef;
+    /** One document per distinct key → `$group` + `$replaceWith`. */
+    uniqBy(field: string): JsmqlCollectionRef;
     /** Alias of `.uniq()` — MongoDB's `$group` needs no sorted input. */
     sortedUniq(): JsmqlCollectionRef;
     /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
     sortedUniqBy(field: string): JsmqlCollectionRef;
+    /** First `n` documents → `$limit`. */
+    take(n: number): JsmqlCollectionRef;
+    /** Skip the first `n` documents → `$skip`. */
+    drop(n: number): JsmqlCollectionRef;
+    /** All but the first document → `$skip: 1` (lodash `_.tail`). */
+    tail(): JsmqlCollectionRef;
+    /** Keep the leading run where the predicate holds, stopping at the first failure → `$setWindowFields` running flag + `$match` (lodash `_.takeWhile`). Needs a preceding sort. */
+    takeWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
+    /** Drop the leading run where the predicate holds, keeping from the first failure on → `$setWindowFields` running flag + `$match` (lodash `_.dropWhile`). Needs a preceding sort. */
+    dropWhile(predicate: ((doc: any) => any) | Record<string, any> | string): JsmqlCollectionRef;
+    /** One random document → `$sample: { size: 1 }` (lodash `_.sample`; use `.sampleSize(n)` for more). */
+    sample(): JsmqlCollectionRef;
+    /** `n` random documents → `$sample`. */
+    sampleSize(n: number): JsmqlCollectionRef;
+    /** Key documents by a field → the lodash object `{ <key>: <last doc> }`. */
+    keyBy(field: string): JsmqlCollectionRef;
+    /** Group the stream. A field name collapses to the lodash object `{ <key>: [docs] }`; a `$group` body (`{ _id, … }`) lowers to a `$group` stage. */
+    groupBy(spec: string | Record<string, any>): JsmqlCollectionRef;
+    /** Tally documents per distinct key → the lodash object `{ <key>: <count> }` (for the count-descending stream, use the `$sortByCount` stage). */
+    countBy(field: string): JsmqlCollectionRef;
+    /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */
+    reject(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
     /** Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named). */
     pick(fields: string[]): JsmqlCollectionRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
     omit(fields: string[]): JsmqlCollectionRef;
-    /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
-    flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
+    /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
+    shuffle(): JsmqlCollectionRef;
+    /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
+    aggregate(pipeline: ((doc: any, index?: number, coll?: any) => void) | object[]): JsmqlCollectionRef;
     /** Narrow the stream → `$match`. Pass an arrow predicate or a matches-object (`{ field: value }`). */
     filter(predicate: ((doc: any) => any) | Record<string, any>): JsmqlCollectionRef;
     /** Drop matching documents → `$match` (`.filter` negated). Pass an arrow predicate or a matches-object. */

@@ -4,7 +4,7 @@ import { resolve } from "node:path";
 import { execSync } from "node:child_process";
 import yaml from "js-yaml";
 import { OPERATORS, OPERATOR_CATEGORIES } from "../src/operators.ts";
-import { streamMethodNames } from "../src/stream-methods.ts";
+import { streamMethodNames } from "../src/compiler/rows.ts";
 import { STAGES } from "../src/stages.ts";
 import { generateGlobalsSource } from "../scripts/generate-globals.mjs";
 

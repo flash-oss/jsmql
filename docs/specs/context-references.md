@@ -17,7 +17,7 @@ This spec covers **syntax only**. Codegen throws a `CodegenError` for any use of
 
 ## Lexer
 
-[`src/lexer.ts`](../../src/lexer.ts) — the `$` branch in `tokenize()` does longest-match counting over consecutive `$` characters, then chooses one of:
+[`src/compiler/lex/lexer.ts`](../../src/compiler/lex/lexer.ts) — the `$` branch in `tokenize()` does longest-match counting over consecutive `$` characters, then chooses one of:
 
 | Source              | Token            |
 | ------------------- | ---------------- |
@@ -38,7 +38,7 @@ The trailing `.` / `[` is **not** consumed by the new prefix tokens — they're 
 
 ## AST
 
-[`src/ast.ts`](../../src/ast.ts) — three new bare marker nodes added immediately after `FieldRef`:
+[`src/registry/ast.ts`](../../src/registry/ast.ts) — three new bare marker nodes added immediately after `FieldRef`:
 
 ```ts
 | { type: "CollectionRef"; pos: number }   // $$
@@ -56,7 +56,7 @@ Why separate node types instead of a single `ContextRef { depth }`? Cleaner patt
 
 ## Parser
 
-[`src/parser.ts`](../../src/parser.ts) — `parsePrimary()` adds three cases that dispatch to one shared helper:
+[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parsePrimary()` adds three cases that dispatch to one shared helper:
 
 ```ts
 case TokenType.DoubleDollar:  return this.parseContextRef("CollectionRef", "$$");
@@ -76,7 +76,7 @@ Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens
 
 ## Codegen
 
-[`src/codegen.ts`](../../src/codegen.ts) — three new cases in the main `_generate` switch immediately after `FieldRef`. Each throws a `CodegenError` with the offending node's `pos`:
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — three new cases in the main `_generate` switch immediately after `FieldRef`. Each throws a `CodegenError` with the offending node's `pos`:
 
 ```ts
 case "CollectionRef":
@@ -94,7 +94,7 @@ Because postfix wraps recurse into their `object` first, any chained form (`$$.f
 
 ## Helpers that pattern-match `FieldRef`
 
-Several codegen / parser helpers explicitly check for `FieldRef` — `asFieldPath`, `targetToPath`, `tryFieldPath`, `isFieldPathTarget`, the `match-translation` field-path extractor. All of them return `null` / `false` for the new node types, which is correct:
+The emitter locates a `FieldRef` through one function, `locate` in `src/compiler/emit/lower.ts`, which every write target and read shares.
 
 - Path extractors give up — context refs aren't document field paths.
 - Assignment-target validator rejects them — you can't write to `$$.foo`.

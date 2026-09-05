@@ -107,7 +107,7 @@ jsmql("$add($.a, $.b)");
 // → { $expr: { $add: ["$a", "$b"] } }
 ```
 
-The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/match-query-translation.md](specs/match-query-translation.md) for the full table.
+The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
 
 **`new Date(...)` and indexes.** When all `new Date(...)` arguments are compile-time literals — `new Date("2026-01-01")`, `new Date(2026, 1, 1)`, `new Date(Date.UTC(2026, 1, 1))` — jsmql folds the constructor at compile time and emits a real JS `Date` instance on the query-doc RHS. That's the shape MongoDB indexes on `createdAt` actually need. `new Date()` (zero-arg, server-side `$$NOW`) and `new Date($.someField)` necessarily fall back to `$expr` since they can't be evaluated until query time. Conversely, `{ field: { $gte: { $toDate: "..." } } }` does **not** work in a Filter — MongoDB's query language treats `{ $toDate: ... }` as a literal subdocument, never matching anything. The fold avoids that footgun.
 
@@ -765,7 +765,7 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
-**Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/stream-methods.ts](../src/stream-methods.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
+**Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
 
 **Any lodash stream method may *start* the chain — not only `.find` / `.filter` / `.aggregate`.** The whole chain lowers, in source order, into one `$lookup.pipeline`, and a `.filter` / `.reject` may sit at any position (each becomes a `$match`, correlating `$.<field>` into `let` when present). Because stages run in chain order, `.toSorted(k).take(n).filter(p)` sorts and caps *before* filtering — a different result from filter-first, and one no prior spelling could express. A chain with no `$.` correlation emits the lean uncorrelated `$lookup` (no `let`, matching the `.aggregate` shape):
 
@@ -865,7 +865,7 @@ Reference a collection in the CURRENT database instead — write '$$$.orders'
 (drop the '$$$$.cold_storage.' prefix) …
 ```
 
-**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives at the `requireSameDbColl` choke point in [`src/lookup-translation.ts`](../../src/lookup-translation.ts).
+**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives at the `requireSameDbColl` choke point in [`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts).
 
 **What to write instead.** Reference the collection in the *current* database with same-database `$$$.<coll>` (drop the `$$$$.<db>.` prefix) and run the pipeline against the database that holds the data:
 
@@ -1049,11 +1049,12 @@ To count an **inner** sub-stream (not the root), use the 3rd callback param —
 lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
 
 **Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
-count. Inside a top-level `$lookup` (predicate, `.aggregate` block, or `.map` chain)
-`$$.length` works via the `$lookup.let` capture above; still **not** supported
-inside a `$facet`/`$unionWith` sub-pipeline, a *deeper* nested lookup, or a
-reusable function body `[DEF-033]` (compute it at the top level and carry the
-value in).
+count. `$$.length` is the root count at every depth: a `$lookup` body
+(predicate, `.aggregate` block, or `.map` chain) reads it through the
+`$lookup.let` capture above, a `$facet` branch and a declared function body read
+the stamped field directly. The one place it cannot reach is a `$$.push(…)`
+(`$unionWith`) body — that stage has no `let`, so the compiler refuses the read
+and names the join form that carries the value.
 
 ### `$out`: write the pipeline to a collection
 
@@ -3533,7 +3534,7 @@ jsmql("[{ $match: $.deletedAt == null }]");
 // → [{ $match: { deletedAt: null } }]
 ```
 
-The full rule table and divergence reference live in [docs/specs/match-query-translation.md](specs/match-query-translation.md).
+The full rule table and divergence reference live in [docs/specs/emit-pass.md](specs/emit-pass.md).
 
 ### Local bindings (`let`)
 

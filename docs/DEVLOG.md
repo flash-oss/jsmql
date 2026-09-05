@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — refactor: the shipped compiler is gone
+
+Thirty source modules — `codegen.ts`, `pipeline.ts`, `lookup-translation.ts`, `stream-methods.ts`, `methods/`, the `mql-*` builders, the old lexer, parser and AST, the validators and the sugar translators — are removed; nothing imported them since the swap. The globals generator reads the registry now: `src/compiler/rows.ts` exposes the vocabulary it types (`streamMethodNames`, `valueMethodNames`, `valueMethodReturns`, `valueTerminalMethodNames`, `nativeDateMethodNames`, `requiredReceiverFamily`), each derived from the rows' cells and `on` — a method chains on `$` because its row has a stream RULE, ends a `$$.<coll>` chain with a value because it has an array value rule and no stream rule — so `src/globals.ts` cannot drift from what the compiler accepts. `src/operators.ts` and `src/stages.ts` stay as the operator and stage shapes the generator reads.
+
+The specs that described only the removed modules go with them (`lowering-grid`, `method-dispatch`, `predicate-ir`, `operator-validation`, `pipeline-validation`, `match-query-translation`, `const-folding`); the remaining specs and the CLAUDE guides point at the modules that own each construct now. DEF-033 closes: `$.length` reads the root stream at every depth, inside a `$facet` branch and a function body alike; the one body that cannot read it, `$unionWith`, has no `let` by MongoDB's design and says so.
+
+Two deferred rows close with the removal. DEF-011 (partial extraction under `||` in `$match`) described the removed translator: the new filter road lowers each `||` branch on its own. DEF-033 (`$$.length` in a sub-pipeline or a function body) is the stream-length rule at every depth: a `$facet` branch and a declared function body read the stamped field, a `$lookup` body reads it through `let`, and a `$unionWith` body — the one stage without a `let` — refuses the read and names the join form. `docs/specs/stream-length.md` and `docs/LANGUAGE.md` state the rule; the tags are gone. The globals generator reads the registry's arity for the value terminals, so a no-argument terminal is typed `(): T`, and `Array.from` stays a static in TypeScript's own lib.
+
+---
+
 ## 2026-09-06 — feat!: the new compiler is jsmql
 
 `src/index.ts` runs `src/compiler/` over `src/registry/` for every entry — `jsmql()`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`, each `.compile`, and `jsmql.validate` — in all three call shapes. The module only turns the caller's input into source and values and the compiler's errors into `validate()` results; the shape of a program is read off the parsed tree (`shapeOf`), and a `const` prelude before one predicate is a Filter, the constants inlined (a Date or an ObjectId the source cannot spell rides in as the value). What changes at the call site:

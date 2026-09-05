@@ -9,11 +9,11 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 - **MongoDB docs:** https://www.mongodb.com/docs/manual/reference/mql/aggregation-stages/
 - **Spec YAML:** `vendor/mql-specifications/definitions/stage/`
 - **Registry:** [src/stages.ts](../../src/stages.ts) — `STAGES` is the single source of truth for stage names, descriptions, and per-stage sub-pipeline fields.
-- **Detection + lowering:** [src/pipeline.ts](../../src/pipeline.ts).
+- **Detection + lowering:** [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts).
 
 ## Two pipeline forms
 
-jsmql accepts two surface forms that both compile through `src/pipeline.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form-;-between-stages) recommends, what the README's tour uses, and what the realistic-test pipelines author. The bracketed form is the alternative for "evaluates to an array literal" cases and verbatim MQL copy-paste.
+jsmql accepts two surface forms that both compile through `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form-;-between-stages) recommends, what the README's tour uses, and what the realistic-test pipelines author. The bracketed form is the alternative for "evaluates to an array literal" cases and verbatim MQL copy-paste.
 
 1. **`;`-separated (canonical)** — any `;` at the top level (including a single trailing `;`) flips parsing to pipeline mode. `Parser.parse()` returns a `Pipeline` whose `stmts` are the `;`-separated statements; `compile()` dispatches to `generateImplicitPipeline`. Each statement is lowered in isolation; adjacent update op statements **never** coalesce across `;`.
 2. **Bracketed `[…]`** — `Parser.parse()` returns an `ArrayLiteral`; `compile()` calls `isPipelineAst(ast)` to decide between pipeline and expression mode and dispatches to `generatePipeline`. Adjacent update op elements **coalesce** through `generateUpdateOpGroups`.
@@ -76,12 +76,12 @@ $$$.archive = $$.$match({ s: "x" }).$sort({ a: -1 });
 ```
 
 Name resolution, arity, and the sub-pipeline placement rules live in one leaf module,
-[src/stage-link.ts](../../src/stage-link.ts), so all three containers share the wording.
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts), so all three containers share the wording.
 Placement is validated per container from the same declarative `forbiddenIn` / `position`
 data the statement path reads — so `.$out(…)` inside a `$lookup` chain is rejected. An
 `.aggregate((o) => { … })` block gets the identical check and wording, via
 `GenerateCtx.subPipelineContainer`; see
-[pipeline-validation.md](pipeline-validation.md).
+[emit-pass.md](emit-pass.md).
 
 **Correlation.** Inside a foreign sub-pipeline `$.` means the *outer* document and hoists
 into `$lookup.let`. That works in every aggregation-**expression** slot:
@@ -154,11 +154,11 @@ When detection trigger 1 + 2 do not fire, the array is left to the existing expr
 
 When `Parser.parse()` sees any `;` token at the top level, it returns a `Pipeline` node directly — there is no `isPipelineAst`-style heuristic on the resulting elements. Each statement contributes to the pipeline regardless of whether its first form looks like a stage; non-stage expressions are reported with the usual stage-suggestion error during lowering.
 
-The presence of `;` is also the top-level dispatch signal: any `;` flips `jsmql()` into Pipeline mode, and no `;` routes the input to the [Filter dispatch](filter-mode.md) instead. So a bare predicate like `$.age > 18;` is **rejected** with an actionable `$match(...)` suggestion — Pipeline statements must be stage calls (or update ops / `let` bindings). The error helper `looksLikePredicate` in [src/pipeline.ts](../../src/pipeline.ts) detects comparison / logical / unary-`!` shapes and steers the wording to "wrap as `$match(...)`" so the user doesn't have to look it up.
+The presence of `;` is also the top-level dispatch signal: any `;` flips `jsmql()` into Pipeline mode, and no `;` routes the input to the [Filter dispatch](filter-mode.md) instead. So a bare predicate like `$.age > 18;` is **rejected** with an actionable `$match(...)` suggestion — Pipeline statements must be stage calls (or update ops / `let` bindings). The error helper `looksLikePredicate` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) detects comparison / logical / unary-`!` shapes and steers the wording to "wrap as `$match(...)`" so the user doesn't have to look it up.
 
 ## Lowering
 
-`generatePipeline(ast)` walks the array and emits a stage object per element via `generateStageBody(stageName, body)`. The single stage-aware transform is the **`$match` body translation rule** ([src/match-translation.ts](../../src/match-translation.ts), full rules in [match-query-translation.md](match-query-translation.md)):
+`generatePipeline(ast)` walks the array and emits a stage object per element via `generateStageBody(stageName, body)`. The single stage-aware transform is the **`$match` body translation rule** ([src/compiler/emit/filter.ts](../../src/compiler/emit/filter.ts), full rules in [emit-pass.md](emit-pass.md)):
 
 - `{ $match: <ObjectLiteral> }` → raw passthrough (interpreted as a MongoDB query document; the existing object-literal codegen produces the right shape verbatim). This is also the explicit escape hatch: `$match({ $expr: $.foo === 5 })` forces strict aggregation `$eq` semantics.
 - `{ $match: <other expression> }` → `translateMatchBody(body)` returns a query-language fragment plus an optional residual. Fully-translatable bodies emit `{ $match: <queryDoc> }` (index-friendly). Partially-translatable bodies emit `{ $match: { ...<queryDoc>, $expr: <residual> } }` so the planner still uses indexes on the translatable half. Fully-untranslatable bodies emit `{ $match: { $expr: <body> } }`.
@@ -167,13 +167,13 @@ For other stages, the body is generated with the existing `generate()` infrastru
 
 ### `$`-string pass-through (HR1) and the `pipelineContext` flag
 
-Under **HR1** (see [docs/LANG_RULES.md](../LANG_RULES.md)), a source-typed `$`-prefixed string literal passes through verbatim in **every** context — pipeline, stage body, `jsmql.expr`, and the standalone Filter `$expr` residual alike. The `StringLiteral` codegen case ([src/codegen.ts](../../src/codegen.ts)) emits it unchanged; jsmql adds no `{ $literal: … }` of its own. So a stage path (`$unwind("$items")`), a stage-spec value (`$project({ x: "$y" })`), an array body (`$documents([{ a: "$x" }])`), and a nested operator argument (`$project({ t: $concat("$a", "$b") })`) all round-trip, and pasted raw MQL (`[{ $unwind: "$items" }]` in → identical out) is never mangled into the un-runnable `{ $unwind: { $literal: "$items" } }`.
+Under **HR1** (see [docs/LANG_RULES.md](../LANG_RULES.md)), a source-typed `$`-prefixed string literal passes through verbatim in **every** context — pipeline, stage body, `jsmql.expr`, and the standalone Filter `$expr` residual alike. The `StringLiteral` codegen case ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)) emits it unchanged; jsmql adds no `{ $literal: … }` of its own. So a stage path (`$unwind("$items")`), a stage-spec value (`$project({ x: "$y" })`), an array body (`$documents([{ a: "$x" }])`), and a nested operator argument (`$project({ t: $concat("$a", "$b") })`) all round-trip, and pasted raw MQL (`[{ $unwind: "$items" }]` in → identical out) is never mangled into the un-runnable `{ $unwind: { $literal: "$items" } }`.
 
-The only auto-`$literal` wrap is HR1's runtime-injected exception (`jsmql.compile` params / template-tag `${…}`), applied by `literalSafeInjectedString` via `safeBoundValue`. `GenerateCtx.pipelineContext` — seeded once at the pipeline entrypoints (`generatePipeline` / `generateImplicitPipeline` / `generatePipelineWithCtx`) and propagated down (`extendCtx`, `freshSubPipelineCtx`, `freshFacetCtx`; the let/accumulator helpers spread `...ctx`) — now gates **only** that injected-value wrap: injected values pass through inside a pipeline and wrap in `jsmql.expr` position. The `$literal(...)` operator (which sets `insideLiteral`) forces a literal `$`-string anywhere. See [src/codegen.ts](../../src/codegen.ts) `GenerateCtx.pipelineContext`.
+The only auto-`$literal` wrap is HR1's runtime-injected exception (`jsmql.compile` params / template-tag `${…}`), applied by `literalSafeInjectedString` via `safeBoundValue`. `GenerateCtx.pipelineContext` — seeded once at the pipeline entrypoints (`generatePipeline` / `generateImplicitPipeline` / `generatePipelineWithCtx`) and propagated down (`extendCtx`, `freshSubPipelineCtx`, `freshFacetCtx`; the let/accumulator helpers spread `...ctx`) — now gates **only** that injected-value wrap: injected values pass through inside a pipeline and wrap in `jsmql.expr` position. The `$literal(...)` operator (which sets `insideLiteral`) forces a literal `$`-string anywhere. See [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) `GenerateCtx.pipelineContext`.
 
-One validator consequence: `rejectNonDocumentNewRoot` ([src/stage-validation.ts](../../src/stage-validation.ts)) now allows a `$`-prefixed string for `$replaceWith` / `$replaceRoot.newRoot` (a field path that resolves to a document at runtime — same as the `$.field` form); a non-`$` literal string is still rejected.
+One validator consequence: `rejectNonDocumentNewRoot` ([src/compiler/emit/check.ts](../../src/compiler/emit/check.ts)) now allows a `$`-prefixed string for `$replaceWith` / `$replaceRoot.newRoot` (a field path that resolves to a document at runtime — same as the `$.field` form); a non-`$` literal string is still rejected.
 
-Before lowering, every stage body passes through `validateStageBody` ([src/stage-validation.ts](../../src/stage-validation.ts)) and every stage's placement is checked by the per-pipeline validator in [src/pipeline.ts](../../src/pipeline.ts). This pre-flight pass rejects the structural and shape violations the MongoDB server would otherwise reject — see [pipeline-validation.md](pipeline-validation.md).
+Before lowering, every stage body passes through `validateStageBody` ([src/compiler/emit/check.ts](../../src/compiler/emit/check.ts)) and every stage's placement is checked by the per-pipeline validator in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts). This pre-flight pass rejects the structural and shape violations the MongoDB server would otherwise reject — see [emit-pass.md](emit-pass.md).
 
 `generateImplicitPipeline(p)` lowers each `;`-separated statement independently. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already emits one or more `$set`/`$unset` stages depending on its `,`-grouped coalescing and read-after-write splits); a stage expression goes through `generatePipeline` with a single-element synthesised `ArrayLiteral` so the `$match` translation rule and sub-pipeline recursion still apply. The output of each statement is concatenated onto the pipeline — there is no cross-statement buffering, so update ops on either side of a `;` never combine.
 
@@ -189,7 +189,7 @@ For sub-pipeline slots, lowering checks whether the value is itself `isPipelineA
 ## Accumulator / window operator context
 
 Some operators are only valid in particular stage slots, and `checkOperatorContext`
-in [src/codegen.ts](../../src/codegen.ts) enforces that at compile time:
+in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) enforces that at compile time:
 
 - **Window-only** operators (any with `category: "window"` in the registry) are
   confined to `$setWindowFields.output` slots.
@@ -197,13 +197,13 @@ in [src/codegen.ts](../../src/codegen.ts) enforces that at compile time:
   [operator-registry.md](operator-registry.md), which owns the flag) are confined to
   `$group` field-value slots and `$setWindowFields.output`.
 
-The context is set by `generateBodyObject` in [src/pipeline.ts](../../src/pipeline.ts)
+The context is set by `generateBodyObject` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)
 via `GenerateCtx.accumulatorContext`. Both sets are read from the registry rather than
 listed here, so a new operator is gated by its registry entry alone.
 
 ## Object-key syntax for `$<name>`
 
-The parser accepts `Dollar` + identifier tokens as a static object key in `parseObjectEntry` ([src/parser.ts](../../src/parser.ts)). Without this, `{ $match: ... }` would fail to parse. The synthesised key name is `$<ident>` exactly — matching how operator names appear elsewhere. This is JS-syntax-valid (`$match` is a legal JS identifier), so the [strict-subset-of-JavaScript](grammar.md#strict-js-subset-rule) invariant holds.
+The parser accepts `Dollar` + identifier tokens as a static object key in `parseObjectEntry` ([src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts)). Without this, `{ $match: ... }` would fail to parse. The synthesised key name is `$<ident>` exactly — matching how operator names appear elsewhere. This is JS-syntax-valid (`$match` is a legal JS identifier), so the [strict-subset-of-JavaScript](grammar.md#strict-js-subset-rule) invariant holds.
 
 ## Public API impact
 
@@ -225,7 +225,7 @@ Coverage lives in [test/pipeline.test.ts](../../test/pipeline.test.ts):
 
 - Each stage in stage-object and stage-call form, with assertions on exact MQL output.
 - Mixed-form pipelines.
-- `$match` body translation (expression body) and raw passthrough (object-literal body). Full translation-rule coverage in [test/match-translation.test.ts](../../test/match-translation.test.ts).
+- `$match` body translation (expression body) and raw passthrough (object-literal body). Full coverage in `test/compiler-filter.test.ts` and the two agreement suites.
 - Sub-pipeline recursion in `$lookup.pipeline`, `$unionWith.pipeline`, `$facet`.
 - Negatives: unknown stage with did-you-mean, mid-pipeline non-stage element, multi-key stage object.
 - Regression: plain value array `[1, 2, 3]` stays expression-mode.

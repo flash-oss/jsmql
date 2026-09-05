@@ -99,7 +99,7 @@ minter of `Truth`, and `mql.ts` builds every slot that reads one. The table in
 `lowerFilter(node, env)` in `emit/filter.ts` turns a predicate into a QUERY
 document — the language an index reads — and falls back to `{ $expr: <truth> }`
 exactly where a row states no native form. The rules the shipped translator
-established hold (see [match-query-translation.md](match-query-translation.md)
+established hold (see [emit-pass.md](emit-pass.md)
 for the query semantics and the documented divergences from the expression
 form), with one change the developer ruled:
 

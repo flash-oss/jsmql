@@ -34,7 +34,7 @@ When both appear, the only legal order is `(params, { $, … })`. Shorter combin
 
 ## Parser
 
-[`src/parser.ts`](../../src/parser.ts) — `parseFunctionInput` returns `{ program, bindings }` (type `FunctionInputResult`). The body is parsed exactly as today; the new work happens in `parseParameterList` (replacing the old `skipParameterList`).
+[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parseFunctionInput` returns `{ program, bindings }` (type `FunctionInputResult`). The body is parsed exactly as today; the new work happens in `parseParameterList` (replacing the old `skipParameterList`).
 
 `parseParameterList` walks each top-level slot inside the parens, calling `parseParameterSlot` for each:
 
@@ -66,7 +66,7 @@ Rejecting defaults entirely keeps the rule simple and the surface honest: **the 
 
 ## Codegen
 
-[`src/codegen.ts`](../../src/codegen.ts) — `GenerateCtx` gains an optional `bindings` field: `ReadonlyMap<string, unknown>`. Helpers:
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — `GenerateCtx` gains an optional `bindings` field: `ReadonlyMap<string, unknown>`. Helpers:
 
 - `extendCtx(ctx, params)` preserves `bindings` alongside `reduceRemap`, `pipelineLets`, `droppedLets`.
 - `freshSubPipelineCtx(outer)` — **carries `bindings` across the sub-pipeline boundary**, unlike `pipelineLets`. Sub-pipelines run against a different document, so `let` bindings (per-document state) can't follow them; function-form bindings (compile-time constants) can and should.
@@ -89,15 +89,15 @@ A lambda parameter inside the body legitimately shadows a binding of the same na
 
 ### Name-collision rule
 
-[`src/pipeline.ts`](../../src/pipeline.ts) — `lowerLetDecl` rejects a `let <name> = …` declaration whose `name` is already in `ctx.bindings`. Two strict-mode rules in JS already prevent the case from arising through legitimate arrow source (parameter and `let` cannot share a name in the same scope), so the check is defensive — but it produces a clear error if the function ever reaches codegen through any other path:
+[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) — `lowerLetDecl` rejects a `let <name> = …` declaration whose `name` is already in `ctx.bindings`. Two strict-mode rules in JS already prevent the case from arising through legitimate arrow source (parameter and `let` cannot share a name in the same scope), so the check is defensive — but it produces a clear error if the function ever reaches codegen through any other path:
 
 > `let <name>` shadows a function-form parameter binding of the same name. Rename one — parameter bindings are compile-time constants supplied at call time, `let` bindings are per-document values derived from a stage expression; mixing them under one name would be ambiguous.
 
 ### `$match` index-friendly translation
 
-[`src/match-translation.ts`](../../src/match-translation.ts) — `translateMatchBody` accepts an optional `TranslateCtx` with the same `bindings` map. The literal-detecting helpers (`anyEqualityLiteral`, `anyOrderedLiteral`) recognise a `ParamRef` whose name is in `ctx.bindings` as if it were a literal AST node, looking the value up at translation time.
+[`src/compiler/emit/filter.ts`](../../src/compiler/emit/filter.ts) — `translateMatchBody` accepts an optional `TranslateCtx` with the same `bindings` map. The literal-detecting helpers (`anyEqualityLiteral`, `anyOrderedLiteral`) recognise a `ParamRef` whose name is in `ctx.bindings` as if it were a literal AST node, looking the value up at translation time.
 
-This lets `$match($.age >= minAge)` with `{ minAge: 21 }` emit the index-friendly `{ $match: { age: { $gte: 21 } } }` instead of falling back to `{ $match: { $expr: { $gte: ["$age", 21] } } }`. The same type-divergence rules apply as for plain literals — booleans/null are accepted for equality but not for `<`/`>` (where they'd produce silent surprises). See [match-query-translation.md](match-query-translation.md) for the broader translator.
+This lets `$match($.age >= minAge)` with `{ minAge: 21 }` emit the index-friendly `{ $match: { age: { $gte: 21 } } }` instead of falling back to `{ $match: { $expr: { $gte: ["$age", 21] } } }`. The same type-divergence rules apply as for plain literals — booleans/null are accepted for equality but not for `<`/`>` (where they'd produce silent surprises). See [emit-pass.md](emit-pass.md) for the broader translator.
 
 ## index.ts — entry points
 

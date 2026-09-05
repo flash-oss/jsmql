@@ -109,7 +109,7 @@ operands by calling `_generate(arg, ctx)`, and the first operand for a bare
 When the RHS of `$ = …` is an object literal where every value is a
 `$$.filter(<lambda>)` call, the same `$ = { … }` surface lowers to a
 `$facet` stage instead of `$replaceWith`. The detection lives in
-`src/facet-translation.ts` and runs *before* the `$replaceWith` emission
+`src/compiler/emit/statement.ts` and runs *before* the `$replaceWith` emission
 inside `lowerReplaceRoot`'s callers:
 
 ```
@@ -136,7 +136,7 @@ Spread entries (`...rest`) and computed keys are also rejected in strict mode.
 
 **Each filter lambda becomes one sub-pipeline body.** `lowerFacetEntry(lambda, ctx, lowerBlock)`:
 
-- Predicate shape and arity come from the shared local-`$$` gate (`requireStreamPredicate`), so a facet branch accepts exactly the spellings the `$$ =` stream and an `$out` chain do — see [pipeline-validation.md](pipeline-validation.md) § the local-`$$` predicate gate. Exactly one parameter: the doc is named explicitly so the rejection message for `$.<field>` references can point at the right replacement (`o.<field>`).
+- Predicate shape and arity come from the shared local-`$$` gate (`requireStreamPredicate`), so a facet branch accepts exactly the spellings the `$$ =` stream and an `$out` chain do — see [emit-pass.md](emit-pass.md) § the local-`$$` predicate gate. Exactly one parameter: the doc is named explicitly so the rejection message for `$.<field>` references can point at the right replacement (`o.<field>`).
 - Expression body: rewritten via `extractLetsFromExpr` (foreign param → `FieldRef`), then run through `translateMatchBody` (same engine `$match` uses). Translatable portions emit index-friendly `{ field: value }`; residuals ride in `$expr` side-by-side.
 - Block body: rewritten via `extractLetsFromPipeline`, then lowered via `lowerBlock` (same `SubPipelineLowerer` used by lookup and union).
 - **`$.<field>` is rejected.** If `extractLetsFromExpr` / `extractLetsFromPipeline` returns any letVars (= the predicate referenced the local doc), the helper throws the shared `localRefInPredicateMessage` (`'$.<field>' inside '$$.filter(<predicate>)' in a \`$ = { ... }\` $facet branch is not supported — use the lambda parameter …`; a shorthand-spelled predicate is redirected to the arrow form instead, since it has no parameter the user could write). Rationale: inside a facet sub-pipeline, the lambda param IS the current document, so `$.x` and `o.x` would mean the same thing — supporting both invites drift. (Contrast with `$lookup`, where `$.x` refers to the *outer* doc and gets auto-`let`-extracted.)
@@ -171,7 +171,7 @@ variant it reuses the `allocSlot()` machinery and the closing `$replaceWith`
 discards the `__jsmql` namespace, so the trailing-`$unset` skip already applies.
 
 **What counts as "provably an array"** is exactly
-`staticBindingType(value) === "array"` (in `src/codegen.ts`): array literals,
+`staticBindingType(value) === "array"` (in `src/compiler/emit/lower.ts`): array literals,
 array-returning methods (`.map`, `.filter`, `.flatMap`, `.split`, `.slice` of an
 array, …), array operators, and `Object.entries/keys/values`. A bare field ref
 `$ = $.items` is **not** provably an array (field paths carry no compile-time
@@ -200,7 +200,7 @@ two spellings is a footgun we avoid.
 
 ## Detection
 
-`isReplaceRootAssign(op)` (in `src/pipeline.ts`) recognises the shape:
+`isReplaceRootAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the shape:
 
 ```ts
 op.target.type === "FieldRef" && op.target.path === ""
@@ -211,7 +211,7 @@ chain (different node type). The interception fires before the update-op
 buffer in three places — both pipeline entry points and the
 update-filter-with-lookups inner loop:
 
-- `generatePipeline` (the `[ … ]` form) — line ~196 in `src/pipeline.ts`
+- `generatePipeline` (the `[ … ]` form) — line ~196 in `src/compiler/emit/statement.ts`
 - `generateImplicitPipeline` (the `;` form, via `lowerUpdateFilterWithLookups`)
 - `lowerUpdateFilterWithLookups` (one `,`-chained UpdateFilter statement)
 
@@ -239,7 +239,7 @@ non-empty array literal of documents, or a non-literal provably-array
 expression, is **not** rejected — it [fans out](#fan-out-variant).
 
 Compound-desugar detection works by referential identity rather than a
-parser flag: `parsePrefixIncDec` (`src/parser.ts:860`), the postfix branch
+parser flag: `parsePrefixIncDec` (`src/compiler/parse/parser.ts:860`), the postfix branch
 in `parseUpdateOp` (around line 749), and the compound branch in
 `parseAssignmentChainFrom` (line 799) all build a `BinaryExpr` that *reuses*
 the original `target` node as `left`. Two different syntactic occurrences
@@ -307,14 +307,13 @@ src/
                            { stages, ctx } so the let-clearing flows out.
                            Imports staticBindingType from codegen.ts to gate
                            the non-literal fan-out branch.
-  lookup-translation.ts    No change. translatePredicate is already exported
+  src/compiler/emit/join.ts    No change. translatePredicate is already exported
                            and is reused by lowerReplaceRoot's direct-lookup
                            branch.
   stages.ts                No change. $replaceWith was already registered.
   facet-translation.ts     New. detectFacetShape, lowerFacet, lowerFacetEntry.
                            Reuses extractLetsFromExpr / extractLetsFromPipeline
-                           from lookup-translation and translateMatchBody from
-                           match-translation. Treats any non-empty letVars as
+                           from the join road (`src/compiler/emit/join.ts`) and the filter road (`src/compiler/emit/filter.ts`). Treats any non-empty letVars as
                            a "use lambda param instead of $.<field>" error.
   union-translation.ts     `validateUnionPushShape` was later removed when the
                            bare-statement `$$.<chain>;` form shipped — a

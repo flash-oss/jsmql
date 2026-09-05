@@ -515,7 +515,17 @@ const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalE
  * cannot refuse a unit the server takes or accept one it does not. The window
  * operators take a NARROWER set — see `WINDOW_TIME_UNIT`.
  */
-const TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"] as const;
+export const TIME_UNIT = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+  "millisecond",
+] as const;
 
 /**
  * The spellings `startOfWeek` accepts: the seven days and their three-letter
@@ -8136,7 +8146,7 @@ export const NAMES = {
   getTime: name({
     doc: "'.getTime()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "any",
+    on: "date",
     returns: "number",
     where: ["value"],
     filter: viaFallback,

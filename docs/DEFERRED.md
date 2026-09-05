@@ -57,18 +57,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** open
 - **Effort.** S
 
-### DEF-011 — Partial extraction under `||` in `$match`
-
-- **What's blocked.** `($.status === "active" && cond) || ($.status === "trial" && cond)` — if both `||` branches have a translatable factor that shares a field, we could lift the OR over the field-equality match, but today any residual under `||` makes the whole `||` fall through to `$expr`.
-- **Target lowering.** Lift shared-prefix translatable conjuncts. Narrow safe rewrites only; correctness over partial gain.
-- **Why blocked.** The disjunction translator currently prefers correctness — if any branch has a residual or empty query, the whole `||` becomes residual. Adding partial extraction needs a careful set of safe-rewrite rules.
-- **Attempted approaches.** None.
-- **Success criteria.** Narrow test cases land cleanly; the index-using guarantee of the `$or` translation is preserved.
-- **Rejection site(s).** `docs/specs/match-query-translation.md:102, 169`.
-- **Spec.** `docs/specs/match-query-translation.md` § Out of scope — future work bullet 2.
-- **Status.** open
-- **Effort.** M
-
 ### DEF-012 — Index-pitfall warning channel via `validate()`
 
 - **What's blocked.** A `let` binding before an indexable `$match` blocks the match from using the index. The compiler could surface a warning, but `validate()` has no warning channel — only errors.
@@ -137,7 +125,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Attempted approaches.** None.
 - **Success criteria.** The three shapes lower as above; non-matching shapes throw the existing hint.
 - **Rejection site(s).** `DEVLOG.md:1428` (historical, no live throw — the runtime rejection happens in codegen with a generic comparator-not-supported message that doesn't carry the tag).
-- **Spec.** `docs/specs/method-dispatch.md` (`.toSorted` section, no spec line today).
+- **Spec.** `docs/specs/emit-pass.md` (`.toSorted` section, no spec line today).
 - **Status.** design-only — small win
 - **Effort.** S
 
@@ -148,7 +136,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** No Infinity/NaN literal in jsmql source, and the lowering would touch every numeric comparison helper. jsmql's output must stay JSON-serialisable, so an emitted literal cannot be a real BSON `NaN` / `±Infinity` (`JSON.stringify(NaN)` is `null`, which would silently become a different comparison) — it has to be synthesised server-side.
 - **Attempted approaches.** The comparison half is solved and verified on a live mongod: `{$toDouble: "NaN"}` yields a genuine double NaN, and because MongoDB's `$eq` treats `NaN == NaN` as true (unlike JS), `{$eq: [x, {$toDouble: "NaN"}]}` is an exact NaN test — true for `double` and `decimal` NaN, false for ±Infinity, ±0, the string `"NaN"`, null, missing, `[]`, `{}`. `{$toDouble: "-Infinity"}` gives the other bound (NaN sorts below it, so `{$gt: [x, -Infinity]}` also isolates NaN among numbers). What remains is the source-syntax half and the cost: the same clause measured at +41% on a `$match` when added to `jsBool`, which is why the truthiness rule does not carry it (see the NaN note in `docs/LANGUAGE.md`) — a one-off `Number.isFinite` call would not pay that whole-language price. The existing error message names three workarounds (`$type`, `$convert` sentinel, range guard).
 - **Success criteria.** TBD with the literal-escape design.
-- **Rejection site(s).** `src/codegen.ts:3309`.
+- **Rejection site(s).** `src/compiler/emit/lower.ts:3309`.
 - **Spec.** None — would need `docs/specs/numeric-edges.md` or similar.
 - **Status.** open
 - **Effort.** M
@@ -160,7 +148,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** Filters are a single expression with no statement list; threading a declaration in needs either a separate declaration channel or a textual-inline pass distinct from the pipeline `$let` expansion. Output shape differs from the pipeline form (inlined body vs `$let`), so it's a deliberate separate design.
 - **Attempted approaches.** None — recorded at the developer's request as the likely next step for Filters.
 - **Success criteria.** TBD with the inline design; `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))` (or a Filter-specific syntax) produces a query document with the body inlined.
-- **Rejection site(s).** None — no bespoke throw; the existing pipeline-only requirement (`throwFuncDeclOutsidePipeline` in `src/parser.ts`) covers it generically.
+- **Rejection site(s).** None — no bespoke throw; the existing pipeline-only requirement (`throwFuncDeclOutsidePipeline` in `src/compiler/parse/parser.ts`) covers it generically.
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** design-only
 - **Effort.** M
@@ -175,20 +163,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Rejection site(s).** `src/compiler/emit/errors.ts` `functionAsValue` (a declared function or an arrow read as a value, tagged `[DEF-032]`).
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** open
-- **Effort.** M
-
----
-
-### DEF-033 — `$$.length` in a `$facet`/`$unionWith` sub-pipeline, a deep nested lookup, or a function body
-
-- **What's blocked (narrowed).** `$$.length` (= the ROOT stream count) is now supported **inside a top-level `$lookup`** — its predicate (`$$$.coll.filter(o => o.n === $$.length)`), an `.aggregate` block, and a `.map` chain — by capturing the top-materialised `$__jsmql.length` into the `$lookup.let` as `jsmql_s0_length` and reading it back as `$$jsmql_s0_length`. Inner *sub-stream* counts ship too, via the named 3rd-arg handle (`.map((o, _i, coll) => coll.length)`). **Still blocked:** `$$.length` inside a `$facet` / `$unionWith` sub-pipeline; `$$.length` *deeper* than one `$lookup` level (capture is gated to `depth === 0`); and `$$.length` inside a **reusable function body** (`const f = () => $$.length`).
-- **Target lowering.** `$facet`/`$unionWith`: their sub-pipeline lowerers would need the same `captureRootStreamLength` hook (`$facet` branches see the same docs, so the field is reachable; `$unionWith` has no `let` slot so it needs another route). Deep nesting: let-chain `v<d-1>_len → v<d>_len` at each level instead of binding only `depth === 0`. Function body: the function inlines at each call site, so the materialiser would need to hoist a `$setWindowFields` ahead of every calling stage — the body isn't in the inline AST where the per-statement scan runs.
-- **Why blocked.** The shipped capture reaches one `$lookup.let` hop from the top; the remaining contexts need either a different carrier (`$unionWith`) or let-chaining (depth > 1) / call-site hoisting (functions). Scoped out of this cut.
-- **Attempted approaches.** Shipped the top-level `$lookup` capture (`captureRootStreamLength`, `rootStreamLengthVar`) + the named sub-stream handle (`substreamLengthHandles`). Remaining contexts deferred.
-- **Success criteria.** `$ = { k: $$.filter(o => o.x === $$.length) }` ($facet) captures the root count; a 2-levels-deep `$$.length` let-chains correctly; `const f = () => $$.length; $.n = f()` materialises ahead of the call site.
-- **Rejection site(s).** `src/codegen.ts` `generateStreamLength` (the `topLevelStream`/`rootStreamLengthVar` gate — fires for `$facet`/`$unionWith`/deep nesting) and `src/pipeline.ts` `lowerFuncDecl` (reusable function body) — both tagged `[DEF-033]`.
-- **Spec.** `docs/specs/stream-length.md` § Scope & rejections.
-- **Status.** open (narrowed — top-level `$lookup` + sub-stream handle now ship)
 - **Effort.** M
 
 ---
@@ -218,7 +192,7 @@ The implementation was the argument against the feature. All four worked by reac
 
 **Not** rejected in value position: `$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray` and friends all still ship. A stored array carries its own order, so there the methods mean exactly what they mean in JS. The distinction is the receiver, not the method.
 
-The stream rewrite is to state the order and take from the front — `$$.toSorted({ createdAt: -1 }).take(3)` — which `fromTheEndRejection` (`src/stream-methods.ts`) names in the error. It is wired into all three chain-assembly sites: `unknownStreamMethod`, `validateLookupShape`, and the peel loop in `tryExtractChainedLookup` (that last one so a foreign chain can't quietly fall back to value-mode and slice the tail of an array whose order is whatever the foreign scan produced).
+The stream rewrite is to state the order and take from the front — `$$.toSorted({ createdAt: -1 }).take(3)` — which `fromTheEndRejection` (`src/registry/names.ts`) names in the error. It is wired into all three chain-assembly sites: `unknownStreamMethod`, `validateLookupShape`, and the peel loop in `tryExtractChainedLookup` (that last one so a foreign chain can't quietly fall back to value-mode and slice the tail of an array whose order is whatever the foreign scan produced).
 
 Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation over the existing `$sort` machinery would land back on the same two defects.
 
@@ -228,7 +202,7 @@ Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation ov
 
 ### `!expr` via De Morgan in `$match`
 
-Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `$op($not, …)` stays as the explicit escape. Documented in `docs/specs/match-query-translation.md:162-164`. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
+Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `$op($not, …)` stays as the explicit escape. Documented in `docs/specs/emit-pass.md:162-164`. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
 
 ### `$let`-as-optimisation (peephole)
 
@@ -236,15 +210,15 @@ When a `let` is read in exactly one downstream expression with no reshape betwee
 
 ### `in` operator query translation
 
-JS `in` checks **property existence**; reusing it for array-membership would be a semantic mismatch. `.includes()` covers the common case and translates to `$in` cleanly. Documented in `docs/specs/match-query-translation.md:168`.
+JS `in` checks **property existence**; reusing it for array-membership would be a semantic mismatch. `.includes()` covers the common case and translates to `$in` cleanly. Documented in `docs/specs/emit-pass.md:168`.
 
 ### Bare foreign-param ref (`o` alone) in a `$lookup` predicate
 
-Not enough signal to choose between "all foreign docs" and "use foreign doc as key". User must write `o.<field>` or `o => true` explicitly. Rejected in `src/lookup-translation.ts:799-802`; tested in `test/lookup.test.ts:228-230`.
+Not enough signal to choose between "all foreign docs" and "use foreign doc as key". User must write `o.<field>` or `o => true` explicitly. Rejected in `src/compiler/emit/join.ts:799-802`; tested in `test/lookup.test.ts:228-230`.
 
 ### Compile-time validation of runtime-dependent pipeline constraints
 
-The pre-flight validator (`docs/specs/pipeline-validation.md`) throws only on violations that are 100% certain from the source. A whole class of server-enforced constraints depends on runtime state the compiler cannot know — sharding (`$out` to a sharded collection, `$unionWith`-in-`$lookup` on a sharded `coll`), transactions, view definitions, memory limits (`$group`/`$sort`/`$bucket` 100 MB without `allowDiskUse`, BSON 16 MB), collection type (`$out`→capped, `$merge`→time-series), read concern, and Atlas availability of `$search`/`$searchMeta`/`$vectorSearch`/`$listSearchIndexes`. jsmql emits the MQL unchanged for all of these and lets the server decide. Validating them at compile time would require modelling deployment/data state and would force throws on pipelines that are perfectly valid in another context — exactly the *probable*-not-*certain* throw rule #1 forbids. (Position rules that happen to involve an Atlas-only stage — e.g. `$search` must be first — still apply; only the availability check is skipped.)
+The pre-flight validator (`docs/specs/emit-pass.md`) throws only on violations that are 100% certain from the source. A whole class of server-enforced constraints depends on runtime state the compiler cannot know — sharding (`$out` to a sharded collection, `$unionWith`-in-`$lookup` on a sharded `coll`), transactions, view definitions, memory limits (`$group`/`$sort`/`$bucket` 100 MB without `allowDiskUse`, BSON 16 MB), collection type (`$out`→capped, `$merge`→time-series), read concern, and Atlas availability of `$search`/`$searchMeta`/`$vectorSearch`/`$listSearchIndexes`. jsmql emits the MQL unchanged for all of these and lets the server decide. Validating them at compile time would require modelling deployment/data state and would force throws on pipelines that are perfectly valid in another context — exactly the *probable*-not-*certain* throw rule #1 forbids. (Position rules that happen to involve an Atlas-only stage — e.g. `$search` must be first — still apply; only the availability check is skipped.)
 
 ### `$replaceRoot` verbose-form knob on `$ = …`
 

@@ -44,16 +44,16 @@ translation; only the wrapping differs.
 `.filter` / `.reject` take their **argument** through the shared local-`$$` predicate
 gate first, so an arrow and its matches-object / field-name / `["field", value]`
 equivalents all lower identically here and in every other container. See
-[pipeline-validation.md](pipeline-validation.md) § the local-`$$` predicate gate.
+[emit-pass.md](emit-pass.md) § the local-`$$` predicate gate.
 
 ## Bare `$$` as an assignment target
 
-`parseContextRef` in `src/parser.ts` lets the `CollectionRef`
+`parseContextRef` in `src/compiler/parse/parser.ts` lets the `CollectionRef`
 variant (`$$`) accept a following `=` token, in addition to `.` and `[`.
 The other context prefixes (`$$$`, `$$$$`) keep the strict rule —
 `$$$ = X` / `$$$$ = X` are meaningless and stay parse-rejected.
 
-`isFieldPathTarget` in `src/parser.ts` accepts
+`isFieldPathTarget` in `src/compiler/parse/parser.ts` accepts
 `CollectionRef` as an assignment target, alongside the existing `FieldRef`
 and `MemberAccess` chains.
 
@@ -61,7 +61,7 @@ No new tokens or AST nodes. The shape is `AssignExpr { target: CollectionRef, va
 
 ## Detection and lowering
 
-`isReplaceStreamAssign(op)` (in `src/pipeline.ts`) recognises the shape:
+`isReplaceStreamAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the shape:
 
 ```ts
 op.target.type === "CollectionRef"
@@ -88,7 +88,7 @@ the top-level `;` that dispatches to Pipeline mode (see
 assignment-loop site above, and lands in `generateUpdateFilter`, which has no
 write path for a `CollectionRef` target.
 
-`updateFilterHasReplaceStream(uf)` (in `src/pipeline.ts`) detects that
+`updateFilterHasReplaceStream(uf)` (in `src/compiler/emit/statement.ts`) detects that
 `UpdateFilter` — the `$$`-target twin of `updateFilterHasReplaceRoot` — and
 `index.ts` reroutes it as a synthetic one-statement `Pipeline`, so the no-`;`
 form emits exactly what the `;`-terminated form emits. Two reroute sites, one
@@ -233,8 +233,7 @@ src/
                    bare-statement `$$.<chain>;` form shipped: a statement-position
                    '$$.filter(...)' now lowers to '$match' (sugar for
                    '$$ = $$.filter(p)') rather than emitting a suggestion.
-  match-translation.ts  No change. translateMatchBody reused as-is.
-  lookup-translation.ts No change. extractLookupTarget, extractLetsFromExpr,
+  src/compiler/emit/join.ts No change. extractLookupTarget, extractLetsFromExpr,
                    extractLetsFromPipeline reused as-is (already exported).
 ```
 

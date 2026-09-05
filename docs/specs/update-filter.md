@@ -6,7 +6,7 @@ User-facing reference is `docs/LANGUAGE.md` § Update filters.
 
 ## AST
 
-Three node types in `src/ast.ts`:
+Three node types in `src/registry/ast.ts`:
 
 ```ts
 type AssignExpr      = { type: "AssignExpr"; target: Expr; value: Expr };
@@ -23,7 +23,7 @@ type UpdateFilter = { type: "UpdateFilter"; update ops: Update op[] };
 
 ## Lexer
 
-Six new tokens (`src/lexer.ts`):
+Six new tokens (`src/compiler/lex/lexer.ts`):
 
 | Token       | Source | Notes |
 |-------------|--------|-------|
@@ -99,7 +99,7 @@ Downstream:
 
 ## Codegen
 
-`src/codegen.ts` exports two update op entry points:
+`src/compiler/emit/lower.ts` exports two update op entry points:
 
 - `generateUpdateFilter(prog)` — top-level entry from `lowerProgram` in `src/index.ts`. Emits a single stage object (one group) or a stage array (2+ groups), matching the existing 1-stage-vs-pipeline output convention.
 - `generateUpdateOpGroups(muts)` — used by `pipeline.ts` when update ops appear inline in a pipeline array. Returns an array of stage objects without the unwrap step.
@@ -132,16 +132,16 @@ The codegen never inspects the original compound operator — by the time it run
 
 There are two pipeline forms, with one important behavioural difference:
 
-- **Bracketed `[…]`** — `isStageCandidate` in `src/pipeline.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare update op (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline. `generatePipeline` walks elements left-to-right with a `updateBuffer`. Consecutive update op elements accumulate; non-update op stages flush the buffer through `generateUpdateOpGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage.
-- **Implicit `;`-separated** — `generateImplicitPipeline` in `src/pipeline.ts` lowers each `;`-separated statement in isolation. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already handles RAW splits inside its `,`-grouped chain); a stage expression goes through the same single-element path used for bracketed pipelines. Adjacent update op statements **never** coalesce across `;` — the boundary is hard. Comma-grouped update ops inside one `;` chunk still coalesce via the usual rules.
+- **Bracketed `[…]`** — `isStageCandidate` in `src/compiler/emit/statement.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare update op (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline. `generatePipeline` walks elements left-to-right with a `updateBuffer`. Consecutive update op elements accumulate; non-update op stages flush the buffer through `generateUpdateOpGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage.
+- **Implicit `;`-separated** — `generateImplicitPipeline` in `src/compiler/emit/statement.ts` lowers each `;`-separated statement in isolation. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already handles RAW splits inside its `,`-grouped chain); a stage expression goes through the same single-element path used for bracketed pipelines. Adjacent update op statements **never** coalesce across `;` — the boundary is hard. Comma-grouped update ops inside one `;` chunk still coalesce via the usual rules.
 
 ### Mutating-method desugar
 
-`AssignExpr`s also enter the lowering path via the statement-position mutator rewrite (see [method-dispatch.md § Mutators at statement position](method-dispatch.md#mutators-at-statement-position)). Before classifying a statement as an Expr, both pipeline loops call `tryRewriteMutatorCall` from `codegen.ts`; if it returns a synthetic `AssignExpr`, that node enters the same UpdateOp coalescer the explicit-`=` path uses. From the coalescer's perspective the two sources are indistinguishable — chained mutators on the same field (`$.events.push(x); $.events.sort(e => e.t);`) split on read-after-write the same way `$.events = …; $.events = …` already does. There is no separate "mutator stage" type.
+`AssignExpr`s also enter the lowering path via the statement-position mutator rewrite (see [emit-pass.md § Mutators at statement position](emit-pass.md#mutators-at-statement-position)). Before classifying a statement as an Expr, both pipeline loops call `tryRewriteMutatorCall` from `codegen.ts`; if it returns a synthetic `AssignExpr`, that node enters the same UpdateOp coalescer the explicit-`=` path uses. From the coalescer's perspective the two sources are indistinguishable — chained mutators on the same field (`$.events.push(x); $.events.sort(e => e.t);`) split on read-after-write the same way `$.events = …; $.events = …` already does. There is no separate "mutator stage" type.
 
 ### `Object.assign` at statement position
 
-A bare `Object.assign(target, ...sources)` statement is JavaScript's *mutating* merge — it writes the merged object back into `target`. `classifyObjectAssignStmt` (in `src/pipeline.ts`) runs in both pipeline loops, right after the array-mutator rewrite, and dispatches on the first argument:
+A bare `Object.assign(target, ...sources)` statement is JavaScript's *mutating* merge — it writes the merged object back into `target`. `classifyObjectAssignStmt` (in `src/compiler/emit/statement.ts`) runs in both pipeline loops, right after the array-mutator rewrite, and dispatches on the first argument:
 
 - **Writable field path** (`$.profile`, `$.a.b`) → returns a synthetic `AssignExpr { target, value: <the whole ObjectCall> }`. Because the call's first argument *is* the target, generating that `ObjectCall` yields `$mergeObjects[<target>, ...sources]`, so the assignment lowers to `{ $set: { <path>: { $mergeObjects: [<read>, ...sources] } } }` and rides the same coalescer as `$.x = …` and the array mutators.
 - **In-scope `let`/`const` binding** → emits its own `{ $set: { <slot>: <gen(ObjectCall)> } }` directly (after flushing the update buffer and hoisting any buried `$lookup`s through `extractLookupCalls`). It deliberately does **not** route through the `ParamRef` reassignment path in `tryLowerAssignSugar`, so the `const`-reassignment guard there is bypassed — mutating a `const`-bound object is legal JS (only *rebinding* it via `=` is not). The binding case is owned by [let-bindings.md § Object.assign mutation](let-bindings.md).

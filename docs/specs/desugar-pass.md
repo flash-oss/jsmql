@@ -433,7 +433,7 @@ that set and the pair becomes order-sensitive.
 An exclusion list is a coupling between two forms that neither form declares.
 The grid removes it: each form declares its own trigger, and an overlap is
 resolved by declared precedence rather than by a list one form keeps about
-another. See [lowering-grid.md](lowering-grid.md).
+another. See [emit-pass.md](emit-pass.md#the-method-cells).
 
 ## Why a pass and not a hub
 

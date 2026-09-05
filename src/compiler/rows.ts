@@ -470,3 +470,91 @@ export function onlyInsideOf(name: string, position: Position): readonly string[
     position
   ];
 }
+
+// ── the vocabulary the globals generator reads ──────────────────────────────
+//
+// `scripts/generate-globals.mjs` types the ambient `$$` / `$$$` chains and the
+// value methods from these, so the generated `src/globals.ts` cannot drift from
+// the registry: what a row states here is what the editor completes.
+
+/** Is this cell a RULE — something that lowers — rather than a refusal, a pending or an in-code marker? */
+function isRuleCell(cell: unknown): boolean {
+  if (cell === null || typeof cell !== "object") return false;
+  const c = cell as Record<string, unknown>;
+  if ("unsupported" in c || "pending" in c || "inCode" in c || "because" in c) return false;
+  if ("perFamily" in c) return Object.values(c.perFamily as Record<string, unknown>).some(isRuleCell);
+  if ("byArgs" in c) return Object.values(c.byArgs as Record<string, unknown>).some(isRuleCell);
+  return "emit" in c || "uncertain" in c;
+}
+
+/** The JavaScript-named method rows: callable, on a receiver family, neither a global nor a MongoDB operator. */
+const VALUE_FAMILIES: ReadonlySet<string> = new Set(["array", "string", "number", "object", "date", "regexp", "set"]);
+
+function methodRows(): string[] {
+  return Object.keys(ROWS).filter((n) => {
+    if (n.startsWith("$") || !isCallable(n) || isGlobalName(n)) return false;
+    const on = families(row(n)?.on);
+    // a method on a VALUE — not a namespace static (`Math.abs`) and not a stage on the stream alone
+    return on === "any" || (on !== undefined && on.some((f) => VALUE_FAMILIES.has(f)));
+  });
+}
+
+/** Every JavaScript-named method row, whatever it lives on — a value or the stream alone. */
+function everyMethodRow(): string[] {
+  return Object.keys(ROWS).filter(
+    (n) => !n.startsWith("$") && isCallable(n) && !isGlobalName(n) && row(n)?.on !== undefined,
+  );
+}
+
+/** The methods that chain on a stream (`$.filter(…)`, `$.take(3)`): a stream RULE on the row. */
+export function streamMethodNames(): string[] {
+  // a union link (`.concat(…)` → `$unionWith`) chains too, though the union road lowers it rather than a stream cell
+  return everyMethodRow().filter(
+    (n) => lists(n, "stream") && (isRuleCell((row(n) as { stream?: unknown }).stream) || unionsOf(n)),
+  );
+}
+
+/** The methods that END a `$$$.<coll>` chain with a value: an array value rule and no stream rule. */
+export function valueTerminalMethodNames(): string[] {
+  return methodRows().filter((n) => {
+    const on = families(row(n)?.on);
+    if (on === undefined || on === "any" || !on.includes("array")) return false;
+    const r = row(n) as { expr?: unknown; stream?: unknown };
+    return isRuleCell(r.expr) && !isRuleCell(r.stream);
+  });
+}
+
+/** Every method the rows know in value position — a rule or a refusal that names the alternative; the editor completes both. */
+export function valueMethodNames(): string[] {
+  return methodRows().filter((n) => lists(n, "value") || (row(n) as { expr?: unknown }).expr !== undefined);
+}
+
+/** The kind each value method states it returns — a Kind, or "unknown" when it depends on the receiver. */
+export function valueMethodReturns(): Record<string, string> {
+  const out: Record<string, string> = {};
+  for (const n of valueMethodNames()) {
+    const r = returnsOf(n);
+    out[n] = typeof r === "string" ? r : "unknown";
+  }
+  return out;
+}
+
+/** The one receiver family a method needs, or null when it lives on several or on any. */
+export function requiredReceiverFamily(name: string): Family | null {
+  const on = families(row(name)?.on);
+  if (on === undefined || on === "any" || on.length !== 1) return null;
+  return on[0];
+}
+
+/** The `Date.prototype` methods jsmql lowers — the ones TypeScript already types. */
+export function nativeDateMethodNames(): string[] {
+  return methodRows().filter((n) => {
+    const on = families(row(n)?.on);
+    return (
+      on !== undefined &&
+      on !== "any" &&
+      on.includes("date") &&
+      typeof (Date.prototype as unknown as Record<string, unknown>)[n] === "function"
+    );
+  });
+}

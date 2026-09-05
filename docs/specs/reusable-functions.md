@@ -10,7 +10,7 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Reusable functions.
 
 ## The one-line idea
 
-A reusable function is a **named [IIFE](method-dispatch.md)**. Calling it is
+A reusable function is a **named [IIFE](emit-pass.md)**. Calling it is
 sugar for `((params) => body)(args)` — which jsmql already lowers to `$let`. So
 the feature reuses the entire IIFE → `$let` machinery; the only new parts are
 *naming* a lambda and *resolving a call* back to it.
@@ -54,7 +54,7 @@ they aren't values).
 
 ## AST
 
-Two additions in [src/ast.ts](../../src/ast.ts):
+Two additions in [src/registry/ast.ts](../../src/registry/ast.ts):
 
 ```ts
 type Lambda   = Extract<Expr, { type: "Lambda" }>;            // the arrow node, reusable standalone
@@ -74,7 +74,7 @@ expression/declaration can start. See § The `function` keyword.
 
 ## Parser
 
-[src/parser.ts](../../src/parser.ts):
+[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts):
 
 - **`parseLetDecl()`** additionally recognises an **unparenthesised** single-param
   arrow RHS (`const f = x => …`), which `parseExpression` does not (only the
@@ -96,7 +96,7 @@ expression/declaration can start. See § The `function` keyword.
 
 ## Codegen
 
-[src/codegen.ts](../../src/codegen.ts).
+[src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts).
 
 ### Context
 
@@ -157,7 +157,7 @@ toward calling it — MQL has no first-class functions ([DEF-032]). Two sites:
 
 ## Pipeline
 
-[src/pipeline.ts](../../src/pipeline.ts) `lowerFuncDecl(decl, ctx)`:
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) `lowerFuncDecl(decl, ctx)`:
 
 - Emits **no stage**; returns `extendCtxFunctions(ctx, decl)`.
 - Collision guards (mirroring `lowerLetDecl`): re-declaration, clash with a
@@ -172,7 +172,7 @@ registering, so update ops written before the declaration can't see the function
 (declaration-before-use) and ops after it can.
 
 `isStageCandidate` admits `FuncDecl`, so `[const f = …, $set(…)]` is detected as
-a pipeline. The lookup / union / out / match / stage-validation walkers all treat
+a pipeline. The join, union, out, filter and stage-body lowerings all treat
 a `FuncDecl` the same way they treat a `LetDecl` that contains no relevant
 construct — skip / `null` / `false` / pass-through-unchanged — because a function
 declaration produces no stage and its body is expanded only at call sites.

@@ -47,8 +47,8 @@ type>`. The custom message rides in as the bogus type name.
   bson type name); `$convert` throws `Unknown type name: <failType>`.
 
 Built by `generateAssertGuardExpr` (the `$convert` expression) in
-[`src/codegen.ts`](../../src/codegen.ts); the `$match` wrap is applied in
-[`src/pipeline.ts`](../../src/pipeline.ts) (`lowerStatementTail`).
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts); the `$match` wrap is applied in
+[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) (`lowerStatementTail`).
 
 ### `<cond>`
 

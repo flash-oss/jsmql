@@ -25,24 +25,17 @@ When you add a new operator or syntax feature, add a table row or code example h
 
 | File | Scope (one line — the spec itself is the detail) |
 |---|---|
-| `specs/architecture.md` | End-to-end pipeline, the three targets and two receiver kinds, pass order, module responsibilities |
-| `specs/lowering-grid.md` | One declaration per feature: the cells, derived applicability, the four feature kinds, file-per-family layout, the tests that hold it up |
-| `specs/predicate-ir.md` | The predicate vocabulary shared by the Query and Expr targets, and the automatic `$expr` fallback |
+| `specs/architecture.md` | The five phases over the registry, end to end; where each construct is owned |
 | `specs/differential-harness.md` | `npm run diff:compilers`: the reference-vs-working-tree comparison, the no-unclassified-divergence rule, and the corpus |
 | `specs/desugar-pass.md` | Sugar → explicit nodes before any lowering runs; the load-bearing precedence between overlapping forms |
 | `specs/position-pass.md` | The seven positions: where each one comes from, how a stage row lays out its body, and why an accumulator slot takes one operand |
 | `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the query cells and the per-branch `$or`, the acceptance gate |
-| `specs/grammar.md` | Formal grammar (EBNF) for the parser |
+| `specs/grammar.md` | Formal grammar (EBNF) the parser in `src/compiler/parse/` accepts |
 | `specs/operator-registry.md` | Operator-shape registry: how it works, how to add/modify entries |
-| `specs/method-dispatch.md` | `.foo()` method-call dispatch, lambda scoping, regex/template/optional-chaining lexing |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body rule |
-| `specs/pipeline-validation.md` | Compile-time validation: structural stage placement + per-stage body shape + `$match` operator placement |
-| `specs/operator-validation.md` | Compile-time validation of `$op(...)` arguments: arity, object required/unknown keys, enums, literal types (the value-position mirror of pipeline-validation) |
 | `specs/filter-mode.md` | No-semicolon top-level dispatch: a bare expression → a Filter document |
-| `specs/match-query-translation.md` | The `$match`/Filter expression-body → query-language translator |
 | `specs/update-filter.md` | Assignment + `delete` statements → `$set` / `$unset` stages |
 | `specs/let-bindings.md` | Pipeline-scoped local variables (`let x = …`) → runtime `$set` binding |
-| `specs/const-folding.md` | Compile-time-constant `const`/`let` folded to inlined values (the compile-time counterpart to let-bindings) |
 | `specs/reusable-functions.md` | Reusable named functions (`const f = (a) => …`) → inline IIFE/`$let` per call |
 | `specs/function-form-params.md` | `jsmql.compile(fn)` parameter bindings: the two-slot `(params, { $, … })` arrow signature |
 | `specs/globals-generation.md` | How `src/globals.ts` (`@koresar/jsmql/globals`) is generated + its drift test |
