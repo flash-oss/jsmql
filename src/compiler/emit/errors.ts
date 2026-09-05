@@ -155,7 +155,7 @@ export const callableAsValue = (spelled: string, pos: number): CodegenError =>
 
 export const functionAsValue = (name: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' is a reusable function — call it with '${name}(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead.`,
+    `'${name}' is a reusable function — call it with '${name}(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead. [DEF-032]`,
     pos,
   );
 
@@ -887,5 +887,19 @@ export const notAnUpdate = (pos: number): CodegenError =>
 export const unappliedReference = (ns: string, name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${ns}.${name}' is a function, not a value. Call it ('${ns}.${name}(…)'), or hand it to a callback slot ('.map(${ns}.${name})').`,
+    pos,
+  );
+
+/** `$match({ loc: { $near: … } })` — the proximity operators query a `find()` alone. */
+export const nearInMatch = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is not allowed inside an aggregation '$match' — the server refuses it there. Use the '$geoNear' stage as the first stage instead ('$geoNear({ near: …, distanceField: "d", spherical: true })'), or run the proximity query with 'find()'.`,
+    pos,
+  );
+
+/** `$$.reduce(…, [])` whose body is not an append — a total, which the wrap form computes. */
+export const arrayReduceShape = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$.reduce((acc, d) => …, [])' keeps documents by appending: write 'acc.concat(<doc>)' (or '[...acc, <doc>]') to reshape each document, and 'cond ? acc.concat(<doc>) : acc' to filter first. A total — a sum, a count, a maximum — is the wrap form: '$$ = [{ total: $$.reduce((acc, d) => acc + d.amount, 0) }]'.",
     pos,
   );

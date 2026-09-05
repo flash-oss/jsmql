@@ -631,8 +631,8 @@ $sort({ total: -1 });</code></pre>
         <article class="example" data-example data-mode="update">
           <h3><span class="chip update">Update</span> Assignment, <code>+=</code> and <code>delete</code></h3>
           <p class="blurb">
-            Mutating statements compile to an update pipeline of <code>$set</code> and <code>$unset</code> stages — the
-            second argument of <code>updateOne()</code>.
+            Mutating statements compile to the update document <code>updateOne()</code> takes as its second argument —
+            <code>$inc</code>, <code>$set</code>, <code>$unset</code> — with every value a constant.
           </p>
           <div class="io">
             <div>

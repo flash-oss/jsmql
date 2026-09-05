@@ -24,13 +24,13 @@ describe("cli: input sources", () => {
   it("reads JSMQL from stdin and prints MQL JSON (Filter default)", () => {
     const r = run([], "$.age > 18\n");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 
   it("accepts the source as a positional argument", () => {
     const r = run(["$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 
   it("reads the source from --file (in preference to stdin)", () => {
@@ -40,7 +40,7 @@ describe("cli: input sources", () => {
     // stdin carries a different predicate to prove --file wins.
     const r = run(["--file", file], "$.age > 18");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ score: { $gte: 90 } });
+    expect(JSON.parse(r.stdout)).toEqual({ score: { $gte: 90, $not: { $type: "array" } } });
   });
 });
 
@@ -48,13 +48,16 @@ describe("cli: output shapes", () => {
   it("--filter forces a Filter document", () => {
     const r = run(["--filter", "$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 
   it("--pipeline forces a stage array", () => {
     const r = run(["--pipeline", "$match($.age > 18); $sort({ age: -1 })"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
+    expect(JSON.parse(r.stdout)).toEqual([
+      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $sort: { age: -1 } },
+    ]);
   });
 
   it("--expr forces a raw aggregation expression", () => {
@@ -63,10 +66,10 @@ describe("cli: output shapes", () => {
     expect(JSON.parse(r.stdout)).toEqual({ $multiply: ["$price", { $subtract: [1, "$discount"] }] });
   });
 
-  it("--update forces an update pipeline", () => {
-    const r = run(["--update", "$.name = $.name.toUpperCase()"]);
+  it("--update forces an update document", () => {
+    const r = run(["--update", "$.score += 1; delete $.tmp"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+    expect(JSON.parse(r.stdout)).toEqual({ $inc: { score: 1 }, $unset: { tmp: "" } });
   });
 
   it("rejects a bare expression under --pipeline (inherited library error)", () => {
@@ -79,12 +82,12 @@ describe("cli: output shapes", () => {
 describe("cli: formatting", () => {
   it("defaults to pretty (2-space, multiline) output", () => {
     const r = run(["$.age > 18"]);
-    expect(r.stdout).toBe('{\n  "age": {\n    "$gt": 18\n  }\n}\n');
+    expect(r.stdout).toBe('{\n  "age": {\n    "$gt": 18,\n    "$not": {\n      "$type": "array"\n    }\n  }\n}\n');
   });
 
   it("-c / --compact emits single-line JSON", () => {
     const r = run(["-c", "$.age > 18"]);
-    expect(r.stdout).toBe('{"age":{"$gt":18}}\n');
+    expect(r.stdout).toBe('{"age":{"$gt":18,"$not":{"$type":"array"}}}\n');
   });
 
   it("--tab indents with tabs", () => {
@@ -125,25 +128,25 @@ describe("cli: parameters", () => {
   it("--argjson binds a JSON value through jsmql.compile", () => {
     const r = run(["--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 
   it("--arg binds a string value", () => {
     const r = run(["--arg", "name", "ann"], "({ name }, { $ }) => $.name === name");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ name: "ann" });
+    expect(JSON.parse(r.stdout)).toEqual({ name: { $eq: "ann", $not: { $type: "array" } } });
   });
 
   it("binds params under --filter (routes through jsmql.filter.compile)", () => {
     const r = run(["--filter", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 
   it("binds params under --pipeline and enforces the Pipeline shape", () => {
     const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => { $match($.age > minAge) }");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
   });
 
   it("--pipeline + params rejects a bare-expression arrow (inherited shape error)", () => {
@@ -152,10 +155,10 @@ describe("cli: parameters", () => {
     expect(r.stderr).toContain("jsmql.pipeline() expects a Pipeline");
   });
 
-  it("binds params under --update and enforces the update-stage whitelist", () => {
+  it("binds params under --update into the update document", () => {
     const r = run(["--update", "--argjson", "tier", "2"], "({ tier }, { $ }) => ($.tier = tier)");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $set: { tier: 2 } }]);
+    expect(JSON.parse(r.stdout)).toEqual({ $set: { tier: 2 } });
   });
 
   it("validates a parameterised arrow under --validate (exit 0 for valid)", () => {

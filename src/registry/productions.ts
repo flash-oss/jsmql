@@ -1051,11 +1051,12 @@ export const PRODUCTIONS = {
   }),
 
   parameterReference: production({
-    doc: "A name bound by the parameter destructure.",
+    doc: "A name bound by the parameter destructure. At the call it becomes its value: a literal when the source could have spelled it, an `Injected` node otherwise.",
     tokens: ["identifier"],
     spelling: "<param>",
-    // Indistinguishable from any other bare name at parse time — scope decides.
-    becomes: "Ident",
+    // Indistinguishable from any other bare name at parse time — scope decides; the
+    // injection pass then replaces it by the value the call supplied.
+    becomes: ["Ident", "Injected"],
     on: "any",
     returns: "unknown",
     where: ["value"],

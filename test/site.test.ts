@@ -32,7 +32,7 @@ const ENTRIES = {
 type Mode = keyof typeof ENTRIES;
 
 /** A shape label (the chip above an example) and the output type it promises. */
-const CHIP_IS_ARRAY: Record<string, boolean> = { filter: false, expression: false, pipeline: true, update: true };
+const CHIP_IS_ARRAY: Record<string, boolean> = { filter: false, expression: false, pipeline: true, update: false };
 
 function decodeEntities(html: string): string {
   // `&amp;` resolves last. In the other order `&amp;gt;` would turn into `>`.

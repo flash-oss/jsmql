@@ -84,7 +84,7 @@ function constantOf(e: Expr): unknown {
 }
 
 /** Is this `$$.reduce(…)` — a fold of the ROOT stream? */
-const isStreamReduce = (e: Expr): e is Call =>
+export const isStreamReduce = (e: Expr): e is Call =>
   e.type === "MethodCall" && e.name === "reduce" && e.object.type === "CollectionRef";
 
 /** Does a `$$ = [ … ]` list hold a reducer wrap — and is it the whole list? */
@@ -151,7 +151,7 @@ function accumulatorOf(body: Expr, isAcc: (e: Expr) => boolean, param: string): 
 }
 
 /** The `(acc, d) => body` of a `$$.reduce(fn, init)`, its two parameters checked. */
-function reducerOf(call: Call): { lambda: Lambda; acc: string; param: string; body: Expr } {
+export function reducerOf(call: Call): { lambda: Lambda; acc: string; param: string; body: Expr } {
   if (call.args.length !== 2) throw E.reduceWrapArity(call.args.length, call.pos);
   const fn = call.args[0];
   if (fn.type !== "Lambda" || fn.body === undefined || fn.params.length !== 2) throw E.reduceWrapCallback(call.pos);
@@ -263,4 +263,43 @@ export function holdsStreamReduce(node: unknown): boolean {
   if (n.type === "MethodCall" && (chainBase(n) as { type: string }).type === "CollectionRef" && n.name === "reduce")
     return true;
   return Object.entries(n).some(([k, v]) => k !== "type" && k !== "pos" && holdsStreamReduce(v));
+}
+
+/**
+ * The ARRAY reducer as a stream: `$$.reduce((acc, d) => acc.concat(<doc>), [])`
+ * keeps every document reshaped, and `(acc, d) => cond ? acc.concat(<doc>) : acc`
+ * filters first — a `$match` and a `$replaceWith`, with `d` the document. Any
+ * other body is a total, which the wrap form computes; the refusal names it.
+ */
+export function arrayReduceParts(call: Call): { test: Lambda | null; doc: Lambda } {
+  const { lambda, acc, param, body } = reducerOf(call);
+  const seed = call.args[1];
+  if (seed === undefined || seed.type !== "ArrayLiteral" || seed.elements.length !== 0)
+    throw E.arrayReduceShape(call.pos);
+  const appended = (e: Expr): Expr | null => {
+    if (e.type === "MethodCall" && e.name === "concat" && e.object.type === "Ident" && e.object.name === acc) {
+      const [only] = e.args;
+      return e.args.length === 1 && only.type !== "SpreadElement" ? only : null;
+    }
+    if (e.type === "ArrayLiteral" && e.elements.length === 2) {
+      const [first, second] = e.elements;
+      if (
+        first.type === "SpreadElement" &&
+        first.argument.type === "Ident" &&
+        first.argument.name === acc &&
+        second.type !== "SpreadElement"
+      ) {
+        return second as Expr;
+      }
+    }
+    return null;
+  };
+  const one = (b: Expr): Lambda => ({ type: "Lambda", params: [param], body: b, pos: lambda.pos });
+  const plain = appended(body);
+  if (plain !== null) return { test: null, doc: one(plain) };
+  if (body.type === "TernaryExpr" && body.alternate.type === "Ident" && body.alternate.name === acc) {
+    const kept = appended(body.consequent);
+    if (kept !== null) return { test: one(body.test), doc: one(kept) };
+  }
+  throw E.arrayReduceShape(body.pos);
 }

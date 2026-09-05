@@ -2,9 +2,6 @@
 
 ## Test files and their purposes
 
-### `codegen.test.ts` — unit tests
-
-One `describe` block per feature area, one `it` per case. When you add or change anything in `src/`, add a corresponding case here. Keep cases small and focused — a failing test should immediately tell you which feature broke.
 
 ### `realistic.test.ts` — full-feature integration tests
 
@@ -40,35 +37,13 @@ Each therefore carries a **coverage guard** that states which happened. `permuta
 
 **Never gate a server half behind an unset environment variable.** `permutations.test.ts` did, and the result was that all 2 277 of its chains were compile-only in every normal run — the half that catches server rejections, and that found the two bugs its header names, never executed. Default to a local URI and self-skip instead.
 
-### `update-filter.test.ts`, `pipeline.test.ts`, `security.test.ts`, `operator-spec-coverage.test.ts`
 
-Topic-scoped suites: pipeline-stage handling, update-filter desugaring (the `$set`/`$unset` shape MongoDB's `db.coll.updateOne(filter, update)` takes), template-tag interpolation safety, and drift protection between `src/operators.ts` and the vendored MongoDB spec. Add to the matching file when extending those areas; create a new topic file only when an area outgrows `codegen.test.ts`.
-
-### `literal-passthrough.test.ts`
-
-The comprehensive guard for the `$`-string rule (`GenerateCtx.pipelineContext`): in pipeline context a `$`-prefixed string literal passes through verbatim; in `jsmql.expr` it is wrapped in `$literal`. Loops **every** operator in `OPERATORS` and **every** stage in `STAGES` so no `$op` can regress, plus a coverage meta-assertion that each op/stage is either tested or explicitly skipped-with-reason. When you add an operator or stage, this file picks it up automatically (the loops are registry-driven); add a `STAGE_CASES` row for a new stage that carries a `$`-string body, or a `STAGE_SKIP` reason otherwise.
 
 ### `site.test.ts` — the published site
 
 Guards the landing page (`index.html`), the `CNAME` that binds it to jsmql.js.org, and the `_config.yml` that tells GitHub Pages what to publish. The page compiles its own examples in the reader's browser, so it can never show stale MQL; what can rot is the JSMQL **input**. This suite extracts every example from the markup, compiles it through the entry its `data-mode` names, and asserts the output shape matches the label the page shows. It also holds the Jekyll-passthrough invariant — no YAML front matter and no Liquid delimiters in `index.html`, or the Pages build mangles the page. See [`docs/specs/site.md`](../docs/specs/site.md). Add a landing-page example and this file picks it up automatically.
 
-### `parity.test.ts` — the value/stream gate
 
-A method name that carries **two** lowerings — a value form over an array inside a document (`$.rows.take(2)`) and a stream form over the pipeline's documents (`$$.take(2)`) — has two implementations of one meaning, in two files, sharing no code. This suite runs both over the same documents on a real mongod and compares what comes back.
-
-The comparison is **order-insensitive on purpose**. Parity is contracted on which elements survive and what shape they arrive in, never on their sequence: SR2 in [`docs/LANG_RULES.md`](../docs/LANG_RULES.md) says an ordering guarantee the developer never wrote gives way to MongoDB's behaviour, and `$group` is unordered. `.uniqBy` is the worked case — it returns the same three documents in a different order from each side, and that passes.
-
-Two coverage floors sit beside the cases, because a comparison suite that quietly stops comparing is worse than none: one asserts every case names a genuinely dual-declared method, the other fails when the shared surface grows without cases joining it. Self-skips (green) when no mongod is reachable, like `fold-consistency.test.ts`. When you give a method a second lowering, add a case here.
-
-### `query-expr-agreement.test.ts` — the two targets must select the same documents
-
-A predicate reaches MQL by two roads: the QUERY language in Filter / `$match` position, the aggregation-EXPRESSION language everywhere else. Two lowerings of one source, in two files, sharing no code — the same shape `parity.test.ts` guards on the value/stream axis, and it drifts the same way.
-
-It already had. `typeof $.a === "boolean"` selected documents as a filter and matched **nothing** as an expression, because the query side carried a BSON alias table and the expression side compared `$type` against JavaScript's own spelling. No unit test could see it: each side was individually self-consistent, and both had passing `toEqual`s.
-
-So this suite runs **both** lowerings of the same source over the **same** documents on a real mongod and compares the ids that come back. Legitimate differences live in a `DIVERGE` table with a reason each, and are asserted to **still** differ — so repairing one fails the suite and forces the row to move, rather than letting a fix land silently. Self-skips when no mongod is reachable, with the usual all-or-nothing coverage guard.
-
-Add a case here whenever you touch predicate lowering on either side. This is the acceptance harness for migrating a node into the Predicate IR — see [`docs/specs/predicate-ir.md`](../docs/specs/predicate-ir.md).
 
 ### `compiler-query-expr-agreement.test.ts` — the NEW compiler's two roads
 

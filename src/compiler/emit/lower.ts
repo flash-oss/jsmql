@@ -46,6 +46,8 @@ import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { familyOfKind, kindOf, sourceFamily } from "./types.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
+import { injectedNeedsLiteral } from "./env.ts";
+import { isMqlShaped } from "../passes/inject.ts";
 
 const NAMESPACES = namespaceNames();
 const READ: Reader = { value: lowerValue, truth: lowerTruth };
@@ -149,6 +151,9 @@ export function lowerValue(node: Expr, env: Env): unknown {
       return arrayLiteral(node, node.elements, env);
     case "ObjectLiteral":
       return objectLiteral(node, node.entries, env);
+    case "Injected":
+      // HR1: a value the call supplied is a VALUE — never an operator or a field reference
+      return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
     case "FieldRef":
       return env.render(locate(node, env) as Located, node.pos);
     case "CollectionRef":

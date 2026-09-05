@@ -15,6 +15,8 @@ import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import { constructedFamilyOf, isCallable, namespaceNames, productionForOperator, returnsOf } from "../rows.ts";
+import { ObjectId } from "../../objectid.ts";
+import { isMqlShaped } from "../passes/inject.ts";
 
 export type Known = Kind | "unknown";
 
@@ -73,6 +75,19 @@ export function kindOf(node: Expr, env: Env): Known {
       return "bool";
     case "ObjectIdLiteral":
       return "objectId";
+    case "Injected": {
+      const v = node.value;
+      if (typeof v === "number" || typeof v === "bigint") return "number";
+      if (typeof v === "string") return isMqlShaped(v) ? "unknown" : "string";
+      if (typeof v === "boolean") return "bool";
+      if (v instanceof Date) return "date";
+      if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
+      if (v instanceof ObjectId) return "objectId";
+      if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
+        return isMqlShaped(v) ? "unknown" : "object";
+      }
+      return "unknown";
+    }
     case "ArrayLiteral":
       return "array";
     case "ObjectLiteral":

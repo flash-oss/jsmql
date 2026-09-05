@@ -157,6 +157,9 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
   return out;
 }
 
+/** The proximity operators, valid in a `find()` filter and refused inside an aggregation `$match`. */
+const NEAR: ReadonlySet<string> = new Set(["$near", "$nearSphere"]);
+
 /** The top-level query operators whose operand is a list of query documents. */
 const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
 
@@ -195,6 +198,8 @@ function rawDocument(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): 
     }
     // A key whose row states a different position for its operand takes that
     // language instead of the query one — `$expr`'s operand is an expression.
+    // `$near` / `$nearSphere` query only a `find()`: inside an aggregation `$match` the server refuses them.
+    if (NEAR.has(key) && env.site.root !== "filter") throw E.nearInMatch(key, e.pos);
     // `$and` / `$or` / `$nor` hold a LIST of query documents: each element is a filter of its own.
     if (LOGICAL.has(key) && e.value.type === "ArrayLiteral") {
       out[key] = e.value.elements.map((el) => {
@@ -263,6 +268,7 @@ function leaf(node: Expr, env: Env): QueryDoc | null {
     args = node.args.filter(isExpr);
     const hosts = onlyInsideOf(name, "filter");
     if (hosts !== undefined && !hosts.includes(env.site.inside ?? "")) throw E.onlyInside(name, hosts, node.pos);
+    if (NEAR.has(name) && env.site.root !== "filter") throw E.nearInMatch(name, node.pos);
   } else return null;
   if (name === undefined) return null;
   const verdict = consult(name, "filter");
@@ -419,6 +425,7 @@ export function literalIn(e: Expr): { value: unknown } | null {
 }
 
 export function constantIn(e: Expr): { value: unknown } | null {
+  if (e.type === "Injected") return { value: e.value };
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, new Map());
   if (!v.ok) return null;

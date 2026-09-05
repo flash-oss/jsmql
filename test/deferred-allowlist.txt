@@ -71,9 +71,6 @@ docs/specs/lookup-stage.md::Bare lambda parameter 'o' in a $lookup predicate is 
 src/lookup-translation.ts::Bare lambda parameter '${foreignParam}' in a $lookup predicate is not yet supported
 src/lookup-translation.ts::Bare lambda parameter '${path.param}' from an enclosing lookup is not yet supported
 src/lookup-translation.ts::Bare `o` alone is not yet supported (no $$ROOT lowering)
-test/lookup.test.ts::Bare lambda parameter 'o' in a \$lookup predicate is not yet supported
-test/lookup.test.ts::Bare lambda parameter 'a' in a \$lookup predicate is not yet supported
-test/lookup.test.ts::out of scope.
 
 # -----------------------------------------------------------------------------
 # Stale doc references (fork landed the feature but didn't clean up wording).

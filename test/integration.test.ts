@@ -385,7 +385,7 @@ $.recentOrders = $$$.orders.aggregate(o => {
   $match(o.userId === $._id);
   $sort({ placedAt: -1 });
   $limit(5);
-  $.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id);
+  o.shipments = $$$.shipments.filter(s => s.orderId === o._id && s.userId === $._id);
 });
 $project({ name: 1, recentOrders: 1 });`,
     );

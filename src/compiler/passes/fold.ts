@@ -301,6 +301,7 @@ const NOT_ASKED_TYPES = [
   "UndefinedLiteral",
   "RegexLiteral",
   "ObjectIdLiteral",
+  "Injected",
   "ArrayLiteral",
   "ObjectLiteral",
   "FieldRef",

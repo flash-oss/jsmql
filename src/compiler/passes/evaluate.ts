@@ -25,6 +25,7 @@ import {
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
 import { acceptsArgumentCount, isCallable, namespaceNames } from "../rows.ts";
+import { isMqlShaped } from "./inject.ts";
 
 /** What is known so far: a name bound to a constant, or to a declared function. */
 export type Constants = ReadonlyMap<string, unknown>;
@@ -645,6 +646,8 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
   const literal = readLiteral(node);
   if (literal.ok) return literal;
 
+  // a value a call supplied is a constant — unless it reads as MQL, which must never fold into a spelling the emit would read as an operator
+  if (node.type === "Injected") return isMqlShaped(node.value) ? NOT_CONSTANT : ok(node.value);
   switch (node.type) {
     case "Ident":
       return env.has(node.name) ? ok(env.get(node.name)) : NOT_CONSTANT;

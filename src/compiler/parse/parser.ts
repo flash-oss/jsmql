@@ -426,13 +426,30 @@ class Parser {
     return this.startsAWrite();
   }
 
+  /**
+   * Does the expression that starts here end in an assignment? A SCAN of the tokens
+   * to the end of the expression — the first `,` / `;` / closing bracket at depth
+   * zero — for an assignment operator at depth zero. A scan, not a speculative
+   * parse: parsing here doubled the work at every nesting level (exponential on
+   * `[[[…]]]`) and swallowed every error the speculation raised.
+   */
   private startsAWrite(): boolean {
     const save = this.c.mark();
     try {
-      this.expression();
-      return ASSIGN_TRIGGERS.has(this.c.type);
-    } catch {
-      return false;
+      let depth = 0;
+      for (;;) {
+        const t = this.c.peek();
+        if (t.type === "EOF") return false;
+        if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
+        else if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") {
+          if (depth === 0) return false;
+          depth--;
+        } else if (depth === 0) {
+          if (t.type === "Comma" || t.type === "Semi") return false;
+          if (ASSIGN_TRIGGERS.has(t.type)) return true;
+        }
+        this.c.next();
+      }
     } finally {
       this.c.reset(save);
     }
@@ -571,8 +588,23 @@ class Parser {
 
   // ── expressions: one Pratt loop ───────────────────────────────────────────
 
+  /** Nesting deeper than this is refused before the call stack is — a hostile input, not a query. */
+  private static readonly MAX_DEPTH = 200;
+  private depth = 0;
+
   expression(): Expr {
-    return this.pratt(1).expr;
+    if (++this.depth > Parser.MAX_DEPTH) {
+      const pos = this.c.peek().pos;
+      throw new ParseError(
+        `The expression nests too deeply (more than ${Parser.MAX_DEPTH} levels) at position ${pos}`,
+        pos,
+      );
+    }
+    try {
+      return this.pratt(1).expr;
+    } finally {
+      this.depth--;
+    }
   }
 
   private pratt(minPrec: number): Parsed {

@@ -172,7 +172,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** MQL expressions can't carry a function value; the common `arr.map(double)` desire is already served by `arr.map(x => double(x))` (an explicit lambda whose body calls the function). A clear rejection already guides toward that.
 - **Attempted approaches.** None — scoped out of the first cut per the developer's call.
 - **Success criteria.** TBD; at minimum `arr.map(double)` would lower like `arr.map(x => double(x))`.
-- **Rejection site(s).** `src/codegen.ts` `ParamRef` case (function-as-value error, tagged `[DEF-032]`).
+- **Rejection site(s).** `src/compiler/emit/errors.ts` `functionAsValue` (a declared function or an arrow read as a value, tagged `[DEF-032]`).
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** open
 - **Effort.** M

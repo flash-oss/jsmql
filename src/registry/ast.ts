@@ -123,6 +123,13 @@ export type Expr =
   | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
   /** `0x` and exactly 24 hex digits. A re-reading of a Number token. */
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
+  /**
+   * A value a CALL supplied — a `jsmql.compile` parameter, a template slot — that the
+   * source could not spell (a Date, a binary) or must not be read as MQL (a string
+   * starting with a dollar, a document with a dollar-key). Made by the injection
+   * pass, never by the parser.
+   */
+  | { type: "Injected"; value: unknown; pos: number }
   | { type: "TemplateLiteral"; quasis: readonly string[]; exprs: readonly Expr[]; pos: number }
   | { type: "ArrayLiteral"; elements: readonly ArrayElement[]; pos: number }
   | { type: "ObjectLiteral"; entries: readonly ObjectEntry[]; pos: number }

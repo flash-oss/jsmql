@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — feat!: the new compiler is jsmql
+
+`src/index.ts` runs `src/compiler/` over `src/registry/` for every entry — `jsmql()`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`, each `.compile`, and `jsmql.validate` — in all three call shapes. The module only turns the caller's input into source and values and the compiler's errors into `validate()` results; the shape of a program is read off the parsed tree (`shapeOf`), and a `const` prelude before one predicate is a Filter, the constants inlined (a Date or an ObjectId the source cannot spell rides in as the value). What changes at the call site:
+
+- **A JavaScript spelling reads the field's own value.** `$.age > 18` is `{ age: { $gt: 18, $not: { $type: "array" } } }`: a document whose `age` is an array no longer matches through one element, as it would not in JavaScript. Every Filter in this repository's examples carries the clause.
+- **`jsmql.update()` is the update DOCUMENT** — `{ $set, $inc, $push, $unset, $rename, $currentDate, $min/$max, $pop }`, constants only — the object `updateOne(filter, update)` takes; a value computed from the document is refused, naming the pipeline form (`jsmql()` / `jsmql.pipeline()`), which `updateOne` accepts as well. The mongoose plugin's update slot follows.
+- **Parameters and template slots are values, never syntax.** A `jsmql.compile` parameter or a `${…}` slot becomes an `Injected` node — spelled as a literal when the source could have, held as the value otherwise — so a `"$b"` stays the string `"$b"` in a query and `{ $literal: "$b" }` in an expression (HR1), a BigInt, a Date, an ObjectId and a document with `# DEVLOG
+
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+
+**Conventions.**
+- Newest entry on top.
+- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
+- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
+- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+-keys pass as data, and `undefined`, a function, a symbol, NaN and a circular structure are refused by slot. The old `FunctionInputError` is a `ParseError` now.
+- **`$ = <array>` fans out** into a stream of documents (`$set` a slot, `$unwind`, `$replaceWith`), and `$ = $.reduce((acc, d) => cond ? acc.concat(<doc>) : acc, [])` is the `$match` and `$replaceWith` it means (a total is the wrap form). A mixed `$project` and a `$near` inside an aggregation `$match` are refused as the server would.
+- **The parser scans instead of speculating.** The write lookahead was a speculative parse that doubled the work at every nesting level (`[[[…]]]` did not return) and swallowed the errors it raised; it is a linear token scan now, and an expression that nests more than 200 levels deep is refused before the call stack is.
+
+The suites that specified the shipped compiler's shapes are gone with it — the new compiler's suites compare every construct with JavaScript's own answer on mongod (`compiler-*.test.ts`). `test/realistic.test.ts` (the README's and the playground's source) is regenerated from the compiler, its two nested-lookup programs written through the callback parameter (J2: `o.shipments = …`, `o = { … }`), and the API suites (`strict-api`, `security`, `error-pos`, `cli`, `mongoose`, `site`, `integration`) assert the new shapes. The shipped compiler's modules stay in the tree until the globals generator reads the registry; nothing imports them.
+
+---
+
 ## 2026-09-06 — feat(compiler): the update-document target, takeWhile / dropWhile, and no pending cell left
 
 **The registry has no pending cell.** The last three clusters landed and the ratchet stands at zero.

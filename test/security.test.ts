@@ -1,115 +1,81 @@
+// The template tag and the compile parameters take VALUES: nothing a caller
+// supplies is ever read as syntax, as an operator, or as a field reference (HR1).
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 
+const OWN = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
+
 describe("jsmql template-tag interpolation guards", () => {
   it("rejects undefined with a slot-pointing error", () => {
-    expect(() => jsmql`$.x == ${undefined}`).toThrow(JsmqlInterpolationError);
-    expect(() => jsmql`$.x == ${undefined}`).toThrow(/slot 1.*undefined/);
+    expect(() => jsmql`$.x === ${undefined}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x === ${undefined}`).toThrow(/slot 1.*undefined/);
   });
-
-  it("rejects function values", () => {
+  it("rejects function and Symbol values", () => {
     const fn = () => 1;
-    expect(() => jsmql`$.x == ${fn}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x === ${fn}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x === ${Symbol("x")}`).toThrow(JsmqlInterpolationError);
   });
-
-  it("rejects Symbol values", () => {
-    expect(() => jsmql`$.x == ${Symbol("x")}`).toThrow(JsmqlInterpolationError);
-  });
-
   it("rejects NaN, Infinity, -Infinity", () => {
-    expect(() => jsmql`$.x == ${NaN}`).toThrow(JsmqlInterpolationError);
-    expect(() => jsmql`$.x == ${Infinity}`).toThrow(JsmqlInterpolationError);
-    expect(() => jsmql`$.x == ${-Infinity}`).toThrow(JsmqlInterpolationError);
+    for (const v of [NaN, Infinity, -Infinity]) expect(() => jsmql`$.x === ${v}`).toThrow(JsmqlInterpolationError);
   });
-
-  it("rejects BigInt with a serialisation error", () => {
-    expect(() => jsmql`$.x == ${BigInt(1)}`).toThrow(JsmqlInterpolationError);
-  });
-
   it("rejects circular objects", () => {
     const cyc: Record<string, unknown> = {};
     cyc.self = cyc;
-    expect(() => jsmql`$.x == ${cyc}`).toThrow(JsmqlInterpolationError);
+    expect(() => jsmql`$.x === ${cyc}`).toThrow(JsmqlInterpolationError);
   });
-
   it("reports the correct slot index", () => {
-    expect(() => jsmql`$.a == ${1} && $.b == ${undefined}`).toThrow(/slot 2/);
+    expect(() => jsmql`$.a === ${1} && $.b === ${undefined}`).toThrow(/slot 2/);
+  });
+  it("takes a BigInt as a value", () => {
+    expect(jsmql`$.x === ${BigInt(1)}`).toEqual({ $expr: { $eq: ["$x", { $toLong: "1" }] } });
   });
 });
 
 describe("jsmql template-tag interpolation cannot inject syntax", () => {
-  // `$eq($.field, ...)` is an OperatorCall, not a comparison BinaryExpr, so
-  // the top-level Filter dispatch wraps it in `$expr`. The security property
-  // the tests assert — that interpolated values round-trip as data, not as
-  // syntax — is unaffected; expectations just unwrap the outer `$expr`.
+  const evil = '"}); db.dropDatabase(); //';
   it("breakout-attempt strings round-trip as literal values", () => {
-    const evil = '"); $where: 1; (';
-    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $expr: { $eq: ["$field", evil] } });
+    expect(jsmql`$.field === ${evil}`).toEqual({ field: OWN(evil) });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ field: { $eq: evil } });
   });
-
   it("backticks and template-style payloads stay literal", () => {
-    const evil = "`${$.password}`";
-    expect(jsmql`$eq($.field, ${evil})`).toEqual({ $expr: { $eq: ["$field", evil] } });
+    const payload = "`${$.password}`";
+    expect(jsmql`$.field === ${payload}`).toEqual({ field: OWN(payload) });
   });
-
+  it("a string that looks like a field reference stays a string", () => {
+    expect(jsmql`$.a === ${"$b"}`).toEqual({ a: OWN("$b") });
+    expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $add: ["$a", { $literal: "$b" }] });
+    expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $add: ["$a", { $literal: "$b" }] });
+  });
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
-    const payload = { $function: { body: "function(){return 1}", args: [], lang: "js" } };
-    // Interpolating the object lands inside a value position, so codegen treats
-    // it as a plain object literal — keys become output keys, NOT operator dispatch.
-    // (Operator dispatch is triggered by `$name(...)` call syntax in the source.)
-    const result = jsmql`$eq($.field, ${payload})` as { $expr: { $eq: [string, unknown] } };
-    expect(result.$expr.$eq[0]).toEqual("$field");
-    expect(result.$expr.$eq[1]).toEqual(payload);
+    const payload = { $gt: 0, $where: "this.secret" };
+    expect(jsmql`$eq($.field, ${payload})`).toEqual({ field: { $eq: payload } });
+    expect(jsmql.expr`${payload}`).toEqual({ $literal: payload });
   });
 });
 
 describe("recursion depth limits", () => {
-  it("jsmql.validate() catches deeply nested input as SYNTAX_ERROR (no uncaught RangeError)", () => {
-    const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    const result = jsmql.validate(src);
+  const nested = "(".repeat(300) + "1" + ")".repeat(300);
+  it("jsmql.validate() reports deep nesting as a SYNTAX_ERROR, never a RangeError", () => {
+    const result = jsmql.validate(nested);
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("SYNTAX_ERROR");
     expect(result.errors[0].message).toMatch(/nests too deeply/);
   });
-
-  it("jsmql() throws ParseError with the depth message on deeply nested parens", () => {
-    const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    expect(() => jsmql(src)).toThrow(/nests too deeply/);
+  it("jsmql() throws the depth message on deeply nested parens and operator calls", () => {
+    expect(() => jsmql(nested)).toThrow(/nests too deeply/);
+    expect(() => jsmql("$add(".repeat(300) + "1" + ")".repeat(300))).toThrow(/nests too deeply/);
   });
-
-  it("rejects deeply nested operator-call arguments", () => {
-    // 600 levels of $not($not(...$not(true))) — survives lexing and parsing
-    // until the depth counter trips (200 is the cap, but the throw happens
-    // when we recurse past it).
-    let src = "true";
-    for (let i = 0; i < 600; i++) src = `$not(${src})`;
-    expect(() => jsmql(src)).toThrow(/nests too deeply/);
-  });
-
   it("typical-depth expressions still compile", () => {
-    let src = "true";
-    for (let i = 0; i < 50; i++) src = `$not(${src})`;
-    // 50 levels nests inside MAX_RECURSION_DEPTH; should compile fine.
+    const src = "(".repeat(40) + "$.a > 1" + ")".repeat(40);
     expect(() => jsmql(src)).not.toThrow();
   });
 });
 
 describe("jsmql.validate() error contract", () => {
-  it("never throws on BigInt-via-template-tag interpolation; returns structured error", () => {
-    // Now that `jsmql.validate` is itself polymorphic, the workaround the previous
-    // test had to dance around is gone — `jsmql.validate` accepts the template-tag
-    // form directly and turns the JsmqlInterpolationError into a structured
-    // SYNTAX_ERROR, never throwing.
-    const result = jsmql.validate`$.x == ${BigInt(1)}`;
+  it("never throws on a template value; it reports or accepts", () => {
+    expect(jsmql.validate`$.x === ${BigInt(1)}`).toEqual({ valid: true, errors: [] });
+    const result = jsmql.validate`$.x === ${undefined}`;
     expect(result.valid).toBe(false);
     expect(result.errors[0].code).toBe("SYNTAX_ERROR");
-    expect(result.errors[0].message).toMatch(/slot 1/);
-  });
-
-  it("turns RangeError into a structured SYNTAX_ERROR via the depth-limit path", () => {
-    // Already covered by the depth-limit test, but assert the contract shape
-    // here: jsmql.validate() returns, never throws, regardless of input.
-    const src = "(".repeat(2000) + "1" + ")".repeat(2000);
-    expect(() => jsmql.validate(src)).not.toThrow();
   });
 });

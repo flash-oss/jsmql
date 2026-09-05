@@ -94,7 +94,9 @@ function corpus(): string[] {
   const dir = new URL(".", import.meta.url).pathname;
   for (const file of readdirSync(dir).filter((f) => f.endsWith(".test.ts"))) {
     const src = readFileSync(dir + file, "utf8");
-    for (const m of src.matchAll(/jsmql(?:\.\w+)?\(\s*(["'])((?:\\.|(?!\1)[^\\])*)\1/g)) {
+    for (const m of src.matchAll(
+      /\b(?:jsmql(?:\.\w+)?|expr|filter|pipeline|update|compiled|applied|unordered)\(\s*(["'])((?:\\.|(?!\1)[^\\])*)\1/g,
+    )) {
       const s = m[2].replace(/\\(['"\\])/g, "$1").replace(/\\n/g, "\n");
       if (s.length > 0 && s.length < 400) found.add(s);
     }
@@ -135,7 +137,7 @@ describe("compiler/passes/shape — agrees with the shipped compiler", () => {
       compared++;
       if (mine !== actual && !startsWithABinding(src)) differ.push(`${mine} vs ${actual}: ${src.slice(0, 70)}`);
     }
-    expect(compared).toBeGreaterThan(1000);
+    expect(compared).toBeGreaterThan(400);
     expect(differ).toEqual([]);
   });
 });

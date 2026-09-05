@@ -1,55 +1,42 @@
+// The strict-shape entries: each accepts one shape and refuses the others by
+// name, so a source that would silently lower to the wrong document for the
+// driver method at hand is a compile-time error instead. See
+// docs/specs/strict-shape-entries.md.
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// Strict-shape entry points: `jsmql.filter()`, `jsmql.pipeline()`,
-// `jsmql.update()`. These wrap the same parser/lowering pipeline as
-// `jsmql()` but each enforces a single output shape at compile time and
-// throws an actionable error otherwise. The polymorphic `jsmql()` stays the
-// "guess from input shape" entry point; these three exist for call sites
-// where the desired shape is fixed and a silent mis-dispatch would be a
-// footgun.
-//
-// The AST type for an update-op chain is still `UpdateFilter` (mirroring the
-// MongoDB driver's `UpdateFilter<T>`); only the public function name is
-// `update`, to avoid the "filter ≠ query doc" confusion at the call site.
+const OWN = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
 
 describe("jsmql.filter() — strict Filter shape", () => {
   it("returns a Filter document for an indexable predicate", () => {
-    expect(jsmql.filter("$.age > 18 && $.status === 'active'")).toEqual({ age: { $gt: 18 }, status: "active" });
+    expect(jsmql.filter("$.age > 18 && $.status === 'active'")).toEqual({
+      age: { $gt: 18, $not: { $type: "array" } },
+      status: OWN("active"),
+    });
   });
-
-  it("wraps a non-translatable expression in $expr (same as jsmql())", () => {
+  it("takes the expression road where the query language has no clause", () => {
     expect(jsmql.filter("$.name.trim() === 'alice'")).toEqual({
       $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] },
     });
   });
-
   it("accepts the arrow form", () => {
-    expect(jsmql.filter(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18 } });
+    expect(jsmql.filter(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
-
-  it("accepts the template-tag form with an interpolated literal", () => {
+  it("accepts the template-tag form with an interpolated value", () => {
     const minAge = 21;
-    expect(jsmql.filter`$.age >= ${minAge}`).toEqual({ age: { $gte: 21 } });
+    expect(jsmql.filter`$.age >= ${minAge}`).toEqual({ age: { $gte: 21, $not: { $type: "array" } } });
   });
-
-  it("throws on a `;`-separated Pipeline", () => {
+  it("refuses a `;`-separated Pipeline and names jsmql.pipeline()", () => {
     expect(() => jsmql.filter("$match($.x > 0); $sort({ x: 1 })")).toThrow(
       /jsmql\.filter\(\) expects a Filter.*`;`-separated Pipeline.*jsmql\.pipeline\(\)/s,
     );
   });
-
-  it("throws on an update-op chain and points at jsmql.update()", () => {
+  it("refuses a write and names both update forms", () => {
     expect(() => jsmql.filter("$.x = 1")).toThrow(
-      /jsmql\.filter\(\) expects a Filter.*update-op chain.*jsmql\.update\(\)/s,
+      /jsmql\.filter\(\) expects a Filter.*a write.*jsmql\.update\(\).*jsmql\.pipeline\(\)/s,
     );
   });
-
-  it("throws on a stream-replace `$$ = <expr>` and names the shape, not 'update-op chain'", () => {
-    // A `$$ =` LHS is a `CollectionRef`, so it parses into the same UpdateFilter
-    // node an update-op chain does — but calling it one would send the user to
-    // jsmql.update(), which rejects it too. Name the stream-replace, and offer the
-    // Filter the narrowing form was reaching for.
+  it("refuses a stream-replace `$$ = <expr>` and names the shape", () => {
     for (const src of ["$$ = $$.filter(t => t.a === 1)", "$$ = $$.filter(t => t.a === 1);"]) {
       expect(() => jsmql.filter(src)).toThrow(/jsmql\.filter\(\) expects a Filter/);
     }
@@ -57,26 +44,15 @@ describe("jsmql.filter() — strict Filter shape", () => {
       /stream-replace `\$\$ = <expr>`.*jsmql\.pipeline\(\).*pass the predicate to jsmql\.filter\(\) directly/s,
     );
   });
-
-  it("throws on a top-level stage call with the offending stage name", () => {
+  it("refuses a top-level stage call with the offending stage name, and says to drop a `$match`", () => {
     expect(() => jsmql.filter("$match($.age > 18)")).toThrow(
-      /jsmql\.filter\(\) expects a Filter.*top-level '\$match' stage call/s,
+      /top-level '\$match' stage call.*drop the `\$match\(\.\.\.\)` wrapper/s,
     );
-  });
-
-  it("suggests dropping $match for the most common mistake", () => {
-    // The $match-specific hint nudges users who wrapped a predicate by reflex.
-    expect(() => jsmql.filter("$match($.age > 18)")).toThrow(/drop the `\$match\(\.\.\.\)` wrapper/);
-  });
-
-  it("throws on a stage-object literal (Compass copy-paste shape)", () => {
     expect(() => jsmql.filter("{ $match: $.x > 0 }")).toThrow(/top-level '\$match' stage call/);
   });
-
-  it("throws on an array-literal Pipeline", () => {
+  it("refuses an array-literal Pipeline", () => {
     expect(() => jsmql.filter("[{ $match: $.x > 0 }]")).toThrow(/Pipeline array/);
   });
-
   it("rejects non-string / non-function / non-template inputs by name", () => {
     expect(() => (jsmql.filter as (n: unknown) => unknown)(42)).toThrow(
       /jsmql\.filter\(\) expects a string, an arrow function, or a template literal — got number/,
@@ -85,212 +61,122 @@ describe("jsmql.filter() — strict Filter shape", () => {
 });
 
 describe("jsmql.pipeline() — strict Pipeline shape", () => {
-  it("auto-wraps a single top-level stage call (same as jsmql())", () => {
-    expect(jsmql.pipeline("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18 } } }]);
+  it("takes a single top-level stage call (same as jsmql())", () => {
+    expect(jsmql.pipeline("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
   });
-
   it("compiles a `;`-separated multi-stage pipeline", () => {
     expect(jsmql.pipeline("$match($.age > 18); $sort({ age: 1 })")).toEqual([
-      { $match: { age: { $gt: 18 } } },
+      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
       { $sort: { age: 1 } },
     ]);
   });
-
-  it("compiles an update-op chain to a $set / $unset pipeline", () => {
+  it("compiles writes to a $set / $unset pipeline", () => {
     expect(jsmql.pipeline("$.x = 1; delete $.y")).toEqual([{ $set: { x: 1 } }, { $unset: "y" }]);
   });
-
   it("accepts an array-literal Pipeline", () => {
     expect(jsmql.pipeline("[{ $match: $.x > 0 }, { $sort: { x: 1 } }]")).toEqual([
-      { $match: { x: { $gt: 0 } } },
+      { $match: { x: { $gt: 0, $not: { $type: "array" } } } },
       { $sort: { x: 1 } },
     ]);
   });
-
-  it("accepts the template-tag form with an interpolated literal", () => {
+  it("accepts the template-tag form with an interpolated value", () => {
     const cutoff = 100;
-    expect(jsmql.pipeline`$match($.score > ${cutoff})`).toEqual([{ $match: { score: { $gt: 100 } } }]);
+    expect(jsmql.pipeline`$match($.score > ${cutoff})`).toEqual([
+      { $match: { score: { $gt: 100, $not: { $type: "array" } } } },
+    ]);
   });
-
   it("accepts the block-body arrow form", () => {
     expect(
       jsmql.pipeline(({ $, $match, $sort }) => {
         $match($.age > 18);
         $sort({ age: 1 });
       }),
-    ).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } }]);
+    ).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }, { $sort: { age: 1 } }]);
   });
-
-  it("lowers a stream-replace `$$ = <expr>` with or without a trailing `;`", () => {
-    // Both spellings must reach the pipeline lowerer here exactly as they do
-    // under `jsmql()` — a strict entry that agrees with the polymorphic one on
-    // the `;` form but not on the no-`;` form is the mis-dispatch this entry exists
-    // to prevent.
+  it("lowers a stream-replace `$$ = <expr>` with or without a trailing `;`, like jsmql()", () => {
     for (const src of ["$$ = $$.filter({ a: 1 })", "$$ = $$.filter({ a: 1 });"]) {
-      expect(jsmql.pipeline(src)).toEqual([{ $match: { a: 1 } }]);
+      expect(jsmql.pipeline(src)).toEqual([{ $match: { a: OWN(1) } }]);
       expect(jsmql.pipeline(src)).toEqual(jsmql(src));
     }
   });
-
-  it("lowers a no-`;` source-switch `$$ = $$$.<coll>.filter(...)` like jsmql() does", () => {
-    const src = "$$ = $$$.orders.filter({ userId: $._id })";
-    expect(jsmql.pipeline(src)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.1",
-        },
-      },
-      { $unwind: "$__jsmql.tmp.1" },
-      { $replaceWith: "$__jsmql.tmp.1" },
-    ]);
-    expect(jsmql.pipeline(src)).toEqual(jsmql(src));
-  });
-
-  it("throws on a bare predicate that would lower to a Filter", () => {
+  it("refuses a bare predicate that would lower to a Filter", () => {
     expect(() => jsmql.pipeline("$.age > 18")).toThrow(
       /jsmql\.pipeline\(\) expects a Pipeline.*bare expression that would lower to a Filter.*jsmql\.filter\(\).*wrap the predicate as `\$match/s,
     );
-  });
-
-  it("throws on a bare non-predicate expression", () => {
     expect(() => jsmql.pipeline("$.a + $.b")).toThrow(/jsmql\.pipeline\(\) expects a Pipeline/);
   });
 });
 
-describe("jsmql.update() — strict aggregation-pipeline update", () => {
-  it("compiles an assignment to a one-element $set pipeline", () => {
-    expect(jsmql.update("$.name = $.name.toUpperCase()")).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+describe("jsmql.update() — the update document", () => {
+  it("compiles writes to the document `updateOne(filter, update)` takes", () => {
+    expect(jsmql.update("$.x = 1; delete $.y")).toEqual({ $set: { x: 1 }, $unset: { y: "" } });
+    expect(jsmql.update("$.score += 5; $.tags.push('a')")).toEqual({ $inc: { score: 5 }, $push: { tags: "a" } });
   });
-
-  it("compiles a chained assignment plus delete to two stages", () => {
-    expect(jsmql.update("$.x = 1; delete $.y")).toEqual([{ $set: { x: 1 } }, { $unset: "y" }]);
+  it("takes the update operators themselves", () => {
+    expect(jsmql.update("$inc({ n: 2 }); $set({ a: 1 })")).toEqual({ $inc: { n: 2 }, $set: { a: 1 } });
+    expect(jsmql.update("{ $set: { x: 1 }, $unset: { y: '' } }")).toEqual({ $set: { x: 1 }, $unset: { y: "" } });
   });
-
-  it("accepts an explicit $set stage call", () => {
-    expect(jsmql.update("$set({ x: $.x + 1 })")).toEqual([{ $set: { x: { $add: ["$x", 1] } } }]);
+  it("refuses a value computed from the document, naming the pipeline form", () => {
+    expect(() => jsmql.update("$.name = $.name.toUpperCase()")).toThrow(/takes constants.*pipeline form/s);
   });
-
-  it("accepts $addFields / $project / $unset / $replaceRoot / $replaceWith", () => {
-    expect(jsmql.update("$addFields({ y: $.x + 1 }); $project({ y: 1 })")).toEqual([
-      { $addFields: { y: { $add: ["$x", 1] } } },
-      { $project: { y: 1 } },
-    ]);
-    expect(jsmql.update("$replaceRoot({ newRoot: $.nested })")).toEqual([{ $replaceRoot: { newRoot: "$nested" } }]);
-    expect(jsmql.update("$replaceWith($.nested)")).toEqual([{ $replaceWith: "$nested" }]);
+  it("refuses a bare predicate", () => {
+    expect(() => jsmql.update("$.age > 18")).toThrow(/An update document is made of writes/);
   });
-
-  it("rejects $match with the offending stage name and the allowed list", () => {
-    // Allowed-stage list is alphabetical so the message stays deterministic.
-    expect(() => jsmql.update("$match($.age > 18); $set({ x: 1 })")).toThrow(
-      /jsmql\.update\(\) rejected '\$match' \(stage 0\).*aggregation-pipeline update form only accepts \$addFields, \$project, \$replaceRoot, \$replaceWith, \$set, \$unset/s,
-    );
+  it("refuses a fragment or a stage where an update operator belongs", () => {
+    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(/'\$sort' is a fragment of '\$push'/);
+    expect(() => jsmql.update("$match($.x > 0)")).toThrow(/not valid in an update document/);
   });
-
-  it("rejects $sort even when it follows valid stages", () => {
-    expect(() => jsmql.update("$set({ x: 1 }); $sort({ x: 1 })")).toThrow(
-      /jsmql\.update\(\) rejected '\$sort' \(stage 1\)/,
-    );
-  });
-
-  it("throws on a bare predicate (same error as jsmql.pipeline)", () => {
-    expect(() => jsmql.update("$.age > 18")).toThrow(/jsmql\.update\(\) expects a Pipeline.*bare expression/);
-  });
-
-  it("judges a no-`;` stream-replace on the stage it emits, not on its spelling", () => {
-    // `$$ = <expr>` reaches the whitelist like any other stage source: the
-    // `$replaceWith` a `.map` head emits is allowed, the `$match` a `.filter`
-    // head emits is not — and the verdict must not change with the trailing `;`.
-    for (const src of ["$$ = $$.map(t => ({ x: t.x }))", "$$ = $$.map(t => ({ x: t.x }));"]) {
-      expect(jsmql.update(src)).toEqual([{ $replaceWith: { x: "$x" } }]);
-    }
-    for (const src of ["$$ = $$.filter({ a: 1 })", "$$ = $$.filter({ a: 1 });"]) {
-      expect(() => jsmql.update(src)).toThrow(/jsmql\.update\(\) rejected '\$match' \(stage 0\)/);
-    }
-  });
-
-  it("accepts the template-tag form with an interpolated literal", () => {
+  it("accepts the template-tag and arrow forms", () => {
     const bump = 5;
-    expect(jsmql.update`$.score += ${bump}`).toEqual([{ $set: { score: { $add: ["$score", 5] } } }]);
-  });
-
-  it("accepts the arrow form", () => {
-    expect(jsmql.update(({ $ }) => ($.name = $.name.toUpperCase()))).toEqual([
-      { $set: { name: { $toUpper: "$name" } } },
-    ]);
-  });
-
-  it("allows `let` bindings (they lower to whitelisted $set / $unset stages)", () => {
-    // `let` bindings desugar to a `$set: { "__jsmql.var.foo": ... }` stage plus a
-    // trailing `$unset: "__jsmql"` cleanup — both stages are in the
-    // update-pipeline whitelist, so the chain composes cleanly.
-    expect(jsmql.update("let upper = $.name.toUpperCase(); $.name = upper")).toEqual([
-      { $set: { "__jsmql.var.upper": { $toUpper: "$name" } } },
-      { $set: { name: "$__jsmql.var.upper" } },
-      { $unset: "__jsmql" },
-    ]);
+    expect(jsmql.update`$.score += ${bump}`).toEqual({ $inc: { score: 5 } });
+    expect(jsmql.update(({ $ }) => ($.name = "x"))).toEqual({ $set: { name: "x" } });
   });
 });
 
-// The strict-shape entries each carry a parameterised `.compile` builder — the
-// parse-once / bind-many form of that entry point, narrowed to the same output
-// shape. They mirror `jsmql.compile` but enforce the entry's shape contract on
-// every call (so a parameterised arrow that lowers to the wrong shape throws
-// the same actionable error the one-shot strict entry would).
 describe("strict-shape `.compile` builders", () => {
   it("jsmql.filter.compile binds params and returns a Filter", () => {
     const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
-    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
-    expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21, $not: { $type: "array" } } });
   });
-
   it("jsmql.filter.compile accepts the arrow as a source string", () => {
     const q = jsmql.filter.compile("({ minAge }, { $ }) => $.age > minAge");
-    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
-
-  it("jsmql.filter.compile throws on a Pipeline-shaped arrow body", () => {
+  it("jsmql.filter.compile refuses a Pipeline-shaped arrow body", () => {
     const q = jsmql.filter.compile("({ $ }) => { $match($.x > 0); $sort({ x: 1 }) }");
     expect(() => q({})).toThrow(/jsmql\.filter\(\) expects a Filter/);
   });
-
   it("jsmql.pipeline.compile binds params and returns a stage array", () => {
     const q = jsmql.pipeline.compile(({ minAge }: { minAge: number }) => {
       $match($.age > minAge);
       $sort({ age: -1 });
     });
-    expect(q({ minAge: 18 })).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
+    expect(q({ minAge: 18 })).toEqual([
+      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $sort: { age: -1 } },
+    ]);
   });
-
-  it("jsmql.pipeline.compile throws on a bare-expression arrow body", () => {
+  it("jsmql.pipeline.compile refuses a bare-expression arrow body", () => {
     const q = jsmql.pipeline.compile("({ minAge }, { $ }) => $.age > minAge");
     expect(() => q({ minAge: 18 })).toThrow(/jsmql\.pipeline\(\) expects a Pipeline.*bare expression/);
   });
-
-  it("jsmql.update.compile binds params and enforces the update-stage whitelist", () => {
+  it("jsmql.update.compile binds params into the update document", () => {
     const q = jsmql.update.compile(({ tier }: { tier: number }) => ($.tier = tier));
-    expect(q({ tier: 2 })).toEqual([{ $set: { tier: 2 } }]);
+    expect(q({ tier: 2 })).toEqual({ $set: { tier: 2 } });
   });
-
-  it("jsmql.update.compile throws when the body uses a non-whitelisted stage", () => {
-    const q = jsmql.update.compile("({ $ }) => { $match($.x > 0) }");
-    expect(() => q({})).toThrow(/jsmql\.update\(\) rejected '\$match'/);
-  });
-
   it("jsmql.expr.compile binds params and returns a raw aggregation expression", () => {
     const q = jsmql.expr.compile(({ k }: { k: number }) => $.a + k);
     expect(q({ k: 2 })).toEqual({ $add: ["$a", 2] });
   });
-
-  it("missing a declared binding throws (same as jsmql.compile)", () => {
+  it("a parameter left out at the call is named", () => {
     const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
-    expect(() => q({} as { minAge: number })).toThrow(/minAge/);
+    expect(() => q({} as { minAge: number })).toThrow(/'minAge' is a parameter of this query and was not supplied/);
   });
-
   it("rejects a non-arrow input type with an entry-named TypeError", () => {
-    // @ts-expect-error — exercising the runtime guard on a wrong-typed call.
-    expect(() => jsmql.pipeline.compile(42)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);
+    expect(() => jsmql.pipeline.compile(42 as never)).toThrow(/jsmql\.pipeline\.compile\(\) expects an arrow function/);
+  });
+  it("a string that is not the entry form is refused", () => {
+    expect(() => jsmql.compile("$.age > 18")).toThrow(/takes the entry form/);
   });
 });

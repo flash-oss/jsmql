@@ -41,7 +41,7 @@ import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
-import { holdsStreamReduce, isReduceWrap, reduceWrapStages } from "./reduce-wrap.ts";
+import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
 
 /**
@@ -545,6 +545,17 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     const path = targetPath(op, inner);
     // `$$ = <chain>` replaces the STREAM: its stages stand on their own, after
     // whatever the run has grouped so far.
+    if (
+      path === STREAM_TARGET &&
+      op.type === "AssignExpr" &&
+      op.value.type === "MethodCall" &&
+      isStreamReduce(op.value)
+    ) {
+      // `$$ = $$.reduce((acc, d) => acc.concat(…), [])`: the array reducer, in its assignment spelling
+      flush();
+      out.push(...arrayReduceStages(op.value, inner, first && out.length === 0));
+      continue;
+    }
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw E.cannotDeleteRoot(op.pos);
       flush();
@@ -601,6 +612,13 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         throw E.rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
       const kind = kindOf(op.value, inner);
+      if (kind === "array") {
+        // `$ = <array>` FANS OUT: each element becomes a document of the stream.
+        const slot = inner.chain.slot();
+        flush();
+        out.push({ $set: { [slot.path]: value } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
+        continue;
+      }
       if (kind !== "unknown" && kind !== "object") throw E.rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
       out.push({ $replaceWith: value });
@@ -777,6 +795,8 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
       if (node.optional) throw E.optionalOnStream(node.pos);
       const row = namedRow(node) ?? node.name;
       // `$$.push(…)` — documents unioned into the stream.
+      // `$.reduce((acc, d) => acc.concat(…), [])`: the array reducer is a filter and a reshape of the stream.
+      if (node.object.type === "CollectionRef" && isStreamReduce(node)) return arrayReduceStages(node, env, first);
       if (isContextRef(node.object) && unionsOf(row)) {
         if (base.type !== "CollectionRef") throw E.rootStreamInForeign(node.pos);
         if (env.level > 0) throw E.rootStreamInForeign(node.pos);
@@ -850,4 +870,15 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   // A cell answers with the stages its name means; where they may STAND is the
   // row's other fact, and it is applied to each of them.
   return stages.flatMap((st) => place(Object.keys(st)[0] ?? name, st, env, first, node.pos));
+}
+
+/** The array reducer as stages: `$match` when the body tests, then `$replaceWith` of the appended document. */
+function arrayReduceStages(call: Extract<Expr, { type: "MethodCall" }>, env: Env, first: boolean): Stage[] {
+  const parts = arrayReduceParts(call);
+  const inputs = stageInputs("reduce", call.args as readonly Expr[], [], env, call, READ);
+  const out: Stage[] = [];
+  if (parts.test !== null) out.push(...place("$match", { $match: inputs.predicate(parts.test) }, env, first, call.pos));
+  const doc = inputs.document(parts.doc);
+  out.push(...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos));
+  return out;
 }

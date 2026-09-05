@@ -32,6 +32,7 @@ const EVERY_NODE: Record<Node["type"], true> = {
   UndefinedLiteral: true,
   RegexLiteral: true,
   ObjectIdLiteral: true,
+  Injected: true,
   TemplateLiteral: true,
   ArrayLiteral: true,
   ObjectLiteral: true,
@@ -63,7 +64,7 @@ const EVERY_NODE: Record<Node["type"], true> = {
 
 describe("registry/ast — the tree and the rules agree", () => {
   it("has one node type per shape and no more", () => {
-    expect(Object.keys(EVERY_NODE)).toHaveLength(35);
+    expect(Object.keys(EVERY_NODE)).toHaveLength(36);
   });
 
   it("every node a production claims to build exists in the tree", () => {

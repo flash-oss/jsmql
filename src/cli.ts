@@ -36,7 +36,7 @@ Output shape (default: polymorphic):
   --filter        force a Filter document   (single object)
   --pipeline      force a Pipeline           (array of stages)
   --expr          force an aggregation expression
-  --update        force an update pipeline   (whitelisted stages)
+  --update        force an update document   (the object updateOne takes)
   --validate      report {valid, errors} as JSON; exit 1 if invalid
   --check         alias for --validate
 

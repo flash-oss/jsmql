@@ -50,6 +50,14 @@ function statementShaped(node: Any): boolean {
  */
 export function shapeOf(program: Program): Shape {
   const root = program as Any;
+  // `const cutoff = 18; $.age > cutoff` is a Filter with a prelude: every statement but
+  // the last declares a binding the fold inlines, and the last is an expression.
+  if (root.type === "Pipeline") {
+    const stmts = root.stmts as readonly Any[];
+    const last = stmts[stmts.length - 1];
+    const prelude = stmts.length >= 2 && stmts.slice(0, -1).every((s) => s.type === "LetDecl" || s.type === "FuncDecl");
+    if (last !== undefined && prelude && !statementShaped(last)) return "filter";
+  }
   if (statementShaped(root)) return "pipeline";
   if (root.type === "ArrayLiteral") {
     const first = (root.elements as readonly Any[] | undefined)?.[0];

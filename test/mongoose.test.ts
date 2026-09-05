@@ -106,14 +106,14 @@ describe("@koresar/jsmql/mongoose — Filter-accepting methods", () => {
       jsmqlMongoose(mongoose);
       Model[name]("$.age > 18");
       expect(recorded).toHaveLength(1);
-      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
+      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
     });
 
     it(`Model.${name}: arrow filter is lowered through jsmql.filter`, () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
       Model[name](({ $ }: any) => $.age > 18);
-      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
+      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
     });
 
     it(`Model.${name}: plain-object filter passes through untouched`, () => {
@@ -131,7 +131,7 @@ describe("@koresar/jsmql/mongoose — Filter-accepting methods", () => {
     const projection = { name: 1, age: 1 };
     const options = { limit: 10 };
     Model.find("$.age > 18", projection, options);
-    expect(recorded[0].args).toEqual([{ age: { $gt: 18 } }, projection, options]);
+    expect(recorded[0].args).toEqual([{ age: { $gt: 18, $not: { $type: "array" } } }, projection, options]);
   });
 
   it("a Pipeline-shaped source at a filter slot surfaces the strict error", () => {
@@ -149,8 +149,8 @@ describe("@koresar/jsmql/mongoose — Filter + update slots", () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
       Model[name]("$.status === 'active'", ({ $ }: any) => ($.score += 1));
-      expect(recorded[0].args[0]).toEqual({ status: "active" });
-      expect(recorded[0].args[1]).toEqual([{ $set: { score: { $add: ["$score", 1] } } }]);
+      expect(recorded[0].args[0]).toEqual({ status: { $eq: "active", $not: { $type: "array" } } });
+      expect(recorded[0].args[1]).toEqual({ $inc: { score: 1 } });
     });
 
     it(`Model.${name}: plain-object filter + plain-object update both pass through`, () => {
@@ -167,24 +167,22 @@ describe("@koresar/jsmql/mongoose — Filter + update slots", () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
       const filter = { _id: 1 };
-      Model[name](filter, "$.name = $.name.toUpperCase()");
+      Model[name](filter, "$.name = 'x'");
       expect(recorded[0].args[0]).toBe(filter);
-      expect(recorded[0].args[1]).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+      expect(recorded[0].args[1]).toEqual({ $set: { name: "x" } });
     });
   }
 
   it("a bare-expression update surfaces jsmql.update()'s actionable error", () => {
     const { mongoose, Model } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    expect(() => Model.updateOne({}, "$.age > 18")).toThrow(/jsmql\.update\(\) expects a Pipeline/);
+    expect(() => Model.updateOne({}, "$.age > 18")).toThrow(/An update document is made of writes/);
   });
 
   it("an out-of-whitelist stage inside an update surfaces the named error", () => {
     const { mongoose, Model } = buildMockMongoose();
     jsmqlMongoose(mongoose);
-    expect(() => Model.updateMany({}, "$set({ a: 1 }); $sort({ a: 1 })")).toThrow(
-      /jsmql\.update\(\) rejected '\$sort'/,
-    );
+    expect(() => Model.updateMany({}, "$set({ a: 1 }); $sort({ a: 1 })")).toThrow(/'\$sort' is a fragment of '\$push'/);
   });
 });
 
@@ -194,7 +192,7 @@ describe("@koresar/jsmql/mongoose — findByIdAndUpdate (id-at-0)", () => {
     jsmqlMongoose(mongoose);
     Model.findByIdAndUpdate("507f1f77bcf86cd799439011", ({ $ }: any) => ($.lastSeen = new Date(0)));
     expect(recorded[0].args[0]).toBe("507f1f77bcf86cd799439011");
-    expect(Array.isArray(recorded[0].args[1])).toBe(true);
+    expect(recorded[0].args[1]).toEqual({ $set: { lastSeen: new Date(0) } });
   });
 });
 
@@ -204,7 +202,7 @@ describe("@koresar/jsmql/mongoose — distinct (filter-at-1)", () => {
     jsmqlMongoose(mongoose);
     Model.distinct("email", "$.region === 'AU'");
     expect(recorded[0].args[0]).toBe("email");
-    expect(recorded[0].args[1]).toEqual({ region: "AU" });
+    expect(recorded[0].args[1]).toEqual({ region: { $eq: "AU", $not: { $type: "array" } } });
   });
 
   it("Model.distinct(field) with no filter is a no-op pass-through", () => {
@@ -220,7 +218,7 @@ describe("@koresar/jsmql/mongoose — aggregate (pipeline-at-0)", () => {
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
     Model.aggregate("$match($.x > 0); $sort({ x: 1 })");
-    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
+    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $sort: { x: 1 } }]);
   });
 
   it("arrow pipeline is lowered through jsmql.pipeline", () => {
@@ -230,7 +228,7 @@ describe("@koresar/jsmql/mongoose — aggregate (pipeline-at-0)", () => {
       $match($.x > 0);
       $sort({ x: 1 });
     });
-    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
+    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $sort: { x: 1 } }]);
   });
 
   it("array-of-stages passes through untouched", () => {
@@ -254,7 +252,7 @@ describe("@koresar/jsmql/mongoose — subclass propagation", () => {
     jsmqlMongoose(mongoose);
     class User extends Model {}
     User.find("$.age > 18");
-    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
+    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
     // The patched function is reached via prototype-chain lookup, so it
     // executes with the subclass as `this` — matching real mongoose behaviour.
     expect(recorded[0].thisArg).toBe(User);
@@ -275,6 +273,6 @@ describe("@koresar/jsmql/mongoose — idempotence", () => {
     jsmqlMongoose(mongoose);
     jsmqlMongoose(mongoose);
     Model.find("$.age > 18");
-    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
+    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
   });
 });

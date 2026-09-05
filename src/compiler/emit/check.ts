@@ -301,6 +301,28 @@ export function checkBody(
       );
     }
   }
+  if (rule.onePolarity === true && body !== null) {
+    let seen: { key: string; on: boolean } | null = null;
+    for (const k of present) {
+      if (k === "_id") continue;
+      const v = valueOf(k);
+      if (v === undefined) continue;
+      const on =
+        v.type === "NumberLiteral" && (v.value === 1 || v.value === 0)
+          ? v.value === 1
+          : v.type === "BooleanLiteral"
+            ? v.value
+            : null;
+      if (on === null) continue;
+      if (seen !== null && seen.on !== on) {
+        throw new CodegenError(
+          `'${name}' is either an inclusion or an exclusion, not both: '${seen.key}' ${seen.on ? "includes" : "excludes"} and '${k}' ${on ? "includes" : "excludes"} ('_id' alone may be excluded from an inclusion). The server refuses the mix.`,
+          v.pos,
+        );
+      }
+      seen ??= { key: k, on };
+    }
+  }
   const caseInsensitive = new Set(rule.caseInsensitiveKeys ?? []);
   for (const [k, allowed] of Object.entries(rule.enums ?? {})) {
     const v = valueOf(k);

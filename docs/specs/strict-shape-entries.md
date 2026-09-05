@@ -6,7 +6,7 @@ The three strict-shape variants of `jsmql()` exported from [src/index.ts](../../
 
 - `jsmql.filter(input)` — returns a Filter document; throws on any Pipeline-shaped input.
 - `jsmql.pipeline(input)` — returns a Pipeline stage array; throws on a bare expression that would lower to a Filter.
-- `jsmql.update(input)` — returns a Pipeline stage array, additionally restricted to MongoDB's aggregation-pipeline update stage whitelist. (The AST node type is still `UpdateFilter`, matching the Node MongoDB driver's `UpdateFilter<T>`; only the function name is shortened to `update`, because "filter" in the driver type routinely trips developers into reaching for it when they meant the query document.)
+- `jsmql.update(input)` — returns the update DOCUMENT `db.coll.updateOne(filter, update)` takes: the object form (`{ $set: …, $inc: …, $push: … }`), every value a compile-time constant. Writes become their operators (`$.n += 2` → `$inc`, `$.tags.push(x)` → `$push`, `delete $.a` → `$unset`, `$.b = $.a; delete $.a` → `$rename`), and a value computed from the document is refused with the pipeline form named — `jsmql()` / `jsmql.pipeline()` lower the same writes to a `$set` / `$unset` pipeline, which `updateOne` accepts too. Lowering: [emit-pass.md § The update-document target](emit-pass.md#the-update-document-target).
 
 User-facing reference: [docs/LANGUAGE.md → Strict-shape entry points](../LANGUAGE.md#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate).
 

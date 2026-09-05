@@ -5469,7 +5469,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
-    body: { required: [], optional: [], closed: false },
+    body: { required: [], optional: [], closed: false, onePolarity: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -6643,6 +6643,8 @@ export const NAMES = {
           emit: ({ recv, args, value, bind }) => sliceArray(recv, args, value, bind),
         },
         string: {
+          // MEASURED: `$substrCP` / `$indexOfCP` of null or a missing field answer as of ""
+          alsoTypes: ["null", "missing"],
           args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
           emit: ({ recv, args, value }) => sliceString(recv, args, value),
         },
@@ -10301,7 +10303,12 @@ export const NAMES = {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
       // Keeps ONLY the named fields: `_id` goes too unless named, as lodash's does.
       emit: ({ args, value }) => [
-        { $project: Object.fromEntries([...(value(args[0]) as string[]).map((k) => [k, 1]), ["_id", 0]]) },
+        {
+          $project: Object.fromEntries([
+            ...(value(args[0]) as string[]).map((k) => [k, 1]),
+            ...((value(args[0]) as string[]).includes("_id") ? [] : [["_id", 0]]),
+          ]),
+        },
       ],
     },
     statement: unsupported(

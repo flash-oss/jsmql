@@ -650,6 +650,12 @@ export type BodyRule = {
   /** Keys whose value must be a compile-time constant. */
   constantKeys?: readonly string[];
   /**
+   * Every literal 0/1/false/true value of the body must agree — a projection is all
+   * inclusions or all exclusions, `_id` aside. Measured: `{ $project: { a: 1, b: 0 } }` →
+   * "Cannot do exclusion on field b in inclusion projection".
+   */
+  onePolarity?: true;
+  /**
    * Each inner list is a set of keys of which EXACTLY ONE must be present.
    * `required` / `optional` cannot say it, and both cases are real:
    *   {$expMovingAvg:{input:"$a"}} → "either an 'N' field or an 'alpha' field"
