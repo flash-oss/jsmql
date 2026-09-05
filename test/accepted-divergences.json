@@ -6562,7 +6562,7 @@
       "src": "$.a.findIndex(x => x, 1)",
       "kind": "now-rejected",
       "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$and\":[{\"$ne\":",
-      "now": ".findIndex(callback) requires exactly 1 argument, got 2",
+      "now": "'.findIndex(callback)' requires exactly 1 argument, got 2",
       "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
     },
     "filter\u0000$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)": {
@@ -6618,7 +6618,7 @@
       "src": "$.a.findIndex(x => x, 1)",
       "kind": "now-rejected",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{",
-      "now": ".findIndex(callback) requires exactly 1 argument, got 2",
+      "now": "'.findIndex(callback)' requires exactly 1 argument, got 2",
       "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
     },
     "pipeline\u0000\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ": {

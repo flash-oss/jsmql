@@ -89,22 +89,26 @@ The first four rows all produce arrays — `jsmql()` is "would the driver call s
 
 The expression is interpreted as a Filter. Field-vs-literal predicates the MongoDB query language can express directly emit indexable `{ field: { $op: lit } }` pairs; anything else (method calls, computed expressions, non-predicate values) rides in a top-level `$expr` residual — a legal Filter operator. So both predicates and computational expressions produce a valid Filter.
 
+**A JavaScript spelling reads the field's own value.** MongoDB's query language matches an array field when *any element* satisfies the predicate; JavaScript's `$.age > 18` compares the value itself. Every field-vs-literal pair therefore carries `$not: { $type: "array" }`, so a document whose `age` is `[10, 25]` does not match — exactly as the JavaScript would answer. The extra key costs nothing: the index on `age` is still used. To test an array's elements, say so: `$.tags.includes("a")` or `$.items.some(i => i.qty > 5)`. A raw query document (`{ age: { $gt: 18 } }`) is MongoDB's own reading and passes through untouched.
+
 ```js
 // Pure query-document — indexable on `age` and `status`
 jsmql("$.age > 18 && $.status === 'active'");
-// → { age: { $gt: 18 }, status: "active" }
+// → { age: { $gt: 18, $not: { $type: "array" } }, status: { $eq: "active", $not: { $type: "array" } } }
 
 // `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
-// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
+// → { method: { $eq: "postalDelivery", $not: { $type: "array" } },
+//     createdAt: { $gte: <Date 2026-01-01>, $not: { $type: "array" } } }
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
-// → { status: "active", $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } }
+// → { status: { $eq: "active", $not: { $type: "array" } }, $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } }
 
-// Fully untranslatable — the whole thing rides in $expr
-jsmql("$add($.a, $.b)");
-// → { $expr: { $add: ["$a", "$b"] } }
+// A value that is not a predicate — the JavaScript truthiness test rides in $expr
+jsmql("$.a + $.b");
+// → { $expr: { $and: [{ $ne: [{ $ifNull: [{ $add: ["$a", "$b"] }, null] }, null] },
+//                     { $ne: [{ $add: ["$a", "$b"] }, false] }, { $ne: [{ $add: ["$a", "$b"] }, ""] }, { $ne: [{ $add: ["$a", "$b"] }, 0] }] } }
 ```
 
 The translation rules are the same ones [`$match` uses inside a Pipeline](#match-indexes-by-default) — see [docs/specs/emit-pass.md](specs/emit-pass.md) for the full table.
@@ -656,27 +660,29 @@ The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documente
 
 **Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**Basic form vs pipeline form.** When the predicate is a single `===` between a foreign field-path (e.g. `o.userId`) and a `$.` local field-path (e.g. `$._id`), jsmql emits the index-friendly basic form (`{ from, localField, foreignField, as }`). Anything richer auto-hoists `$.x` references into the `let` clause and emits the correlated-pipeline form:
+**One route: `let` + `pipeline` + `$expr`.** Every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. jsmql never emits `localField` / `foreignField`: that form matches *any element* of an array field on either side, where the JavaScript `===` compares the two values themselves — and the pipeline form still uses the foreign collection's index (measured).
 
 ```js
-// Basic form: pure equality predicate
+// An equality predicate
 $.orders = $$$.orders.filter(o => o.userId === $._id);
-// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
+// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "orders" } }]
 
-// .find adds a $set { $first } so the slot holds scalar-or-null
+// .find stops at the first match ($limit 1) and unwraps it, so the slot holds one document or nothing
 $.user = $$$.users.find(u => u._id === $.userId);
 // → [
-//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "user" } },
+//     { $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" },
+//                 pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }], as: "user" } },
 //     { $set: { user: { $first: "$user" } } }
 //   ]
 
-// Pipeline form: compound predicate, auto-let hoist
+// A compound predicate — the same route; `u.active` is the JavaScript truthiness test
 $.user = $$$.users.find(u => u._id === $.userId && u.active);
 // → [
 //     { $lookup: {
 //         from: "users",
-//         let: { userId: "$userId" },
-//         pipeline: [{ $match: { $expr: { /* u._id === $$userId && u.active */ } } }],
+//         let: { jsmql_f0_userId: "$userId" },
+//         pipeline: [{ $match: { $expr: { $and: [{ $eq: ["$_id", "$$jsmql_f0_userId"] }, /* u.active is truthy */] } } }, { $limit: 1 }],
 //         as: "user"
 //       } },
 //     { $set: { user: { $first: "$user" } } }
@@ -745,19 +751,22 @@ $.orders = $$$.orders.aggregate((o, _i, coll) => {
 
 Only `coll.length` is available (a stream has no array to index/iterate), and the index (2nd) param may be present but never *used* (no per-doc stream index). **Caveat — empty sub-stream:** an in-pipeline `assert(coll.length > 0, …)` runs *inside* the lookup pipeline, so when a user has **zero** matching orders there's no document for it to reject — the result is just `orders: []`, the assert does not fire. To *guarantee* a non-empty result, assert on the materialised array at the outer level instead: `$.orders = $$$.orders.filter(o => o.userId === $._id); assert($.orders.length > 0, "…");`.
 
-**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot, emits the chained transform as a follow-up `$set`, and substitutes a FieldRef into the parent expression. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
+**Chained terminals.** A lookup call is a first-class value: chain `.length` / `.reduce(fn, init)` on a `.filter` result, or a `.field` member access on a `.find` result, and jsmql materialises the lookup into an internal `__jsmql.tmp.<N>` slot and reads the rest of the chain as a value over that slot. The same `__jsmql` cleanup pipeline-scoped `let` uses takes care of the slot at the end:
 
 ```js
 let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
+$.n = nOrders;
 // → [
-//     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.1" } },
-//     { $set: { "__jsmql.tmp.1": { $size: "$__jsmql.tmp.1" } } },
-//     { $set: { "__jsmql.var.nOrders": "$__jsmql.tmp.1" } },
+//     { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "__jsmql.tmp.0" } },
+//     { $set: { "__jsmql.var.nOrders": { $size: "$__jsmql.tmp.0" } } },
+//     { $set: { n: "$__jsmql.var.nOrders" } },
 //     { $unset: "__jsmql" }
 //   ]
 
 let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);
-// uses $reduce against the materialised slot
+// → the same $lookup into a slot, then
+//   { $set: { "__jsmql.var.total": { $reduce: { input: "$__jsmql.tmp.0", initialValue: 0, in: { $add: ["$$value", "$$this.amount"] } } } } }
 
 let name = $$$.users.find(u => u._id === $.userId).name;
 // .find's $first is applied first; the trailing .name reads off the scalar slot
@@ -992,7 +1001,7 @@ decorative — it stops a message that happens to be a real type name (e.g.
 no value. `$.x = assert(...)`, `cond ? a : assert(...)`, or any other read of the
 result is rejected with a hint pointing at the statement form. `jsmql.filter` /
 `jsmql.expr` reject it wholesale (it's Pipeline-only); `jsmql.update` rejects it
-too, because it lowers to a `$match`, which update pipelines disallow.
+too, because an update document is made of writes.
 
 ### `$$.length`: count the current stream
 
@@ -1307,11 +1316,11 @@ jsmql tracks the JS distinction between strict and loose equality, mapped to the
 
 | jsmql              | Matches                              | MQL (expression context)                                              | MQL (`$match` body)                          |
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
-| `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{ x: { $type: "null" } }`                   |
-| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{ x: { $not: { $type: "null" } } }`         |
-| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{ x: null }`                                |
-| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{ x: { $ne: null } }`                       |
-| `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{ x: 5 }`                                   |
+| `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{ x: { $type: "null", $not: { $type: "array" } } }` |
+| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{ $or: [{ x: { $not: { $type: "null" } } }, { x: { $type: "array" } }] }` |
+| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{ x: { $eq: null, $not: { $type: "array" } } }` |
+| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{ $or: [{ x: { $ne: null } }, { x: { $type: "array" } }] }` |
+| `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{ x: { $eq: 5, $not: { $type: "array" } } }` |
 | `$.x == 5`         | **compile error**                    | —                                                                     | —                                            |
 
 The error for non-null `==`:
@@ -1319,6 +1328,8 @@ The error for non-null `==`:
 > `'=='` is only allowed against null in jsmql. Use `'==='` for JS-like strict equality (no surprising type coercion). To match "null or missing", write `$.x == null`.
 
 `null` may appear on either side: `null == $.x` is identical to `$.x == null`.
+
+The `$match` column reads the field's **own** value (see [No semicolons → Filter](#no-semicolons--filter)): an equality excludes an array field, and a negation (`!==`, `!= null`) is a two-branch `$or`, because an array field is *not equal* to the literal in JavaScript and must match.
 
 **`in` operator semantics:**
 - Array on the right → value membership: `$.x in [1, 2, 3]` is true when `$.x` equals 1, 2, or 3. *(JavaScript itself uses index existence here — we deliberately diverge because value membership is what users want for MongoDB queries.)*
@@ -2722,7 +2733,7 @@ $percentile($.scores, [0.5, 0.95], "approximate")
 
 ## Update filters
 
-Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array** so the output is safe to pass directly to `db.coll.updateOne(filter, update)` — see the `jsmql.expr` note at the end of the section for when you want the bare-document form instead.
+Document field updates can be written with JavaScript-natural syntax: `=`, `+=`, `-=`, `*=`, `/=`, and `delete`. Each update op compiles to a MongoDB pipeline `$set` or `$unset` stage; multiple update ops coalesce into the smallest correct stage shape. `jsmql()` always returns a pipeline **array** so the output is safe to pass directly to `db.coll.updateOne(filter, update)` — see [the document form via `jsmql.update`](#document-form-via-jsmqlupdate) at the end of the section for the `{ $set, $inc, … }` update document.
 
 ```js
 db.users.updateOne({ _id: 1 }, jsmql("$.score = 100"))
@@ -2813,17 +2824,26 @@ jsmql("delete $.a, delete $.b, $.status = 'done'")
 // → [{ $unset: ["a", "b"] }, { $set: { status: "done" } }]
 ```
 
-### Bare-document form via `jsmql.expr`
+### Document form via `jsmql.update`
 
-When you need the bare `{ $set: … }` / `{ $unset: … }` document — e.g. to embed inside a hand-written pipeline stage you're composing yourself — use `jsmql.expr()` instead. It produces the unwrapped document; the caller is responsible for the surrounding shape. See [Partial expressions](#partial-expressions-jsmqlexpr) for the full call shape comparison.
+`jsmql.update()` returns the **update document** — the `{ $set, $inc, $unset, … }` shape `updateOne(filter, update)` takes — with each write lowered to the update operator that means it. It holds constants only: a value computed from the document (`$.b + 1`, `$.name.toUpperCase()`) is refused, because the server reads `"$b"` in an update document as the *string* `"$b"`, never as the field. The refusal names the pipeline form, which `updateOne` accepts as well. See [Strict-shape entry points](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate) for the full rule.
 
 ```js
-// One stage, bare doc — for slotting into something else
-jsmql.expr("$.score = 100")
-// → { $set: { score: 100 } }
+jsmql.update("$.score = 100")            // → { $set: { score: 100 } }
+jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
+jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
+jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
+jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
+jsmql.update("delete $.a, delete $.b, $.status = 'done'")
+// → { $unset: { a: "", b: "" }, $set: { status: "done" } }
+
+jsmql.update("$.name = $.name.toUpperCase()")
+// Error: A document-form update takes constants: the server reads '$b' there as the string,
+//        not the field. To compute from the document, use the pipeline form
+//        ('jsmql.pipeline("$.a = $.b + 1;")'), which 'updateOne' accepts as well.
 ```
 
-Do **not** pass a single-statement `jsmql.expr()` result to `updateOne()`: MongoDB only evaluates aggregation expressions on the RHS when the second argument is an array. The bare doc form would silently store a literal `{ $toUpper: "$name" }` object instead of evaluating it. Use `jsmql()` at every driver call site.
+`jsmql.expr()` refuses a write altogether — an aggregation expression has no `$set` — and names the two entries that take one.
 
 ### Update filters inside pipelines
 
@@ -2837,7 +2857,8 @@ jsmql(`[
   $sort({ score: -1 })
 ]`)
 // → [
-//     { $match: { $expr: "$active" } },   // bare field ref isn't a comparison; stays $expr
+//     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
+//                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
 //     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
 //     { $sort: { score: -1 } }
 //   ]
@@ -2869,13 +2890,14 @@ jsmql("$ = $.profile;")
 jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
 // → [{ $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } }]
 
-// Replace the doc with a single matched join.
-// `.find` returns scalar-or-null; `$replaceWith` runs `$first` on the lookup slot.
+// Replace the doc with a single matched join. A document whose `.find` matched
+// nothing has nothing to become and leaves the stream (the `$unwind` drops it).
 jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 // → [
-//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.1" } },
-//     { $replaceWith: { $first: "$__jsmql.tmp.1" } },
-//     { $unset: "__jsmql" }
+//     { $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" },
+//                 pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }], as: "__jsmql.tmp.0" } },
+//     { $unwind: "$__jsmql.tmp.0" },
+//     { $replaceWith: "$__jsmql.tmp.0" }
 //   ]
 ```
 
@@ -3008,11 +3030,11 @@ jsmql`$$ = $$$.orders
 // ]
 ```
 
-When the predicate is a single `===` between a foreign-path and a `$.<path>` (and there are no chain methods after `.filter`), the lookup uses **basic form** (`localField` / `foreignField`) instead of `let` + `$match $expr` — same index-friendliness as a hand-written `$lookup`. With chain methods or richer predicates, pipeline-form with auto-hoisted `let` vars kicks in.
+The predicate always runs as `let` + `$match $expr` inside the sub-pipeline — the one `$lookup` route jsmql emits (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)) — and the foreign collection's index is used all the same.
 
 The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
-**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql hoists it as a `$lookup.let` var the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too: the resolved path becomes the materialised `__jsmql.var.user._id` and basic-form `$lookup` continues to fire when the predicate is a single `===`:
+**`let` bindings cross the source-switch boundary too.** A name bound via `let foo = …` in the surrounding pipeline can be referenced directly inside a correlated `.filter` predicate — jsmql carries it into `$lookup.let` the same way it does `$.<field>` refs. Member access on a `let`-bound object (`user._id` when `let user = $.user`) works too:
 
 ```js
 jsmql`
@@ -3021,9 +3043,10 @@ $$ = $$$.users.filter(u => u._id === uid);
 `
 // → [
 //   { $set: { "__jsmql.var.uid": "$userId" } },
-//   { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "__jsmql.tmp.1" } },
-//   { $unwind: "$__jsmql.tmp.1" },
-//   { $replaceWith: "$__jsmql.tmp.1" },
+//   { $lookup: { from: "users", let: { jsmql_v0_uid: "$__jsmql.var.uid" },
+//               pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_v0_uid"] } } }], as: "__jsmql.tmp.0" } },
+//   { $unwind: "$__jsmql.tmp.0" },
+//   { $replaceWith: "$__jsmql.tmp.0" },
 // ]
 ```
 
@@ -3135,8 +3158,9 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 ```js
 $.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userId === $._id)
-// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "…" } },
-//    { $set: { "…": { $size: "$…" } } }, …]  — same indexed $lookup either way
+// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
+//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "__jsmql.tmp.0" } },
+//    { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }]  — the same $lookup either way
 ```
 
 **Group keys may be computed.** MongoDB evaluates `$group._id` per document, so the four grouping methods take any expression — it lowers straight into the key, with no extra stages:
@@ -3785,14 +3809,16 @@ The arrow receives a single destructured toolbox object — the document root `$
 
 ## Partial expressions (`jsmql.expr`)
 
-`jsmql()` is opinionated: it returns a Filter (for `db.coll.find(filter)`) or an aggregation Pipeline array (for `db.coll.aggregate(pipeline)` *and* for the pipeline-form of `db.coll.updateOne(filter, update)`). When you need a **raw aggregation expression** — the shape that goes *inside* a hand-written Pipeline stage body, or the bare `{ $set: … }` update document for a doc-form `updateOne` — call `jsmql.expr(input)` instead.
+`jsmql()` is opinionated: it returns a Filter (for `db.coll.find(filter)`) or an aggregation Pipeline array (for `db.coll.aggregate(pipeline)` *and* for the pipeline-form of `db.coll.updateOne(filter, update)`). When you need a **raw aggregation expression** — the shape that goes *inside* a hand-written Pipeline stage body — call `jsmql.expr(input)` instead.
 
-`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag) and differs in two branches:
+`jsmql.expr` accepts the same three call shapes as `jsmql()` (string / arrow / template tag). A bare expression (no `;`) lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope, where `jsmql()` would wrap a non-predicate expression in `$expr` to produce a legal Filter. Anything that is not an expression — a stage, a write (`$.x = …`, `delete $.x`), a stream chain — is refused with the entry that takes it:
 
-- **Bare expression (no `;`)** — `jsmql.expr()` lowers directly to its aggregation-expression form, with no Filter wrapper and no `$expr` envelope. `jsmql()` would wrap a non-predicate expression in `$expr` to produce a legal Filter.
-- **Update-filter input (single stage)** — `jsmql.expr()` returns the bare `{ $set: … }` / `{ $unset: … }` document. `jsmql()` wraps the same output in a single-element pipeline array (`[{ $set: … }]`) so it can be passed directly to `db.coll.updateOne(filter, update)`, which only evaluates aggregation expressions on the RHS when the second argument is an array.
-
-`;`-separated input always produces a Pipeline and array-literal Pipelines always pass through — those branches are identical between the two entry points.
+```js
+jsmql.expr("$.score = 100")
+// Error: jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`),
+//        but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document,
+//        or jsmql.pipeline() for a `$set` / `$unset` pipeline.
+```
 
 ```js
 // Filter — for db.coll.find(filter)
@@ -3817,9 +3843,7 @@ db.users.aggregate([
 ]);
 ```
 
-⚠️ **Don't pass `jsmql.expr()` directly to `updateOne()`.** The bare-doc form `{ $set: { name: { $toUpper: "$name" } } }` would silently store the literal expression object instead of evaluating `$toUpper` — MongoDB only treats `updateOne`'s second argument as an aggregation pipeline when it is an array. Use `jsmql()` for the call site; reserve `jsmql.expr()` for the slot inside another structure.
-
-The rule of thumb: **the function you call should match the call site**. `find()`, `aggregate()`, `updateOne()` → `jsmql()`. Inside a hand-written stage body or a `$cond`'s `then`-branch (where you want the raw aggregation expression) → `jsmql.expr()`.
+The rule of thumb: **the function you call should match the call site**. `find()`, `aggregate()`, `updateOne()` → `jsmql()`. Inside a hand-written stage body or a `$cond`'s `then`-branch (where you want the raw aggregation expression) → `jsmql.expr()`. For the `{ $set, $inc, … }` update document → [`jsmql.update()`](#jsmqlupdateinput--for-dbcollupdateonefilter-update--updatemany).
 
 ---
 
@@ -3831,7 +3855,7 @@ The rule of thumb: **the function you call should match the call site**. `find()
 |---|---|---|
 | `jsmql.filter(input)` | a single Filter document | any Pipeline-shaped input |
 | `jsmql.pipeline(input)` | a Pipeline (stage array) | a bare expression that would lower to a Filter |
-| `jsmql.update(input)` | a Pipeline (stage array) | a bare expression, **and** any stage outside the update-pipeline whitelist |
+| `jsmql.update(input)` | the update document `{ $set, $inc, $unset, … }` | a computed value, a stage, anything that is not a write or an update operator |
 
 (The function is `update`, not `updateFilter`, even though the Node MongoDB driver types the slot as `UpdateFilter<TSchema>` — "filter" in that type name routinely trips developers into reaching for it when they meant the query document. The MongoDB type name stays as the driver defines it; we just don't repeat the confusing half of it on this call.)
 
@@ -3874,31 +3898,31 @@ A single top-level stage call (`$match(...)`), single stage-object literal (`{ $
 ```js
 db.users.updateOne(
   { _id: 123 },
-  jsmql.update("$.name = $.name.toUpperCase(), $.updatedAt = new Date()"),
+  jsmql.update("$.visits += 1, $.status = 'active', $.updatedAt = new Date(), delete $.tmp"),
 );
 // → db.users.updateOne(
 //     { _id: 123 },
-//     [
-//       { $set: { name: { $toUpper: "$name" }, updatedAt: { $toDate: "$$NOW" } } },
-//     ],
+//     { $inc: { visits: 1 }, $set: { status: "active" }, $currentDate: { updatedAt: true }, $unset: { tmp: "" } },
 //   )
 
+jsmql.update("$.name = $.name.toUpperCase()");
+// Error: A document-form update takes constants: the server reads '$b' there as the
+//        string, not the field. To compute from the document, use the pipeline form
+//        ('jsmql.pipeline("$.a = $.b + 1;")'), which 'updateOne' accepts as well.
+
 jsmql.update("$match($.age > 18); $set({ x: 1 })");
-// Error: jsmql.update() rejected '$match' (stage 0): MongoDB's
-//        aggregation-pipeline update form only accepts $addFields, $project,
-//        $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if
-//        you need other stages.
+// Error: '$match' is not valid in an update document — see its 'where'.
 ```
 
-Output is **always** an array — never the legacy bare-document update form. That form silently treats RHS expressions as object literals, which is exactly the kind of footgun this entry point exists to avoid. Passing `jsmql.update(...)` to the driver guarantees expressions like `$.name.toUpperCase()` evaluate server-side instead of landing in the document as the literal object `{ $toUpper: "$name" }`.
+Output is the **update document** — one key per update operator, the shape `updateOne` / `updateMany` / the mongoose `updateOne` take. Each write lowers to the operator that means it: `=` to `$set`, `+=` / `-=` / `++` / `--` to `$inc`, `*=` to `$mul`, `delete` to `$unset`, `= new Date()` to `$currentDate`, `Math.min` / `Math.max` of the field and a constant to `$min` / `$max`, `.push(x)` to `$push`, `.pop()` / `.shift()` to `$pop`. A raw update operator (`$inc({ n: 2 })`, `{ $set: { a: 1 } }`) merges in as written. Two writes to one path are refused.
 
-The allowed stages are MongoDB's [aggregation-pipeline update whitelist](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline): `$addFields`, `$project`, `$replaceRoot`, `$replaceWith`, `$set`, `$unset`. Anything else (e.g. `$match`, `$sort`, `$group`) is rejected at compile time with the offending stage name and position in the message, before MongoDB would reject the same query at runtime with a less helpful error.
+The values are **constants**. MongoDB's document-form update reads `"$b"` as the string `"$b"`, so a value computed from the document is refused with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")` or `jsmql()`), which `updateOne` accepts as well and evaluates server-side.
 
 ### When to use each
 
 - Call site is `find()` / `deleteOne()` / `countDocuments()` → `jsmql.filter()`.
 - Call site is `aggregate()` → `jsmql.pipeline()`.
-- Call site is `updateOne()` / `updateMany()` → `jsmql.update()`.
+- Call site is `updateOne()` / `updateMany()` with constant values → `jsmql.update()`; with values computed from the document → `jsmql.pipeline()` (or `jsmql()`).
 - The same source string might legitimately produce either Filter or Pipeline → `jsmql()`.
 - Inside another structure (a hand-written stage body, the `then` branch of a `$cond`) → `jsmql.expr()`.
 

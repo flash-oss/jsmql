@@ -284,44 +284,6 @@ Concretely:
    `stages` and `ctx` (instead of just `stages`) to thread this update back
    to the outer pipeline loop in `generateImplicitPipeline`.
 
-## Module layout
-
-```
-src/
-  parser.ts                Updated. parsePrimary's TokenType.Dollar branch
-                           now peeks at the next token: if not an identifier-
-                           like keyword, returns FieldRef { path: "" } instead
-                           of falling through to parseOperatorCall. One added
-                           branch; no new TokenType or AST node.
-  codegen.ts               Updated. FieldRef case in _generate() and
-                           asFieldPath() both special-case empty path →
-                           "$$ROOT". No other call site touches FieldRef.
-  pipeline.ts              Updated. Adds isReplaceRootAssign,
-                           lowerReplaceRoot, rejectNonDocumentReplaceRoot,
-                           and the fan-out helpers lowerFanOut /
-                           rejectScalarFanOutElements / scalarFanOutElementKind.
-                           Wires the interception into generatePipeline,
-                           lowerUpdateFilterWithLookups. Inserts the bare-$
-                           DeleteStmt rejection in two places.
-                           lowerUpdateFilterWithLookups now returns
-                           { stages, ctx } so the let-clearing flows out.
-                           Imports staticBindingType from codegen.ts to gate
-                           the non-literal fan-out branch.
-  src/compiler/emit/join.ts    No change. translatePredicate is already exported
-                           and is reused by lowerReplaceRoot's direct-lookup
-                           branch.
-  stages.ts                No change. $replaceWith was already registered.
-  facet-translation.ts     New. detectFacetShape, lowerFacet, lowerFacetEntry.
-                           Reuses extractLetsFromExpr / extractLetsFromPipeline
-                           from the join road (`src/compiler/emit/join.ts`) and the filter road (`src/compiler/emit/filter.ts`). Treats any non-empty letVars as
-                           a "use lambda param instead of $.<field>" error.
-  union-translation.ts     `validateUnionPushShape` was later removed when the
-                           bare-statement `$$.<chain>;` form shipped — a
-                           statement-position `$$.filter(...)` now lowers to
-                           `$match` instead of erroring, and other wrong-method
-                           calls surface the stream-method registry error.
-```
-
 ## Deferred
 
 - **Trailing `$unset` after a final `$ = …`.** When the pipeline's last stage

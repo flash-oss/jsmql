@@ -48,9 +48,10 @@ still ride in `$expr`, side-by-side with the translated portion:
 | `o.active && o.tier === "gold"` | `{ $match: { tier: "gold", $expr: "$active" } }` |
 
 Block-body predicates pass through verbatim — each statement is lowered to a
-stage exactly as it would be at the top level. The same `lowerBlock`
-sub-pipeline lowering the join road (`src/compiler/emit/join.ts`) uses is shared with
-`union-translation`.
+stage exactly as it would be at the top level. The body is lowered by the join
+road (`lookupOf` in `src/compiler/emit/join.ts`, entered over `$unionWith`), so a
+union body and a lookup body read the same rows; `src/compiler/emit/union.ts` owns
+only what differs — the stage's shape and its missing `let`.
 
 ### `$unionWith` has no `let`
 
@@ -79,43 +80,6 @@ threads `allowBlockBody` when the method receiver chain is rooted at
 
 No `parseContextRef` changes were needed. The sanity guard that requires `.`
 or `[` after `$$` already accommodates `.push(...)`.
-
-## Module layout
-
-```
-src/
-  union-translation.ts     New. Detects $$.push, validates shape,
-                           lowers args to $unionWith stages with
-                           inline-doc batching, source-order-preserving,
-                           and JS-faithful spread rules.
-  src/compiler/emit/join.ts    Existing. `extractLookupTarget`,
-                           `extractLetsFromExpr`, `extractLetsFromPipeline`,
-                           `validateLookupShape` are exported and reused by
-                           union-translation.
-  pipeline.ts              Updated. `generatePipeline` and
-                           `generateImplicitPipeline` both detect a top-level
-                           $$.push and lower via `lowerUnionPush` before
-                           falling through to the generic stage-element path.
-                           `isStageCandidate` recognises $$.push so an
-                           array starting with one (or a sub-pipeline carrying
-                           one) flips into pipeline mode. `generatePipelineWithCtx`
-                           rejects nested $$.push with a hoist hint, mirroring
-                           the nested-lookup rule. The `lowerBlock`
-                           SubPipelineLowerer rejects $$.push inside a
-                           lookup `.aggregate` callback.
-  codegen.ts               Updated. `CollectionRef` case message updated to
-                           name the supported `.push(...)` shapes and the
-                           statement-only constraint.
-  index.ts                 Updated. Top-level `$$.<method>(...)` (any method)
-                           auto-wraps as a single-statement Pipeline so the
-                           pipeline-level handlers (the union lowerer for
-                           `.push`, the bare-statement stream-chain branch for
-                           the rest) surface their precise errors instead of
-                           the generic CollectionRef one. Mode
-                           gates (`jsmql.filter`, `jsmql.expr`, `jsmql.update`)
-                           pre-reject lookup-bearing inputs via
-                           `containsUnionPush` with apiName-specific messages.
-```
 
 ## Error catalog
 

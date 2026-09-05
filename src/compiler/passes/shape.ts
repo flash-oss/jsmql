@@ -32,12 +32,19 @@ function statementShaped(node: Any): boolean {
   if (readsAContextRef(node)) return true;
   const name = namedRow(node);
   if (name === null) return false;
-  // A row with a VALUE form is decided by the `;` and not by this: `Object.assign`
-  // lists both, and `Object.assign($.a, $.b)` merges two objects while
-  // `Object.assign($.a, $.b);` writes the document. The `;` makes the second a
-  // `Pipeline` node, which the first clause above has already answered.
+  // `Object.assign($.a, $.b)` standing alone WRITES `$.a`, as the mutators do:
+  // a merged object is truthy, so as a filter it would keep every document.
+  if (name === "assign" && writesItsTarget(node)) return true;
+  // A row with a VALUE form is decided by the `;` and not by this: `.filter()`
+  // lists one, and `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
   return lists(name, "statement") || lists(name, "stream");
+}
+
+/** Is the first argument a place a write can land — a field of the document, or a binding? */
+function writesItsTarget(node: Any): boolean {
+  const target = (node as { args?: readonly Any[] }).args?.[0];
+  return target !== undefined && (target.type === "FieldRef" || target.type === "Ident");
 }
 
 /**

@@ -497,7 +497,17 @@ describe("compiler/emit/join — the refusals name the way out", () => {
   it("a read with no destination, a value in the stream, a value outside a pipeline", () => {
     expect(() => pipeline("$$$.orders.filter(o => o.a > 1);")).toThrow(/gives it no destination/);
     expect(() => pipeline("$$ = $$$.orders.filter(o => o.a > 1).length;")).toThrow(/makes a value/);
-    expect(() => expr("$$$.orders.filter(o => o.a > 1).length")).toThrow(/needs Pipeline mode|pipeline/i);
+    expect(() => expr("$$$.orders.filter(o => o.a > 1).length")).toThrow(
+      /'\$\$\$\.<coll>' \(a read of another collection\) needs Pipeline mode — it materialises a '\$lookup' stage/,
+    );
+  });
+  it("a wrong count and a wrong receiver are spelled as the source would write them", () => {
+    expect(() => pipeline("$.x = $$$.orders.find()")).toThrow(
+      /'\.find\(predicate\)' requires exactly 1 argument, got 0/,
+    );
+    expect(() => pipeline("$.x = $$$.orders.find(o => o.a === 1).length")).toThrow(
+      /'\.length' is not available on a 'object' — it is defined on 'array', 'string', 'stream'/,
+    );
   });
   it("the collection is named when the pipeline is written, in the current database", () => {
     expect(() => pipeline("$.o = $$$[$.name].find(o => o.a > 1);")).toThrow(/named when the pipeline is written/);

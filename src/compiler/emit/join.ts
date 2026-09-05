@@ -192,7 +192,7 @@ function rebase(node: Expr, peeledTo: Expr, replacement: Expr): Expr {
  */
 export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   const l = lookupOf(node, env, S);
-  if (!env.chain.isPipeline) throw E.needsPipeline("$$$.<coll>", l.pos);
+  if (!env.chain.isPipeline) throw E.joinNeedsPipeline(l.pos);
   const slot: FieldSlot = env.chain.slot();
   const stages: Stage[] = [lookupStage(l, slot.path)];
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));

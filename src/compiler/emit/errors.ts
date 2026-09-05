@@ -11,7 +11,7 @@ import type { Arity, Position } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
-import { spreadAlternativeOf } from "../rows.ts";
+import { isFieldProperty, spreadAlternativeOf } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
 
@@ -62,6 +62,9 @@ export function refusalFor(
   near: readonly string[],
   format: (candidate: string) => string = (s) => `.${s}()`,
 ): CodegenError {
+  // Callers spell the name as the source did — `.trim`, `'.find()'`, `Math.max` —
+  // and a sentence that adds its own quotes or parentheses starts from the bare name.
+  const bare = spelled.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
     case "refused":
       return new CodegenError(
@@ -86,7 +89,7 @@ export function refusalFor(
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
       const hint =
         sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
-          ? ` Map over the array first — '.map(x => x${spelled}(…))' — or take one element ('[0]').`
+          ? ` Map over the array first — '.map(x => x${bare}(…))' — or take one element ('[0]').`
           : sel.got === "date" && takesString
             ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
             : sel.got === "number" && takesString
@@ -94,10 +97,12 @@ export function refusalFor(
               : sel.got === "bool"
                 ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
                 : "";
-      return new CodegenError(`'${spelled}()' is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
+      // a property (`.length`) is spelled without the call parentheses
+      const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
+      return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
     }
     case "wrongCount":
-      return new CodegenError(`${signature(spelled, sel.args)} ${countWord(sel.args)}, got ${sel.got}`, pos);
+      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}`, pos);
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
     case "spreadRefused": {
@@ -239,6 +244,13 @@ export const redeclared = (kind: string, name: string, pos: number): CodegenErro
 export const listOperand = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `${name} operates on a list of operands — pass two or more (${name}(a, b)) or a single array (${name}([a, b])).`,
+    pos,
+  );
+
+/** A read of another collection where there is no pipeline to place its `$lookup` in. */
+export const joinNeedsPipeline = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$$.<coll>.filter(…).length; }`); it has no meaning in a Filter or in 'jsmql.expr'.",
     pos,
   );
 

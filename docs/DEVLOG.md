@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — fix(compiler): `Object.assign` on a field is a write; the refusals spell names as the source does
+
+Three defects found by probing the surface for the reference. A bare `Object.assign($.p, { a: 1 })` — no `;` — was read as a filter: the shape pass let the `;` decide for a name that lists both a value and a statement form, and a merged object is truthy, so the filter kept every document. It is now the write it is (`[{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }]`), as `$.tags.push(1)` already was; `Object.assign({}, $.a)` — a fresh object, nothing written — stays a value. Two refusals were mis-spelled: a wrong count read `'.find()'(predicate) requires exactly 1 argument` and a property refused on its receiver read `'.length()'`; `refusalFor` now starts from the bare name (`'.find(predicate)' requires …`, `'.length' is not available on …`). And a read of another collection outside a pipeline was refused with the stream-count sentence (`'$$.$$$.<coll>' (the current stream's document count) …`); it has its own (`'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage …`).
+
+---
+
 ## 2026-09-06 — fix(compiler): one stream-length stamp, no empty `$let`
 
 Two emit warts, both found by probing `$$.length` at every depth. A write whose join chain goes on after the `$lookup` (`$.o = $$$.orders.filter(o => o.i < $$.length).map(…)`) lowered the body twice — once to learn the chain is not complete, once on the value road — and each lowering hoisted the `$setWindowFields` stamp, so the pipeline carried it twice. The first attempt now takes its hoists back (`joinWrite` in `src/compiler/emit/join.ts`). And a call with no parameters (`const half = () => $$.length / 2; … half()`) wrapped its body in `{ $let: { vars: {}, in: … } }`; a `$let` that binds nothing is dropped (`applyLambda` in `src/compiler/emit/lower.ts`).

@@ -50,7 +50,8 @@ previously reachable only by nesting an `.aggregate((o) => { … })` block.
 - **Not a stage link** — a bare `.$name` with no call, and `?.$name(…)`. Both are parse
   errors; see [grammar.md](grammar.md).
 - Once the chain produces a **value** (`.map("<field>")`, `.uniq()`, a value terminal), a
-  following stage link is rejected by the guard at the top of `generateMethodCall`.
+  following stage link is refused: a value has no stream for a stage to run over
+  (`streamStages` in `src/compiler/emit/statement.ts`).
 - **Placement rules read a chain link as a stage**, so a link is subject to the same
   `position` constraints as the statement it stands for. Each chain loop calls the
   validator's `checkBeforeElement` **per link** (not once per statement), which is what

@@ -209,34 +209,6 @@ docs (from the foreign collection), not the pre-switch docs. Any prior
 `let` becomes unreadable: `let cutoff = 10; $$ = $$$.t.filter(o => true); $.flagged = cutoff;`
 produces `` `cutoff` is a `let` binding and can't be read after `$unionWith` … ``.
 
-## Module layout
-
-```
-src/
-  parser.ts        Updated. parseContextRef accepts '=' after $$ (CollectionRef
-                   only). isFieldPathTarget accepts CollectionRef as a target.
-                   No new tokens, no new AST nodes.
-  pipeline.ts      Updated. Adds isReplaceStreamAssign, lowerReplaceStream,
-                   lowerStreamFilterPredicate, rejectLocalRefInStreamFilter,
-                   rejectInvalidReplaceStream, updateFilterHasReplaceStream.
-                   Wires the interception into generatePipeline and
-                   lowerUpdateFilterWithLookups before the existing
-                   isReplaceRootAssign branch.
-  index.ts         Updated. lowerProgram and lowerToPipelineStages reroute an
-                   `updateFilterHasReplaceStream` UpdateFilter (the no-`;` form)
-                   through the pipeline lowerer; lowerFilterStrict rejects it on
-                   its own branch. See § Single statement with no trailing ';'.
-  codegen.ts       Updated. The bare-`$$` CollectionRef rejection message now
-                   mentions '$$ = <expr>' alongside '.push(...)' and the facet
-                   pattern, for DX consistency with the new surface.
-  union-translation.ts  `validateUnionPushShape` was later removed when the
-                   bare-statement `$$.<chain>;` form shipped: a statement-position
-                   '$$.filter(...)' now lowers to '$match' (sugar for
-                   '$$ = $$.filter(p)') rather than emitting a suggestion.
-  src/compiler/emit/join.ts No change. extractLookupTarget, extractLetsFromExpr,
-                   extractLetsFromPipeline reused as-is (already exported).
-```
-
 ## Not supported (by design)
 
 These RHS forms are rejected on purpose — they have no coherent JS semantics, so

@@ -228,36 +228,6 @@ Two small changes in [`src/compiler/parse/parser.ts`](../src/compiler/parse/pars
 
 No new tokens, no new AST nodes.
 
-## Module layout
-
-```
-src/
-  out-translation.ts  New. detectOutAssign, validateOutShape (via the
-                      thrown CodegenErrors inside detectOutAssign),
-                      lowerOutChain, lowerOut, containsOutAssign.
-                      Reuses extractLetsFromExpr / extractLetsFromPipeline
-                      from the join road (`src/compiler/emit/join.ts`) and the filter road (`src/compiler/emit/filter.ts`).
-  parser.ts           Updated. validateUpdateTarget accepts the $out LHS
-                      shape via the new isOutTarget helper.
-                      parseContextRef allows bare `$$`.
-  pipeline.ts         Updated. detectOutAssign branch in generatePipeline
-                      and lowerUpdateFilterWithLookups, mirroring the
-                      isReplaceRootAssign / detectLookupCall pattern.
-                      sawOut/outPos threaded through both top-level
-                      pipeline loops + the UpdateFilter inner loop. New
-                      makeAfterOutError helper for the trailing-stage
-                      diagnostic.
-  index.ts            Updated. rejectOutOutsidePipeline gates
-                      jsmql.filter / jsmql.expr. containsOutAssign
-                      reroute in lowerWithCtx and lowerToPipelineStages
-                      so UpdateFilter-shaped input with $out sugar reaches
-                      the pipeline lowerer.
-  codegen.ts          Updated. Bare-DatabaseRef and bare-ClusterRef errors
-                      now mention $out write as an alternative to $lookup
-                      read.
-  stages.ts           No change. `$out` was already registered.
-```
-
 ## Deferred
 
 - **`$merge` sugar.** MongoDB has both `$out` (full replace) and
