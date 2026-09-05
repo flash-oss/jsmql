@@ -406,6 +406,201 @@ describe("compiler/emit — array methods", () => {
 
 // ── the server ───────────────────────────────────────────────────────────────
 
+describe("compiler/emit — the JavaScript globals, Math, regex methods and the reducers", () => {
+  it("lowers each Math function to its operator", () => {
+    expect(compiled("Math.abs($.neg)", () => Math.abs(DOC.neg))).toEqual({ $abs: "$neg" });
+    expect(compiled("Math.sqrt($.n)", () => Math.sqrt(DOC.n))).toEqual({ $sqrt: "$n" });
+    expect(compiled("Math.cbrt($.neg)", () => Math.cbrt(DOC.neg))).toEqual({
+      $multiply: [{ $cmp: ["$neg", 0] }, { $pow: [{ $abs: "$neg" }, { $divide: [1, 3] }] }],
+    });
+    expect(compiled("Math.sign($.neg)", () => Math.sign(DOC.neg))).toEqual({ $cmp: ["$neg", 0] });
+    expect(compiled("Math.trunc($.n)", () => Math.trunc(DOC.n))).toEqual({ $trunc: "$n" });
+    expect(compiled("Math.round($.n)", () => Math.round(DOC.n))).toEqual({ $round: ["$n", 0] });
+    expect(compiled("Math.ceil($.n)", () => Math.ceil(DOC.n))).toEqual({ $ceil: "$n" });
+    expect(compiled("Math.floor($.n)", () => Math.floor(DOC.n))).toEqual({ $floor: "$n" });
+    expect(compiled("Math.log($.n)", () => Math.log(DOC.n))).toEqual({ $ln: "$n" });
+    expect(compiled("Math.log2($.n)", () => Math.log2(DOC.n))).toEqual({ $log: ["$n", 2] });
+    expect(compiled("Math.log10($.n)", () => Math.log10(DOC.n))).toEqual({ $log10: "$n" });
+    expect(compiled("Math.exp($.neg)", () => Math.exp(DOC.neg))).toEqual({ $exp: "$neg" });
+    expect(compiled("Math.pow($.neg, 3)", () => Math.pow(DOC.neg, 3))).toEqual({ $pow: ["$neg", 3] });
+    expect(compiled("Math.hypot($.neg, 4)", () => Math.hypot(DOC.neg, 4))).toEqual({
+      $sqrt: { $add: [{ $pow: ["$neg", 2] }, { $pow: [4, 2] }] },
+    });
+    expect(compiled("Math.atan2($.neg, 4)", () => Math.atan2(DOC.neg, 4))).toEqual({ $atan2: ["$neg", 4] });
+    expect(compiled("Math.sin($.n)", () => Math.sin(DOC.n))).toEqual({ $sin: "$n" });
+    expect(compiled("Math.acos($.n / 10)", () => Math.acos(DOC.n / 10))).toEqual({ $acos: { $divide: ["$n", 10] } });
+    expect(compiled("Math.tanh($.n)", () => Math.tanh(DOC.n))).toEqual({ $tanh: "$n" });
+    expect(compiled("Math.asinh($.n)", () => Math.asinh(DOC.n))).toEqual({ $asinh: "$n" });
+    expect(compiled("Math.min($.neg, $.n)", () => Math.min(DOC.neg, DOC.n))).toEqual({ $min: ["$neg", "$n"] });
+    expect(compiled("Math.max(...$.a)", () => Math.max(...DOC.a))).toEqual({ $max: "$a" });
+    expect(compiled("Math.max(...$.a, 9)", () => Math.max(...DOC.a, 9))).toEqual({
+      $max: { $concatArrays: ["$a", [9]] },
+    });
+    expect(expr("Math.random()")).toEqual({ $rand: {} });
+  });
+
+  it("lowers the global constructors and the Number, Array and Object statics", () => {
+    expect(compiled("String($.n)", () => String(DOC.n))).toEqual({ $toString: "$n" });
+    expect(compiled("Boolean($.neg)", () => Boolean(DOC.neg))).toEqual({
+      $and: [
+        { $ne: [{ $ifNull: ["$neg", null] }, null] },
+        { $ne: ["$neg", false] },
+        { $ne: ["$neg", ""] },
+        { $ne: ["$neg", 0] },
+      ],
+    });
+    expect(compiled("parseInt($.n)", () => parseInt(String(DOC.n)))).toEqual({
+      $toInt: { $trunc: { $toDouble: "$n" } },
+    });
+    expect(compiled("parseFloat($.n)", () => parseFloat(String(DOC.n)))).toEqual({ $toDouble: "$n" });
+    expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
+      $and: [
+        { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },
+        { $eq: ["$n", { $trunc: "$n" }] },
+      ],
+    });
+    expect(compiled("Number.isInteger($.neg)", () => Number.isInteger(DOC.neg))).toBeDefined();
+    expect(compiled("Number.isNaN($.n)", () => Number.isNaN(DOC.n))).toEqual({
+      $and: [{ $isNumber: "$n" }, { $eq: [{ $toString: "$n" }, "NaN"] }],
+    });
+    expect(compiled("Array.isArray($.a)", () => Array.isArray(DOC.a))).toEqual({ $isArray: ["$a"] });
+    expect(compiled("Array.isArray($.n)", () => Array.isArray(DOC.n))).toEqual({ $isArray: ["$n"] });
+    expect(compiled("Object.assign($.o, { z: 1 })", () => Object.assign({}, DOC.o, { z: 1 }))).toEqual({
+      $mergeObjects: ["$o", { z: 1 }],
+    });
+    expect(compiled("Object.assign({}, ...$.docs)", () => Object.assign({}, ...DOC.docs))).toEqual({
+      $mergeObjects: { $concatArrays: [[{}], "$docs"] },
+    });
+    expect(compiled("Object.fromEntries($.pairs)", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
+      $arrayToObject: "$pairs",
+    });
+  });
+
+  it("lowers a regex literal's own methods", () => {
+    expect(compiled("/hello/i.test($.s)", () => /hello/i.test(DOC.s))).toEqual({
+      $regexMatch: { input: "$s", regex: "hello", options: "i" },
+    });
+    expect(expr("/o/.exec($.s)")).toEqual({ $regexFind: { input: "$s", regex: "o" } });
+  });
+
+  it("lowers the index searches, the reducers and zipWith", () => {
+    expect(compiled("$.a.findIndex(x => x < 3)", () => DOC.a.findIndex((x) => x < 3))).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
+        initialValue: -1,
+        in: {
+          $cond: [
+            {
+              $and: [
+                { $eq: ["$$value", -1] },
+                { $let: { vars: { x: { $arrayElemAt: ["$$this", 1] } }, in: { $lt: ["$$x", 3] } } },
+              ],
+            },
+            { $arrayElemAt: ["$$this", 0] },
+            "$$value",
+          ],
+        },
+      },
+    });
+    expect(compiled("$.a.findIndex((x, i) => x + i > 3)", () => DOC.a.findIndex((x, i) => x + i > 3))).toBeDefined();
+    expect(compiled("$.a.findIndex(x => x > 9)", () => DOC.a.findIndex((x) => x > 9))).toBeDefined();
+    expect(compiled("$.a.findLastIndex(x => x > 1)", () => DOC.a.findLastIndex((x) => x > 1))).toBeDefined();
+    expect(compiled("$.a.reduce((acc, x) => acc + x, 0)", () => DOC.a.reduce((acc, x) => acc + x, 0))).toEqual({
+      $reduce: { input: "$a", initialValue: 0, in: { $add: ["$$value", "$$this"] } },
+    });
+    expect(
+      compiled("$.a.reduce((acc, x, i) => acc + x * i, 0)", () => DOC.a.reduce((acc, x, i) => acc + x * i, 0)),
+    ).toEqual({
+      $reduce: {
+        input: { $zip: { inputs: [{ $range: [0, { $size: "$a" }] }, "$a"] } },
+        initialValue: 0,
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$this", 1] }, i: { $arrayElemAt: ["$$this", 0] } },
+            in: { $add: ["$$value", { $multiply: ["$$x", "$$i"] }] },
+          },
+        },
+      },
+    });
+    // a body that calls anything reads the reducer's two variables through a `$let`: the call may own a `$reduce`
+    expect(
+      compiled("$.a.reduceRight((acc, x) => acc.concat([x]), [])", () =>
+        DOC.a.reduceRight((acc: number[], x) => acc.concat([x]), []),
+      ),
+    ).toEqual({
+      $reduce: {
+        input: { $reverseArray: "$a" },
+        initialValue: [],
+        in: { $let: { vars: { acc: "$$value", x: "$$this" }, in: { $concatArrays: ["$$acc", ["$$x"]] } } },
+      },
+    });
+    expect(
+      compiled("$.docs.reduce((acc, d) => acc + d.v, 0)", () => DOC.docs.reduce((acc, d) => acc + d.v, 0)),
+    ).toEqual({ $reduce: { input: "$docs", initialValue: 0, in: { $add: ["$$value", "$$this.v"] } } });
+    expect(compiled("$.a.zipWith($.a, (x, y) => x * y)", () => DOC.a.map((x, i) => x * DOC.a[i]))).toEqual({
+      $map: {
+        input: { $zip: { inputs: ["$a", "$a"], useLongestLength: true } },
+        as: "jsmqlPair",
+        in: {
+          $let: {
+            vars: { x: { $arrayElemAt: ["$$jsmqlPair", 0] }, y: { $arrayElemAt: ["$$jsmqlPair", 1] } },
+            in: { $multiply: ["$$x", "$$y"] },
+          },
+        },
+      },
+    });
+    expect(() => expr("$.a.reduce(5, 0)")).toThrow(/two- or three-parameter arrow/);
+    expect(() => expr("$.a.zipWith($.b, x => x)")).toThrow(/one parameter per zipped array/);
+  });
+
+  it("lowers the Set relations on a Set or an array", () => {
+    expect(compiled("new Set($.a).isSubsetOf(new Set($.b))", () => new Set(DOC.a).isSubsetOf(new Set(DOC.b)))).toEqual({
+      $setIsSubset: ["$a", "$b"],
+    });
+    expect(compiled("new Set([2]).isSubsetOf(new Set($.b))", () => new Set([2]).isSubsetOf(new Set(DOC.b)))).toEqual({
+      $setIsSubset: [[2], "$b"],
+    });
+    expect(
+      compiled("new Set($.b).isSupersetOf(new Set([5]))", () => new Set(DOC.b).isSupersetOf(new Set([5]))),
+    ).toEqual({ $setIsSubset: [[5], "$b"] });
+    expect(
+      compiled("new Set($.a).isDisjointFrom(new Set($.b))", () => new Set(DOC.a).isDisjointFrom(new Set(DOC.b))),
+    ).toEqual({ $eq: [{ $size: { $setIntersection: ["$a", "$b"] } }, 0] });
+    expect(
+      unordered("new Set($.a).symmetricDifference(new Set($.b))", () => [
+        ...new Set(DOC.a).symmetricDifference(new Set(DOC.b)),
+      ]),
+    ).toEqual({
+      $let: {
+        vars: { jsmqlA: "$a", jsmqlB: "$b" },
+        in: {
+          $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] }, { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }],
+        },
+      },
+    });
+    expect(unordered("new Set($.a).union(new Set($.b))", () => [...new Set(DOC.a).union(new Set(DOC.b))])).toEqual({
+      $setUnion: ["$a", "$b"],
+    });
+  });
+
+  it("packs a spread into the one list a variadic method reads", () => {
+    expect(compiled("$.a.concat(...$.b, 1)", () => DOC.a.concat(...DOC.b, 1))).toBeDefined();
+    expect(compiled("$.csv.concat(...$.a)", () => DOC.csv.concat(...DOC.a))).toBeDefined();
+    expect(() => expr("$.a.indexOf(...$.b)")).toThrow(/Spread \(\.\.\.\) is not supported/);
+  });
+
+  it("lowers a $switch written with $case branches, and the date constructors from parts", () => {
+    expect(expr('$switch([$case($.n > 1, "big")], "small")')).toEqual({
+      $switch: { branches: [{ case: { $gt: ["$n", 1] }, then: "big" }], default: "small" },
+    });
+    expect(expr("new Date(2026, 0, 15)")).toEqual({ $dateFromParts: { year: 2026, month: 1, day: 15 } });
+    expect(expr("new Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
+    expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
+      $toLong: { $dateFromParts: { year: { $year: "$d" }, month: 1, day: 1, timezone: "UTC" } },
+    });
+  });
+});
+
 let client: MongoClient | null = null;
 let coll: Collection | null = null;
 

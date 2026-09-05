@@ -1,9 +1,5 @@
 {
-  "reference": {
-    "commit": "46afc8d",
-    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
-    "dirty": false
-  },
+  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
   "rows": {
     "jsmql\u0000$.a.take(1.5)": {
       "entry": "jsmql",
@@ -24890,7 +24886,7 @@
       "src": "$.a.size().difference($.b)",
       "kind": "message",
       "was": "'.difference(...)' expects an array receiver, but '.size(...)' returns a number. Call '.difference(...)' on an array value instead.",
-      "now": "'.difference()' is not available on a 'number' — it is defined on 'array'.",
+      "now": "'.difference()' is not available on a 'number' — it is defined on 'array', 'set'.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.s.trim().union($.b)": {
@@ -24898,7 +24894,7 @@
       "src": "$.s.trim().union($.b)",
       "kind": "message",
       "was": "'.union(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.union(...)' on an array value instead.",
-      "now": "'.union()' is not available on a 'string' — it is defined on 'array'.",
+      "now": "'.union()' is not available on a 'string' — it is defined on 'array', 'set'.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.a.map(\"name\")": {
@@ -25149,36 +25145,20 @@
       "now": "'sampleSize' argument 1 must be a number from 0 to Infinity — got -1.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
-    "expr\u0000new Set($.a).intersection(new Set($.b))": {
-      "entry": "expr",
-      "src": "new Set($.a).intersection(new Set($.b))",
-      "kind": "now-rejected",
-      "was": "{\"$setIntersection\":[\"$a\",\"$b\"]}",
-      "now": "'.intersection()' is not available on a 'set' — it is defined on 'array'.",
-      "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
-    },
-    "expr\u0000new Set($.a).union(new Set($.b))": {
-      "entry": "expr",
-      "src": "new Set($.a).union(new Set($.b))",
-      "kind": "now-rejected",
-      "was": "{\"$setUnion\":[\"$a\",\"$b\"]}",
-      "now": "'.union()' is not available on a 'set' — it is defined on 'array'.",
-      "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
-    },
     "expr\u0000new Set($.a).difference(new Set($.b))": {
       "entry": "expr",
       "src": "new Set($.a).difference(new Set($.b))",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$setDifference\":[\"$a\",\"$b\"]}",
-      "now": "'.difference()' is not available on a 'set' — it is defined on 'array'.",
+      "now": "{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$not\":[{\"$in\":[\"$$jsmqlItem\",\"$b\"]}]}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000new Set($.a).intersection($.b)": {
       "entry": "expr",
       "src": "new Set($.a).intersection($.b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Set.intersection()'s argument must be a 'new Set(...)' expression, not a plain value",
-      "now": "'.intersection()' is not available on a 'set' — it is defined on 'array'.",
+      "now": "{\"$setIntersection\":[\"$a\",\"$b\"]}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.items.map(s => s.code.padStart(s.width, s.pad))": {
@@ -25474,7 +25454,7 @@
       "src": "$.arr.concat([1])",
       "kind": "output",
       "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$arr\"},\"then\":{\"$concatArrays\":[\"$arr\",[1]]},\"else\":{\"$concat\":[\"$arr\",[1]]}}}",
-      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$arr\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"string\"]]},\"then\":{\"$concat\":[\"$arr\",[1]]}}],\"default\":\"$$REMOVE\"}}",
+      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$arr\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"string\"]]},\"then\":{\"$concat\":[\"$arr\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "expr\u0000$.s.slice(1,2)": {
@@ -25570,7 +25550,7 @@
       "src": "$.s.concat([1])",
       "kind": "output",
       "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"$s\",[1]]},\"else\":{\"$concat\":[\"$s\",[1]]}}}",
-      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",[1]]}}],\"default\":\"$$REMOVE\"}}",
+      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"\",\"in\":{",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "expr\u0000$.n.slice(1,2)": {
@@ -25666,7 +25646,7 @@
       "src": "$.n.concat([1])",
       "kind": "output",
       "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$n\"},\"then\":{\"$concatArrays\":[\"$n\",[1]]},\"else\":{\"$concat\":[\"$n\",[1]]}}}",
-      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$n\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"string\"]]},\"then\":{\"$concat\":[\"$n\",[1]]}}],\"default\":\"$$REMOVE\"}}",
+      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$n\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"string\"]]},\"then\":{\"$concat\":[\"$n\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"\",\"in\":{",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "expr\u0000$.obj.slice(1,2)": {
@@ -25762,7 +25742,7 @@
       "src": "$.obj.concat([1])",
       "kind": "output",
       "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$concatArrays\":[\"$obj\",[1]]},\"else\":{\"$concat\":[\"$obj\",[1]]}}}",
-      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$obj\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"string\"]]},\"then\":{\"$concat\":[\"$obj\",[1]]}}],\"default\":\"$$REMOVE\"}}",
+      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$obj\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"string\"]]},\"then\":{\"$concat\":[\"$obj\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "expr\u0000[1,2,3].uniqBy('t')": {
@@ -26746,7 +26726,7 @@
       "src": "$.a.size().difference($.b)",
       "kind": "message",
       "was": "'.difference(...)' expects an array receiver, but '.size(...)' returns a number. Call '.difference(...)' on an array value instead.",
-      "now": "'.difference()' is not available on a 'number' — it is defined on 'array'.",
+      "now": "'.difference()' is not available on a 'number' — it is defined on 'array', 'set'.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.s.trim().union($.b)": {
@@ -26754,7 +26734,7 @@
       "src": "$.s.trim().union($.b)",
       "kind": "message",
       "was": "'.union(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.union(...)' on an array value instead.",
-      "now": "'.union()' is not available on a 'string' — it is defined on 'array'.",
+      "now": "'.union()' is not available on a 'string' — it is defined on 'array', 'set'.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.a.map(\"name\")": {
@@ -26997,36 +26977,20 @@
       "now": "'sampleSize' argument 1 must be a number from 0 to Infinity — got -1.",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
-    "filter\u0000new Set($.a).intersection(new Set($.b))": {
-      "entry": "filter",
-      "src": "new Set($.a).intersection(new Set($.b))",
-      "kind": "now-rejected",
-      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setIntersection\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]}",
-      "now": "'.intersection()' is not available on a 'set' — it is defined on 'array'.",
-      "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
-    },
-    "filter\u0000new Set($.a).union(new Set($.b))": {
-      "entry": "filter",
-      "src": "new Set($.a).union(new Set($.b))",
-      "kind": "now-rejected",
-      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setUnion\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setUnion\":[\"$a\",\"$b\"]},0]}]}}",
-      "now": "'.union()' is not available on a 'set' — it is defined on 'array'.",
-      "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
-    },
     "filter\u0000new Set($.a).difference(new Set($.b))": {
       "entry": "filter",
       "src": "new Set($.a).difference(new Set($.b))",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setDifference\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setDifference\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setDifference\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setDifference\":[\"$a\",\"$b\"]},0]}]}}",
-      "now": "'.difference()' is not available on a 'set' — it is defined on 'array'.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$not\":[{\"$in\":[\"$$jsmqlItem\",\"$b\"]}]}}},null]},null]},{\"$ne\":[{\"$filter\":{\"input\":\"$a\",\"as\":\"jsmqlItem\",\"cond\":{\"$not\":[{\"$in\":[\"$$",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000new Set($.a).intersection($.b)": {
       "entry": "filter",
       "src": "new Set($.a).intersection($.b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Set.intersection()'s argument must be a 'new Set(...)' expression, not a plain value",
-      "now": "'.intersection()' is not available on a 'set' — it is defined on 'array'.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$setIntersection\":[\"$a\",\"$b\"]},null]},null]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},false]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]},\"\"]},{\"$ne\":[{\"$setIntersection\":[\"$a\",\"$b\"]}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.items.map(s => s.code.padStart(s.width, s.pad))": {
@@ -27314,7 +27278,7 @@
       "src": "$.arr.concat([1])",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$arr\"},\"then\":{\"$concatArrays\":[\"$arr\",[1]]},\"else\":{\"$concat\":[\"$arr\",[1]]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$arr\"},\"then\":{\"$concatAr",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$arr\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"string\"]]},\"then\":{\"$concat\":[\"$arr\",[1",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$arr\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$arr\"},[\"string\"]]},\"then\":{\"$concat\":[\"$arr\",{\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "filter\u0000$.s.slice(1,2)": {
@@ -27402,7 +27366,7 @@
       "src": "$.s.concat([1])",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"$s\",[1]]},\"else\":{\"$concat\":[\"$s\",[1]]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",[1]]}}],\"d",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",{\"$reduce\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "filter\u0000$.n.slice(1,2)": {
@@ -27490,7 +27454,7 @@
       "src": "$.n.concat([1])",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$n\"},\"then\":{\"$concatArrays\":[\"$n\",[1]]},\"else\":{\"$concat\":[\"$n\",[1]]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$n\"},\"then\":{\"$concatArrays\":[\"",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$n\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"string\"]]},\"then\":{\"$concat\":[\"$n\",[1]]}}],\"d",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$n\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$n\"},[\"string\"]]},\"then\":{\"$concat\":[\"$n\",{\"$reduce\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "filter\u0000$.obj.slice(1,2)": {
@@ -27578,7 +27542,7 @@
       "src": "$.obj.concat([1])",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$concatArrays\":[\"$obj\",[1]]},\"else\":{\"$concat\":[\"$obj\",[1]]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$obj\"},\"then\":{\"$concatAr",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$obj\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"string\"]]},\"then\":{\"$concat\":[\"$obj\",[1",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$obj\",[1]]}},{\"case\":{\"$in\":[{\"$type\":\"$obj\"},[\"string\"]]},\"then\":{\"$concat\":[\"$obj\",{\"",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "filter\u0000[1,2,3].uniqBy('t')": {
@@ -28324,6 +28288,894 @@
       "was": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[99],{\"$slice",
       "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[99],{\"$cond\":[",
       "reason": "shippedBug: a three-argument `$slice` refuses a count of 0 (measured: `Third argument to $slice must be positive`), which `.splice` at either end reached through the shipped shape; the head is the two-argument form and the tail is guarded now."
+    },
+    "expr\u0000[\"a\", \"b\"].reduce((acc, k) => acc + $.m[k], \"\")": {
+      "entry": "expr",
+      "src": "[\"a\", \"b\"].reduce((acc, k) => acc + $.m[k], \"\")",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":[\"a\",\"b\"],\"initialValue\":\"\",\"in\":{\"$add\":[\"$$value\",{\"$getField\":{\"field\":\"$$this\",\"input\":\"$m\"}}]}}}",
+      "now": "{\"$reduce\":{\"input\":[\"a\",\"b\"],\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",{\"$cond\":{\"if\":{\"$isArray\":\"$m\"},\"then\":{\"$arrayElemAt\":[\"$m\",\"$$this\"]},\"else\":{\"$getField\":{\"field\":{\"$toString\":{\"$ifNull\":[\"$$this\",\"\"]}},\"in",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "expr\u0000/x/.test()": {
+      "entry": "expr",
+      "src": "/x/.test()",
+      "kind": "message",
+      "was": "regex.test(str) requires exactly 1 argument, got 0",
+      "now": ".test(str) requires exactly 1 argument, got 0",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.xs.reduce((a, x) => a[0], {})": {
+      "entry": "expr",
+      "src": "$.xs.reduce((a, x) => a[0], {})",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$cond\":{\"if\":{\"$isArray\":\"$$value\"},\"then\":{\"$arrayElemAt\":[\"$$value\",0]},\"else\":{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$$value\"},\"string\"]},\"then\":{\"$substrCP\":[\"$$value\",0,1",
+      "now": "{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$getField\":{\"field\":\"0\",\"input\":\"$$value\"}}}}",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "expr\u0000$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})": {
+      "entry": "expr",
+      "src": "$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$mergeObjects\":[\"$$value\",{\"k\":{\"$reduce\":{\"input\":\"$$this.ys\",\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",[{\"$arrayElemAt\":[\"$$value\",0]}]]}}}}]}}}",
+      "now": "{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$let\":{\"vars\":{\"acc\":\"$$value\",\"x\":\"$$this\"},\"in\":{\"$mergeObjects\":[\"$$acc\",{\"k\":{\"$reduce\":{\"input\":\"$$x.ys\",\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",[{\"$arra",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "expr\u0000$.xs.reduce(Boolean, 0)": {
+      "entry": "expr",
+      "src": "$.xs.reduce(Boolean, 0)",
+      "kind": "message",
+      "was": ".reduce() lambda must have 2 or 3 parameters (accumulator, element[, index])",
+      "now": "'.reduce((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000new Date(2024, 13, 1)": {
+      "entry": "expr",
+      "src": "new Date(2024, 13, 1)",
+      "kind": "output",
+      "was": "\"«date:2025-01-01T00:00:00.000Z»\"",
+      "now": "{\"$dateFromParts\":{\"year\":2024,\"month\":14,\"day\":1}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "expr\u0000new Date($.y, $.m, 1)": {
+      "entry": "expr",
+      "src": "new Date($.y, $.m, 1)",
+      "kind": "output",
+      "was": "{\"$dateFromParts\":{\"year\":\"$y\",\"month\":\"$m\",\"day\":1}}",
+      "now": "{\"$dateFromParts\":{\"year\":\"$y\",\"month\":{\"$add\":[\"$m\",1]},\"day\":1}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "expr\u0000new Date(2024, 0, 15)": {
+      "entry": "expr",
+      "src": "new Date(2024, 0, 15)",
+      "kind": "now-accepted",
+      "was": "Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means January there and December of the previous year ",
+      "now": "{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "expr\u0000new Date(2024, -1, 15)": {
+      "entry": "expr",
+      "src": "new Date(2024, -1, 15)",
+      "kind": "now-accepted",
+      "was": "Month -1 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in -1 means an earlier year here. Write a month from 1 to ",
+      "now": "{\"$dateFromParts\":{\"year\":2024,\"month\":0,\"day\":15}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "expr\u0000Date.UTC(2024, 0, 15)": {
+      "entry": "expr",
+      "src": "Date.UTC(2024, 0, 15)",
+      "kind": "now-accepted",
+      "was": "Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means January there and December of the previous year ",
+      "now": "{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "expr\u0000Date.UTC()": {
+      "entry": "expr",
+      "src": "Date.UTC()",
+      "kind": "message",
+      "was": "Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got 0 at position 0",
+      "now": "Date.UTC(year[, month, day, hour, minute, second, ms]) requires 1, 2, 3, 4, 5, 6, or 7 arguments, got 0",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000Date.UTC(1,2,3,4,5,6,7,8)": {
+      "entry": "expr",
+      "src": "Date.UTC(1,2,3,4,5,6,7,8)",
+      "kind": "message",
+      "was": "Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got 8 at position 0",
+      "now": "Date.UTC(year[, month, day, hour, minute, second, ms]) requires 1, 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000parseInt($.s)": {
+      "entry": "expr",
+      "src": "parseInt($.s)",
+      "kind": "output",
+      "was": "{\"$toInt\":\"$s\"}",
+      "now": "{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$s\"}}}",
+      "reason": "jsBehaviour: `parseInt` truncates a decimal (`\"12.7\"` → 12) — `$toInt` alone refuses a string with a fraction — so it reads through `$toDouble` and `$trunc`."
+    },
+    "expr\u0000Object.entries($.doc)": {
+      "entry": "expr",
+      "src": "Object.entries($.doc)",
+      "kind": "output",
+      "was": "{\"$objectToArray\":\"$doc\"}",
+      "now": "{\"$map\":{\"input\":{\"$objectToArray\":\"$doc\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}}",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "expr\u0000$.items.findLastIndex(x => x.active)": {
+      "entry": "expr",
+      "src": "$.items.findLastIndex(x => x.active)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.active",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x.active\",nul",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.items.findIndex(x => x.active)": {
+      "entry": "expr",
+      "src": "$.items.findIndex(x => x.active)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$and\":",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$and\":[{\"$n",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.xs.findIndex((x, i) => x === i)": {
+      "entry": "expr",
+      "src": "$.xs.findIndex((x, i) => x === i)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\",0]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"},\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayEle",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.xs.findIndex((_, i) => i > 2)": {
+      "entry": "expr",
+      "src": "$.xs.findIndex((_, i) => i > 2)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\",0]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"},\"in\":{\"$let\":{\"vars\":{\"v__5f\":{\"$arra",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.xs.findLastIndex((_, i) => i > 2)": {
+      "entry": "expr",
+      "src": "$.xs.findLastIndex((_, i) => i > 2)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\",0]}},\"in\":{\"$cond\":{\"if\":{\"$gt\":[\"$$",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"},\"in\":{\"$let\":{\"vars\":{\"v__5f\":{\"$arrayElemAt\":[\"$$jsmqlPair\",1]},\"i\":",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.xs.findIndex((x, i, arr) => true)": {
+      "entry": "expr",
+      "src": "$.xs.findIndex((x, i, arr) => true)",
+      "kind": "now-accepted",
+      "was": ".findIndex() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$let\":{\"vars\":{\"a",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "expr\u0000$.xs.reduce((acc, x, i, arr) => acc, 0)": {
+      "entry": "expr",
+      "src": "$.xs.reduce((acc, x, i, arr) => acc, 0)",
+      "kind": "message",
+      "was": ".reduce() lambda must have 2 or 3 parameters (accumulator, element[, index])",
+      "now": "'.reduce((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.items.map(x => x).round(2)": {
+      "entry": "expr",
+      "src": "$.items.map(x => x).round(2)",
+      "kind": "now-accepted",
+      "was": "'.round(...)' expects a number receiver, but '.map(...)' returns an array. Map over the array first, e.g. '.map(x => x.round(...))', or take one element with '.at(0)'.",
+      "now": "{\"$round\":[{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":\"$$x\"}},2]}",
+      "reason": "naming: the number receiver's `.round([precision])`, `.ceil()`, `.floor()` are registry cells now."
+    },
+    "expr\u0000$.s.trim().findIndex(x => x)": {
+      "entry": "expr",
+      "src": "$.s.trim().findIndex(x => x)",
+      "kind": "message",
+      "was": "'.findIndex(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.findIndex(...)' on an array value instead.",
+      "now": "'.findIndex()' is not available on a 'string' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.n.round(2).reduceRight((a, b) => a, 0)": {
+      "entry": "expr",
+      "src": "$.n.round(2).reduceRight((a, b) => a, 0)",
+      "kind": "message",
+      "was": "'.reduceRight(...)' expects an array receiver, but '.round(...)' returns a number. Call '.reduceRight(...)' on an array value instead.",
+      "now": "'.reduceRight()' is not available on a 'number' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.t.startOf(\"month\").findIndex(x => x)": {
+      "entry": "expr",
+      "src": "$.t.startOf(\"month\").findIndex(x => x)",
+      "kind": "message",
+      "was": "'.findIndex(...)' expects an array receiver, but '.startOf(...)' returns a date. Call '.findIndex(...)' on an array value instead.",
+      "now": "'.findIndex()' is not available on a 'date' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.a.zipWith($.b, (x, y) => x + y)": {
+      "entry": "expr",
+      "src": "$.a.zipWith($.b, (x, y) => x + y)",
+      "kind": "output",
+      "was": "{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlZip0\",\"",
+      "now": "{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPair\",1]}},\"in\":{\"$add\":[\"$$x\",\"$$y\"]}}}",
+      "reason": "naming: the zipped pair is minted by the `elements` service; each parameter reads its position of the pair."
+    },
+    "expr\u0000$.a.zipWith($.b, x => x)": {
+      "entry": "expr",
+      "src": "$.a.zipWith($.b, x => x)",
+      "kind": "message",
+      "was": ".zipWith(...arrays, iteratee) needs a 2-parameter arrow (one per zipped array).",
+      "now": "'.zipWith()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000$.n.ceil(2)": {
+      "entry": "expr",
+      "src": "$.n.ceil(2)",
+      "kind": "output",
+      "was": "{\"$divide\":[{\"$ceil\":{\"$multiply\":[\"$n\",{\"$pow\":[10,2]}]}},{\"$pow\":[10,2]}]}",
+      "now": "{\"$ceil\":\"$n\"}",
+      "reason": "naming: the number receiver's `.round([precision])`, `.ceil()`, `.floor()` are registry cells now."
+    },
+    "expr\u0000new Set($.a).symmetricDifference(new Set($.b))": {
+      "entry": "expr",
+      "src": "new Set($.a).symmetricDifference(new Set($.b))",
+      "kind": "now-accepted",
+      "was": "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlA\":\"$a\",\"jsmqlB\":\"$b\"},\"in\":{\"$setDifference\":[{\"$setUnion\":[\"$$jsmqlA\",\"$$jsmqlB\"]},{\"$setIntersection\":[\"$$jsmqlA\",\"$$jsmqlB\"]}]}}}",
+      "reason": "gap: the Set relations accept a Set or an array receiver, and `symmetricDifference` / `isDisjointFrom` lower to the set operators the server has (the shipped compiler refused them)."
+    },
+    "expr\u0000Number.isInteger($.n)": {
+      "entry": "expr",
+      "src": "Number.isInteger($.n)",
+      "kind": "output",
+      "was": "{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$n\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$n\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$n\",{\"$trunc\":\"$n\"}]},\"else\":false}}}}",
+      "now": "{\"$and\":[{\"$and\":[{\"$isNumber\":\"$n\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$n\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$n\",{\"$trunc\":\"$n\"}]}]}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "expr\u0000Number.isNaN($.x)": {
+      "entry": "expr",
+      "src": "Number.isNaN($.x)",
+      "kind": "output",
+      "was": "{\"$ne\":[\"$x\",\"$x\"]}",
+      "now": "{\"$and\":[{\"$isNumber\":\"$x\"},{\"$eq\":[{\"$toString\":\"$x\"},\"NaN\"]}]}",
+      "reason": "shippedBug: the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true, measured), so `$ne: [v, v]` was always false; `Number.isNaN` reads `$toString` for \"NaN\" now."
+    },
+    "expr\u0000Array.from({ length: 3 }, (_, i) => i * 2)": {
+      "entry": "expr",
+      "src": "Array.from({ length: 3 }, (_, i) => i * 2)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$range\":[0,3]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":{\"$multiply\":[\"$$i\",2]}}}}}",
+      "now": "{\"$map\":{\"input\":{\"$range\":[0,3]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":{\"$multiply\":[\"$$i\",2]}}}}}",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "expr\u0000Array.from({ length: $.n }, (_, i) => i)": {
+      "entry": "expr",
+      "src": "Array.from({ length: $.n }, (_, i) => i)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}}",
+      "now": "{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}}",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "expr\u0000Array.from({ length: 3 }, x => x)": {
+      "entry": "expr",
+      "src": "Array.from({ length: 3 }, x => x)",
+      "kind": "message",
+      "was": "Array.from() map function must take 2 parameters (element, index) — element is always null in the {length} form",
+      "now": "'.from()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000Object.groupBy($.items, x => x.category)": {
+      "entry": "expr",
+      "src": "Object.groupBy($.items, x => x.category)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":\"$items\",\"initialValue\":{},\"in\":{\"$let\":{\"vars\":{\"jsmqlKey\":{\"$toString\":\"$$this.category\"}},\"in\":{\"$mergeObjects\":[\"$$value\",{\"$arrayToObject\":[[[\"$$jsmqlKey\",{\"$concatArrays\":[{\"$ifNull\":[{\"$getFiel",
+      "now": "{\"$arrayToObject\":{\"$map\":{\"input\":{\"$setUnion\":[{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$ifNull\":[{\"$toString\":\"$$x.category\"},\"null\"]}}},[]]},\"as\":\"jsmqlKey\",\"in\":{\"k\":\"$$jsmqlKey\",\"v\":{\"$filter\":{\"input\":\"$items\",\"a",
+      "reason": "naming: the Object statics mint their `kv` / `key` variables through `bind`, so the names carry the `jsmql` prefix."
+    },
+    "expr\u0000Object.groupBy($.items, $.f)": {
+      "entry": "expr",
+      "src": "Object.groupBy($.items, $.f)",
+      "kind": "message",
+      "was": "Object.groupBy() requires a single-parameter arrow function as the discriminator",
+      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000Object.groupBy($.items, (a, b) => a)": {
+      "entry": "expr",
+      "src": "Object.groupBy($.items, (a, b) => a)",
+      "kind": "message",
+      "was": "Object.groupBy() requires a single-parameter arrow function as the discriminator",
+      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a one-parameter callback and the arrow has 2",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000Object.fromEntries(Object.entries($.doc))": {
+      "entry": "expr",
+      "src": "Object.fromEntries(Object.entries($.doc))",
+      "kind": "output",
+      "was": "{\"$arrayToObject\":{\"$objectToArray\":\"$doc\"}}",
+      "now": "{\"$arrayToObject\":{\"$map\":{\"input\":{\"$objectToArray\":\"$doc\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}}}",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "expr\u0000Array.isArray($.items)": {
+      "entry": "expr",
+      "src": "Array.isArray($.items)",
+      "kind": "output",
+      "was": "{\"$isArray\":\"$items\"}",
+      "now": "{\"$isArray\":[\"$items\"]}",
+      "reason": "correctness: `$isArray` takes its operand as a one-element list, so a literal array operand (`Array.isArray([1, 2])`) is one argument and not two."
+    },
+    "expr\u0000Object.keys($.user?.profile)": {
+      "entry": "expr",
+      "src": "Object.keys($.user?.profile)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$objectToArray\":{\"$ifNull\":[\"$user.profile\",{}]}},\"as\":\"jsmqlKv\",\"in\":\"$$jsmqlKv.k\"}}",
+      "now": "{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\":\"jsmqlKv\",\"in\":\"$$jsmqlKv.k\"}}",
+      "reason": "naming: the Object statics mint their `kv` / `key` variables through `bind`, so the names carry the `jsmql` prefix."
+    },
+    "expr\u0000Object.entries($.user?.profile)": {
+      "entry": "expr",
+      "src": "Object.entries($.user?.profile)",
+      "kind": "output",
+      "was": "{\"$objectToArray\":{\"$ifNull\":[\"$user.profile\",{}]}}",
+      "now": "{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}}",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "expr\u0000Math.cbrt($.x)": {
+      "entry": "expr",
+      "src": "Math.cbrt($.x)",
+      "kind": "output",
+      "was": "{\"$pow\":[\"$x\",{\"$divide\":[1,3]}]}",
+      "now": "{\"$multiply\":[{\"$cmp\":[\"$x\",0]},{\"$pow\":[{\"$abs\":\"$x\"},{\"$divide\":[1,3]}]}]}",
+      "reason": "shippedBug: `$pow` of a negative base to 1/3 is NaN on the server (measured); `Math.cbrt` keeps the sign now, `-8` → `-2`."
+    },
+    "expr\u0000Number.isInteger($.x,)": {
+      "entry": "expr",
+      "src": "Number.isInteger($.x,)",
+      "kind": "output",
+      "was": "{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]},\"else\":false}}}}",
+      "now": "{\"$and\":[{\"$and\":[{\"$isNumber\":\"$x\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$x\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]}]}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "expr\u0000Number.isInteger($.x)": {
+      "entry": "expr",
+      "src": "Number.isInteger($.x)",
+      "kind": "output",
+      "was": "{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]},\"else\":false}}}}",
+      "now": "{\"$and\":[{\"$and\":[{\"$isNumber\":\"$x\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$x\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]}]}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "expr\u0000Array.from({ length: 5 }, (_, i) => i,)": {
+      "entry": "expr",
+      "src": "Array.from({ length: 5 }, (_, i) => i,)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}}",
+      "now": "{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}}",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "expr\u0000Array.from({ length: 5 }, (_, i) => i)": {
+      "entry": "expr",
+      "src": "Array.from({ length: 5 }, (_, i) => i)",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}}",
+      "now": "{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}}",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "expr\u0000$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)": {
+      "entry": "expr",
+      "src": "$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$events\",\"as\":\"e\",\"in\":{\"$toLong\":\"$$e.at\"}}},\"initialValue\":0,\"in\":{\"$max\":[\"$$value\",\"$$this\"]}}}",
+      "now": "{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$events\",\"as\":\"e\",\"in\":{\"$toLong\":\"$$e.at\"}}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"max\":\"$$value\",\"t\":\"$$this\"},\"in\":{\"$max\":[\"$$max\",\"$$t\"]}}}}}",
+      "reason": "spread: a rule that reads its arguments as one list (`args.spread`) takes a spread call packed into one array literal; the server reads one array operand for `$max`/`$min`/`$mergeObjects` (measured)."
+    },
+    "expr\u0000$.xs.reduce((acc, _, i) => acc + i, 0)": {
+      "entry": "expr",
+      "src": "$.xs.reduce((acc, _, i) => acc + i, 0)",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\",0]}},\"in\":{\"$add\":[\"$$value\",\"$$i\"]}}",
+      "now": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"v__5f\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\",0]}},\"in\":{\"$add\":[\"$$value\",\"$$i\"",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "expr\u0000Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0": {
+      "entry": "expr",
+      "src": "Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0",
+      "kind": "output",
+      "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$scores\"},\"then\":{\"$subtract\":[{\"$max\":\"$scores\"},{\"$min\":\"$scores\"}]},\"else\":0}}",
+      "now": "{\"$cond\":{\"if\":{\"$isArray\":[\"$scores\"]},\"then\":{\"$subtract\":[{\"$max\":\"$scores\"},{\"$min\":\"$scores\"}]},\"else\":0}}",
+      "reason": "spread: a rule that reads its arguments as one list (`args.spread`) takes a spread call packed into one array literal; the server reads one array operand for `$max`/`$min`/`$mergeObjects` (measured)."
+    },
+    "expr\u0000\n{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}\n      ": {
+      "entry": "expr",
+      "src": "\n{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}\n      ",
+      "kind": "output",
+      "was": "{\"distance\":{\"$sqrt\":{\"$add\":[{\"$pow\":[{\"$subtract\":[\"$point.x\",\"$origin.x\"]},2]},{\"$pow\":[{\"$subtract\":[\"$point.y\",\"$origin.y\"]},2]}]}},\"octave\":{\"$log\":[{\"$divide\":[\"$frequency\",440]},2]},\"decibels\":{\"$multiply\":[{\"$lo",
+      "now": "{\"distance\":{\"$sqrt\":{\"$add\":[{\"$pow\":[{\"$subtract\":[\"$point.x\",\"$origin.x\"]},2]},{\"$pow\":[{\"$subtract\":[\"$point.y\",\"$origin.y\"]},2]}]}},\"octave\":{\"$log\":[{\"$divide\":[\"$frequency\",440]},2]},\"decibels\":{\"$multiply\":[{\"$lo",
+      "reason": "shippedBug: `$pow` of a negative base to 1/3 is NaN on the server (measured); `Math.cbrt` keeps the sign now, `-8` → `-2`."
+    },
+    "expr\u0000\"abc\".reduce((a,b) => a + b, 0)": {
+      "entry": "expr",
+      "src": "\"abc\".reduce((a,b) => a + b, 0)",
+      "kind": "message",
+      "was": "'.reduce(...)' expects an array receiver, but the value before it returns a string. Call '.reduce(...)' on an array value instead.",
+      "now": "'.reduce()' is not available on a 'string' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "expr\u0000\"abc\".concat([1])": {
+      "entry": "expr",
+      "src": "\"abc\".concat([1])",
+      "kind": "output",
+      "was": "{\"$concat\":[\"abc\",[1]]}",
+      "now": "{\"$concat\":[\"abc\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",{\"$toString\":\"$$this\"}]}}}]}",
+      "reason": "jsBehaviour: a string receiver appends the elements of an array argument one by one, `$toString` each — `\"abc\".concat([1])` is \"abc1\" — through the same cell a packed spread reaches."
+    },
+    "expr\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "expr",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$and\":[{\"$ne\":",
+      "now": ".findIndex(callback) requires exactly 1 argument, got 2",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000[\"a\", \"b\"].reduce((acc, k) => acc + $.m[k], \"\")": {
+      "entry": "filter",
+      "src": "[\"a\", \"b\"].reduce((acc, k) => acc + $.m[k], \"\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[\"a\",\"b\"],\"initialValue\":\"\",\"in\":{\"$add\":[\"$$value\",{\"$getField\":{\"field\":\"$$this\",\"input\":\"$m\"}}]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input\":[\"a\",\"b\"],\"initial",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":[\"a\",\"b\"],\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",{\"$cond\":{\"if\":{\"$isArray\":\"$m\"},\"then\":{\"$arrayElemAt\":[\"$m\",\"$$this\"]},\"else\":{\"$getField\":{\"field\":{\"$to",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "filter\u0000/x/.test()": {
+      "entry": "filter",
+      "src": "/x/.test()",
+      "kind": "message",
+      "was": "regex.test(str) requires exactly 1 argument, got 0",
+      "now": ".test(str) requires exactly 1 argument, got 0",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.xs.reduce((a, x) => a[0], {})": {
+      "entry": "filter",
+      "src": "$.xs.reduce((a, x) => a[0], {})",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$cond\":{\"if\":{\"$isArray\":\"$$value\"},\"then\":{\"$arrayElemAt\":[\"$$value\",0]},\"else\":{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$$value\"},\"string",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$getField\":{\"field\":\"0\",\"input\":\"$$value\"}}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$getField\":{",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "filter\u0000$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})": {
+      "entry": "filter",
+      "src": "$.xs.reduce((acc, x) => ({ ...acc, k: x.ys.reduce((acc, y) => [...acc, acc[0]], []) }), {})",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$mergeObjects\":[\"$$value\",{\"k\":{\"$reduce\":{\"input\":\"$$this.ys\",\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",[{\"$arrayElemAt\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$xs\",\"initialValue\":{},\"in\":{\"$let\":{\"vars\":{\"acc\":\"$$value\",\"x\":\"$$this\"},\"in\":{\"$mergeObjects\":[\"$$acc\",{\"k\":{\"$reduce\":{\"input\":\"$$x.ys\",\"initialValue\":[],\"in",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "filter\u0000$.xs.reduce(Boolean, 0)": {
+      "entry": "filter",
+      "src": "$.xs.reduce(Boolean, 0)",
+      "kind": "message",
+      "was": ".reduce() lambda must have 2 or 3 parameters (accumulator, element[, index])",
+      "now": "'.reduce((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000new Date(2024, 13, 1)": {
+      "entry": "filter",
+      "src": "new Date(2024, 13, 1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"«date:2025-01-01T00:00:00.000Z»\",null]},null]},{\"$ne\":[\"«date:2025-01-01T00:00:00.000Z»\",false]},{\"$ne\":[\"«date:2025-01-01T00:00:00.000Z»\",\"\"]},{\"$ne\":[\"«date:2025-01-01T00:00:00.00",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateFromParts\":{\"year\":2024,\"month\":14,\"day\":1}},null]},null]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":14,\"day\":1}},false]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":1",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "filter\u0000new Date($.y, $.m, 1)": {
+      "entry": "filter",
+      "src": "new Date($.y, $.m, 1)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateFromParts\":{\"year\":\"$y\",\"month\":\"$m\",\"day\":1}},null]},null]},{\"$ne\":[{\"$dateFromParts\":{\"year\":\"$y\",\"month\":\"$m\",\"day\":1}},false]},{\"$ne\":[{\"$dateFromParts\":{\"year\":\"$y\",\"mont",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateFromParts\":{\"year\":\"$y\",\"month\":{\"$add\":[\"$m\",1]},\"day\":1}},null]},null]},{\"$ne\":[{\"$dateFromParts\":{\"year\":\"$y\",\"month\":{\"$add\":[\"$m\",1]},\"day\":1}},false]},{\"$ne\":[{\"$dateFro",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "filter\u0000new Date(2024, 0, 15)": {
+      "entry": "filter",
+      "src": "new Date(2024, 0, 15)",
+      "kind": "now-accepted",
+      "was": "Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means January there and December of the previous year ",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15}},null]},null]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15}},false]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":1",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "filter\u0000new Date(2024, -1, 15)": {
+      "entry": "filter",
+      "src": "new Date(2024, -1, 15)",
+      "kind": "now-accepted",
+      "was": "Month -1 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in -1 means an earlier year here. Write a month from 1 to ",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$dateFromParts\":{\"year\":2024,\"month\":0,\"day\":15}},null]},null]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":0,\"day\":15}},false]},{\"$ne\":[{\"$dateFromParts\":{\"year\":2024,\"month\":0",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "filter\u0000Date.UTC(2024, 0, 15)": {
+      "entry": "filter",
+      "src": "Date.UTC(2024, 0, 15)",
+      "kind": "now-accepted",
+      "was": "Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1, December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0 means January there and December of the previous year ",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}},null]},null]},{\"$ne\":[{\"$toLong\":{\"$dateFromParts\":{\"year\":2024,\"month\":1,\"day\":15,\"timezone\":\"UTC\"}}",
+      "reason": "jsBehaviour: `new Date(y, m, …)` and `Date.UTC(…)` count the month from 0, as JavaScript does and as `getMonth()` reads it; the month moves up by one on the way to `$dateFromParts` (a constant of parts is not folded, the server carries them)."
+    },
+    "filter\u0000Date.UTC()": {
+      "entry": "filter",
+      "src": "Date.UTC()",
+      "kind": "message",
+      "was": "Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got 0 at position 0",
+      "now": "Date.UTC(year[, month, day, hour, minute, second, ms]) requires 1, 2, 3, 4, 5, 6, or 7 arguments, got 0",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000Date.UTC(1,2,3,4,5,6,7,8)": {
+      "entry": "filter",
+      "src": "Date.UTC(1,2,3,4,5,6,7,8)",
+      "kind": "message",
+      "was": "Date.UTC(year[, month, day, hour, minute, second, ms]) takes 1 to 7 arguments, got 8 at position 0",
+      "now": "Date.UTC(year[, month, day, hour, minute, second, ms]) requires 1, 2, 3, 4, 5, 6, or 7 arguments, got 8",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000parseInt($.s)": {
+      "entry": "filter",
+      "src": "parseInt($.s)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toInt\":\"$s\"},null]},null]},{\"$ne\":[{\"$toInt\":\"$s\"},false]},{\"$ne\":[{\"$toInt\":\"$s\"},\"\"]},{\"$ne\":[{\"$toInt\":\"$s\"},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$s\"}}},null]},null]},{\"$ne\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$s\"}}},false]},{\"$ne\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$s\"}}},\"\"]},{\"$ne\":[{\"$toInt",
+      "reason": "jsBehaviour: `parseInt` truncates a decimal (`\"12.7\"` → 12) — `$toInt` alone refuses a string with a fraction — so it reads through `$toDouble` and `$trunc`."
+    },
+    "filter\u0000Object.entries($.doc)": {
+      "entry": "filter",
+      "src": "Object.entries($.doc)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$objectToArray\":\"$doc\"},null]},null]},{\"$ne\":[{\"$objectToArray\":\"$doc\"},false]},{\"$ne\":[{\"$objectToArray\":\"$doc\"},\"\"]},{\"$ne\":[{\"$objectToArray\":\"$doc\"},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$doc\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$doc\"},\"as\":\"jsmqlKv\",\"in\":[\"",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "filter\u0000$.items.findLastIndex(x => x.active)": {
+      "entry": "filter",
+      "src": "$.items.findLastIndex(x => x.active)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$and\"",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.items.findIndex(x => x.active)": {
+      "entry": "filter",
+      "src": "$.items.findIndex(x => x.active)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$items\"}]},\"$items\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"x\":{\"$arrayEle",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.xs.findIndex((x, i) => x === i)": {
+      "entry": "filter",
+      "src": "$.xs.findIndex((x, i) => x === i)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"}",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.xs.findIndex((_, i) => i > 2)": {
+      "entry": "filter",
+      "src": "$.xs.findIndex((_, i) => i > 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"}",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.xs.findLastIndex((_, i) => i > 2)": {
+      "entry": "filter",
+      "src": "$.xs.findLastIndex((_, i) => i > 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$let\":{\"vars\":{\"jsmqlPair\":\"$$this\"},\"in\":{\"$let\":{\"vars\":{\"v__5f\":{",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.xs.findIndex((x, i, arr) => true)": {
+      "entry": "filter",
+      "src": "$.xs.findIndex((x, i, arr) => true)",
+      "kind": "now-accepted",
+      "was": ".findIndex() callbacks take at most 2 parameters (element, index); the third 'array' argument isn't supported. Reference the receiver directly instead.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":-1,\"in\":{\"$cond\":[{\"$and\":[{\"$eq\":[\"$$value\",-1]},{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "filter\u0000$.xs.reduce((acc, x, i, arr) => acc, 0)": {
+      "entry": "filter",
+      "src": "$.xs.reduce((acc, x, i, arr) => acc, 0)",
+      "kind": "message",
+      "was": ".reduce() lambda must have 2 or 3 parameters (accumulator, element[, index])",
+      "now": "'.reduce((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.items.map(x => x).round(2)": {
+      "entry": "filter",
+      "src": "$.items.map(x => x).round(2)",
+      "kind": "now-accepted",
+      "was": "'.round(...)' expects a number receiver, but '.map(...)' returns an array. Map over the array first, e.g. '.map(x => x.round(...))', or take one element with '.at(0)'.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$round\":[{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":\"$$x\"}},2]},null]},null]},{\"$ne\":[{\"$round\":[{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":\"$$x\"}},2]},false]},{\"$ne\":[{\"$round\":[{\"$map\"",
+      "reason": "naming: the number receiver's `.round([precision])`, `.ceil()`, `.floor()` are registry cells now."
+    },
+    "filter\u0000$.s.trim().findIndex(x => x)": {
+      "entry": "filter",
+      "src": "$.s.trim().findIndex(x => x)",
+      "kind": "message",
+      "was": "'.findIndex(...)' expects an array receiver, but '.trim(...)' returns a string. Call '.findIndex(...)' on an array value instead.",
+      "now": "'.findIndex()' is not available on a 'string' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.n.round(2).reduceRight((a, b) => a, 0)": {
+      "entry": "filter",
+      "src": "$.n.round(2).reduceRight((a, b) => a, 0)",
+      "kind": "message",
+      "was": "'.reduceRight(...)' expects an array receiver, but '.round(...)' returns a number. Call '.reduceRight(...)' on an array value instead.",
+      "now": "'.reduceRight()' is not available on a 'number' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.t.startOf(\"month\").findIndex(x => x)": {
+      "entry": "filter",
+      "src": "$.t.startOf(\"month\").findIndex(x => x)",
+      "kind": "message",
+      "was": "'.findIndex(...)' expects an array receiver, but '.startOf(...)' returns a date. Call '.findIndex(...)' on an array value instead.",
+      "now": "'.findIndex()' is not available on a 'date' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.a.zipWith($.b, (x, y) => x + y)": {
+      "entry": "filter",
+      "src": "$.a.zipWith($.b, (x, y) => x + y)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlZip0\":\"$a\",\"jsmqlZip1\":\"$b\"},\"in\":{\"$map\":{\"input\":{\"$range\":[0,{\"$max\":[{\"$size\":\"$$jsmqlZip0\"},{\"$size\":\"$$jsmqlZip1\"}]}]},\"as\":\"jsmqlI\",\"in\":{\"$let\":{\"vars\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[\"$a\",\"$b\"],\"useLongestLength\":true}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$jsmqlPair\",0]},\"y\":{\"$arrayElemAt\":[\"$$jsmqlPa",
+      "reason": "naming: the zipped pair is minted by the `elements` service; each parameter reads its position of the pair."
+    },
+    "filter\u0000$.a.zipWith($.b, x => x)": {
+      "entry": "filter",
+      "src": "$.a.zipWith($.b, x => x)",
+      "kind": "message",
+      "was": ".zipWith(...arrays, iteratee) needs a 2-parameter arrow (one per zipped array).",
+      "now": "'.zipWith()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000$.n.ceil(2)": {
+      "entry": "filter",
+      "src": "$.n.ceil(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$divide\":[{\"$ceil\":{\"$multiply\":[\"$n\",{\"$pow\":[10,2]}]}},{\"$pow\":[10,2]}]},null]},null]},{\"$ne\":[{\"$divide\":[{\"$ceil\":{\"$multiply\":[\"$n\",{\"$pow\":[10,2]}]}},{\"$pow\":[10,2]}]},false]",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$ceil\":\"$n\"},null]},null]},{\"$ne\":[{\"$ceil\":\"$n\"},false]},{\"$ne\":[{\"$ceil\":\"$n\"},\"\"]},{\"$ne\":[{\"$ceil\":\"$n\"},0]}]}}",
+      "reason": "naming: the number receiver's `.round([precision])`, `.ceil()`, `.floor()` are registry cells now."
+    },
+    "filter\u0000Number.isInteger($.n)": {
+      "entry": "filter",
+      "src": "Number.isInteger($.n)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$n\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$n\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$n\",{\"$trunc\":\"$n\"}]},\"else\":fa",
+      "now": "{\"$expr\":{\"$and\":[{\"$and\":[{\"$isNumber\":\"$n\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$n\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$n\",{\"$trunc\":\"$n\"}]}]}}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "filter\u0000Number.isNaN($.x)": {
+      "entry": "filter",
+      "src": "Number.isNaN($.x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$ne\":[\"$x\",\"$x\"]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$isNumber\":\"$x\"},{\"$eq\":[{\"$toString\":\"$x\"},\"NaN\"]}]}}",
+      "reason": "shippedBug: the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true, measured), so `$ne: [v, v]` was always false; `Number.isNaN` reads `$toString` for \"NaN\" now."
+    },
+    "filter\u0000Array.from({ length: 3 }, (_, i) => i * 2)": {
+      "entry": "filter",
+      "src": "Array.from({ length: 3 }, (_, i) => i * 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,3]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":{\"$multiply\":[\"$$i\",2]}}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,3]},\"as\":\"i\",\"in\":{\"$",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,3]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":{\"$multiply\":[\"$$i\",2]}}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$ra",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "filter\u0000Array.from({ length: $.n }, (_, i) => i)": {
+      "entry": "filter",
+      "src": "Array.from({ length: $.n }, (_, i) => i)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,\"$n\"]},",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "filter\u0000Array.from({ length: 3 }, x => x)": {
+      "entry": "filter",
+      "src": "Array.from({ length: 3 }, x => x)",
+      "kind": "message",
+      "was": "Array.from() map function must take 2 parameters (element, index) — element is always null in the {length} form",
+      "now": "'.from()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000Object.groupBy($.items, x => x.category)": {
+      "entry": "filter",
+      "src": "Object.groupBy($.items, x => x.category)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":\"$items\",\"initialValue\":{},\"in\":{\"$let\":{\"vars\":{\"jsmqlKey\":{\"$toString\":\"$$this.category\"}},\"in\":{\"$mergeObjects\":[\"$$value\",{\"$arrayToObject\":[[[\"$$jsmqlKey\",{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":{\"$map\":{\"input\":{\"$setUnion\":[{\"$map\":{\"input\":\"$items\",\"as\":\"x\",\"in\":{\"$ifNull\":[{\"$toString\":\"$$x.category\"},\"null\"]}}},[]]},\"as\":\"jsmqlKey\",\"in\":{\"k\":\"$$jsmqlKe",
+      "reason": "naming: the Object statics mint their `kv` / `key` variables through `bind`, so the names carry the `jsmql` prefix."
+    },
+    "filter\u0000Object.groupBy($.items, $.f)": {
+      "entry": "filter",
+      "src": "Object.groupBy($.items, $.f)",
+      "kind": "message",
+      "was": "Object.groupBy() requires a single-parameter arrow function as the discriminator",
+      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000Object.groupBy($.items, (a, b) => a)": {
+      "entry": "filter",
+      "src": "Object.groupBy($.items, (a, b) => a)",
+      "kind": "message",
+      "was": "Object.groupBy() requires a single-parameter arrow function as the discriminator",
+      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a one-parameter callback and the arrow has 2",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000Object.fromEntries(Object.entries($.doc))": {
+      "entry": "filter",
+      "src": "Object.fromEntries(Object.entries($.doc))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":{\"$objectToArray\":\"$doc\"}},null]},null]},{\"$ne\":[{\"$arrayToObject\":{\"$objectToArray\":\"$doc\"}},false]},{\"$ne\":[{\"$arrayToObject\":{\"$objectToArray\":\"$doc\"}},\"\"]},{\"$n",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":{\"$map\":{\"input\":{\"$objectToArray\":\"$doc\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}}},null]},null]},{\"$ne\":[{\"$arrayToObject\":{\"$map\":{\"input\":{\"$objectTo",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "filter\u0000Array.isArray($.items)": {
+      "entry": "filter",
+      "src": "Array.isArray($.items)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$isArray\":\"$items\"}}",
+      "now": "{\"$expr\":{\"$isArray\":[\"$items\"]}}",
+      "reason": "correctness: `$isArray` takes its operand as a one-element list, so a literal array operand (`Array.isArray([1, 2])`) is one argument and not two."
+    },
+    "filter\u0000Object.keys($.user?.profile)": {
+      "entry": "filter",
+      "src": "Object.keys($.user?.profile)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$objectToArray\":{\"$ifNull\":[\"$user.profile\",{}]}},\"as\":\"jsmqlKv\",\"in\":\"$$jsmqlKv.k\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$objectToArray\":{\"$ifNull\":[\"$user.p",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\":\"jsmqlKv\",\"in\":\"$$jsmqlKv.k\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\":\"jsmqlKv\",\"in\":",
+      "reason": "naming: the Object statics mint their `kv` / `key` variables through `bind`, so the names carry the `jsmql` prefix."
+    },
+    "filter\u0000Object.entries($.user?.profile)": {
+      "entry": "filter",
+      "src": "Object.entries($.user?.profile)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$objectToArray\":{\"$ifNull\":[\"$user.profile\",{}]}},null]},null]},{\"$ne\":[{\"$objectToArray\":{\"$ifNull\":[\"$user.profile\",{}]}},false]},{\"$ne\":[{\"$objectToArray\":{\"$ifNull\":[\"$user.pro",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\":\"jsmqlKv\",\"in\":[\"$$jsmqlKv.k\",\"$$jsmqlKv.v\"]}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$objectToArray\":\"$user.profile\"},\"as\"",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "filter\u0000Math.cbrt($.x)": {
+      "entry": "filter",
+      "src": "Math.cbrt($.x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$pow\":[\"$x\",{\"$divide\":[1,3]}]},null]},null]},{\"$ne\":[{\"$pow\":[\"$x\",{\"$divide\":[1,3]}]},false]},{\"$ne\":[{\"$pow\":[\"$x\",{\"$divide\":[1,3]}]},\"\"]},{\"$ne\":[{\"$pow\":[\"$x\",{\"$divide\":[1,3",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$multiply\":[{\"$cmp\":[\"$x\",0]},{\"$pow\":[{\"$abs\":\"$x\"},{\"$divide\":[1,3]}]}]},null]},null]},{\"$ne\":[{\"$multiply\":[{\"$cmp\":[\"$x\",0]},{\"$pow\":[{\"$abs\":\"$x\"},{\"$divide\":[1,3]}]}]},false]",
+      "reason": "shippedBug: `$pow` of a negative base to 1/3 is NaN on the server (measured); `Math.cbrt` keeps the sign now, `-8` → `-2`."
+    },
+    "filter\u0000Number.isInteger($.x,)": {
+      "entry": "filter",
+      "src": "Number.isInteger($.x,)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]},\"else\":fa",
+      "now": "{\"$expr\":{\"$and\":[{\"$and\":[{\"$isNumber\":\"$x\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$x\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]}]}}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "filter\u0000Number.isInteger($.x)": {
+      "entry": "filter",
+      "src": "Number.isInteger($.x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"int\",\"long\"]]},\"then\":true,\"else\":{\"$cond\":{\"if\":{\"$in\":[{\"$type\":\"$x\"},[\"double\",\"decimal\"]]},\"then\":{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]},\"else\":fa",
+      "now": "{\"$expr\":{\"$and\":[{\"$and\":[{\"$isNumber\":\"$x\"},{\"$not\":[{\"$in\":[{\"$toString\":\"$x\"},[\"NaN\",\"Infinity\",\"-Infinity\"]]}]}]},{\"$eq\":[\"$x\",{\"$trunc\":\"$x\"}]}]}}",
+      "reason": "correctness: `Number.isInteger` excludes NaN and the infinities (the shipped chain answered true for both, measured); `$and` short-circuits, so `$trunc` never sees a non-number."
+    },
+    "filter\u0000Array.from({ length: 5 }, (_, i) => i,)": {
+      "entry": "filter",
+      "src": "Array.from({ length: 5 }, (_, i) => i,)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "filter\u0000Array.from({ length: 5 }, (_, i) => i)": {
+      "entry": "filter",
+      "src": "Array.from({ length: 5 }, (_, i) => i)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\":null},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"i\",\"in\":{\"$let\":{\"vars\":{\"v_\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"v__5f\":null,\"i\":\"$$jsmqlPair\"},\"in\":\"$$i\"}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":{\"$range\":[0,5]},\"as\":\"",
+      "reason": "naming: the `(_, i)` callback binds `_` to null and `i` to the `$range` element through the `elements` service; the variable names are the parameters' own."
+    },
+    "filter\u0000$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)": {
+      "entry": "filter",
+      "src": "$.events.map(e => e.at.getTime()).reduce((max, t) => Math.max(max, t), 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$events\",\"as\":\"e\",\"in\":{\"$toLong\":\"$$e.at\"}}},\"initialValue\":0,\"in\":{\"$max\":[\"$$value\",\"$$this\"]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"input\":{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$events\",\"as\":\"e\",\"in\":{\"$toLong\":\"$$e.at\"}}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"max\":\"$$value\",\"t\":\"$$this\"},\"in\":{\"$max\":[\"$$max\",\"$$t\"]}",
+      "reason": "spread: a rule that reads its arguments as one list (`args.spread`) takes a spread call packed into one array literal; the server reads one array operand for `$max`/`$min`/`$mergeObjects` (measured)."
+    },
+    "filter\u0000$.xs.reduce((acc, _, i) => acc + i, 0)": {
+      "entry": "filter",
+      "src": "$.xs.reduce((acc, _, i) => acc + i, 0)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"v_\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$this\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"initialValue\":0,\"in\":{\"$let\":{\"vars\":{\"v__5f\":{\"$arrayElemAt\":[\"$$this\",1]},\"i\":{\"$arrayElemAt\":[\"$$th",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "filter\u0000Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0": {
+      "entry": "filter",
+      "src": "Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$scores\"},\"then\":{\"$subtract\":[{\"$max\":\"$scores\"},{\"$min\":\"$scores\"}]},\"else\":0}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$scores\"},\"then\":{\"$su",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$isArray\":[\"$scores\"]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$subtract\":[{\"$max\":\"$scores\"},{\"$min\":\"$scores\"}]},null]},null]},{\"$ne\":[{\"$subtract\":[{\"$max\":\"$scores\"},{\"$min\":\"$scores\"}]},false",
+      "reason": "spread: a rule that reads its arguments as one list (`args.spread`) takes a spread call packed into one array literal; the server reads one array operand for `$max`/`$min`/`$mergeObjects` (measured)."
+    },
+    "filter\u0000typeof $.value === \"string\" ? $.value.trim() : String($.value)": {
+      "entry": "filter",
+      "src": "typeof $.value === \"string\" ? $.value.trim() : String($.value)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$value\"},\"string\"]},\"then\":{\"$trim\":{\"input\":\"$value\"}},\"else\":{\"$toString\":\"$value\"}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$value",
+      "now": "{\"$expr\":{\"$cond\":{\"if\":{\"$eq\":[{\"$type\":\"$value\"},\"string\"]},\"then\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$value\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$value\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$value\"",
+      "reason": "naming: `String(x)` is `$toString` now (the global constructors are registry cells); the filter target lifts the ternary into `$expr` and tests its truth."
+    },
+    "filter\u0000\n{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}\n      ": {
+      "entry": "filter",
+      "src": "\n{\n  distance: Math.hypot($.point.x - $.origin.x, $.point.y - $.origin.y),\n  octave: Math.log2($.frequency / 440),\n  decibels: Math.log10($.amplitude) * 20,\n  fovRad: $.fovDeg * Math.PI / 180,\n  growthFactor: Math.E ** $.rate,\n  trend: Math.sign($.delta),\n  cubeSide: Math.cbrt($.volume)\n}\n      ",
+      "kind": "now-rejected",
+      "was": "{\"distance\":{\"$sqrt\":{\"$add\":[{\"$pow\":[{\"$subtract\":[\"$point.x\",\"$origin.x\"]},2]},{\"$pow\":[{\"$subtract\":[\"$point.y\",\"$origin.y\"]},2]}]}},\"octave\":{\"$log\":[{\"$divide\":[\"$frequency\",440]},2]},\"decibels\":{\"$multiply\":[{\"$lo",
+      "now": "The value of a key in a query document is a VALUE or a query operator, and this is a computed expression. The query language reads it as a value to compare against: measured, '{ a: $.b > 1 }' becomes '{ a: { $gt: [\"$b\", ",
+      "reason": "shippedBug: `$pow` of a negative base to 1/3 is NaN on the server (measured); `Math.cbrt` keeps the sign now, `-8` → `-2`."
+    },
+    "filter\u0000\"abc\".reduce((a,b) => a + b, 0)": {
+      "entry": "filter",
+      "src": "\"abc\".reduce((a,b) => a + b, 0)",
+      "kind": "message",
+      "was": "'.reduce(...)' expects an array receiver, but the value before it returns a string. Call '.reduce(...)' on an array value instead.",
+      "now": "'.reduce()' is not available on a 'string' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "filter\u0000\"abc\".concat([1])": {
+      "entry": "filter",
+      "src": "\"abc\".concat([1])",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[\"abc\",[1]]},null]},null]},{\"$ne\":[{\"$concat\":[\"abc\",[1]]},false]},{\"$ne\":[{\"$concat\":[\"abc\",[1]]},\"\"]},{\"$ne\":[{\"$concat\":[\"abc\",[1]]},0]}]}}",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[\"abc\",{\"$reduce\":{\"input\":[1],\"initialValue\":\"\",\"in\":{\"$concat\":[\"$$value\",{\"$toString\":\"$$this\"}]}}}]},null]},null]},{\"$ne\":[{\"$concat\":[\"abc\",{\"$reduce\":{\"input\":[1],\"i",
+      "reason": "jsBehaviour: a string receiver appends the elements of an array argument one by one, `$toString` each — `\"abc\".concat([1])` is \"abc1\" — through the same cell a packed spread reaches."
+    },
+    "filter\u0000$.a.findIndex(x => x, 1)": {
+      "entry": "filter",
+      "src": "$.a.findIndex(x => x, 1)",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$a\"}]},\"$a\"]}},\"initialValue\":-1,\"in\":{\"$let\":{\"vars\":{\"x\":{\"$arrayElemAt\":[\"$$this\",1]}},\"in\":{\"$cond\":{\"if\":{\"$and\":[{",
+      "now": ".findIndex(callback) requires exactly 1 argument, got 2",
+      "reason": "naming: the index search binds its parameters through the `callback` service — the same `$let` over the `[i, x]` pair as every other array callback."
+    },
+    "pipeline\u0000const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.includes(o.pid));": {
+      "entry": "pipeline",
+      "src": "const cfg = Object.assign({}, $.cfg); const r = $$$.orders.filter(o => cfg.ids.includes(o.pid));",
+      "kind": "output",
+      "was": "[{\"$set\":{\"__jsmql.var.cfg\":{\"$mergeObjects\":[{},\"$cfg\"]}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.cfg.ids\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$cond\":{\"if\":{\"$isArray\":\"$$jsmql_v0_ids\"},\"then\":{\"$",
+      "now": "[{\"$set\":{\"__jsmql.var.cfg\":{\"$mergeObjects\":[{},\"$cfg\"]}}},{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_v0_ids\":\"$__jsmql.var.cfg.ids\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$$jsm",
+      "reason": "spread: a rule that reads its arguments as one list (`args.spread`) takes a spread call packed into one array literal; the server reads one array operand for `$max`/`$min`/`$mergeObjects` (measured)."
+    },
+    "pipeline\u0000let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);": {
+      "entry": "pipeline",
+      "src": "let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"tx\",\"localField\":\"_id\",\"foreignField\":\"userId\",\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$reduce\":{\"input\":\"$__jsmql.tmp.1\",\"initialValue\":0,\"in\":{\"$add\":[\"$$value\",\"$$this.amount\"]}}}}},{\"$s",
+      "now": "[{\"$lookup\":{\"from\":\"tx\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}}],\"as\":\"__jsmql.tmp.0\"}},{\"$set\":{\"__jsmql.var.total\":{\"$reduce\":{\"input\":\"$__jsmql.tmp.0\",\"init",
+      "reason": "correctness: a reducer whose body calls anything reads `acc`/`x` through a `$let`, since a call may lower to a `$reduce` of its own and shadow `$$value`/`$$this`; the seed's kind types the accumulator, so `+` on a string seed is `$concat` and an index on an object seed is `$getField`."
+    },
+    "pipeline\u0000let total = $$$.tx.find(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);": {
+      "entry": "pipeline",
+      "src": "let total = $$$.tx.find(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);",
+      "kind": "message",
+      "was": ".reduce() on a .find() result is not meaningful — .find returns a scalar-or-null. Use .filter(...) before .reduce(), or read the scalar directly.",
+      "now": "'.reduce()' is not available on a 'object' — it is defined on 'array'.",
+      "reason": "message: the same refusal, reworded by the value cells."
+    },
+    "pipeline\u0000$.x = $$$.orders.size().round();": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.orders.size().round();",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[{\"$match\":{\"$expr\":true}}],\"as\":\"__jsmql.tmp.1\"}},{\"$set\":{\"x\":{\"$round\":[{\"$size\":\"$__jsmql.tmp.1\"},0]}}},{\"$unset\":\"__jsmql\"}]",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"pipeline\":[],\"as\":\"__jsmql.tmp.0\"}},{\"$set\":{\"x\":{\"$round\":[{\"$size\":\"$__jsmql.tmp.0\"},0]}}},{\"$unset\":\"__jsmql\"}]",
+      "reason": "naming: the number receiver's `.round([precision])`, `.ceil()`, `.floor()` are registry cells now."
+    },
+    "pipeline\u0000[ $ = Object.entries($.scores) ]": {
+      "entry": "pipeline",
+      "src": "[ $ = Object.entries($.scores) ]",
+      "kind": "now-rejected",
+      "was": "[{\"$set\":{\"__jsmql.tmp.1\":{\"$objectToArray\":\"$scores\"}}},{\"$unwind\":\"$__jsmql.tmp.1\"},{\"$replaceWith\":\"$__jsmql.tmp.1\"}]",
+      "now": "'$ = …' replaces the document, so the value has to BE a document — an array is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
     }
   }
 }

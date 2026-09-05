@@ -23,9 +23,13 @@ import {
   notAnArrow,
   unfilledParam,
   valueWhereBlockExpected,
+  reducerShape,
+  elementsShape,
 } from "./errors.ts";
 import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
+import { reduceVar } from "./names.ts";
+import { indexedPairs } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
 
 /** The two readings of an expression, supplied by lower.ts. */
@@ -118,6 +122,98 @@ function arrayCallback(
   };
 }
 
+/** Does the body call anything? A call may lower to a `$reduce` of its own, whose `$$value`/`$$this` shadow the reducer's. */
+function callsSomething(node: unknown): boolean {
+  if (node === null || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some(callsSomething);
+  const n = node as { type?: string } & Record<string, unknown>;
+  if (n.type === "MethodCall" || n.type === "CallExpression" || n.type === "NewExpression" || n.type === "OperatorCall")
+    return true;
+  return Object.entries(n).some(([k, v]) => k !== "type" && callsSomething(v));
+}
+
+/**
+ * A REDUCER — `(acc, x[, i]) => …` — as what a `$reduce` takes. The accumulator IS
+ * `$$value` and the element IS `$$this` when the body is plain arithmetic; a body
+ * that calls anything reads them through a `$let`, because the call may lower to
+ * a `$reduce` of its own and shadow both. An index read makes the input the
+ * `[i, x]` pairs, bound the same way.
+ */
+function reducerCallback(
+  cb: Expr,
+  seed: Expr,
+  recv: unknown,
+  env: Env,
+  read: (body: Expr, e: Env) => unknown,
+  name: string,
+): { input: unknown; in: unknown } {
+  if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 2 || cb.params.length > 3) {
+    throw reducerShape(name, (cb as { pos: number }).pos);
+  }
+  const [acc, elem, index] = cb.params;
+  const accType = kindOf(seed, env);
+  const direct = !callsSomething(cb.body);
+  const vars: Record<string, unknown> = {};
+  let bodyEnv = env;
+  if (direct) {
+    bodyEnv = bodyEnv.bind(acc, {
+      ref: { kind: "var", ref: reduceVar("value") },
+      type: accType,
+      mutable: false,
+      pos: cb.pos,
+    });
+  } else {
+    const a = bodyEnv.param(acc, accType, cb.pos);
+    vars[a.as] = reduceVar("value");
+    bodyEnv = a.env;
+  }
+  if (index === undefined) {
+    if (direct) {
+      bodyEnv = bodyEnv.bind(elem, {
+        ref: { kind: "var", ref: reduceVar("this") },
+        type: "unknown",
+        mutable: false,
+        pos: cb.pos,
+      });
+      return { input: recv, in: read(cb.body, childEnv(bodyEnv, cb, "body")) };
+    }
+    const x = bodyEnv.param(elem, "unknown", cb.pos);
+    vars[x.as] = reduceVar("this");
+    bodyEnv = x.env;
+    return { input: recv, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+  }
+  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  vars[x.as] = { $arrayElemAt: [reduceVar("this"), 1] };
+  bodyEnv = x.env;
+  const i = bodyEnv.param(index, "number", cb.pos);
+  vars[i.as] = { $arrayElemAt: [reduceVar("this"), 0] };
+  bodyEnv = i.env;
+  return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+}
+
+/** An arrow of `count` parameters over one array's elements — each parameter bound to its position. */
+function elementsCallback(
+  cb: Expr,
+  count: number,
+  env: Env,
+  read: (body: Expr, e: Env) => unknown,
+  name: string,
+  pick: (element: string, k: number) => unknown = (element, k) => ({ $arrayElemAt: [element, k] }),
+): { as: string; ref: string; in: unknown } {
+  if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== count) {
+    throw elementsShape(name, count, (cb as { pos: number }).pos);
+  }
+  const pair = env.fresh("pair");
+  let bodyEnv = pair.env;
+  const vars: Record<string, unknown> = {};
+  cb.params.forEach((p, k) => {
+    const b = bodyEnv.param(p, "unknown", cb.pos);
+    vars[b.as] = pick(pair.ref, k);
+    bodyEnv = b.env;
+  });
+  return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
+}
+
 /**
  * The record for a call of `name` on `recv` with `args`, under `env`. `keys` is
  * the row's positional key order. `overrides` lets the dispatcher substitute a
@@ -146,6 +242,8 @@ export function exprInputs(
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
     callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name),
+    reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
+    elements: (cb, count, pick) => elementsCallback(cb, count, argEnv, read.value, name, pick),
     sortSpec: (e, objects) => sortSpecOf(e, name, objects),
     orderBy: (keys, orders) => orderBySpec(keys, orders, name),
     objIteratee: (cb) => {

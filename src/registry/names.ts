@@ -21,41 +21,45 @@
 // where a fact still lives in code, the row says `pending(<file>)`.
 
 import {
+  DATE_PARTS_CALENDAR,
+  DATE_PARTS_ISO,
+  DATE_PARTS_ISO_MARKERS,
   capitalizeExpr,
+  cbrt,
   clampNonNegative,
   clampNonNegativeIndex,
   coerceStringBinding,
   cond,
-  escapeHtmlExpr,
-  firstCharExpr,
-  foldedSubtract,
-  isSingleCodePointLiteral,
-  joinWords,
-  literalIndexValue,
-  normaliseSliceIndex,
-  regexBody,
-  strLenOf,
-  wordsExpr,
-  type Minted,
-  DATE_PARTS_CALENDAR,
-  DATE_PARTS_ISO,
-  DATE_PARTS_ISO_MARKERS,
+  dateFromParts,
   dateOptions,
   distinctKeysExpr,
+  escapeHtmlExpr,
+  firstCharExpr,
   firstOf,
+  foldedSubtract,
+  indexedPairs,
+  isFiniteNumber,
+  isSingleCodePointLiteral,
   iterateeKeys,
+  joinWords,
   joinedWith,
   jsTruth,
   lastOf,
+  literalIndexValue,
   negate,
+  normaliseSliceIndex,
+  regexBody,
   reverseArrayOf,
   singleArrayArg,
   sizeOf,
   sliceArray,
   sliceString,
+  strLenOf,
   stringKeyExpr,
   takeDropWhile,
+  type Minted,
   uniqByReduce,
+  wordsExpr,
 } from "./mql.ts";
 import type {
   Expr,
@@ -594,6 +598,19 @@ function padded(
 function identity(bind: (hint: string) => Minted): { as: string; ref: string; in: unknown } {
   const x = bind("x");
   return { as: x.as, ref: x.ref, in: x.ref };
+}
+
+/** lodash's `groupBy` as a value: `{ <key>: [elements whose key is <key>] }`, one entry per distinct key. */
+function groupedByKey(
+  input: unknown,
+  it: { as: string; ref: string; in: unknown },
+  bind: (hint: string) => Minted,
+): Record<string, unknown> {
+  const key = bind("key");
+  const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
+  return {
+    $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } },
+  };
 }
 
 export const NAMES = {
@@ -6476,7 +6493,21 @@ export const NAMES = {
         },
         string: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => ({ $concat: [recv, ...args.map((a) => value(a))] }),
+          emit: ({ recv, args, value }) =>
+            args.length === 1 && args[0].type === "ArrayLiteral"
+              ? {
+                  $concat: [
+                    recv,
+                    {
+                      $reduce: {
+                        input: value(args[0]),
+                        initialValue: "",
+                        in: { $concat: ["$$value", { $toString: "$$this" }] },
+                      },
+                    },
+                  ],
+                }
+              : { $concat: [recv, ...args.map((a) => value(a))] },
         },
       },
       uncertain: () => "$$REMOVE",
@@ -6951,7 +6982,20 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "callback", exact: 1 }),
+    expr: {
+      args: { sig: "callback", exact: 1 },
+      emit: ({ recv, args, callback }) => {
+        const cb = callback(args[0], "truth");
+        const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
+        return {
+          $reduce: {
+            input: indexedPairs(recv),
+            initialValue: -1,
+            in: { $cond: [{ $and: [{ $eq: ["$$value", -1] }, hit] }, { $arrayElemAt: ["$$this", 0] }, "$$value"] },
+          },
+        };
+      },
+    },
     stream: because("returns an index, and a stream has no index."),
     statement: unsupported(
       "'.findIndex()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findIndex();'",
@@ -7000,7 +7044,20 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "callback", exact: 1 }),
+    expr: {
+      args: { sig: "callback", exact: 1 },
+      emit: ({ recv, args, callback }) => {
+        const cb = callback(args[0], "truth");
+        const hit = { $let: { vars: { [cb.as]: cb.paired ? "$$this" : { $arrayElemAt: ["$$this", 1] } }, in: cb.in } };
+        return {
+          $reduce: {
+            input: indexedPairs(recv),
+            initialValue: -1,
+            in: { $cond: [hit, { $arrayElemAt: ["$$this", 0] }, "$$value"] },
+          },
+        };
+      },
+    },
     stream: because("returns an index, and a stream has no index."),
     statement: unsupported(
       "'.findLastIndex()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.findLastIndex();'",
@@ -7153,7 +7210,13 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "lambda, initialValue", exact: 2 }),
+    expr: {
+      args: { sig: "lambda, initialValue", exact: 2 },
+      emit: ({ recv, args, value, reducer }) => {
+        const r = reducer(args[0], args[1]);
+        return { $reduce: { input: r.input, initialValue: value(args[1]), in: r.in } };
+      },
+    },
     stream: unsupported(
       "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
     ),
@@ -7175,7 +7238,13 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "lambda, initialValue", exact: 2 }),
+    expr: {
+      args: { sig: "lambda, initialValue", exact: 2 },
+      emit: ({ recv, args, value, reducer }) => {
+        const r = reducer(args[0], args[1]);
+        return { $reduce: { input: { $reverseArray: r.input }, initialValue: value(args[1]), in: r.in } };
+      },
+    },
     stream: because(
       "folds from the END, which needs the whole stream buffered, and collapses it to one value. Use the '.reduce' wrap forms — see the '.reduce' error for the three shapes.",
     ),
@@ -7442,7 +7511,15 @@ export const NAMES = {
         array: unsupported(
           ".entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.",
         ),
-        Object: pending("src/codegen.ts", { sig: "obj", exact: 1 }),
+        Object: {
+          args: { sig: "obj", exact: 1 },
+          emit: ({ args, value, bind }) => {
+            const kv = bind("kv");
+            return {
+              $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] },
+            };
+          },
+        },
       },
     },
     stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
@@ -7465,7 +7542,13 @@ export const NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.",
         ),
-        Object: pending("src/codegen.ts", { sig: "obj", exact: 1 }),
+        Object: {
+          args: { sig: "obj", exact: 1 },
+          emit: ({ args, value, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.k` } };
+          },
+        },
       },
     },
     stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
@@ -7488,7 +7571,13 @@ export const NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.",
         ),
-        Object: pending("src/codegen.ts", { sig: "obj", exact: 1 }),
+        Object: {
+          args: { sig: "obj", exact: 1 },
+          emit: ({ args, value, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.v` } };
+          },
+        },
       },
     },
     stream: unsupported("'Object.values()' produces a value, not a stream of documents."),
@@ -8546,7 +8635,10 @@ export const NAMES = {
       // MEASURED: Math.max($.a, $.b) → {"$max":["$a","$b"]}; $.rows.max() takes none.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
-        Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+        Math: {
+          args: { sig: "...values", atLeast: 1, spread: true },
+          emit: ({ args, value }) => ({ $max: args.length === 1 ? value(args[0]) : args.map(value) }),
+        },
       },
     },
     stream: unsupported("'.max()' has no stream form: it produces a value, not a stream of documents."),
@@ -8568,7 +8660,10 @@ export const NAMES = {
       // MEASURED: Math.min($.a, $.b) → {"$min":["$a","$b"]}; $.rows.min() takes none.
       perFamily: {
         array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
-        Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
+        Math: {
+          args: { sig: "...values", atLeast: 1, spread: true },
+          emit: ({ args, value }) => ({ $min: args.length === 1 ? value(args[0]) : args.map(value) }),
+        },
       },
     },
     stream: unsupported("'.min()' has no stream form: it produces a value, not a stream of documents."),
@@ -9625,7 +9720,14 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "...arrays, iteratee", atLeast: 2 }),
+    expr: {
+      args: { sig: "...arrays, iteratee", atLeast: 2 },
+      emit: ({ recv, args, value, elements }) => {
+        const arrays = [recv, ...args.slice(0, -1).map(value)];
+        const cb = elements(args[args.length - 1], arrays.length);
+        return { $map: { input: { $zip: { inputs: arrays, useLongestLength: true } }, as: cb.as, in: cb.in } };
+      },
+    },
     stream: because("pairs elements positionally across arrays. Join on a key with '$$.<coll>.find(<pred>)'."),
     statement: unsupported(
       "'.zipWith()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.zipWith();'",
@@ -9717,19 +9819,14 @@ export const NAMES = {
       perFamily: {
         array: {
           args: { sig: "[iteratee]", allowed: [0, 1] },
-          emit: ({ recv, args, iteratee, bind }) => {
-            const it = args[0] === undefined ? identity(bind) : iteratee(args[0]);
-            const key = bind("key");
-            const filtered = { $filter: { input: recv, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
-            return {
-              $arrayToObject: {
-                $map: { input: distinctKeysExpr(recv, it), as: key.as, in: { k: key.ref, v: filtered } },
-              },
-            };
-          },
+          emit: ({ recv, args, iteratee, bind }) =>
+            groupedByKey(recv, args[0] === undefined ? identity(bind) : iteratee(args[0]), bind),
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value — see its 'stream' cell."),
-        Object: pending("src/codegen.ts", { sig: "items, x => key", exact: 2 }),
+        Object: {
+          args: { sig: "items, x => key", exact: 2 },
+          emit: ({ args, value, iteratee, bind }) => groupedByKey(value(args[0]), iteratee(args[1]), bind),
+        },
       },
     },
     stream: {
@@ -10408,8 +10505,11 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.round(2) takes the precision; Math.round($.n, 2) is refused.
       perFamily: {
-        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => ({ $round: [recv, args[0] === undefined ? 0 : value(args[0])] }),
+        },
+        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $round: [value(args[0]), 0] }) },
       },
     },
     stream: unsupported("'.round()' has no stream form: it produces a value, not a stream of documents."),
@@ -10431,8 +10531,8 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.ceil(2) takes the precision; Math.ceil($.n, 2) is refused.
       perFamily: {
-        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $ceil: recv }) },
+        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ceil: value(args[0]) }) },
       },
     },
     stream: unsupported("'.ceil()' has no stream form: it produces a value, not a stream of documents."),
@@ -10454,8 +10554,8 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.floor(2) takes the precision; Math.floor($.n, 2) is refused.
       perFamily: {
-        number: pending("src/methods/", { sig: "[precision]", allowed: [0, 1] }),
-        Math: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $floor: recv }) },
+        Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $floor: value(args[0]) }) },
       },
     },
     stream: unsupported("'.floor()' has no stream form: it produces a value, not a stream of documents."),
@@ -10469,7 +10569,7 @@ export const NAMES = {
   intersection: name({
     doc: "'.intersection()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "set"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10490,7 +10590,7 @@ export const NAMES = {
   union: name({
     doc: "'.union()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "set"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10509,7 +10609,7 @@ export const NAMES = {
   difference: name({
     doc: "'.difference()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "set"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10534,11 +10634,14 @@ export const NAMES = {
   isSubsetOf: name({
     doc: "'.isSubsetOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "any",
-    returns: "unknown",
+    on: ["array", "set"],
+    returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $setIsSubset: [recv, value(args[0])] }),
+    },
     stream: unsupported("'.isSubsetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isSubsetOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isSubsetOf();'",
@@ -10552,11 +10655,14 @@ export const NAMES = {
   isSupersetOf: name({
     doc: "'.isSupersetOf()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "any",
-    returns: "unknown",
+    on: ["array", "set"],
+    returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $setIsSubset: [value(args[0]), recv] }),
+    },
     stream: unsupported("'.isSupersetOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.isSupersetOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.isSupersetOf();'",
@@ -10574,7 +10680,12 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "str", exact: 1 }),
+    expr: {
+      args: { sig: "str", exact: 1 },
+      emit: ({ recv, args, value }) => ({
+        $regexMatch: regexBody(value(args[0]), recv as Expr, () => value(recv as Expr)),
+      }),
+    },
     stream: unsupported("'.test()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.test()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.test();'",
@@ -10590,7 +10701,12 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "str", exact: 1 }),
+    expr: {
+      args: { sig: "str", exact: 1 },
+      emit: ({ recv, args, value }) => ({
+        $regexFind: regexBody(value(args[0]), recv as Expr, () => value(recv as Expr)),
+      }),
+    },
     stream: unsupported("'.exec()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.exec()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.exec();'",
@@ -10844,7 +10960,10 @@ export const NAMES = {
     filter: unsupported(
       "'$case' is a branch of '$switch' and has no meaning on its own — write '$switch({ branches: [{ case: <test>, then: <value> }], default: <value> })'.",
     ),
-    expr: pending("src/operator-validation.ts"),
+    expr: {
+      args: { sig: "condition, result", exact: 2 },
+      emit: ({ args, value }) => ({ case: value(args[0]), then: value(args[1]) }),
+    },
     group: unsupported(
       "'$case' is only valid inside $switch, and only in an aggregation expression — never in a $group slot.",
     ),
@@ -11584,7 +11703,10 @@ export const NAMES = {
     returns: "object",
     where: ["value", "statement"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "...sources", atLeast: 1, spread: true }),
+    expr: {
+      args: { sig: "...sources", atLeast: 1, spread: true },
+      emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) }),
+    },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
     statement: pending("src/pipeline.ts"),
     group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -11600,7 +11722,10 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "entries", exact: 1 }),
+    expr: {
+      args: { sig: "entries", exact: 1 },
+      emit: ({ args, value }) => ({ $arrayToObject: singleArrayArg(value(args[0])) }),
+    },
     stream: unsupported("'Object.fromEntries()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Object.fromEntries()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Object.fromEntries(…);'",
@@ -11618,7 +11743,12 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: {
+      args: { sig: "value", exact: 1 },
+      emit: ({ args, value }) => ({
+        $and: [isFiniteNumber(value(args[0])), { $eq: [value(args[0]), { $trunc: value(args[0]) }] }],
+      }),
+    },
     stream: unsupported("'Number.isInteger()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Number.isInteger()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Number.isInteger(…);'",
@@ -11636,7 +11766,12 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: {
+      args: { sig: "value", exact: 1 },
+      emit: ({ args, value }) => ({
+        $and: [{ $isNumber: value(args[0]) }, { $eq: [{ $toString: value(args[0]) }, "NaN"] }],
+      }),
+    },
     stream: unsupported("'Number.isNaN()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Number.isNaN()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Number.isNaN(…);'",
@@ -11680,7 +11815,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $isArray: [value(args[0])] }) },
     stream: unsupported("'Array.isArray()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Array.isArray()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Array.isArray(…);'",
@@ -11694,15 +11829,25 @@ export const NAMES = {
   symmetricDifference: name({
     doc: "'Set.symmetricDifference()' — recognised, and refused: MongoDB has no equivalent.",
     call: true,
-    on: "set",
+    on: ["array", "set"],
     returns: "array",
-    where: [],
+    where: ["value"],
     filter: unsupported(
       "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
     ),
-    expr: unsupported(
-      "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value, bind }) => {
+        const a = bind("a");
+        const b = bind("b");
+        return {
+          $let: {
+            vars: { [a.as]: recv, [b.as]: value(args[0]) },
+            in: { $setDifference: [{ $setUnion: [a.ref, b.ref] }, { $setIntersection: [a.ref, b.ref] }] },
+          },
+        };
+      },
+    },
     stream: unsupported(
       "Set.symmetricDifference() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
     ),
@@ -11720,15 +11865,16 @@ export const NAMES = {
   isDisjointFrom: name({
     doc: "'Set.isDisjointFrom()' — recognised, and refused: MongoDB has no equivalent.",
     call: true,
-    on: "set",
-    returns: "array",
-    where: [],
+    on: ["array", "set"],
+    returns: "bool",
+    where: ["value"],
     filter: unsupported(
       "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
     ),
-    expr: unsupported(
-      "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
-    ),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $eq: [{ $size: { $setIntersection: [recv, value(args[0])] } }, 0] }),
+    },
     stream: unsupported(
       "Set.isDisjointFrom() has no MongoDB equivalent — compose via $setDifference / $setIntersection / $setUnion as needed",
     ),
@@ -11765,7 +11911,7 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toString: value(args[0]) }) },
     stream: unsupported("'String()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'String()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = String(…);'",
@@ -11782,7 +11928,7 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, truth }) => truth(args[0]) },
     stream: unsupported("'Boolean()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Boolean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Boolean(…);'",
@@ -11799,7 +11945,10 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: {
+      args: { sig: "value", exact: 1 },
+      emit: ({ args, value }) => ({ $toInt: { $trunc: { $toDouble: value(args[0]) } } }),
+    },
     stream: unsupported("'parseInt()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'parseInt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseInt(…);'",
@@ -11816,7 +11965,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
     stream: unsupported("'parseFloat()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'parseFloat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseFloat(…);'",
@@ -11836,7 +11985,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $abs: value(args[0]) }) },
     stream: unsupported("'Math.abs()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.abs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.abs(…);'",
@@ -11853,7 +12002,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sqrt: value(args[0]) }) },
     stream: unsupported("'Math.sqrt()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.sqrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sqrt(…);'",
@@ -11872,7 +12021,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $exp: value(args[0]) }) },
     stream: unsupported("'Math.exp()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.exp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.exp(…);'",
@@ -11889,7 +12038,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ln: value(args[0]) }) },
     stream: unsupported("'Math.log()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.log()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log(…);'",
@@ -11906,7 +12055,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log: [value(args[0]), 2] }) },
     stream: unsupported("'Math.log2()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.log2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log2(…);'",
@@ -11925,7 +12074,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $log10: value(args[0]) }) },
     stream: unsupported("'Math.log10()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.log10()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.log10(…);'",
@@ -11944,7 +12093,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $trunc: value(args[0]) }) },
     stream: unsupported("'Math.trunc()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.trunc()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.trunc(…);'",
@@ -11963,7 +12112,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cmp: [value(args[0]), 0] }) },
     stream: unsupported("'Math.sign()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.sign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sign(…);'",
@@ -11982,7 +12131,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => cbrt(value(args[0])) },
     stream: unsupported("'Math.cbrt()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.cbrt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cbrt(…);'",
@@ -12001,7 +12150,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sin: value(args[0]) }) },
     stream: unsupported("'Math.sin()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.sin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sin(…);'",
@@ -12018,7 +12167,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cos: value(args[0]) }) },
     stream: unsupported("'Math.cos()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.cos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cos(…);'",
@@ -12035,7 +12184,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tan: value(args[0]) }) },
     stream: unsupported("'Math.tan()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.tan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.tan(…);'",
@@ -12052,7 +12201,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asin: value(args[0]) }) },
     stream: unsupported("'Math.asin()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.asin()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.asin(…);'",
@@ -12071,7 +12220,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acos: value(args[0]) }) },
     stream: unsupported("'Math.acos()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.acos()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.acos(…);'",
@@ -12090,7 +12239,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atan: value(args[0]) }) },
     stream: unsupported("'Math.atan()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.atan()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atan(…);'",
@@ -12109,7 +12258,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $sinh: value(args[0]) }) },
     stream: unsupported("'Math.sinh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.sinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.sinh(…);'",
@@ -12128,7 +12277,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $cosh: value(args[0]) }) },
     stream: unsupported("'Math.cosh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.cosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.cosh(…);'",
@@ -12147,7 +12296,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $tanh: value(args[0]) }) },
     stream: unsupported("'Math.tanh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.tanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.tanh(…);'",
@@ -12165,7 +12314,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $asinh: value(args[0]) }) },
     stream: unsupported("'Math.asinh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.asinh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.asinh(…);'",
@@ -12183,7 +12332,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $acosh: value(args[0]) }) },
     stream: unsupported("'Math.acosh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.acosh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.acosh(…);'",
@@ -12201,7 +12350,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "value", exact: 1 }),
+    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $atanh: value(args[0]) }) },
     stream: unsupported("'Math.atanh()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.atanh()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atanh(…);'",
@@ -12219,7 +12368,10 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "base, exponent", exact: 2 }),
+    expr: {
+      args: { sig: "base, exponent", exact: 2 },
+      emit: ({ args, value }) => ({ $pow: [value(args[0]), value(args[1])] }),
+    },
     stream: unsupported("'Math.pow()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.pow()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.pow(…);'",
@@ -12235,7 +12387,10 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "y, x", exact: 2 }),
+    expr: {
+      args: { sig: "y, x", exact: 2 },
+      emit: ({ args, value }) => ({ $atan2: [value(args[0]), value(args[1])] }),
+    },
     stream: unsupported("'Math.atan2()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.atan2()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.atan2(…);'",
@@ -12253,7 +12408,10 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "...values", atLeast: 1 }),
+    expr: {
+      args: { sig: "...values", atLeast: 1 },
+      emit: ({ args, value }) => ({ $sqrt: { $add: args.map((a) => ({ $pow: [value(a), 2] })) } }),
+    },
     stream: unsupported("'Math.hypot()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.hypot()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.hypot(…);'",
@@ -12271,7 +12429,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/codegen.ts", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: () => ({ $rand: {} }) },
     stream: unsupported("'Math.random()' produces a value, not a stream of documents."),
     statement: unsupported(
       "'Math.random()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = Math.random(…);'",
@@ -12426,7 +12584,7 @@ export const NAMES = {
         // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
         multiple: {
           args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
-          pending: "src/mql-date.ts",
+          emit: ({ args, value }) => dateFromParts(args.map(value), null),
         },
         otherwise: unsupported(
           "'new Date(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.",
@@ -12582,7 +12740,7 @@ export const NAMES = {
   now: name({
     doc: "The current time, in milliseconds.",
     call: true,
-    on: "any",
+    on: "Date",
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -12596,19 +12754,22 @@ export const NAMES = {
   }),
 
   UTC: name({
-    doc: "A UTC timestamp from calendar parts. Months are 1-based, unlike JavaScript.",
+    doc: "'Date.UTC(year, month, …)' — the millisecond count of a UTC instant from calendar parts; the month counts from 0, as in JavaScript.",
     call: true,
-    on: "any",
-    returns: "unknown",
+    on: "Date",
+    returns: "number",
     where: ["value"],
     filter: viaFallback,
     // 1-based months are deliberate: $dateFromParts is 1-based, and silently shifting the
     // user's number would be worse than refusing 0.
-    expr: pending("src/mql-date.ts", {
-      sig: "year[, month, day, hour, minute, second, ms]",
-      allowed: [1, 2, 3, 4, 5, 6, 7],
-      slotType: { 1: "int" },
-    }),
+    expr: {
+      args: {
+        sig: "year[, month, day, hour, minute, second, ms]",
+        allowed: [1, 2, 3, 4, 5, 6, 7],
+        slotType: { 1: "int" },
+      },
+      emit: ({ args, value }) => ({ $toLong: dateFromParts(args.map(value), "UTC") }),
+    },
     stream: unsupported("'Date.UTC()' is a value. Use it inside a reshape or a '$set'."),
     statement: unsupported(
       "'.UTC()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.UTC();'",
@@ -12634,7 +12795,15 @@ export const NAMES = {
           emit: ({ args, value }) => ({ $range: [0, (value(args[0]) as { length: unknown }).length] }),
         },
         // With a mapper: `(_, i) => …` over the range, the element parameter bound to null.
-        multiple: pending("src/codegen.ts", { sig: "{ length: n }, (_, i) => …", exact: 2 }),
+        multiple: {
+          args: { sig: "{ length: n }, (_, i) => …", exact: 2 },
+          emit: ({ args, value, elements }) => {
+            const cb = elements(args[1], 2, (element, k) => (k === 0 ? null : element));
+            return {
+              $map: { input: { $range: [0, (value(args[0]) as { length: unknown }).length] }, as: cb.as, in: cb.in },
+            };
+          },
+        },
         otherwise: unsupported(
           "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
         ),

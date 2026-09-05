@@ -57,7 +57,7 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
   it("routes each class of `new Date(…)`", () => {
     expect(pick("Date", "f()").kind).toBe("rule");
     expect(pick("Date", "f($.ms)").kind).toBe("rule");
-    expect(pick("Date", "f($.y, $.m)")).toMatchObject({ kind: "pending", livesIn: "src/mql-date.ts" });
+    expect(pick("Date", "f($.y, $.m)").kind).toBe("rule");
     // a constant that reached the row did not fold: refused, in the developer's terms
     expect(pick("Date", 'f("not a date")')).toMatchObject({ kind: "refused" });
     expect((pick("Date", 'f("not a date")') as { message: string }).message).toContain("ISO 8601");
@@ -105,8 +105,8 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
 
   it("takes the one field family as the receiver's family, without a dispatch", () => {
     // `ceil` is on number and Math: an unprovable receiver is a number by the row's claim.
-    expect(at("ceil", OPAQUE).kind).toBe("pending");
-    expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("pending");
+    expect(at("ceil", OPAQUE).kind).toBe("rule");
+    expect(at("ceil", { kind: "namespace", name: "Math" }, 1).kind).toBe("rule");
   });
 
   it("refuses a receiver the row does not list, naming what it accepts", () => {

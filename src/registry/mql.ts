@@ -373,3 +373,36 @@ export const joinedWith = (recv: unknown, separator: unknown): unknown => ({
 
 /** `{ $eq: [{ $type: v }, "string"] }` — the string test a dual-receiver dispatch uses. */
 export const isStringType = (operand: unknown): object => ({ $eq: [{ $type: operand }, "string"] });
+
+// ── the JavaScript globals ───────────────────────────────────────────────────
+
+/**
+ * `$dateFromParts` from the positional `(year, month, day, hour, minute, second,
+ * ms)` of `new Date(…)` and `Date.UTC(…)`. JavaScript counts months from 0 and
+ * MongoDB from 1, so the month moves up by one — folded when it is a literal.
+ */
+export function dateFromParts(parts: readonly unknown[], timezone: string | null): Record<string, unknown> {
+  const body: Record<string, unknown> = {};
+  DATE_PARTS_CALENDAR.forEach((key, i) => {
+    if (i >= parts.length) return;
+    const p = parts[i];
+    body[key] = key !== "month" ? p : typeof p === "number" ? p + 1 : { $add: [p, 1] };
+  });
+  if (timezone !== null) body.timezone = timezone;
+  return { $dateFromParts: body };
+}
+
+/** The `[index, element]` pairs of an array, for a lowering that needs the position of each element. */
+export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
+  $zip: { inputs: [{ $range: [0, sizeOf(arr)] }, arr] },
+});
+
+/** `Math.cbrt` keeps the sign: `$pow` of a negative base to a fractional exponent is NaN on the server. */
+export const cbrt = (v: unknown): Record<string, unknown> => ({
+  $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }],
+});
+
+/** A number, and neither NaN nor an infinity — read off `$toString`, since the server holds NaN equal to itself. */
+export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
+  $and: [{ $isNumber: v }, { $not: [{ $in: [{ $toString: v }, ["NaN", "Infinity", "-Infinity"]] }] }],
+});

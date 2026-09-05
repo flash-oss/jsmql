@@ -894,6 +894,22 @@ export type ExprIn = {
    */
   objIteratee: (cb: Expr) => { as: string; ref: string; body: unknown };
   /**
+   * A REDUCER — `(acc, x[, i]) => …` with its seed — as what a `$reduce` takes:
+   * the accumulator reads `$value`, the element `$this`; an index makes the
+   * input the `[i, x]` pairs and the body a `$let` over them.
+   */
+  reducer: (cb: Expr, seed: Expr) => { input: unknown; in: unknown };
+  /**
+   * An arrow of `count` parameters over the elements of one array — `.zipWith`'s —
+   * each parameter bound to its position of the element (`pick` chooses another
+   * reading: `Array.from`'s `(_, i)` binds the index alone).
+   */
+  elements: (
+    cb: Expr,
+    count: number,
+    pick?: (element: string, k: number) => unknown,
+  ) => { as: string; ref: string; in: unknown };
+  /**
    * A collision-free MongoDB variable: the bare name for an `as` / `vars` slot,
    * and the `$$name` that reads it.
    */

@@ -28,6 +28,7 @@ import {
   immutableTwinOf,
   isFieldProperty,
   iterateeSlotsOf,
+  packsSpreadOf,
   picksOneOf,
   receiverFamily,
 } from "../rows.ts";
@@ -302,6 +303,33 @@ const mutatorSpread: Rule = {
   },
 };
 
+/**
+ * `Math.max(...$.a, 1)` → `Math.max([...$.a, 1])`: a call whose rule reads its
+ * arguments as ONE list (`args.spread` on the row) takes them packed into one
+ * array literal, so the cell sees a single operand and the array literal's own
+ * lowering splices the spread. A rule that reads arguments one by one keeps the
+ * spread, and select.ts refuses it with the alternative the row names.
+ */
+const packSpread: Rule = {
+  name: "packSpread",
+  apply: (node, where) => {
+    if (where.at === "statement") return node;
+    const n = node as Node & { args?: readonly Node[]; name?: string; callee?: Node };
+    if ((n.type !== "MethodCall" && n.type !== "CallExpression") || !Array.isArray(n.args)) return node;
+    if (!n.args.some((a) => a.type === "SpreadElement")) return node;
+    // `$$.push(...$$$.coll)` spreads a COLLECTION into the stream: the union road reads that spread itself.
+    if (n.type === "MethodCall" && readsAContextRef(n.object as object)) return node;
+    const name =
+      n.type === "MethodCall"
+        ? n.name
+        : n.callee?.type === "Ident"
+          ? (n.callee as unknown as { name: string }).name
+          : undefined;
+    if (name === undefined || !packsSpreadOf(name)) return node;
+    return { ...n, args: [{ type: "ArrayLiteral", elements: n.args, pos: n.args[0].pos }] };
+  },
+};
+
 // ── the iteratee shorthands ──────────────────────────────────────────────────
 //
 // A shorthand is a shorter spelling of an arrow, so this is the plainest kind of
@@ -448,6 +476,8 @@ export const RULES: readonly Rule[] = [
   // or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
+  // AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
+  packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
   iterateeShorthand,

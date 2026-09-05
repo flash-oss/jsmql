@@ -57,6 +57,9 @@ export type SystemVar = (typeof SYSTEM_VARS)[number];
 /** `$$ROOT`, `$$REMOVE`, … — a system variable's read. */
 export const systemRef = (name: SystemVar): VarRef => ("$$" + name) as VarRef;
 
+/** `$$value` and `$$this` — the two variables a `$reduce` body reads. */
+export const reduceVar = (name: "value" | "this"): VarRef => ("$$" + name) as VarRef;
+
 const refOf = (v: MongoVar): VarRef => ("$$" + v) as VarRef;
 
 /** What the server accepts as written. A `v_` lead is reserved for the escape. */

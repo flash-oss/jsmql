@@ -775,3 +775,17 @@ export const notADocumentInList = (noun: string, pos: number): CodegenError =>
     `'$$ = [ … ]' lists the DOCUMENTS the stream starts from, and ${noun} is not a document. Write each as '{ … }'.`,
     pos,
   );
+
+/** `.reduce(5, 0)` — a reducer is a two- or three-parameter arrow. */
+export const reducerShape = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.`,
+    pos,
+  );
+
+/** `.zipWith(b, x => x)` — the arrow takes one parameter per zipped array. */
+export const elementsShape = (name: string, count: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' takes an arrow with one parameter per zipped array — ${count} here — and an expression body.`,
+    pos,
+  );

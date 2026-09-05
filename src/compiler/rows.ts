@@ -443,3 +443,18 @@ export function productionForOperator(nodeType: "BinaryExpr" | "UnaryExpr", op: 
 export function flattensChain(productionKey: string): boolean {
   return (PRODUCTIONS as Record<string, { flattensChain?: true }>)[productionKey]?.flattensChain === true;
 }
+
+/**
+ * Does a value cell of this name read its arguments as ONE list — `args.spread`
+ * stated on some rule of its `expr` cell? The desugar pass then packs a spread
+ * call's arguments into one array literal, and the cell reads that.
+ */
+export function packsSpreadOf(name: string): boolean {
+  const states = (v: unknown): boolean => {
+    if (v === null || typeof v !== "object") return false;
+    const o = v as Record<string, unknown>;
+    if (o.spread === true && typeof o.sig === "string") return true;
+    return Object.values(o).some(states);
+  };
+  return states((row(name) as { expr?: unknown } | undefined)?.expr);
+}

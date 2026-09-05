@@ -478,7 +478,7 @@ per family under `perFamily` when the method lives on more than one prototype �
 and the pure MQL builders the cells share live in `src/registry/mql.ts`, a leaf
 like the rest of the registry. A cell RECEIVES everything it needs (`ExprIn`: the
 lowered receiver, the source arguments, `value`, `truth`, `iteratee`, `predicate`,
-`objIteratee`, `bind`) and throws nothing: every refusal is a fact on `args` the
+`objIteratee`, `callback`, `reducer`, `elements`, `bind`) and throws nothing: every refusal is a fact on `args` the
 dispatcher checks first — `slotType`, `slotEnums`, `regexFlag` (`.matchAll` needs
 `g`), `dateFormat` (a `%` specifier the server knows, and a Moment token named
 for what it is), `body` (an options document's keys, types and `notTogether`
@@ -492,6 +492,42 @@ ones: the server has no client timezone, so both read UTC. A receiver PROVEN to 
 of a kind no family has — a boolean, an ObjectId — is refused by every
 field-family row, naming the way to the type the method takes; a `?.` on a
 receiver of unproven type takes the neutral of the one family the row names.
+
+The callbacks are services, so a cell never binds a parameter itself. `callback`
+is the array callback `(x[, i[, arr]]) => …`: an index read makes the input the
+`[i, x]` pairs of a `$zip`. `reducer` is `(acc, x[, i]) => …` with its seed: the
+accumulator IS `$value` and the element IS `$this` when the body is plain
+arithmetic, and both are read through a `$let` when the body calls anything,
+because a call may lower to a `$reduce` of its own and shadow them.
+`elements` binds one parameter per position of one array element — `.zipWith`'s
+arrow over a `$zip` pair, `Array.from`'s `(_, i)` over a `$range`.
+
+```
+$.a.reduce((acc, x) => acc + x, 0)
+  → {"$reduce":{"input":"$a","initialValue":0,"in":{"$add":["$value","$this"]}}}
+$.a.reduceRight((acc, x) => acc.concat([x]), [])
+  → {"$reduce":{"input":{"$reverseArray":"$a"},"initialValue":[],
+               "in":{"$let":{"vars":{"acc":"$value","x":"$this"},"in":{"$concatArrays":["$acc",["$x"]]}}}}}
+```
+
+A rule that reads its arguments as ONE list states `spread: true` on its `args`,
+and the desugar pass packs a spread call's arguments into one array literal for
+it (see [desugar-pass.md](desugar-pass.md)): `Math.max(...$.a, 1)` reaches its
+cell as one operand, `{ $max: { $concatArrays: ["$a", [1]] } }`, and
+`Object.assign({}, ...$.docs)` as `{ $mergeObjects: <one list> }` — the server
+reads a single array operand for both (measured).
+
+The globals follow JavaScript where the two number differently or the server
+holds a different equality. `new Date(y, m, d, …)` and `Date.UTC(…)` count the
+month from 0, like `getMonth()`, so the month moves up by one on the way to
+`$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
+because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
+measured), and `Number.isInteger` excludes NaN and the infinities the same way.
+`Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN), and
+`parseInt` truncates through `$toDouble` so `"12.7"` reads as 12. The Set
+relations (`isSubsetOf`, `isSupersetOf`, `isDisjointFrom`,
+`symmetricDifference`, and the three set operations) accept a Set or an array
+receiver: `new Set(x)` folds to `x`, since the server has no set type.
 
 ## What has no value
 
