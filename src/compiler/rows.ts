@@ -7,7 +7,7 @@
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
-import type { Family, FieldFamily, IterateeSlots, On, Position } from "../registry/vocabulary.ts";
+import type { Family, FieldFamily, IterateeSlots, On, Position, MutatorForm } from "../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
@@ -457,4 +457,9 @@ export function packsSpreadOf(name: string): boolean {
     return Object.values(o).some(states);
   };
   return states((row(name) as { expr?: unknown } | undefined)?.expr);
+}
+
+/** A mutator's write form by argument count — `.pop()` → `_r.slice(0, -1)` — or undefined when the row states none. */
+export function mutatorFormOf(name: string): MutatorForm | undefined {
+  return (row(name) as { mutatorForm?: MutatorForm } | undefined)?.mutatorForm;
 }

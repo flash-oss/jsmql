@@ -18,9 +18,9 @@ import { pipeline } from "../src/compiler/index.ts";
 const URI = "mongodb://127.0.0.1:27017";
 
 const MAIN = [
-  { _id: 1, a: 1, tag: "t1" },
-  { _id: 2, a: 2, tag: "t2" },
-  { _id: 3, a: 3, tag: "t1" },
+  { _id: 1, a: 1, tag: "t1", xs: [3, 1, 2] },
+  { _id: 2, a: 2, tag: "t2", xs: [2, 5] },
+  { _id: 3, a: 3, tag: "t1", xs: [] as number[] },
 ];
 const ARCHIVE = [
   { _id: 10, a: 10, tag: "t1" },
@@ -315,7 +315,7 @@ afterAll(async () => {
 });
 
 /** A result reduced to what the pipeline added: a fixture document is its id, a facet branch a list of them. */
-const FIXTURE_KEYS = new Set(["a", "tag"]);
+const FIXTURE_KEYS = new Set(["a", "tag", "xs"]);
 const shrink = (v: unknown, top: boolean): unknown => {
   if (Array.isArray(v)) return v.map((x) => shrink(x, false));
   if (v !== null && typeof v === "object") {
@@ -409,6 +409,162 @@ describe("compiler/emit — a JavaScript aggregate inside $group / $setWindowFie
       },
       { $sort: { _id: 1 } },
     ]);
+  });
+});
+
+describe("compiler/emit — a mutator statement writes its receiver", () => {
+  // each expectation is JavaScript's own answer over the fixture
+  const after = (mutate: (xs: number[]) => void) =>
+    MAIN.map((d) => {
+      const ys = [...d.xs];
+      mutate(ys);
+      return { _id: d._id, ys };
+    });
+
+  it("pop and shift are slices of a receiver the spelling proved an array", () => {
+    expect(
+      compiled(
+        "$.ys = $.xs; $.ys.pop();",
+        after((ys) => ys.pop()),
+      ),
+    ).toEqual([
+      { $set: { ys: "$xs" } },
+      {
+        $set: {
+          ys: {
+            $let: {
+              vars: { jsmqlArr: "$ys" },
+              in: { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] },
+            },
+          },
+        },
+      },
+    ]);
+    expect(
+      compiled(
+        "$.ys = $.xs; $.ys.shift();",
+        after((ys) => ys.shift()),
+      ),
+    ).toEqual([
+      { $set: { ys: "$xs" } },
+      {
+        $set: {
+          ys: {
+            $let: {
+              vars: { jsmqlArr: "$ys" },
+              in: { $slice: ["$$jsmqlArr", 1, { $max: [1, { $size: "$$jsmqlArr" }] }] },
+            },
+          },
+        },
+      },
+    ]);
+    expect(() => pipeline("$.xs.pop(1);")).toThrow(/'\.pop\(\)' takes exactly 0 arguments, got 1/);
+  });
+
+  it("fill and copyWithin follow JavaScript's index rules, negatives included", () => {
+    expect(
+      compiled(
+        "$.ys = $.xs; $.ys.fill(0);",
+        after((ys) => ys.fill(0)),
+      ),
+    ).toEqual([{ $set: { ys: "$xs" } }, { $set: { ys: { $map: { input: "$ys", as: "v__5f", in: 0 } } } }]);
+    compiled(
+      "$.ys = $.xs; $.ys.fill(9, 1);",
+      after((ys) => ys.fill(9, 1)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.fill(9, 1, 2);",
+      after((ys) => ys.fill(9, 1, 2)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.fill(9, 2, 1);",
+      after((ys) => ys.fill(9, 2, 1)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.fill(9, -1);",
+      after((ys) => ys.fill(9, -1)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.copyWithin(0, 1);",
+      after((ys) => ys.copyWithin(0, 1)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.copyWithin(1, 0, 1);",
+      after((ys) => ys.copyWithin(1, 0, 1)),
+    );
+    compiled(
+      "$.ys = $.xs; $.ys.copyWithin(-1, 0);",
+      after((ys) => ys.copyWithin(-1, 0)),
+    );
+    expect(() => pipeline("$.xs.fill();")).toThrow(
+      /'\.fill\(value\[, start\[, end\]\]\)' takes 1 to 3 arguments, got 0/,
+    );
+  });
+
+  it("a binding is a target too, and a mutator may write a const — JavaScript allows the mutation", () => {
+    compiled(
+      "let r = [3, 1]; r.pop(); $.r = r;",
+      MAIN.map((d) => ({ _id: d._id, r: [3] })),
+    );
+    compiled(
+      "const r = [3, 1]; r.push(2); $.r = r;",
+      MAIN.map((d) => ({ _id: d._id, r: [3, 1, 2] })),
+    );
+    compiled(
+      "const r = { p: 1 }; Object.assign(r, { q: 2 }); $.r = r;",
+      MAIN.map((d) => ({ _id: d._id, r: { p: 1, q: 2 } })),
+    );
+    expect(() => pipeline("Object.assign(zzz, { a: 1 });")).toThrow(/zzz/);
+    expect(() => pipeline("$.s.trim().sort();")).toThrow(/needs a field or a binding to write/);
+    expect(() => pipeline("[1, 2].reverse();")).toThrow(/needs a field or a binding to write/);
+  });
+
+  it("Object.assign at statement position writes its target", () => {
+    expect(
+      compiled("$.o = { p: 1 }; Object.assign($.o, { q: 2 });", [
+        { _id: 1, o: { p: 1, q: 2 } },
+        { _id: 2, o: { p: 1, q: 2 } },
+        { _id: 3, o: { p: 1, q: 2 } },
+      ]),
+    ).toEqual([{ $set: { o: { $mergeObjects: [{ p: 1 }] } } }, { $set: { o: { $mergeObjects: ["$o", { q: 2 }] } } }]);
+  });
+
+  it("assert is a guard stage whose failure names the message", () => {
+    expect(compiled('assert($.a > 0, "a must be positive");', [1, 2, 3])).toEqual([
+      {
+        $match: {
+          $expr: {
+            $convert: {
+              input: true,
+              to: { $cond: [{ $gt: ["$a", 0] }, "bool", "jsmql assertion failed: a must be positive"] },
+            },
+          },
+        },
+      },
+    ]);
+    expect(compiled("assert($.a > 0);", [1, 2, 3])).toEqual([
+      {
+        $match: {
+          $expr: { $convert: { input: true, to: { $cond: [{ $gt: ["$a", 0] }, "bool", "jsmql assertion failed"] } } },
+        },
+      },
+    ]);
+    expect(pipeline("assert($.a > 0, $.tag);")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $convert: {
+              input: true,
+              to: {
+                $cond: [{ $gt: ["$a", 0] }, "bool", { $concat: ["jsmql assertion failed: ", { $toString: "$tag" }] }],
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(() => pipeline("assert(...$.flags);")).toThrow(/Spread \(\.\.\.\) is not supported/);
+    expect(() => pipeline("const assert = (x) => x; assert($.y);")).toThrow(/only computes a value/);
   });
 });
 

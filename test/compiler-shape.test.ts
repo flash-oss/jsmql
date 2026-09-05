@@ -13,7 +13,9 @@ import { parse } from "../src/compiler/parse/parser.ts";
 import { desugar } from "../src/compiler/passes/desugar.ts";
 import { shapeOf } from "../src/compiler/passes/shape.ts";
 
-const shape = (src: string): string => shapeOf(desugar(parse(src)));
+// The shape is read off the PARSED program: an entry picks the desugar root from it, and the
+// statement-root desugar turns a lone mutator call into the write it means.
+const shape = (src: string): string => shapeOf(parse(src));
 
 describe("compiler/passes/shape — a statement makes a pipeline", () => {
   it("reads a write as a pipeline, with or without a `;`", () => {

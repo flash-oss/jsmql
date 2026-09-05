@@ -214,7 +214,15 @@ export type FuncDecl = {
 };
 
 /** A write. `op` is the spelling as written; desugar reduces it to `=`. */
-export type AssignExpr = { type: "AssignExpr"; target: Expr; op: AssignOp; value: Expr; pos: number };
+export type AssignExpr = {
+  type: "AssignExpr";
+  target: Expr;
+  op: AssignOp;
+  value: Expr;
+  pos: number;
+  /** Set by the desugar pass on a MUTATOR's own write (`$.a.pop();`, `Object.assign(r, …);`) — JavaScript allows that on a `const` binding, and so does the emitter. */
+  mutates?: true;
+};
 export type DeleteStmt = { type: "DeleteStmt"; target: Expr; pos: number };
 export type UpdateOp = AssignExpr | DeleteStmt;
 

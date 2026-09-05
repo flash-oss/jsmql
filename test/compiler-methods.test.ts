@@ -476,6 +476,18 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     });
   });
 
+  it("applies a bare callable global to each element", () => {
+    expect(compiled("$.a.map(String)", () => DOC.a.map(String))).toEqual({
+      $map: { input: "$a", as: "x", in: { $toString: "$$x" } },
+    });
+    expect(compiled("$.mixed.filter(Boolean)", () => DOC.mixed.filter(Boolean))).toBeDefined();
+    expect(compiled("[$.neg, $.n].map(Math.abs)", () => [DOC.neg, DOC.n].map(Math.abs))).toEqual({
+      $map: { input: ["$neg", "$n"], as: "x", in: { $abs: "$$x" } },
+    });
+    expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toBeDefined();
+    expect(() => expr("$.a.map(Date)")).toThrow(/takes an arrow/);
+  });
+
   it("lowers a regex literal's own methods", () => {
     expect(compiled("/hello/i.test($.s)", () => /hello/i.test(DOC.s))).toEqual({
       $regexMatch: { input: "$s", regex: "hello", options: "i" },

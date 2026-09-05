@@ -5842,7 +5842,7 @@
       "src": "$count()",
       "kind": "message",
       "was": "Element 0 of pipeline is not a recognised stage. Expected `{ $stage: ... }` or `$stage(...)` where $stage is one of: $addFields, $bucket, $bucketAuto, $changeStream, $changeStreamSplitLargeEvent, $collStats, $count, $cur",
-      "now": "'$count'(body) requires exactly 1 argument, got 0",
+      "now": "$count(body) requires exactly 1 argument, got 0",
       "reason": "message: both refuse the argument count; the new wording names the parameter from the row's own signature."
     },
     "pipeline\u0000$rand(1, 2)": {
@@ -9384,17 +9384,17 @@
     "pipeline\u0000Object.assign($.a, $.b)": {
       "entry": "pipeline",
       "src": "Object.assign($.a, $.b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "A pipeline is one or more statements: `;`-separated ('$match(…); $sort({…});') or a bracketed list of stages ('[$match(…), $sort({…})]'). This source is a single expression — pass it to jsmql() for a filter, or jsmql.exp",
+      "now": "[{\"$set\":{\"a\":{\"$mergeObjects\":[\"$a\",\"$b\"]}}}]",
       "reason": "message: both refuse a source that is not a pipeline; the new wording says what a pipeline IS and how to spell one, instead of naming the entry point that was called."
     },
     "pipeline\u0000Object.assign($.a, $.b, $.c)": {
       "entry": "pipeline",
       "src": "Object.assign($.a, $.b, $.c)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "A pipeline is one or more statements: `;`-separated ('$match(…); $sort({…});') or a bracketed list of stages ('[$match(…), $sort({…})]'). This source is a single expression — pass it to jsmql() for a filter, or jsmql.exp",
+      "now": "[{\"$set\":{\"a\":{\"$mergeObjects\":[\"$a\",\"$b\",\"$c\"]}}}]",
       "reason": "message: both refuse a source that is not a pipeline; the new wording says what a pipeline IS and how to spell one, instead of naming the entry point that was called."
     },
     "pipeline\u0000$let({ d: $.price * 0.1 }, (d) => $.price - d)": {
@@ -14898,7 +14898,7 @@
       "src": "$macth($.a); $.b = 1",
       "kind": "message",
       "was": "Element 0 of pipeline: '$macth' is not a known aggregation stage. Did you mean '$match'?",
-      "now": "Unknown name ''$macth'' at position 0.",
+      "now": "Unknown name '$macth' at position 0.",
       "reason": "message: a lexer or parser error whose wording differs; the new one names the token with its friendly spelling and appends the position once."
     },
     "pipeline\u0000$.items.map(i => i.price).reduce((acc, p) => acc + p, 0)": {
@@ -15002,7 +15002,7 @@
       "src": "$match($.a > 0); zzz = 5; $project({ a: 1 });",
       "kind": "message",
       "was": "Cannot assign to bare identifier 'zzz' — it isn't a `let` binding in scope. Declare it first with `let zzz = …`, or write `$.zzz = …` to set a document field.",
-      "now": "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' wh",
+      "now": "Unknown identifier 'zzz'. Did you mean '$.zzz'?",
       "reason": "message: both refuse a destination that is not a field path; the new wording names the three spellings that are, and `$setField` for a computed name."
     },
     "pipeline\u0000x = 5": {
@@ -15010,7 +15010,7 @@
       "src": "x = 5",
       "kind": "message",
       "was": "Cannot assign to bare identifier 'x'. Reassignable `let` bindings exist only inside a pipeline — add a `;` to enter pipeline mode and declare it first (`let x = …`). To write a document field, use a field path: `$.x = …`",
-      "now": "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' wh",
+      "now": "Unknown identifier 'x'. Did you mean '$.x'?",
       "reason": "message: both refuse a destination that is not a field path; the new wording names the three spellings that are, and `$setField` for a computed name."
     },
     "pipeline\u0000const = 5;": {
@@ -17082,7 +17082,7 @@
       "src": "x++",
       "kind": "message",
       "was": "Cannot assign to bare identifier 'x'. Reassignable `let` bindings exist only inside a pipeline — add a `;` to enter pipeline mode and declare it first (`let x = …`). To write a document field, use a field path: `$.x = …`",
-      "now": "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' wh",
+      "now": "Unknown identifier 'x'. Did you mean '$.x'?",
       "reason": "message: both refuse a destination that is not a field path; the new wording names the three spellings that are, and `$setField` for a computed name."
     },
     "pipeline\u0000++x": {
@@ -17090,7 +17090,7 @@
       "src": "++x",
       "kind": "message",
       "was": "Cannot assign to bare identifier 'x'. Reassignable `let` bindings exist only inside a pipeline — add a `;` to enter pipeline mode and declare it first (`let x = …`). To write a document field, use a field path: `$.x = …`",
-      "now": "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' wh",
+      "now": "Unknown identifier 'x'. Did you mean '$.x'?",
       "reason": "message: both refuse a destination that is not a field path; the new wording names the three spellings that are, and `$setField` for a computed name."
     },
     "pipeline\u0000$.items[0]++": {
@@ -17122,7 +17122,7 @@
       "src": "delete x",
       "kind": "message",
       "was": "Cannot assign to bare identifier 'x'. Reassignable `let` bindings exist only inside a pipeline — add a `;` to enter pipeline mode and declare it first (`let x = …`). To write a document field, use a field path: `$.x = …`",
-      "now": "A write names a field: '$.total = …', '$.a.b = …', or the document itself, '$ = { … }'. A computed destination ('$[expr] = …') has no field name at compile time — use '$setField({ field: <expr>, input: $, value: … })' wh",
+      "now": "Unknown identifier 'x'. Did you mean '$.x'?",
       "reason": "message: both refuse a destination that is not a field path; the new wording names the three spellings that are, and `$setField` for a computed name."
     },
     "pipeline\u0000$.items[0] = 5": {
@@ -21802,7 +21802,7 @@
       "src": "$.s.trim().push(1)",
       "kind": "message",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "''push'()' is not available on a receiver whose type jsmql cannot prove — it is defined on 'array', 'stream'.",
+      "now": "'.push()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.push(…);'. For a value, use its immutable form.",
       "reason": "message: same refusal, reworded by the facet, union and out roads."
     },
     "pipeline\u0000const pi = () => 3.14; $ = { x: pi() };": {
@@ -24256,25 +24256,25 @@
     "expr\u0000$.ids.map(ObjectId)": {
       "entry": "expr",
       "src": "$.ids.map(ObjectId)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$ids\",\"as\":\"v\",\"in\":{\"$toObjectId\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$ids\",\"as\":\"x\",\"in\":{\"$toObjectId\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.sumBy(Number)": {
       "entry": "expr",
       "src": "$.xs.sumBy(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlItem\",\"in\":{\"$toDouble\":\"$$jsmqlItem\"}}}}",
-      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "now": "{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.keyBy(ObjectId)": {
       "entry": "expr",
       "src": "$.xs.keyBy(ObjectId)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$arrayToObject\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlItem\",\"in\":{\"k\":{\"$ifNull\":[{\"$toString\":{\"$toObjectId\":\"$$jsmqlItem\"}},\"null\"]},\"v\":\"$$jsmqlItem\"}}}}",
-      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "now": "{\"$arrayToObject\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"k\":{\"$ifNull\":[{\"$toString\":{\"$toObjectId\":\"$$x\"}},\"null\"]},\"v\":\"$$x\"}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.map(Date)": {
@@ -24288,137 +24288,137 @@
     "expr\u0000$.xs.map(parseInt)": {
       "entry": "expr",
       "src": "$.xs.map(parseInt)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 17",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}}}}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.items.filter(Boolean)": {
       "entry": "expr",
       "src": "$.items.filter(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$filter\":{\"input\":\"$items\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$filter\":{\"input\":\"$items\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.nums.map(Number)": {
       "entry": "expr",
       "src": "$.nums.map(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$nums\",\"as\":\"v\",\"in\":{\"$toDouble\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$nums\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.map(String)": {
       "entry": "expr",
       "src": "$.xs.map(String)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$toString\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toString\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.find(Boolean)": {
       "entry": "expr",
       "src": "$.xs.find(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$arrayElemAt\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},0]}",
-      "now": "'.find((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$arrayElemAt\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},0]}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.some(Boolean)": {
       "entry": "expr",
       "src": "$.xs.some(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
-      "now": "'.some((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.every(Boolean)": {
       "entry": "expr",
       "src": "$.xs.every(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}",
-      "now": "'.every((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.flatMap(Number)": {
       "entry": "expr",
       "src": "$.xs.flatMap(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$toDouble\":\"$$v\"}}},\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}}",
-      "now": "'.flatMap((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}},\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.parts.filter(Boolean).join(\" \")": {
       "entry": "expr",
       "src": "$.parts.filter(Boolean).join(\" \")",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":\"$parts\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":\"$parts\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.xs.filter(parseInt)": {
       "entry": "expr",
       "src": "$.xs.filter(parseInt)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 20",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}},false]},{\"$ne\":[{\"$toInt\":{\"$trunc\":{\"$toDo",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.xs.filter(parseFloat)": {
       "entry": "expr",
       "src": "$.xs.filter(parseFloat)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 22",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toDouble\":\"$$x\"},null]},null]},{\"$ne\":[{\"$toDouble\":\"$$x\"},false]},{\"$ne\":[{\"$toDouble\":\"$$x\"},\"\"]},{\"$ne\":[{\"$toDouble\":\"$$x\"},0]}]}}}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.scores.map(Math.floor)": {
       "entry": "expr",
       "src": "$.scores.map(Math.floor)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$floor\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$floor\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.round)": {
       "entry": "expr",
       "src": "$.scores.map(Math.round)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$round\":[\"$$v\",0]}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$round\":[\"$$x\",0]}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.abs)": {
       "entry": "expr",
       "src": "$.scores.map(Math.abs)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$abs\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$abs\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.ceil)": {
       "entry": "expr",
       "src": "$.scores.map(Math.ceil)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$ceil\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$ceil\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.sqrt)": {
       "entry": "expr",
       "src": "$.scores.map(Math.sqrt)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$sqrt\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$sqrt\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.trunc)": {
       "entry": "expr",
       "src": "$.scores.map(Math.trunc)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$trunc\":\"$$v\"}}}",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$trunc\":\"$$x\"}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.scores.map(Math.pow)": {
@@ -24426,15 +24426,15 @@
       "src": "$.scores.map(Math.pow)",
       "kind": "message",
       "was": "Math.pow requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / …) can be passed as bare callbacks (e.g. `arr.map(Math.floor)`).",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "Math.pow(base, exponent) requires exactly 2 arguments, got 1",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.scores.map(Math.min)": {
       "entry": "expr",
       "src": "$.scores.map(Math.min)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Math.min requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / …) can be passed as bare callbacks (e.g. `arr.map(Math.floor)`).",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$min\":\"$$x\"}}}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "expr\u0000$.items.map(x => { const _tmp = x * 2; return _tmp; })": {
@@ -25328,9 +25328,9 @@
     "expr\u0000[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")": {
       "entry": "expr",
       "src": "[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[\"$firstName\",\"$middleName\",\"$lastName\"],\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},\"initialVal",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[\"$firstName\",\"$middleName\",\"$lastName\"],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},\"initialVal",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.posts.map(\"tags\").flat().join(\", \")": {
@@ -25360,9 +25360,9 @@
     "expr\u0000\n[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")\n      ": {
       "entry": "expr",
       "src": "\n[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")\n      ",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$building\",null]},null]},{\"$ne\":[\"$building\",false]},{\"$ne\":[\"$building\",\"\"]},{\"$ne\":[\"$building\",0]}]},\"then\":{\"$concat\":[\"$building\"",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$building\",null]},null]},{\"$ne\":[\"$building\",false]},{\"$ne\":[\"$building\",\"\"]},{\"$ne\":[\"$building\",0]}]},\"then\":{\"$concat\":[\"$building\"",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000$.arr.slice(1,2)": {
@@ -26096,25 +26096,25 @@
     "filter\u0000$.ids.map(ObjectId)": {
       "entry": "filter",
       "src": "$.ids.map(ObjectId)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$ids\",\"as\":\"v\",\"in\":{\"$toObjectId\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$ids\",\"as\":\"v\",\"in\":{\"$toObjectId\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$i",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$ids\",\"as\":\"x\",\"in\":{\"$toObjectId\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$ids\",\"as\":\"x\",\"in\":{\"$toObjectId\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$i",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.sumBy(Number)": {
       "entry": "filter",
       "src": "$.xs.sumBy(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlItem\",\"in\":{\"$toDouble\":\"$$jsmqlItem\"}}}},null]},null]},{\"$ne\":[{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlItem\",\"in\":{\"$toDouble\":\"$$jsmqlIt",
-      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}}},null]},null]},{\"$ne\":[{\"$sum\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}}},false]},{\"$ne\":[{\"$sum\":",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.keyBy(ObjectId)": {
       "entry": "filter",
       "src": "$.xs.keyBy(ObjectId)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlItem\",\"in\":{\"k\":{\"$ifNull\":[{\"$toString\":{\"$toObjectId\":\"$$jsmqlItem\"}},\"null\"]},\"v\":\"$$jsmqlItem\"}}}},null]},null]},{\"$ne\":[{\"$ar",
-      "now": "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayToObject\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"k\":{\"$ifNull\":[{\"$toString\":{\"$toObjectId\":\"$$x\"}},\"null\"]},\"v\":\"$$x\"}}}},null]},null]},{\"$ne\":[{\"$arrayToObject\":{\"$map\":{\"i",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.map(Date)": {
@@ -26128,137 +26128,137 @@
     "filter\u0000$.xs.map(parseInt)": {
       "entry": "filter",
       "src": "$.xs.map(parseInt)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 17",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}}}",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.items.filter(Boolean)": {
       "entry": "filter",
       "src": "$.items.filter(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$items\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},null]},null]},{\"$ne\":[{\"$",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$items\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.nums.map(Number)": {
       "entry": "filter",
       "src": "$.nums.map(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$nums\",\"as\":\"v\",\"in\":{\"$toDouble\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$nums\",\"as\":\"v\",\"in\":{\"$toDouble\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$num",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$nums\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$nums\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$num",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.map(String)": {
       "entry": "filter",
       "src": "$.xs.map(String)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$toString\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$toString\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$xs\",\"as",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toString\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toString\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$xs\",\"as",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.find(Boolean)": {
       "entry": "filter",
       "src": "$.xs.find(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},0]},null]},",
-      "now": "'.find((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$arrayElemAt\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},0]},null]},",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.some(Boolean)": {
       "entry": "filter",
       "src": "$.xs.some(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
-      "now": "'.some((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.every(Boolean)": {
       "entry": "filter",
       "src": "$.xs.every(Boolean)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}}}}",
-      "now": "'.every((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[\"$xs\",[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.flatMap(Number)": {
       "entry": "filter",
       "src": "$.xs.flatMap(Number)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v\",\"in\":{\"$toDouble\":\"$$v\"}}},\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inpu",
-      "now": "'.flatMap((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$map\":{\"input\":\"$xs\",\"as\":\"x\",\"in\":{\"$toDouble\":\"$$x\"}}},\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}},null]},null]},{\"$ne\":[{\"$reduce\":{\"inpu",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.parts.filter(Boolean).join(\" \")": {
       "entry": "filter",
       "src": "$.parts.filter(Boolean).join(\" \")",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":\"$parts\",\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",\"\"]},{\"$ne\":[\"$$v\",0]}]}}},\"init",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":\"$parts\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},\"init",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.xs.filter(parseInt)": {
       "entry": "filter",
       "src": "$.xs.filter(parseInt)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 20",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$toInt\":{\"$trunc\":{\"$toDouble\":\"$$x\"}}},false",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.xs.filter(parseFloat)": {
       "entry": "filter",
       "src": "$.xs.filter(parseFloat)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Expected '(' but got ')' at position 22",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":\"$xs\",\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$toDouble\":\"$$x\"},null]},null]},{\"$ne\":[{\"$toDouble\":\"$$x\"},false]},{\"$ne\":[{\"$toDouble\":\"$$x\"},\"\"]},{\"$ne\":[",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.scores.map(Math.floor)": {
       "entry": "filter",
       "src": "$.scores.map(Math.floor)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$floor\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$floor\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$score",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$floor\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$floor\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$score",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.round)": {
       "entry": "filter",
       "src": "$.scores.map(Math.round)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$round\":[\"$$v\",0]}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$round\":[\"$$v\",0]}}},false]},{\"$ne\":[{\"$map\":{\"input\"",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$round\":[\"$$x\",0]}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$round\":[\"$$x\",0]}}},false]},{\"$ne\":[{\"$map\":{\"input\"",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.abs)": {
       "entry": "filter",
       "src": "$.scores.map(Math.abs)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$abs\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$abs\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$abs\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$abs\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.ceil)": {
       "entry": "filter",
       "src": "$.scores.map(Math.ceil)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$ceil\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$ceil\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\"",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$ceil\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$ceil\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\"",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.sqrt)": {
       "entry": "filter",
       "src": "$.scores.map(Math.sqrt)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$sqrt\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$sqrt\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\"",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$sqrt\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$sqrt\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\"",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.trunc)": {
       "entry": "filter",
       "src": "$.scores.map(Math.trunc)",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$trunc\":\"$$v\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"v\",\"in\":{\"$trunc\":\"$$v\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$score",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$trunc\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$trunc\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$score",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.scores.map(Math.pow)": {
@@ -26266,15 +26266,15 @@
       "src": "$.scores.map(Math.pow)",
       "kind": "message",
       "was": "Math.pow requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / …) can be passed as bare callbacks (e.g. `arr.map(Math.floor)`).",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "Math.pow(base, exponent) requires exactly 2 arguments, got 1",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.scores.map(Math.min)": {
       "entry": "filter",
       "src": "$.scores.map(Math.min)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "Math.min requires '(...)'. Only the unary Math methods (Math.floor / .ceil / .round / .abs / …) can be passed as bare callbacks (e.g. `arr.map(Math.floor)`).",
-      "now": "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$min\":\"$$x\"}}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"as\":\"x\",\"in\":{\"$min\":\"$$x\"}}},false]},{\"$ne\":[{\"$map\":{\"input\":\"$scores\",\"",
       "reason": "message: same refusal, reworded by the value cells — the argument facts on the row (`slotRange`, `constant`, `noCallback`, the callback's shape) word every refusal once."
     },
     "filter\u0000$.items.map(x => { const _tmp = x * 2; return _tmp; })": {
@@ -27144,9 +27144,9 @@
     "filter\u0000[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")": {
       "entry": "filter",
       "src": "[$.firstName, $.middleName, $.lastName].filter(Boolean).join(\" \")",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[\"$firstName\",\"$middleName\",\"$lastName\"],\"as\":\"v\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$v\",null]},null]},{\"$ne\":[\"$$v\",false]},{\"$ne\":[\"$$v\",",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[\"$firstName\",\"$middleName\",\"$lastName\"],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000$.posts.map(\"tags\").flat().join(\", \")": {
@@ -27176,9 +27176,9 @@
     "filter\u0000\n[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")\n      ": {
       "entry": "filter",
       "src": "\n[$.building && $.building + \",\", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]\n  .filter(Boolean)\n  .join(\" \")\n      ",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$building\",null]},null]},{\"$ne\":[\"$building\",false]},{\"$ne\":[\"$building\",\"\"]},{\"$ne\":[\"$building",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$filter\":{\"input\":[{\"$cond\":{\"if\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$building\",null]},null]},{\"$ne\":[\"$building\",false]},{\"$ne\":[\"$building\",\"\"]},{\"$ne\":[\"$building",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000\n{\n  lineup: $.roster.with($.swap.slot, $.swap.in),\n  labelled: $.roster.map((p, i) => ({ slot: i, name: p.name })),\n}\n      ": {
@@ -28162,7 +28162,7 @@
       "src": "\n$ = [\"sender\", \"recipient\"].map(party => {\n  const leg = $.legs?.[party];\n  const score = leg?.riskScore;\n  return score ? { party, score, band: score > 50 ? \"high\" : \"low\" } : null;\n}).filter(Boolean);\n      ",
       "kind": "now-rejected",
       "was": "[{\"$set\":{\"__jsmql.tmp.1\":{\"$filter\":{\"input\":{\"$map\":{\"input\":[\"sender\",\"recipient\"],\"as\":\"party\",\"in\":{\"$let\":{\"vars\":{\"leg\":{\"$getField\":{\"field\":\"$$party\",\"input\":{\"$ifNull\":[\"$legs\",{}]}}}},\"in\":{\"$let\":{\"vars\":{\"sc",
-      "now": "'.filter((x[, i[, arr]]) => …)' takes an arrow with an expression body.",
+      "now": "'$ = …' replaces the document, so the value has to BE a document — an array is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "pipeline\u0000$$ = $$.flatMap(d => d.items.map(x => x * 2));": {
@@ -29180,6 +29180,270 @@
       "was": "[{\"$set\":{\"__jsmql.tmp.1\":{\"$objectToArray\":\"$scores\"}}},{\"$unwind\":\"$__jsmql.tmp.1\"},{\"$replaceWith\":\"$__jsmql.tmp.1\"}]",
       "now": "'$ = …' replaces the document, so the value has to BE a document — an array is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
       "reason": "jsBehaviour: `Object.entries(o)` answers `[key, value]` pairs, as JavaScript does (the shipped `$objectToArray` answered `{ k, v }` documents); `Object.fromEntries` round-trips it."
+    },
+    "pipeline\u0000assert(...$.flags)": {
+      "entry": "pipeline",
+      "src": "assert(...$.flags)",
+      "kind": "message",
+      "was": "Spread (...) is not supported as an argument to 'assert(...)'.",
+      "now": "Spread (...) is not supported in assert(...) — pass operands directly (assert(a, b)) or as a single array (assert([a, b])).",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000const assert = (x) => x; assert($.y)": {
+      "entry": "pipeline",
+      "src": "const assert = (x) => x; assert($.y)",
+      "kind": "message",
+      "was": "Element 1 of pipeline is not a recognised stage. Expected `{ $stage: ... }` or `$stage(...)` where $stage is one of: $addFields, $bucket, $bucketAuto, $changeStream, $changeStreamSplitLargeEvent, $collStats, $count, $cur",
+      "now": "A pipeline statement writes something: a field ('$.total = …;'), the document ('$ = { … };'), a deletion ('delete $.x;'), or a stage ('$match(…);'). This expression only computes a value — assign it to a field, or wrap a",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000$.a.copyWithin(1);": {
+      "entry": "pipeline",
+      "src": "$.a.copyWithin(1);",
+      "kind": "message",
+      "was": ".copyWithin(target, start[, end]) requires 2 or 3 arguments, got 1",
+      "now": "'.copyWithin(target, start[, end])' takes 2 to 3 arguments, got 1. at position 3",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.a.fill();": {
+      "entry": "pipeline",
+      "src": "$.a.fill();",
+      "kind": "message",
+      "was": ".fill(value[, start[, end]]) requires 1, 2, or 3 arguments, got 0",
+      "now": "'.fill(value[, start[, end]])' takes 1 to 3 arguments, got 0. at position 3",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.xs.pop()": {
+      "entry": "pipeline",
+      "src": "$.xs.pop()",
+      "kind": "now-accepted",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}]}}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.xs.shift()": {
+      "entry": "pipeline",
+      "src": "$.xs.shift()",
+      "kind": "now-accepted",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.xs.fill(0)": {
+      "entry": "pipeline",
+      "src": "$.xs.fill(0)",
+      "kind": "now-accepted",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "[{\"$set\":{\"xs\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v__5f\",\"in\":0}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.xs.copyWithin(0, 1)": {
+      "entry": "pipeline",
+      "src": "$.xs.copyWithin(0, 1)",
+      "kind": "now-accepted",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "[{\"$set\":{\"xs\":{\"$concatArrays\":[{\"$slice\":[\"$xs\",0]},{\"$let\":{\"vars\":{\"jsmqlArr\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.s.trim().sort()": {
+      "entry": "pipeline",
+      "src": "$.s.trim().sort()",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.sort()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.sort(…);'. For a value, use its immutable form.",
+      "reason": "message: a mutator on a receiver that is neither a field nor a binding is refused with the place to write."
+    },
+    "pipeline\u0000$.n.round(2).pop()": {
+      "entry": "pipeline",
+      "src": "$.n.round(2).pop()",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.pop()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.pop(…);'. For a value, use its immutable form.",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.events.pop();": {
+      "entry": "pipeline",
+      "src": "$.events.pop();",
+      "kind": "output",
+      "was": "[{\"$set\":{\"events\":{\"$slice\":[\"$events\",{\"$max\":[0,{\"$subtract\":[{\"$size\":\"$events\"},1]}]}]}}}]",
+      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}]}}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.events.shift();": {
+      "entry": "pipeline",
+      "src": "$.events.shift();",
+      "kind": "output",
+      "was": "[{\"$set\":{\"events\":{\"$slice\":[\"$events\",1,{\"$max\":[1,{\"$size\":\"$events\"}]}]}}}]",
+      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.events.fill(0);": {
+      "entry": "pipeline",
+      "src": "$.events.fill(0);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"events\":{\"$map\":{\"input\":\"$events\",\"as\":\"jsmqlFillUnused\",\"in\":0}}}}]",
+      "now": "[{\"$set\":{\"events\":{\"$map\":{\"input\":\"$events\",\"as\":\"v__5f\",\"in\":0}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.events.fill(0, 1, 3);": {
+      "entry": "pipeline",
+      "src": "$.events.fill(0, 1, 3);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlFillStart\":1,\"jsmqlFillEnd\":3},\"in\":{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$events\"}]},\"$events\"]}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"jsmqlFillEl\":{\"$ar",
+      "now": "[{\"$set\":{\"events\":{\"$concatArrays\":[{\"$slice\":[\"$events\",1]},{\"$map\":{\"input\":{\"$slice\":[\"$events\",1,2]},\"as\":\"v__5f\",\"in\":0}},{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$add\":[{\"$size\":{\"$sli",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000let x = 5; $.arr.fill(x, 1); $.done = true;": {
+      "entry": "pipeline",
+      "src": "let x = 5; $.arr.fill(x, 1); $.done = true;",
+      "kind": "output",
+      "was": "[{\"$set\":{\"arr\":{\"$let\":{\"vars\":{\"jsmqlFillStart\":1,\"jsmqlFillEnd\":{\"$size\":\"$arr\"}},\"in\":{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$arr\"}]},\"$arr\"]}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"jsmqlFillEl\"",
+      "now": "[{\"$set\":{\"arr\":{\"$concatArrays\":[{\"$slice\":[\"$arr\",1]},{\"$map\":{\"input\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$arr\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",1,{\"$max\":[1,{\"$size\":\"$$jsmqlArr\"}]}]}}},\"as\":\"v__5f\",\"in\":5}}]}}},{\"$set\":{\"done",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000[ $.x = 1, Object.assign($.profile, { a: $.foo }), $.y = 2 ]": {
+      "entry": "pipeline",
+      "src": "[ $.x = 1, Object.assign($.profile, { a: $.foo }), $.y = 2 ]",
+      "kind": "output",
+      "was": "[{\"$set\":{\"x\":1,\"profile\":{\"$mergeObjects\":[\"$profile\",{\"a\":\"$foo\"}]},\"y\":2}}]",
+      "now": "[{\"$set\":{\"x\":1}},{\"$set\":{\"profile\":{\"$mergeObjects\":[\"$profile\",{\"a\":\"$foo\"}]}}},{\"$set\":{\"y\":2}}]",
+      "reason": "intended: `Object.assign(target, …);` writes its target through the row's `mutatesArgumentAt` — a field, or a binding (a `const` too, JavaScript allows the mutation); an unbound name is the unknown-identifier refusal."
+    },
+    "pipeline\u0000$$.pop({a:1})": {
+      "entry": "pipeline",
+      "src": "$$.pop({a:1})",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop()' is not available on a 'stream' — it is defined on 'array'.",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000Object.assign(zzz, { a: 1 });": {
+      "entry": "pipeline",
+      "src": "Object.assign(zzz, { a: 1 });",
+      "kind": "message",
+      "was": "Cannot 'Object.assign(zzz, …)' — 'zzz' isn't a 'let'/'const' binding in scope. Declare it first with 'let zzz = …', or write '$.zzz' to mutate a document field.",
+      "now": "Unknown identifier 'zzz'. Did you mean '$.zzz'?",
+      "reason": "intended: `Object.assign(target, …);` writes its target through the row's `mutatesArgumentAt` — a field, or a binding (a `const` too, JavaScript allows the mutation); an unbound name is the unknown-identifier refusal."
+    },
+    "pipeline\u0000$.xs.fill(0, 1, 3);": {
+      "entry": "pipeline",
+      "src": "$.xs.fill(0, 1, 3);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlFillStart\":1,\"jsmqlFillEnd\":3},\"in\":{\"$map\":{\"input\":{\"$zip\":{\"inputs\":[{\"$range\":[0,{\"$size\":\"$xs\"}]},\"$xs\"]}},\"as\":\"jsmqlPair\",\"in\":{\"$let\":{\"vars\":{\"jsmqlFillEl\":{\"$arrayElemAt\":[",
+      "now": "[{\"$set\":{\"xs\":{\"$concatArrays\":[{\"$slice\":[\"$xs\",1]},{\"$map\":{\"input\":{\"$slice\":[\"$xs\",1,2]},\"as\":\"v__5f\",\"in\":0}},{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$slice\":[\"$$jsmqlArr\",{\"$add\":[{\"$size\":{\"$slice\":[\"$xs\",1]}},",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.xs.fill(0);": {
+      "entry": "pipeline",
+      "src": "$.xs.fill(0);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"xs\":{\"$map\":{\"input\":\"$xs\",\"as\":\"jsmqlFillUnused\",\"in\":0}}}}]",
+      "now": "[{\"$set\":{\"xs\":{\"$map\":{\"input\":\"$xs\",\"as\":\"v__5f\",\"in\":0}}}}]",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: \"$s\" }); assert(coll.length > 0, \"empty\"); });": {
+      "entry": "pipeline",
+      "src": "$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: \"$s\" }); assert(coll.length > 0, \"empty\"); });",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"c\",\"pipeline\":[{\"$group\":{\"_id\":\"$s\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$gt\":[\"$__jsmql.length\",0]},\"bool",
+      "now": "[{\"$lookup\":{\"from\":\"c\",\"pipeline\":[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$group\":{\"_id\":\"$s\"}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$gt\":[\"$__jsmql.length\",0]},\"bool",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000\n        $.orders = $$$.orders.aggregate((o, i, ordersColl) => {\n          $match(o.userId === $._id);\n          assert(ordersColl.length > 0, \"User without orders is impossible\");\n        });\n      ": {
+      "entry": "pipeline",
+      "src": "\n        $.orders = $$$.orders.aggregate((o, i, ordersColl) => {\n          $match(o.userId === $._id);\n          assert(ordersColl.length > 0, \"User without orders is impossible\");\n        });\n      ",
+      "kind": "output",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$conv",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$match\":{\"$expr\":{\"$conv",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); assert(i > 0, \"x\"); });": {
+      "entry": "pipeline",
+      "src": "$.x = $$$.orders.aggregate((o, i, c) => { $match(o.userId === $._id); assert(i > 0, \"x\"); });",
+      "kind": "message",
+      "was": "'i' (the 2nd, index parameter) has no meaning inside '.aggregate((o, i, …) => …)' — MongoDB streams have no per-doc index. Keep it unused (e.g. '(o, _i, coll)') only to reach the 3rd 'collection' parameter.",
+      "now": "`i` has no value inside `.aggregate()` — a stream has no per-document index; leave the parameter unused.",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ": {
+      "entry": "pipeline",
+      "src": "\nconst userId = 0x507f1f77bcf86cd799439011;\n$$.filter({ _id: userId }); // limit the whole pipeline down to one pass\nassert($$.length === 1, \"More than one user with such ID found\");\n\nconst myProductIds = $$$.orders\n  .filter({ userId })\n  .$sort({ createdAt: -1 }) // same as _.sort()\n  .take(10)\n  .map(\"productIds\")\n  .flatten()\n  .uniq();\n\nconst candidateProductIdCounts = $$$.orders\n  .filter(o => o.productIds.some(p => myProductIds.includes(p)))\n  .toSorted({ createdAt: -1 })\n  .take(100) // a pipeline of co-purchase orders, most recent 100\n  .map(\"productIds\")\n  .flatten()\n  .filter(p => !myProductIds.includes(p))\n  .countBy(); // { ID: count } map\nconst candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);\n\nconst candidateProducts = $$$.products\n  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator\n  .$limit(500); // same as .take(500)\n\n$ = candidateProductIds\n  .map(id => ({\n    productId: id,\n    score: candidateProductIdCounts[id],\n    name:  candidateProducts.find({ _id: id }).name,\n  }))\n  .orderBy({ score: -1 })\n  .take(10);\n      ",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"_id\":\"«oid:507f1f77bcf86cd799439011»\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmq",
+      "now": "'$ = …' replaces the document, so the value has to BE a document — an array is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000\n$$.filter({ email: \"me@example.com\" });\nassert($$.length === 1, \"More than one user with such email found\");\n$$ = $$$.orders\n  .filter({ userId: $._id })\n  .toSorted({ placedAt: -1 })\n  .take(5);\n          ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ email: \"me@example.com\" });\nassert($$.length === 1, \"More than one user with such email found\");\n$$ = $$$.orders\n  .filter({ userId: $._id })\n  .toSorted({ placedAt: -1 })\n  .take(5);\n          ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"email\":\"me@example.com\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.length\",1]},\"bool\",\"jsmql assertion fa",
+      "now": "[{\"$match\":{\"email\":{\"$eq\":\"me@example.com\",\"$not\":{\"$type\":\"array\"}}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$eq\":[\"$__jsmql.lengt",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000\n$$.filter({ status: \"paid\" });\nassert($.qty >= 0, \"order qty must be non-negative\");\n$.revenue = $.qty * $.unitPrice;\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ status: \"paid\" });\nassert($.qty >= 0, \"order qty must be non-negative\");\n$.revenue = $.qty * $.unitPrice;\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"paid\"}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$gte\":[\"$qty\",0]},\"bool\",\"jsmql assertion failed: order qty must be non-negative\"]}}}}},{\"$set\":{\"revenue\":{\"$multiply\":[\"$qty\",",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"paid\",\"$not\":{\"$type\":\"array\"}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$gte\":[\"$qty\",0]},\"bool\",\"jsmql assertion failed: order qty must be non-negative\"]}}}}},{\"$set\"",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000\n$$.filter({ inStock: true });\n$.totalInStock = $$.length;\n$.sharePct = 100 / $$.length;\nassert($$.length <= 1000, \"too many in-stock products to render\");\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ inStock: true });\n$.totalInStock = $$.length;\n$.sharePct = 100 / $$.length;\nassert($$.length <= 1000, \"too many in-stock products to render\");\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"inStock\":true}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$set\":{\"totalInStock\":\"$__jsmql.length\"}},{\"$set\":{\"sharePct\":{\"$divide\":[100,\"$__jsmql.length\"]}}},{\"$match\":{\"$expr\":{\"$co",
+      "now": "[{\"$match\":{\"inStock\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$set\":{\"totalInStock\":\"$__jsmql.length\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000$match($.email === \"x\"); assert($$.length <= 1, \"must be <= 1\")": {
+      "entry": "pipeline",
+      "src": "$match($.email === \"x\"); assert($$.length <= 1, \"must be <= 1\")",
+      "kind": "output",
+      "was": "[{\"$match\":{\"email\":\"x\"}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$lte\":[\"$__jsmql.length\",1]},\"bool\",\"jsmql assertion failed: must b",
+      "now": "[{\"$match\":{\"email\":{\"$eq\":\"x\",\"$not\":{\"$type\":\"array\"}}}},{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$lte\":[\"$__jsmql.length\",1]},\"bool",
+      "reason": "naming: `assert(…)` is the row's own statement cell — a `$match` whose `$expr` converts `true` to a type named by the outcome (measured) — and lowers inside sub-pipelines too; the condition is read as a truth."
+    },
+    "pipeline\u0000$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {\n          assert(o.total > 0, \"bad order\");\n          $ = { id: o._id, t: o.total };\n        });": {
+      "entry": "pipeline",
+      "src": "$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {\n          assert(o.total > 0, \"bad order\");\n          $ = { id: o._id, t: o.total };\n        });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":[{\"$gt\":[\"$total\",0]},\"bool\",\"js",
+      "now": "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: …",
+      "reason": "intended: J2 — `$ = …` inside a body over another collection writes the OUTER document and is refused; write the body's own document through the parameter (`o = { … }`)."
+    },
+    "pipeline\u0000$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {\n          assert(o.total > $.minTotal, \"below min\");\n          $ = { id: o._id };\n        });": {
+      "entry": "pipeline",
+      "src": "$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {\n          assert(o.total > $.minTotal, \"below min\");\n          $ = { id: o._id };\n        });",
+      "kind": "now-rejected",
+      "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\",\"jsmql_f0_minTotal\":\"$minTotal\"},\"pipeline\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$userId\",\"$$jsmql_f0__id\"]}}},{\"$match\":{\"$expr\":{\"$convert\":{\"input\":true,\"to\":{\"$cond\":",
+      "now": "The outer document can't be written from inside a body over another collection — only read. Write the body's own document through its callback parameter ('o.x = …', 'delete o.x', 'o = { … }'), or as a stage ('$set({ x: …",
+      "reason": "intended: J2 — `$ = …` inside a body over another collection writes the OUTER document and is refused; write the body's own document through the parameter (`o = { … }`)."
+    },
+    "pipeline\u0000$$.pop(\"x\")": {
+      "entry": "pipeline",
+      "src": "$$.pop(\"x\")",
+      "kind": "message",
+      "was": "'.pop(...)' is not a chainable stream method on '$$'. Did you mean '.drop'? Chainable methods — any may head OR extend the chain: '.filter', '.reject', .slice, .sample, .take, .drop, .tail, .takeWhile, .dropWhile, .shuff",
+      "now": "'.pop()' is not available on a 'stream' — it is defined on 'array'.",
+      "reason": "jsBehaviour: a mutator with no same-argument twin is written through the form its row states (`mutatorForm`), the receiver spread to prove it an array; negative indices follow JavaScript, which the shipped direct lowerings did not honour."
+    },
+    "pipeline\u0000[1,2,3].reverse()": {
+      "entry": "pipeline",
+      "src": "[1,2,3].reverse()",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.reverse()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.reverse(…);'. For a value, use its immutable form.",
+      "reason": "message: a mutator on a receiver that is neither a field nor a binding is refused with the place to write."
+    },
+    "pipeline\u0000\"abc\".reverse()": {
+      "entry": "pipeline",
+      "src": "\"abc\".reverse()",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.reverse()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.reverse(…);'. For a value, use its immutable form.",
+      "reason": "message: a mutator on a receiver that is neither a field nor a binding is refused with the place to write."
     }
   }
 }

@@ -471,6 +471,19 @@ against the sigil the row's `on` states, so `$$$$.indexStats()` is refused namin
 inlines the body as a `$let` (`lower.ts`, `applyLambda`). A second declaration in
 one block is refused, as JavaScript refuses it.
 
+**`assert(condition[, message]);` is a guard stage** — the row's own statement
+cell: a `$match` whose `$expr` converts `true` to a type NAMED by the outcome,
+`"bool"` when the condition holds and the message when it does not; the server
+refuses the unknown type name and its error carries the message (measured:
+`Unknown type name: jsmql assertion failed: …`). The condition is read as a
+truth (a JavaScript spelling tests JavaScript truthiness); a literal message is
+spelled into the name, a dynamic one concatenated at run time.
+
+```
+assert($.qty >= 0, "qty must be >= 0");
+  → [{"$match":{"$expr":{"$convert":{"input":true,"to":{"$cond":[{"$gte":["$qty",0]},"bool","jsmql assertion failed: qty must be >= 0"]}}}}}]
+```
+
 ## The method cells
 
 A JavaScript method's value lowering is its row's `expr` cell — `{ args, emit }`,

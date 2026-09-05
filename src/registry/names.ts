@@ -111,6 +111,7 @@ import {
   single,
   unsupported,
   viaFallback,
+  type MutatorForm,
 } from "./vocabulary.ts";
 
 type RootSpec<W extends readonly Position[]> = {
@@ -235,6 +236,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * field, and "start"/"end" would leave the reader asking start of what.
    */
   asArrayLiteral?: "receiver, then arguments" | "arguments, then receiver";
+  /**
+   * The write form of a mutator with no same-argument twin — `.pop()`, `.fill()`:
+   * the JSMQL expression by argument count, `_r` the receiver, `_0`… the
+   * arguments. See MutatorForm.
+   */
+  mutatorForm?: MutatorForm;
   /**
    * What a `{ … }` body on this name MEANS. Absent = "javascript", which is every
    * name but one: a stage inside such a block is refused with a rewrite hint.
@@ -6534,7 +6541,7 @@ export const NAMES = {
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
     stream: unsupported("'.reverse()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.reverse()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reverse()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7334,7 +7341,7 @@ export const NAMES = {
       args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
       emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape),
     },
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.sort()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.sort()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7353,7 +7360,7 @@ export const NAMES = {
       ".splice() mutates the array in JavaScript. In expression position, use '.toSpliced(start, deleteCount, ...items)' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
     stream: unsupported("'.splice()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.splice()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.splice()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7382,6 +7389,7 @@ export const NAMES = {
     doc: "'.pop()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    mutatorForm: { sig: "", by: { 0: "[..._r].slice(0, -1)" } },
     returns: "unknown",
     where: ["statement"],
     filter: unsupported(
@@ -7391,7 +7399,7 @@ export const NAMES = {
       ".pop() mutates the array in JavaScript. In expression position, use '.at(-1)' to read the last element or '.slice(0, -1)' for everything-but-last — or call it at statement position (top-level on a '$.<field>' receiver) to drop the last element.",
     ),
     stream: unsupported("'.pop()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.pop()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.pop()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7400,6 +7408,7 @@ export const NAMES = {
     doc: "'.shift()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    mutatorForm: { sig: "", by: { 0: "[..._r].slice(1)" } },
     returns: "unknown",
     where: ["statement"],
     filter: unsupported(
@@ -7409,7 +7418,7 @@ export const NAMES = {
       ".shift() mutates the array in JavaScript. In expression position, use '.at(0)' to read the first element or '.slice(1)' for everything-but-first — or call it at statement position (top-level on a '$.<field>' receiver) to drop the first element.",
     ),
     stream: unsupported("'.shift()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.shift()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.shift()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7428,7 +7437,7 @@ export const NAMES = {
       ".unshift() mutates the array in JavaScript. In expression position, use '.concat()' with the new items first or spread '[...newItems, ...arr]' — or call it at statement position (top-level on a '$.<field>' receiver) to prepend in place.",
     ),
     stream: unsupported("'.unshift()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.unshift()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.unshift()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7437,6 +7446,14 @@ export const NAMES = {
     doc: "'.fill()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    mutatorForm: {
+      sig: "value[, start[, end]]",
+      by: {
+        1: "[..._r].map(() => _0)",
+        2: "[...[..._r].slice(0, _1), ...[..._r].slice(_1).map(() => _0)]",
+        3: "[...[..._r].slice(0, _1), ...[..._r].slice(_1, _2).map(() => _0), ...[..._r].slice([..._r].slice(0, _1).length + [..._r].slice(_1, _2).length)]",
+      },
+    },
     returns: "unknown",
     where: ["statement"],
     filter: unsupported(
@@ -7446,7 +7463,7 @@ export const NAMES = {
       ".fill() mutates the array in JavaScript. In expression position there is no direct immutable replacement (build from a $range or pass a pre-filled array as a parameter) — or call it at statement position (top-level on a '$.<field>' receiver) to fill the field in place.",
     ),
     stream: unsupported("'.fill()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.fill()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.fill()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -7455,6 +7472,13 @@ export const NAMES = {
     doc: "'.copyWithin()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    mutatorForm: {
+      sig: "target, start[, end]",
+      by: {
+        2: "[...[..._r].slice(0, _0), ...[..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
+        3: "[...[..._r].slice(0, _0), ...[..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length), ...[..._r].slice([..._r].slice(0, _0).length + [..._r].slice(_1, _2).slice(0, [..._r].length - [..._r].slice(0, _0).length).length)]",
+      },
+    },
     returns: "unknown",
     where: ["statement"],
     filter: unsupported(
@@ -7466,7 +7490,7 @@ export const NAMES = {
     stream: unsupported(
       "'.copyWithin()' mutates; a chain link must return a stream. Use its immutable form mid-chain.",
     ),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.copyWithin()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'.copyWithin()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -11703,7 +11727,20 @@ export const NAMES = {
       "'assert(...)' is a pipeline statement, not a value — it can't appear inside an expression. Use it as its own statement in a pipeline body, e.g. `({ $ }) => { assert($.qty >= 0, \"qty must be >= 0\"); … }`.",
     ),
     stream: unsupported("'assert(...)' is a statement. Write 'assert($.n > 0);' on its own line."),
-    statement: pending("src/pipeline.ts", { sig: "condition[, message]", allowed: [1, 2] }),
+    statement: {
+      args: { sig: "condition[, message]", allowed: [1, 2] },
+      // a `$convert` to a type named by the message: the server refuses the name and the error carries it (measured)
+      emit: ({ args, truth, value }) => {
+        const prefix = "jsmql assertion failed";
+        const message =
+          args[1] === undefined
+            ? prefix
+            : args[1].type === "StringLiteral"
+              ? `${prefix}: ${args[1].value}`
+              : { $concat: [`${prefix}: `, { $toString: value(args[1]) }] };
+        return [{ $match: { $expr: { $convert: { input: true, to: { $cond: [truth(args[0]), "bool", message] } } } } }];
+      },
+    },
     group: unsupported("'assert(...)' is not an accumulator."),
     window: unsupported("'assert(...)' is not a window function."),
   }),
@@ -11722,7 +11759,7 @@ export const NAMES = {
       emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) }),
     },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -12532,8 +12569,8 @@ export const NAMES = {
     expr: unsupported(
       "'$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.",
     ),
-    stream: pending("src/pipeline.ts"),
-    statement: pending("src/pipeline.ts"),
+    stream: inCode("src/compiler/emit/statement.ts"),
+    statement: inCode("src/compiler/emit/statement.ts"),
     group: unsupported("'$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -12548,7 +12585,7 @@ export const NAMES = {
     filter: unsupported("'$$$.<coll>' names a collection, not a test. Join it: '$.o = $$$.<coll>.find(d => …)'."),
     expr: unsupported("'$$$.<coll>' names a collection. Assign the read to a field: '$.o = $$$.<coll>.find(…)'."),
     stream: inCode("src/compiler/emit/join.ts"),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/emit/statement.ts"),
     group: unsupported("'$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -12568,7 +12605,7 @@ export const NAMES = {
     stream: because(
       "cross-database reads aren't supported, so '$$$$' cannot be a stream source. Cross-database WRITES do work: '$$$$.<db>.<coll> = $$' lowers to '$out'.",
     ),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/emit/statement.ts"),
     group: unsupported("'$$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),

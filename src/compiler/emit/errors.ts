@@ -789,3 +789,10 @@ export const elementsShape = (name: string, count: number, pos: number): Codegen
     `'.${name}()' takes an arrow with one parameter per zipped array — ${count} here — and an expression body.`,
     pos,
   );
+
+/** `$.s.trim().sort();` — a mutator statement writes a field or a binding, and this receiver is neither. */
+export const mutatorNeedsField = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}()' changes its receiver in place, so as a statement it needs a field or a binding to write: '$.<field>.${name}(…);'. For a value, use its immutable form.`,
+    pos,
+  );

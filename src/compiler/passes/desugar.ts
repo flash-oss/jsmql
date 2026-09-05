@@ -23,11 +23,18 @@
 
 import { type AssignOp, type BinaryOp, type Expr, type Program, ASSIGN_OPS } from "../../registry/ast.ts";
 import { ParseError } from "../parse/cursor.ts";
+import { parseExpression } from "../parse/parser.ts";
 import {
   arrayLiteralOrderOf,
   immutableTwinOf,
   isFieldProperty,
+  isCallable,
+  isGlobalName,
   iterateeSlotsOf,
+  mutatedArgumentOf,
+  namespaceNames,
+  newKeywordOf,
+  mutatorFormOf,
   packsSpreadOf,
   picksOneOf,
   receiverFamily,
@@ -240,7 +247,9 @@ const isNode = (v: unknown): v is Node =>
  */
 function writtenField(node: Node): Node | null {
   const recv = node.object;
-  if (!isNode(recv) || recv.type !== "FieldRef" || recv.path === "") return null;
+  if (!isNode(recv)) return null;
+  if (recv.type === "Ident") return recv; // a binding or a callback parameter: the emitter judges the write
+  if (recv.type !== "FieldRef" || recv.path === "") return null;
   return recv;
 }
 
@@ -250,7 +259,8 @@ function writeBack(target: Node, value: object, pos: number): object {
     type: "UpdateFilter",
     // A FRESH copy of the target for the destination: it appears twice now, and a
     // later phase compares nodes by identity.
-    ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos }],
+    // `mutates`: a mutator's own write, which JavaScript allows on a `const` binding too
+    ops: [{ type: "AssignExpr", target: { ...target }, op: "=", value, pos, mutates: true }],
     pos: target.pos,
   };
 }
@@ -276,6 +286,81 @@ const mutatorTwin: Rule = {
       { type: "MethodCall", object: target, name: twin, args: n.args, optional: false, pos: n.pos },
       n.pos,
     );
+  },
+};
+
+/**
+ * The row's write form, instantiated: `_r` is the receiver, `_0`… the arguments
+ * as written. Every node the form contributes stands at the statement's position;
+ * the substituted subtrees keep their own.
+ */
+function instantiate(form: string, recv: Node, args: readonly unknown[], pos: number): object {
+  const sub = (v: unknown): unknown => {
+    if (Array.isArray(v)) return v.map(sub);
+    if (!isNode(v)) return v;
+    if (v.type === "Ident" && typeof v.name === "string") {
+      if (v.name === "_r") return { ...recv };
+      const slot = /^_(\d+)$/.exec(v.name);
+      if (slot !== null) return args[Number(slot[1])];
+    }
+    const out: Record<string, unknown> = { type: v.type, pos };
+    for (const [k, x] of Object.entries(v)) if (k !== "type" && k !== "pos") out[k] = sub(x);
+    return out;
+  };
+  return sub(parseExpression(form)) as object;
+}
+
+/**
+ * `$.a.pop();` → `$.a = $.a.slice(0, -1);`
+ *
+ * A mutator with no same-argument twin states its WRITE FORM on the row, by
+ * argument count; the form is JSMQL, so it reaches the value cells a developer's
+ * own spelling would. A count the row does not state is the arity error.
+ */
+const mutatorForm: Rule = {
+  name: "mutatorForm",
+  apply: (node, where) => {
+    if (where.at !== "statement") return node;
+    const n = node as Node;
+    if (n.type !== "MethodCall" || typeof n.name !== "string") return node;
+    const form = mutatorFormOf(n.name);
+    if (form === undefined) return node;
+    const target = writtenField(n);
+    if (target === null) return node;
+    const args = n.args as readonly Node[];
+    if (args.some((a) => a.type === "SpreadElement")) return node;
+    const template = form.by[args.length];
+    if (template === undefined) {
+      const counts = Object.keys(form.by).map(Number);
+      const range = counts.length === 1 ? `exactly ${counts[0]}` : `${Math.min(...counts)} to ${Math.max(...counts)}`;
+      throw new ParseError(
+        `'.${n.name}(${form.sig})' takes ${range} argument${counts[0] === 1 && counts.length === 1 ? "" : "s"}, got ${args.length}.`,
+        n.pos,
+      );
+    }
+    return writeBack(target, instantiate(template, target, args, n.pos), n.pos);
+  },
+};
+
+/**
+ * `Object.assign($.o, x);` → `$.o = Object.assign($.o, x);`
+ *
+ * A name that writes one of its ARGUMENTS in place (`mutatesArgumentAt` on the
+ * row) is, as a statement, a write of that argument; the call itself is the value.
+ */
+const mutatedArgument: Rule = {
+  name: "mutatedArgument",
+  apply: (node, where) => {
+    if (where.at !== "statement") return node;
+    const n = node as Node;
+    if (n.type !== "MethodCall" || typeof n.name !== "string") return node;
+    const at = mutatedArgumentOf(n.name);
+    if (at === undefined) return node;
+    const args = n.args as readonly Node[];
+    const target = args[at];
+    if (!isNode(target)) return node;
+    if (target.type !== "Ident" && (target.type !== "FieldRef" || target.path === "")) return node;
+    return writeBack(target, { ...n }, n.pos);
   },
 };
 
@@ -374,10 +459,11 @@ function writtenKey(entry: object): string | null {
  * The arrow a short spelling means, or undefined when this argument is not one of
  * the spellings this slot accepts.
  *
- * `bareCallable` is deliberately absent. `$.items.map(Math.asinh)` is REFUSED
- * unapplied and accepted as `x => Math.asinh(x)`, so rewriting it would widen the
- * language — a decision for the row that states which callables may be passed
- * bare, not for a rewrite that cannot see it.
+ * `bareCallable` is a callable GLOBAL passed unapplied — `.map(String)`,
+ * `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — and means the arrow
+ * that applies it to the element. Which slots accept it is the row's decision
+ * (its `iterateeSlots`), never this rewrite's: the rewrite only knows a global
+ * from a binding, and a name that needs `new` is not callable bare.
  */
 function asArrow(arg: object | undefined, forms: readonly string[], pos: number): object | undefined {
   const accepts = (form: string): boolean => forms.includes(form);
@@ -416,6 +502,27 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
     return { type: "Lambda", params: [param], body: strictEq(pathOn(param, p.value, pos), value, pos), pos };
   }
 
+  if (accepts("bareCallable")) {
+    const applied = bareCall(a as Node, param, pos);
+    if (applied !== undefined) return { type: "Lambda", params: [param], body: applied, pos };
+  }
+
+  return undefined;
+}
+
+/** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`; anything that is not a callable global → undefined. */
+function bareCall(callee: Node, param: string, pos: number): object | undefined {
+  const arg = { type: "Ident", name: param, pos };
+  if (callee.type === "Ident" && typeof callee.name === "string") {
+    if (!isGlobalName(callee.name) || !isCallable(callee.name) || newKeywordOf(callee.name) === "required")
+      return undefined;
+    return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
+  }
+  if (callee.type === "MemberAccess" && isNode(callee.object) && callee.object.type === "Ident") {
+    const ns = callee.object.name;
+    if (typeof ns !== "string" || !namespaceNames().has(ns) || typeof callee.name !== "string") return undefined;
+    return { type: "MethodCall", object: { ...callee.object }, name: callee.name, args: [arg], optional: false, pos };
+  }
   return undefined;
 }
 
@@ -476,6 +583,9 @@ export const RULES: readonly Rule[] = [
   // or `asArrayLiteral`, never both.
   mutatorTwin,
   mutatorSpread,
+  // Independent of the two above: a row carries a twin, an array-literal order or a write form, never two.
+  mutatorForm,
+  mutatedArgument,
   // AFTER mutatorSpread: a statement mutator spreads its receiver, and this rule reads none.
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of

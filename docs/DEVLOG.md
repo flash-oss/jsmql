@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the statement mutators state their write form; `assert` and `Object.assign` as statements
+
+The statement target's pending list is empty. `.pop()`, `.shift()`, `.fill()` and `.copyWithin()` — the mutators with no same-argument twin — state their WRITE FORM on the row (`mutatorForm`): JSMQL source by argument count, `_r` the receiver, `_0`… the arguments. A new desugar rule parses the form with the compiler's own parser and writes it back to the receiver, so `$.a.pop();` IS `$.a = $.a.slice(0, -1);` and reaches the same value cells a developer's spelling would — negative indices included, which the shipped direct lowerings did not honour (`.fill(9, -1)`, `.copyWithin(-1, 0)`). The form spreads the receiver into an array literal (`[..._r]`), which lowers to the bare field path and proves the receiver an array — `.pop()` exists on an array alone — so the value cells take the array branch without the runtime type dispatch an unproven receiver otherwise gets. Each form is compared with JavaScript's own answer over the fixture on mongod in `test/compiler-sugars.test.ts`. A count the row does not state is the arity error, worded from the row's `sig`.
+
+**A binding is a mutator's target too**, and a mutator may write a `const` — JavaScript allows the mutation, only the rebinding is refused — so the desugar marks its own writes (`mutates` on the assignment) and the emitter's const check reads the mark. A mutator on a receiver that is neither a field nor a binding (`$.s.trim().sort();`, `[1, 2].reverse();`) is refused with the place to write; a spread argument to a statement call (`assert(...$.flags)`) is refused like every spread a rule does not read as a list; and a function the program declared wins over the `assert` global.
+
+**A bare callable global is the arrow that applies it.** `.map(String)`, `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — the `bareCallable` slot form the rows already listed had no rewrite behind it, so every one was refused as "not an arrow". The shorthand rule now builds `x => String(x)` for a callable global (never a name that needs `new`, never a binding) on the slots whose row states the form. The shape of a program is read off the PARSED program, since an entry picks the desugar root from it.
+
+**`Object.assign($.o, x);` writes its target** through the row's existing `mutatesArgumentAt` fact (a second desugar rule), and **`assert(condition[, message]);`** is the row's own statement cell: a `$match` whose `$expr` converts `true` to a type named by the outcome, so the server's refusal carries the message (measured). The condition is read as a truth, like every JavaScript spelling. `reverse` / `sort` / `splice` / `unshift` / `assign` and the bare `$` / `$# DEVLOG
+
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+
+**Conventions.**
+- Newest entry on top.
+- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
+- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
+- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+ / `$$` statements are stated as in-code cells (the desugar rules and statement.ts own them). `StageIn` gains `truth`.
+
+---
+
 ## 2026-09-05 — feat(compiler): the accumulator aliases — `.sum()` and its siblings inside `$group` and `$setWindowFields`
 
 The sixteen `group` / `window` cells of the JavaScript aggregates are stated: `$.a.sum()` in a `$group` output field is `{ $sum: "$a" }`, `.mean()` is `$avg`, `.max()` / `.min()` their operators, `.first()` / `.head()` are `$first` and `.last()` is `$last`; the same seven inside `$setWindowFields.output` are the window operators. `GroupIn` now carries the receiver and the `iteratee` service, since an alias reads the receiver where an operator call reads its argument.

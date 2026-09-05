@@ -16,7 +16,10 @@ import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import {
+  arrayLiteralOrderOf,
   forbiddenInOf,
+  immutableTwinOf,
+  mutatorFormOf,
   isStageName,
   onlyOf,
   replacesDocumentOf,
@@ -32,11 +35,11 @@ import { bindingSlot } from "../../namespace.ts";
 import * as E from "./errors.ts";
 import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
-import { locate, lowerValue, provideJoin } from "./lower.ts";
+import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
-import { select, type Receiver } from "./select.ts";
+import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
@@ -150,6 +153,7 @@ function hasLet(stage: string): boolean {
 /** The services a stage cell reads: each reading of an argument this file can give. */
 const READ = {
   value: readIn,
+  truth: lowerTruth,
   /** Total: a predicate with no native query form arrives as `{ $expr: … }`. */
   predicate: (body: Expr, env: Env): QueryDoc => lowerFilter(body, env.at(FILTER)),
   reshape: lowerValue,
@@ -361,11 +365,12 @@ function targetPath(op: UpdateOp, env: Env): string {
     const b = env.lookup(t.name, t.pos);
     if (b.ref.kind === "field" || (b.ref.kind === "dropped" && b.ref.replaced)) {
       // A `let` a stage dropped is written again into its slot — see `revived`.
-      if (!b.mutable) throw E.constReassigned(t.name, op.pos);
+      if (!b.mutable && !("mutates" in op && op.mutates === true)) throw E.constReassigned(t.name, op.pos);
       return fieldSlot(bindingSlot(t.name)).path;
     }
     if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, t.pos);
   }
+  if (t.type === "Ident") throw new E.UnknownIdentifierError(t.name, t.pos);
   if (t.type === "CollectionRef") return STREAM_TARGET;
   throw E.notAWriteTarget(op.pos);
 }
@@ -809,11 +814,24 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   } else {
     args = "args" in node ? (node.args as readonly Expr[]) : [];
   }
+  // A function the program declared wins over the global of the same name; a call of it is a value.
+  if (node.type === "CallExpression" && node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
+    throw E.notAStatement(node.pos);
+  }
+  // A mutator writes its receiver; one on a receiver that is neither a field nor a binding has nowhere to write.
+  if (
+    node.type === "MethodCall" &&
+    (immutableTwinOf(name) !== undefined ||
+      arrayLiteralOrderOf(name) !== undefined ||
+      mutatorFormOf(name) !== undefined)
+  ) {
+    throw E.mutatorNeedsField(name, node.pos);
+  }
   const verdict = consult(name, "statement");
-  const sel = select(verdict, { kind: "none" }, { kind: "multiple" }, args.length);
+  const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
-    throw E.refusalFor(sel, `'${name}'`, "", "statement", node.pos, []);
+    throw E.refusalFor(sel, name, "", "statement", node.pos, []);
   }
   const bodyRule = stageBodyRuleOf(name);
   checkSlots(name, sel.rule.args, args, bodyRule !== undefined);

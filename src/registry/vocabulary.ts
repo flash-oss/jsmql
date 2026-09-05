@@ -583,21 +583,12 @@ export type Arity = {
 };
 
 /**
- * One accepted spelling of an argument slot. See `Arity.slotForms`.
- *
- * `bareCallable` is narrower than it looks — only the unary Math methods may be
- * handed over unapplied:
- *   $.items.map(Math.floor)  → accepted
- *   $.items.map(Math.asinh)  → refused, though it is equally unary
- * so a row that lists this form still states its own set beside it.
- */
-/**
  * One spelling that stands in for the arrow in an iteratee slot.
  *
  *   propertyPath         $.rows.uniqBy("id")             means `r => r.id`
  *   matchesObject        $.rows.filter({ active: true })  means `r => r.active === true`
  *   matchesPropertyPair  $.rows.filter(["a.b", 1])        means `r => r.a.b === 1`
- *   bareCallable         $.items.map(String)              handed over unapplied
+ *   bareCallable         $.items.map(String)              means `x => String(x)` (a callable global)
  *   omitted              $.rows.countBy()                 identity
  *
  * The arrow itself is not listed: every iteratee slot takes one, so naming it
@@ -968,6 +959,7 @@ export type StageIn = {
    */
   block: (cb: Expr) => Stage[];
   value: (e: Expr) => unknown;
+  truth: (e: Expr) => Truth;
   /**
    * A sort argument as the `{ field: 1 | -1 }` document a `$sort` takes: a name,
    * a list of names, a `{ field: dir }` spec, a key function or a comparator.
@@ -993,6 +985,20 @@ export type GroupIn = {
   value: (e: Expr) => unknown;
   iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
 };
+
+/**
+ * A mutator's WRITE FORM: the JSMQL expression its statement means, by argument
+ * count, with `_r` for the receiver and `_0`, `_1`, … for the arguments as
+ * written. The desugar pass parses the form and writes it back to the receiver:
+ *   $.a.pop();        { 0: "[..._r].slice(0, -1)" }   → $.a = [...$.a].slice(0, -1);
+ * The receiver is spread into an array literal on purpose: `.pop()` exists on an
+ * array alone, so the form states what the spelling proved, and the value cells
+ * take the array branch without a runtime type dispatch (`[...$.a]` lowers to
+ * `"$a"`, so the proof costs nothing).
+ * Stated as source so a reader sees exactly what the statement means, and so the
+ * form reaches the same value cells as the spelling a developer would write.
+ */
+export type MutatorForm = { readonly sig: string; readonly by: Readonly<Record<number, string>> };
 
 export type SugarIn = {
   /** This entry's own key. See FilterIn.name. */

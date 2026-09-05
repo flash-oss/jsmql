@@ -12,10 +12,16 @@ import { edge, STATEMENT } from "../src/compiler/passes/position.ts";
 import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
 /** The tree, with source offsets erased — two spellings sit at different columns. */
-const shape = (src: string): string => JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : v));
+// `mutates` is the emitter's note that a write came from a mutator, not part of what the source means.
+const shape = (src: string): string =>
+  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "mutates" ? undefined : v));
 
 /** Each pair: the sugar, and the source it MEANS. */
 const EQUIVALENT: [string, string][] = [
+  // a bare callable global is the arrow that applies it
+  ["$.items.map(String)", "$.items.map(x => String(x))"],
+  ["$.items.filter(Boolean)", "$.items.filter(x => Boolean(x))"],
+  ["$.items.map(Math.abs)", "$.items.map(x => Math.abs(x))"],
   // compound assignment on a field
   ["$.a += 1;", "$.a = $.a + 1;"],
   ["$.a -= 2;", "$.a = $.a - 2;"],
@@ -191,12 +197,15 @@ describe("compiler/passes/desugar — a mutator is rewritten ONLY as a statement
     expect(became("$$.sort({ x: 1 });")).toBe("MethodCall");
   });
 
-  it("declines a mutator with no same-argument immutable spelling", () => {
+  it("writes a mutator with no same-argument twin through the form its row states", () => {
     // `.toSpliced(-1, 1)` computes what `.pop()` does, but from arguments the
-    // caller never wrote — so these four are lowered directly instead.
-    for (const src of ["$.items.pop();", "$.items.shift();", "$.items.fill(0);", "$.items.copyWithin(0, 3);"]) {
-      expect(became(src), src).toBe("MethodCall");
-    }
+    // caller never wrote — so the row states the write form instead, and the
+    // receiver is spread to prove it an array.
+    expect(became("$.items.pop();")).toBe("write(MethodCall)");
+    expect(became("$.items.shift();")).toBe("write(MethodCall)");
+    expect(became("$.items.fill(0);")).toBe("write(MethodCall)");
+    expect(became("$.items.copyWithin(0, 3);")).toBe("write(ArrayLiteral)");
+    expect(() => became("$.items.pop(1);")).toThrow(/'\.pop\(\)' takes exactly 0 arguments, got 1/);
   });
 });
 
@@ -306,11 +315,13 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
     expect(arg('Object.groupBy($.items, ["a", 1])', 1)).toBe("ArrayLiteral");
   });
 
-  it("leaves a bare callable alone, because rewriting it would WIDEN the language", () => {
-    // `$.items.map(Math.asinh)` is refused unapplied and accepted as
-    // `x => Math.asinh(x)`. Which callables may be passed bare is the row's call.
-    expect(arg("$.items.map(Number)")).toBe("Ident");
-    expect(arg("$.items.map(Math.floor)")).toBe("MemberAccess");
+  it("applies a bare callable global, and leaves a name that needs `new` or a binding alone", () => {
+    // Which slots take a bare callable is the row's decision (`iterateeSlots`); the
+    // rewrite only knows a callable global from everything else.
+    expect(arg("$.items.map(Number)")).toBe("Lambda");
+    expect(arg("$.items.map(Math.floor)")).toBe("Lambda");
+    expect(arg("$.items.map(Date)")).toBe("Ident");
+    expect(arg("$.items.map(f)")).toBe("Ident");
   });
 
   it("does not capture a name the rewritten value mentions", () => {

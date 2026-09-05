@@ -346,6 +346,7 @@ export function filterInputs(
 /** The three readings a STAGE cell asks of an argument, supplied by statement.ts. */
 export type StageReader = {
   value: (node: Expr, env: Env) => unknown;
+  truth: (node: Expr, env: Env) => Truth;
   predicate: (body: Expr, env: Env) => QueryDoc;
   reshape: (body: Expr, env: Env) => unknown;
   /** The statements of a stage-block callback, under the env the parameter is bound in. */
@@ -422,6 +423,7 @@ export function stageInputs(
     args,
     keys,
     value: (e) => read.value(e, argEnv),
+    truth: (e) => read.truth(e, argEnv),
     predicate: (cb) => {
       const b = body(cb, "a predicate");
       return read.predicate(b.body, b.env);

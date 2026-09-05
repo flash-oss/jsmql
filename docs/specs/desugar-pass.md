@@ -43,6 +43,8 @@ recognises, in what order, and the constraints that order must respect.
 | field path | `$.a.b` | one `FieldRef` holding `a.b` |
 | mutator with a twin | `$.items.sort();` | `$.items = $.items.toSorted();` |
 | mutator as a literal | `$.items.push(9);` | `$.items = [...$.items, 9];` |
+| mutator with a write form | `$.items.pop();` | `$.items = $.items.slice(0, -1);` — the row's `mutatorForm`, JSMQL by argument count |
+| mutated argument | `Object.assign($.o, x);` | `$.o = Object.assign($.o, x);` — the row's `mutatesArgumentAt` |
 | iteratee shorthand | `$.items.filter({ a: 1 })` | `$.items.filter(x => x.a === 1)` |
 | spread pack | `Math.max(...$.a, 1)` | `Math.max([...$.a, 1])` — one list, for a rule that reads one (`args.spread`) |
 
@@ -97,6 +99,27 @@ The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)` an
 Declining a non-path receiver is also what keeps `$$.push(…)` (`$unionWith`) and
 `$$.sort(…)` (`$sort`) out of a rule meant for fields.
 
+**A mutator with neither a twin nor a literal shape states its WRITE FORM** —
+JSMQL source by argument count, `_r` the receiver and `_0`, `_1`, … the
+arguments as written (`mutatorForm` on the row). The pass parses the form with
+the compiler's own parser and writes it back to the receiver, so the statement
+reaches exactly the value cells a developer's own spelling would, negative
+indices included: `.fill(v, s, e)` is three slices, the middle one mapped to
+`v`, and `.copyWithin(t, s, e)` the head, the copied run cut to what fits, and
+the tail from where the run ends. A count the row does not state is the arity
+error, worded from the row's `sig`.
+
+```
+$.a.pop();          → $.a = $.a.slice(0, -1);
+$.a.shift();        → $.a = $.a.slice(1);
+$.a.fill(0);        → $.a = $.a.map(() => 0);
+$.a.fill(9, 1, 2);  → $.a = [...$.a.slice(0, 1), ...$.a.slice(1, 2).map(() => 9), ...$.a.slice($.a.slice(0, 1).length + $.a.slice(1, 2).length)];
+```
+
+**A name that writes one of its arguments in place** (`mutatesArgumentAt`) is, as
+a statement, a write of that argument with the call as the value:
+`Object.assign($.o, x);` → `$.o = Object.assign($.o, x);`.
+
 ## The iteratee shorthands
 
 A shorthand is a shorter spelling of an arrow, so rewriting it is the plainest
@@ -131,9 +154,12 @@ answers for one link.
 | `{f: 1}` | `$.items.filter({f: 1})` → a matcher | `$.items.toSorted({f: 1})` → a DIRECTION |
 | `["a", "b"]` | `$.items.find(["a", "b"])` → a path/value pair | `$.items.toSorted(["a", "b"])` → two sort keys |
 
-`bareCallable` is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
-unapplied and accepted as `x => Math.asinh(x)`, so a rewrite would widen the
-language — which callables may be passed bare is the row's call, in `asReference`.
+`bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
+`$.items.filter(Boolean)`, `$.items.map(Math.abs)`, `$.items.map(ObjectId)` — and
+means the arrow that applies it to the element, `x => String(x)`. Which slots take
+it is the row's decision (`iterateeSlots`); the rewrite only knows a callable
+global from a binding, and a name that needs `new` (`Date`) is not callable bare,
+so both stay as written and the emitter refuses them.
 
 The synthesised parameter cannot capture: it steps aside from any name the values
 spliced into the body mention. See `freshParam`.
@@ -321,9 +347,12 @@ answers for one link.
 | `{f: 1}` | `$.items.filter({f: 1})` → a matcher | `$.items.toSorted({f: 1})` → a DIRECTION |
 | `["a", "b"]` | `$.items.find(["a", "b"])` → a path/value pair | `$.items.toSorted(["a", "b"])` → two sort keys |
 
-`bareCallable` is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
-unapplied and accepted as `x => Math.asinh(x)`, so a rewrite would widen the
-language — which callables may be passed bare is the row's call, in `asReference`.
+`bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
+`$.items.filter(Boolean)`, `$.items.map(Math.abs)`, `$.items.map(ObjectId)` — and
+means the arrow that applies it to the element, `x => String(x)`. Which slots take
+it is the row's decision (`iterateeSlots`); the rewrite only knows a callable
+global from a binding, and a name that needs `new` (`Date`) is not callable bare,
+so both stay as written and the emitter refuses them.
 
 The synthesised parameter cannot capture: it steps aside from any name the values
 spliced into the body mention. See `freshParam`.
