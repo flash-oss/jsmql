@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): facet, union, out, the source stages and declared functions
+
+The statement target's pending list is nearly empty: only the reducer wrap (`$$ = [{ k: $$.reduce(…) }]`) remains. Five constructs landed, each measured against the shipped compiler's output and run on mongod 8.3.7.
+
+**`$ = { k: $$.filter(…), … }` is a `$facet`**, one branch per chain on the stream, lowered under a `$facet` boundary so the row's `forbiddenIn` refuses a `$out` or a nested `$facet` inside — the shipped compiler emitted the nested one and the server refused it. Branch names take the server's field rules (not empty, no `.`, no leading `$`), which the shipped compiler did not check. A bare `$$` is the stream unchanged. A chain on `$$` assigned to a FIELD is refused as "not a value", naming the facet form.
+
+**`$$.push(…)` and `.concat(…)` are `$unionWith`**, one stage per source in order, with JavaScript's spread rule: an array spreads (`...$$$.c`, `...$$$.c.filter(p)`), one document does not (`$$$.c.find(p)`, a literal), and the wrong one is refused with the other spelling. The rows state `unions`. A `$unionWith` body has no `let` (measured: `IDLUnknownField`), and `$documents` runs over nothing, so `$$.push({ a: $.a })` is refused where the shipped compiler emitted `{}` silently. `$$.push` inside a body over another collection is refused — `$$` is the root stream — and `coll.concat(…)` there unions into the body's stream, which the server runs.
+
+**`$$$.<coll> = <stream>` and `$$$$.<db>.<coll> = <stream>` are `$out`**, filed as the pipeline's last stage, the target constant, one name (or `{ db, coll }`), not empty and not `$`-led — the shipped compiler emitted `{ $out: "" }` and `{ $out: "$x" }`, both refused by the server.
+
+**The source stages** run their rows' own statement cells, with the receiver checked against the sigil the row's `on` states: `$$$$.indexStats()` is refused naming `stream`. **A declared function** binds its name and emits nothing; each call inlines the body.
+
 ## 2026-09-05 — feat(compiler): the join road — `$$$.<coll>.<chain>` as `$lookup`, one route
 
 A read of another collection leaves the statement target's pending list: `$.o = $$$.orders.filter(o => o.userId === $._id)` and its kin lower in every position a chain may stand — a bare write, a `let`, inside a value, the stream switch `$$ = …`, the root replace `$ = ….find(…)`. Three decisions shaped it, each measured on mongod 8.3.7 first.

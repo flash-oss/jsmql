@@ -425,6 +425,41 @@ root count, materialised on the root pipeline and carried in by `let`, and
 whose close runs its own cleanup, so no scratch leaks into the joined array (the
 shipped compiler leaked `__jsmql.tmp` there).
 
+### The facet, union and out roads, the source stages, and declared functions
+
+**`$ = { k: <$$ chain>, … }` is a `$facet`** (`statement.ts`, `facetStages`): one
+branch per entry, each the stages its chain means under a `$facet` boundary, so a
+`$out` or a second `$facet` inside is refused by the row's `forbiddenIn`. Every
+entry must be a chain on `$$` — a value among branches is refused naming the key —
+and a bare `$$` is the stream unchanged (`[]`). Branch names follow the server's
+field rules (not empty, no `.`, no leading `$`; measured). The facet is a document-
+replacing stage, so the bindings end with it. A chain on `$$` anywhere else than
+the root replace is refused as "not a value", pointing at the facet form.
+
+**`$$.push(…)` and `.concat(…)` are `$unionWith`** (`emit/union.ts`), one stage
+per source in order: `...$$$.c` is `{ $unionWith: "c" }`, `...$$$.c.filter(p)` is
+the collection with its pipeline, `$$$.c.find(p)` (no spread) the same with
+`$limit: 1`, and a run of documents one `$documents`. JavaScript's spread rule
+holds — an array spreads, one document does not — and the wrong one is refused
+with the other spelling. The rows state `unions`. A `$unionWith` body has no `let`
+(measured), so a read of the outer document inside it is refused where it reads;
+`$documents` runs over nothing, so `{ a: $.a }` there is refused the same way.
+
+**`$$$.<coll> = <stream>` and `$$$$.<db>.<coll> = <stream>` are `$out`**
+(`outStages`): the stream's stages, then the write, filed as the pipeline's last
+stage — so the `__jsmql` cleanup precedes it and nothing can follow it. The right
+side must be `$$` or a chain on it; the target one name for the current database
+(`{ db, coll }` for another), constant, not empty, not `$`-led (measured).
+
+**The source stages** — `$$.indexStats()`, `$$$$.currentOp(…)` and their kind —
+run each row's own statement cell (`refStatement`), with the receiver checked
+against the sigil the row's `on` states, so `$$$$.indexStats()` is refused naming
+`stream`. They are first-stage-only by their rows' `only`.
+
+**A declared function** binds its name to its body and emits no stage; a call
+inlines the body as a `$let` (`lower.ts`, `applyLambda`). A second declaration in
+one block is refused, as JavaScript refuses it.
+
 ## What has no value
 
 `undefined` (compare with it instead), a regex outside its methods, a lambda

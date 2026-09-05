@@ -500,7 +500,7 @@ describe("compiler/emit/join — the refusals name the way out", () => {
     expect(() => expr("$$$.orders.filter(o => o.a > 1).length")).toThrow(/needs Pipeline mode|pipeline/i);
   });
   it("the collection is named when the pipeline is written, in the current database", () => {
-    expect(() => pipeline("$.o = $$$[$.name].find(o => o.a > 1);")).toThrow(/fixed when the pipeline is written/);
+    expect(() => pipeline("$.o = $$$[$.name].find(o => o.a > 1);")).toThrow(/named when the pipeline is written/);
     expect(() => pipeline('$.o = $$$[""].find(o => o.a > 1);')).toThrow(/names no collection/);
     expect(() => pipeline("$.o = $$$$.db.orders.find(o => o.a > 1);")).toThrow(/another DATABASE/);
     // a name that is not an identifier is spelled with brackets

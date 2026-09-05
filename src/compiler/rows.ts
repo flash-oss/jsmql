@@ -369,6 +369,11 @@ export function picksOneOf(name: string): string | null {
   return (row(name) as { picksOne?: string } | undefined)?.picksOne ?? null;
 }
 
+/** Does this method UNION documents into the stream — `push` as a statement, `concat` as a link? */
+export function unionsOf(name: string): boolean {
+  return (row(name) as { unions?: true } | undefined)?.unions === true;
+}
+
 /** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
 export function collapsesOf(name: string): true | "withFieldName" | null {
   return (row(name) as { collapses?: true | "withFieldName" } | undefined)?.collapses ?? null;

@@ -31,7 +31,7 @@ import { mutatedArgumentOf } from "../rows.ts";
 import { asLiteral } from "./literal.ts";
 import type { Constants } from "./evaluate.ts";
 import { asDeclaredFunction, evaluate } from "./evaluate.ts";
-import { bindsFor, namesSomething } from "./naming.ts";
+import { bindsFor, declaredIn, namesSomething } from "./naming.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
 import { mapTree, mapTreeIn } from "./walk.ts";
@@ -95,10 +95,18 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
     for (const name of freeNamesIn(stmt as Any)) readSoFar.add(name);
   }
 
+  // A function whose body reads its OWN name, or a name declared only later, is
+  // not settled here: substituting it would never end (recursion) or would carry
+  // a name that has no value yet. It stays a binding, inlined where it is called,
+  // and the recursion is refused there. A call of an EARLIER function folds.
+  const order = declaredIn(stmts);
   for (const stmt of stmts) {
     if (stmt.type === "LetDecl" || stmt.type === "FuncDecl") {
       if (declared.has(stmt.name)) excluded.add(stmt.name);
       declared.add(stmt.name);
+      const body = (stmt.type === "LetDecl" ? (stmt as Any).value : (stmt as Any).lambda) as Any | undefined;
+      const later = new Set(order.slice(order.indexOf(stmt.name)));
+      if (body?.type === "Lambda" && [...freeNamesIn(body)].some((n) => later.has(n))) excluded.add(stmt.name);
     }
     // Walked WITH positions, because one of the tests below is about position:
     // a call that IS a statement mutates its receiver — `a.sort();` is the whole

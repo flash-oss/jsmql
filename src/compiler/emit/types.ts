@@ -95,6 +95,11 @@ export function kindOf(node: Expr, env: Env): Known {
       // An applied arrow `((x) => x > 1)(5)` is its body — the body's kind is provable
       // wherever it does not hang on a parameter.
       if (node.callee.type === "Lambda" && node.callee.body !== undefined) return kindOf(node.callee.body, env);
+      if (node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
+        const b = env.lookup(node.callee.name, node.callee.pos);
+        if (b.ref.kind === "function" && b.ref.lambda.type === "Lambda" && b.ref.lambda.body !== undefined)
+          return kindOf(b.ref.lambda.body, env);
+      }
       return node.callee.type === "Ident" && !env.scope.has(node.callee.name)
         ? resolveReturns(returnsOf(node.callee.name), "unknown", null)
         : "unknown";

@@ -133,6 +133,8 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * one document, which IS the value.
    */
   collapses?: true | "withFieldName";
+  /** On the stream this method UNIONS documents in — `push` as a statement, `concat` as a link — a `$unionWith` per source. */
+  unions?: true;
   params?: CallbackParams;
   /**
    * The argument slots that take an ITERATEE — a function of one element — and
@@ -6231,6 +6233,7 @@ export const NAMES = {
   }),
 
   concat: name({
+    unions: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "string", "stream"],
@@ -6238,7 +6241,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: pending("src/methods/", { sig: "...items", atLeast: 1, spread: true }),
-    stream: pending("src/stream-methods.ts"),
+    stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
       "'.concat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.concat();'",
     ),
@@ -6809,6 +6812,7 @@ export const NAMES = {
   }),
 
   push: name({
+    unions: true,
     doc: "'.push()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -6822,7 +6826,7 @@ export const NAMES = {
       ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
     stream: because("appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'."),
-    statement: pending("src/pipeline.ts"),
+    statement: inCode("src/compiler/emit/union.ts"),
     group: unsupported("'.push()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.push()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
@@ -9942,7 +9946,10 @@ export const NAMES = {
     ),
     expr: unsupported("'collStats()' is a source stage, not a value."),
     stream: unsupported("'collStats()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'collStats()' is a source stage, not an accumulator."),
     window: unsupported("'collStats()' is a source stage, not a window function."),
   }),
@@ -9959,7 +9966,10 @@ export const NAMES = {
     ),
     expr: unsupported("'indexStats()' is a source stage, not a value."),
     stream: unsupported("'indexStats()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'indexStats()' is a source stage, not an accumulator."),
     window: unsupported("'indexStats()' is a source stage, not a window function."),
   }),
@@ -9976,7 +9986,10 @@ export const NAMES = {
     ),
     expr: unsupported("'listSearchIndexes()' is a source stage, not a value."),
     stream: unsupported("'listSearchIndexes()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'listSearchIndexes()' is a source stage, not an accumulator."),
     window: unsupported("'listSearchIndexes()' is a source stage, not a window function."),
   }),
@@ -9993,7 +10006,10 @@ export const NAMES = {
     ),
     expr: unsupported("'planCacheStats()' is a source stage, not a value."),
     stream: unsupported("'planCacheStats()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'planCacheStats()' is a source stage, not an accumulator."),
     window: unsupported("'planCacheStats()' is a source stage, not a window function."),
   }),
@@ -10010,7 +10026,10 @@ export const NAMES = {
     ),
     expr: unsupported("'currentOp()' is a source stage, not a value."),
     stream: unsupported("'currentOp()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'currentOp()' is a source stage, not an accumulator."),
     window: unsupported("'currentOp()' is a source stage, not a window function."),
   }),
@@ -10027,7 +10046,10 @@ export const NAMES = {
     ),
     expr: unsupported("'listLocalSessions()' is a source stage, not a value."),
     stream: unsupported("'listLocalSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'listLocalSessions()' is a source stage, not an accumulator."),
     window: unsupported("'listLocalSessions()' is a source stage, not a window function."),
   }),
@@ -10044,7 +10066,10 @@ export const NAMES = {
     ),
     expr: unsupported("'listSampledQueries()' is a source stage, not a value."),
     stream: unsupported("'listSampledQueries()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'listSampledQueries()' is a source stage, not an accumulator."),
     window: unsupported("'listSampledQueries()' is a source stage, not a window function."),
   }),
@@ -10061,7 +10086,10 @@ export const NAMES = {
     ),
     expr: unsupported("'listSessions()' is a source stage, not a value."),
     stream: unsupported("'listSessions()' must be the pipeline's first stage, so it cannot be a chain link."),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'listSessions()' is a source stage, not an accumulator."),
     window: unsupported("'listSessions()' is a source stage, not a window function."),
   }),
@@ -10080,7 +10108,10 @@ export const NAMES = {
     stream: unsupported(
       "'shardedDataDistribution()' must be the pipeline's first stage, so it cannot be a chain link.",
     ),
-    statement: pending("src/system-stage-translation.ts"),
+    statement: {
+      args: { sig: "[options]", allowed: [0, 1], slotType: { 0: "object" } },
+      emit: ({ name, args, value }) => [{ ["$" + name]: args.length === 0 ? {} : value(args[0]) }],
+    },
     group: unsupported("'shardedDataDistribution()' is a source stage, not an accumulator."),
     window: unsupported("'shardedDataDistribution()' is a source stage, not a window function."),
   }),

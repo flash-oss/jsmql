@@ -1,0 +1,302 @@
+// Phase 5 of src/compiler/ — the destination-visible sugars and the source stages:
+//
+//   $ = { k: $$.filter(…), … }        a $facet, one branch per chain on the stream
+//   $$.push(…) / .concat(…)           a $unionWith per source, in order
+//   $$$.<coll> = $$.…  / $$$$.<db>.<coll> = $$.…   the stream written out ($out)
+//   $$.indexStats() / $$$$.currentOp(…)             the source stages, scoped by sigil
+//   function f(x) { return … }                      a name for a body, inlined at each call
+//
+// The server half runs every read-only pipeline this file asserts on a live
+// mongod and compares the documents that come back; the `$out` pipelines are run
+// and the target collection read. Self-skips (green) when no mongod is reachable,
+// with the all-or-nothing guard.
+
+import { afterAll, beforeAll, describe, expect, it } from "vitest";
+import { MongoClient, type Db } from "mongodb";
+import { pipeline } from "../src/compiler/index.ts";
+
+const URI = "mongodb://127.0.0.1:27017";
+
+const MAIN = [
+  { _id: 1, a: 1, tag: "t1" },
+  { _id: 2, a: 2, tag: "t2" },
+  { _id: 3, a: 3, tag: "t1" },
+];
+const ARCHIVE = [
+  { _id: 10, a: 10, tag: "t1" },
+  { _id: 20, a: 20, tag: "t9" },
+];
+
+type Run = { src: string; expected?: unknown; reads?: string };
+const RUNS: Run[] = [];
+const compiled = (src: string, expected?: unknown, reads?: string): unknown[] => {
+  RUNS.push({ src, expected, reads });
+  return pipeline(src);
+};
+const ARR = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
+
+describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
+  it("makes one branch per chain on the stream, each the chain's stages", () => {
+    expect(
+      compiled('$ = { big: $$.filter(o => o.a > 1), all: $$.take(10), n: $$.$count("n") };', [
+        { big: [2, 3], all: [1, 2, 3], n: [{ n: 3 }] },
+      ]),
+    ).toEqual([
+      {
+        $facet: {
+          big: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }],
+          all: [{ $limit: 10 }],
+          n: [{ $count: "n" }],
+        },
+      },
+    ]);
+    // the root document is the branch's document, at every depth (HR4)
+    expect(compiled("$ = { t1: $$.filter(o => $.tag === 't1') };", [{ t1: [1, 3] }])).toEqual([
+      { $facet: { t1: [{ $match: { tag: ARR("t1") } }] } },
+    ]);
+    // a bare `$$` is the stream unchanged; a block is its stages
+    expect(
+      compiled("$ = { all: $$, agg: $$.aggregate(o => { $match(o.a > 1); o.y = o.a * 2; }) };", [
+        {
+          all: [1, 2, 3],
+          agg: [
+            { _id: 2, y: 4 },
+            { _id: 3, y: 6 },
+          ],
+        },
+      ]),
+    ).toEqual([
+      {
+        $facet: {
+          all: [],
+          agg: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }, { $set: { y: { $multiply: ["$a", 2] } } }],
+        },
+      },
+    ]);
+    // a `let` before it is dropped — the stage replaces the document
+    expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/can't be read after `\$facet`/);
+  });
+
+  it("refuses what no server accepts, naming the way out", () => {
+    expect(() => pipeline("$ = { a: $$.filter(o => o.a > 1), lit: 1 };")).toThrow(/every entry must be one: 'lit'/);
+    expect(() => pipeline('$ = { "a.b": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
+    expect(() => pipeline('$ = { "$big": $$.take(1) };')).toThrow(/cannot name a '\$facet' branch/);
+    // measured: `$facet is not allowed to be used within a $facet stage`, `$out is not allowed … within a $facet`
+    expect(() => pipeline("$ = { outer: $$.aggregate(o => { $ = { inner: $$.take(1) }; }) };")).toThrow(
+      /'\$facet' cannot stand inside '\$facet'/,
+    );
+    expect(() => pipeline('$ = { w: $$.$out("x") };')).toThrow(/'\$out' cannot stand inside '\$facet'/);
+    // a chain on the stream assigned to a FIELD is not a value
+    expect(() => pipeline("$.k = $$.filter(o => o.a > 1);")).toThrow(/not a value/);
+  });
+});
+
+describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", () => {
+  it("one stage per source, in order; documents batch into one $documents", () => {
+    expect(compiled("$$.push(...$$$.archive);", [1, 2, 3, 10, 20])).toEqual([{ $unionWith: "archive" }]);
+    expect(compiled("$$.push(...$$$.archive.filter(o => o.a > 10));", [1, 2, 3, 20])).toEqual([
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { a: { $gt: 10, $not: { $type: "array" } } } }] } },
+    ]);
+    expect(compiled("$$.push($$$.archive.find(o => o.a > 1));", [1, 2, 3, 10])).toEqual([
+      {
+        $unionWith: {
+          coll: "archive",
+          pipeline: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
+        },
+      },
+    ]);
+    expect(
+      compiled("$$.push({ a: 1 }, { b: 2 }, ...$$$.archive, { c: 3 });", [
+        1,
+        2,
+        3,
+        { a: 1 },
+        { b: 2 },
+        10,
+        20,
+        { c: 3 },
+      ]),
+    ).toEqual([
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { b: 2 }] }] } },
+      { $unionWith: "archive" },
+      { $unionWith: { pipeline: [{ $documents: [{ c: 3 }] }] } },
+    ]);
+    // `.concat` is the same, mid-chain
+    expect(compiled("$$.filter(o => o.a > 2).concat(...$$$.archive).take(2);", [3, 10])).toEqual([
+      { $match: { a: { $gt: 2, $not: { $type: "array" } } } },
+      { $unionWith: "archive" },
+      { $limit: 2 },
+    ]);
+  });
+
+  it("keeps JavaScript's spread rule, and knows $unionWith has no `let`", () => {
+    expect(() => pipeline("$$.push($$$.archive.filter(o => o.a > 1));")).toThrow(
+      /would push the whole array as one document/,
+    );
+    expect(() => pipeline("$$.push(...$$$.archive.find(o => o.a > 1));")).toThrow(
+      /gives ONE document, which JavaScript would not spread/,
+    );
+    expect(() => pipeline("$$.push(...$.items);")).toThrow(/Only another collection spreads/);
+    expect(() => pipeline("$$.push(5);")).toThrow(/this is a number/);
+    // `$documents` runs with no input document, and a `$unionWith` body has no `let` — measured
+    expect(() => pipeline("$$.push({ a: $.a });")).toThrow(/has no 'let'/);
+    expect(() => pipeline("$$.push(...$$$.archive.filter(o => o.tag === $.tag));")).toThrow(/has no 'let'/);
+    // `$$` is the root stream; a body over another collection names its own through the parameter
+    expect(() => pipeline("$.o = $$$.archive.aggregate(o => { $$.push({ a: 1 }); });")).toThrow(
+      /'\$\$' is the root stream/,
+    );
+    expect(compiled("$.o = $$$.archive.aggregate((o, _i, coll) => { coll.concat(...$$$.main); });")).toEqual([
+      { $lookup: { from: "archive", pipeline: [{ $unionWith: "main" }], as: "o" } },
+    ]);
+  });
+});
+
+describe("compiler/emit — `$$$.<coll> = <stream>` is $out", () => {
+  it("writes the stream, after its stages, as the last stage", () => {
+    expect(compiled("$$$.out_all = $$;", [1, 2, 3], "out_all")).toEqual([{ $out: "out_all" }]);
+    expect(compiled("$$$.out_big = $$.filter(o => o.a > 1).take(5);", [2, 3], "out_big")).toEqual([
+      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $limit: 5 },
+      { $out: "out_big" },
+    ]);
+    expect(compiled('$$$["out-dash"] = $$;', [1, 2, 3], "out-dash")).toEqual([{ $out: "out-dash" }]);
+    expect(pipeline("$$$$.jsmql_compiler_sugars_other.c = $$;")).toEqual([
+      { $out: { db: "jsmql_compiler_sugars_other", coll: "c" } },
+    ]);
+    // the cleanup precedes the write
+    expect(
+      compiled(
+        "let x = $.a; $.b = x; $$$.out_b = $$;",
+        [
+          { _id: 1, b: 1 },
+          { _id: 2, b: 2 },
+          { _id: 3, b: 3 },
+        ],
+        "out_b",
+      ),
+    ).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { b: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+      { $out: "out_b" },
+    ]);
+  });
+
+  it("refuses a target the server refuses, and a source that is not the stream", () => {
+    expect(() => pipeline("$$$.x = $$$.other;")).toThrow(/written from the stream/);
+    expect(() => pipeline("$$$.x = $.items;")).toThrow(/written from the stream/);
+    expect(() => pipeline("$$$.a.b = $$;")).toThrow(/too many segments/i);
+    expect(() => pipeline("$$$$.onlydb = $$;")).toThrow(/names a database/);
+    expect(() => pipeline("$$$[$.name] = $$;")).toThrow(/named when the pipeline is written/);
+    expect(() => pipeline('$$$[""] = $$;')).toThrow(/cannot name a collection to write/);
+    expect(() => pipeline('$$$["$x"] = $$;')).toThrow(/cannot name a collection to write/);
+    expect(() => pipeline("$$$.x = $$; $.y = 1;")).toThrow(/Nothing can follow '\$out'/);
+  });
+});
+
+describe("compiler/emit — the source stages, scoped by sigil", () => {
+  it("runs the row's stage, first, on the sigil the row states", () => {
+    expect(compiled("$$.indexStats();")).toEqual([{ $indexStats: {} }]);
+    expect(pipeline("$$$$.currentOp({ allUsers: true });")).toEqual([{ $currentOp: { allUsers: true } }]);
+    expect(pipeline("$$$$.listSessions();")).toEqual([{ $listSessions: {} }]);
+    expect(() => pipeline("$$$$.indexStats();")).toThrow(/is defined on 'stream'/);
+    expect(() => pipeline("$$.currentOp();")).toThrow(/is defined on 'cluster'/);
+    expect(() => pipeline("$match($.a > 1); $$.indexStats();")).toThrow(/has to be the FIRST stage/);
+  });
+});
+
+describe("compiler/emit — a declared function is a name for a body", () => {
+  it("inlines the body at each call, and is declared once per block", () => {
+    expect(
+      compiled("function tax(x) { return x * 1.1; } $.total = tax($.a);", [
+        { _id: 1, total: 1 * 1.1 },
+        { _id: 2, total: 2 * 1.1 },
+        { _id: 3, total: 3 * 1.1 },
+      ]),
+    ).toEqual([{ $set: { total: { $let: { vars: { x: "$a" }, in: { $multiply: ["$$x", 1.1] } } } } }]);
+    expect(() => pipeline("function f(x) { return x; } function f(y) { return y; }")).toThrow(
+      /already declared earlier in this block/,
+    );
+    expect(() => pipeline("function f(x) { return f(x) + 1; } $.y = f($.a);")).toThrow(/recurs/i);
+  });
+});
+
+// ── the server ───────────────────────────────────────────────────────────────
+
+let client: MongoClient | null = null;
+let db: Db | null = null;
+
+beforeAll(async () => {
+  try {
+    const c = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
+    await c.connect();
+    await c.db("admin").command({ ping: 1 });
+    client = c;
+    db = c.db("jsmql_compiler_sugars");
+    await db.dropDatabase();
+    await db.collection("main").insertMany(MAIN.map((d) => ({ ...d })));
+    await db.collection("archive").insertMany(ARCHIVE.map((d) => ({ ...d })));
+  } catch {
+    client = null;
+    db = null;
+  }
+});
+
+afterAll(async () => {
+  await client?.close();
+});
+
+/** A result reduced to what the pipeline added: a fixture document is its id, a facet branch a list of them. */
+const FIXTURE_KEYS = new Set(["a", "tag"]);
+const shrink = (v: unknown, top: boolean): unknown => {
+  if (Array.isArray(v)) return v.map((x) => shrink(x, false));
+  if (v !== null && typeof v === "object") {
+    const d = v as Record<string, unknown>;
+    if ("_id" in d && MAIN.concat(ARCHIVE).some((f) => f._id === d._id)) {
+      const added = Object.entries(d).filter(([k]) => k !== "_id" && !FIXTURE_KEYS.has(k));
+      if (added.length === 0) return d._id;
+      return { _id: d._id, ...Object.fromEntries(added) };
+    }
+    const out = Object.fromEntries(
+      Object.entries(d)
+        .filter(([k]) => k !== "_id")
+        .map(([k, x]) => [k, shrink(x, false)]),
+    );
+    return top ? out : out;
+  }
+  return v;
+};
+const canonical = (v: unknown): string =>
+  JSON.stringify(v, (_k, x) =>
+    x !== null && typeof x === "object" && !Array.isArray(x)
+      ? Object.fromEntries(Object.entries(x as Record<string, unknown>).sort(([a], [b]) => (a < b ? -1 : 1)))
+      : x,
+  );
+
+describe("compiler/emit — the server runs every pipeline this file asserts", () => {
+  it("ran each one, or none", async () => {
+    if (db === null) {
+      expect(RUNS.length).toBeGreaterThan(0);
+      return;
+    }
+    const problems: string[] = [];
+    for (const { src, expected, reads } of RUNS) {
+      let docs: Record<string, unknown>[];
+      try {
+        docs = await db
+          .collection("main")
+          .aggregate(pipeline(src) as Record<string, unknown>[])
+          .toArray();
+        if (reads !== undefined) docs = await db.collection(reads).find().sort({ _id: 1 }).toArray();
+      } catch (e) {
+        problems.push(`${src}\n  ${JSON.stringify(pipeline(src))}\n  ${(e as Error).message}`);
+        continue;
+      }
+      if (expected === undefined) continue;
+      const got = canonical(docs.map((d) => shrink(d, true)));
+      const want = canonical(expected);
+      if (got !== want) problems.push(`${src}\n  got  ${got}\n  want ${want}`);
+    }
+    expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
+  });
+});

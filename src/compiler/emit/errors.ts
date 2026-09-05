@@ -367,8 +367,6 @@ export const spreadInStageList = (pos: number): CodegenError =>
 export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = {
   "a function declaration": "src/codegen.ts",
   "the reducer wrap ('$$ = [{ k: $$.reduce(…) }]')": "src/stream-methods.ts",
-  "a read of the stream ('$$.filter(…)') as a value": "src/pipeline.ts",
-  "a write to another collection ('$$$.<coll> = …')": "src/out-translation.ts",
 };
 
 /** A statement form this compiler does not lower yet. See `PENDING_CONSTRUCTS`. */
@@ -507,7 +505,7 @@ export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
 /** `$$$$.<db>.<coll>.find(…)` — a `$lookup` reads the current database only. */
 export const crossDatabaseRead = (pos: number): CodegenError =>
   new CodegenError(
-    "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
+    "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     pos,
   );
 
@@ -525,10 +523,116 @@ export const rootStreamInForeign = (pos: number): CodegenError =>
     pos,
   );
 
+/** `$.k = $$.filter(…)` — a stream chain has no value; the root replace makes it a `$facet`. */
+export const streamAsValue = (pos: number): CodegenError =>
+  new CodegenError(
+    "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(…);'.",
+    pos,
+  );
+
+/** `$ = { k: $$.filter(…), other: 1 }` — every branch of a `$facet` is a stream. */
+export const facetMixed = (key: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: '${key}' is not a chain on '$$'. Make it one ('${key}: $$.filter(…)'), or move it out of the object.`,
+    pos,
+  );
+
+/** A `$facet` branch name the server refuses: empty, dotted, or `$`-led. */
+export const facetKey = (key: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${key}' cannot name a '$facet' branch — the server takes a plain field name: not empty, no '.', no leading '$'.`,
+    pos,
+  );
+
+export const unionNeedsArgument = (pos: number): CodegenError =>
+  new CodegenError(
+    "Nothing to add to the stream: give a document ('$$.push({ … })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
+    pos,
+  );
+
+/** `$ = { a: …, a: … }` — JavaScript keeps the last; two branches under one name is a lost branch. */
+export const facetDuplicate = (key: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${key}' names two '$facet' branches, and JavaScript would keep only the last. Give each branch its own name.`,
+    pos,
+  );
+
+export const facetSpread = (pos: number): CodegenError =>
+  new CodegenError(
+    "A '$facet' is written branch by branch; '...' cannot spread branches in. Name each one: '$ = { k: $$.filter(…) }'.",
+    pos,
+  );
+
+export const facetComputedKey = (pos: number): CodegenError =>
+  new CodegenError("A '$facet' branch is named when the pipeline is written: a plain key, not a computed one.", pos);
+
+/** `$$$.currentOp()` — the database has no source stage of its own. */
+export const noStageOnDatabase = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$$' is the database, and no stage runs on it alone: '.${name}()' runs on the collection ('$$.${name}()') or the cluster ('$$$$.${name}()') — its row says which.`,
+    pos,
+  );
+
+/** `$$.push(...$.items)` — only another collection spreads into the stream. */
+export const unionSpreadSource = (pos: number): CodegenError =>
+  new CodegenError(
+    "Only another collection spreads into the stream: '...$$$.<coll>' or '...$$$.<coll>.filter(pred)'. A document goes in on its own: '$$.push({ … })'.",
+    pos,
+  );
+
+/** `$$.push(...$$$.c.find(p))` — one document is not spread. */
+export const unionSpreadOfOne = (pos: number): CodegenError =>
+  new CodegenError(
+    "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+    pos,
+  );
+
+/** `$$.push($$$.c.filter(p))` — an array pushed whole would be one document. */
+export const unionNeedsSpread = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it — '$$.push(...$$$.<coll>.filter(pred))' — to push every match, or write '.find(pred)' for the first one.",
+    pos,
+  );
+
+/** `$$.push(5)` — a stream holds documents. */
+export const unionArg = (kind: string, pos: number): CodegenError =>
+  new CodegenError(
+    `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)').`,
+    pos,
+  );
+
+/** `$$$.c = $.x` — a collection is written from the stream. */
+export const outNeedsStream = (pos: number): CodegenError =>
+  new CodegenError(
+    "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+    pos,
+  );
+
+/** `$$$$.db = $$` — a database is not a destination. */
+export const outNeedsCollection = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$$$$.<db>' names a database; write the collection too: '$$$$.<db>.<coll> = $$' — or '$$$.<coll> = $$' for the current database.",
+    pos,
+  );
+
+/** `$$$.a.b = $$` — one segment names a collection of the current database. */
+export const outTooManySegments = (pos: number): CodegenError =>
+  new CodegenError(
+    "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
+    pos,
+  );
+
+/** `$$$[""] = $$` / `$$$["$x"] = $$` — a name the server refuses. */
+export const badOutTarget = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' cannot name a collection to write: the server refuses an empty name and one that starts with '$'.`,
+    pos,
+  );
+
 /** `$$$[$.name].find(…)` — the collection a `$lookup` reads is fixed when the pipeline is written. */
 export const collectionNameMustBeConstant = (pos: number): CodegenError =>
   new CodegenError(
-    "The collection to join is fixed when the pipeline is written: name it, '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
+    "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
     pos,
   );
 

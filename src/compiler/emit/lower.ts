@@ -519,7 +519,7 @@ function dispatchOn(
   // record, which has none of the readings a stream cell asks for; a property of
   // the stream (`$$.length`) is a value of its own and passes.
   if (node.type === "MethodCall" && receiver.kind === "stream" && position !== "stream" && position !== "statement") {
-    throw E.pendingStatement("a read of the stream ('$$.filter(…)') as a value", node.pos);
+    throw E.streamAsValue(node.pos);
   }
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
@@ -614,6 +614,8 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
         if (b.ref.lambda.type !== "Lambda") internalError("a function binding holds a non-lambda");
         return applyLambda(b.ref.lambda, node.args, env, node.pos, `Function '${callee.name}'`, callee.name);
       }
+      // a function's own name inside its body — the recursion refusal it was bound with
+      if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, node.pos);
       throw E.notCallable(node.pos);
     }
     if (isGlobalName(callee.name)) {

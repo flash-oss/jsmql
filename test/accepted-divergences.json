@@ -16820,9 +16820,9 @@
     "pipeline\u0000$ = { hi: $$.$match({ s: \"a\" }).$limit(2), lo: $$.filter(d => d.n < 5) };": {
       "entry": "pipeline",
       "src": "$ = { hi: $$.$match({ s: \"a\" }).$limit(2), lo: $$.filter(d => d.n < 5) };",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$facet\":{\"hi\":[{\"$match\":{\"s\":\"a\"}},{\"$limit\":2}],\"lo\":[{\"$match\":{\"n\":{\"$lt\":5}}}]}}]",
-      "now": "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a cha",
+      "now": "[{\"$facet\":{\"hi\":[{\"$match\":{\"s\":\"a\"}},{\"$limit\":2}],\"lo\":[{\"$match\":{\"n\":{\"$lt\":5,\"$not\":{\"$type\":\"array\"}}}}]}}]",
       "reason": "intended: a stage named where a VALUE belongs is refused by its own row's text, which names the pipeline and chain spellings that work. The shipped compiler answered from the pipeline assembler instead, so the message did not name the stage."
     },
     "pipeline\u0000$project({ o: $$$.orders.find(o => o.uid === 1) });": {
@@ -16841,14 +16841,6 @@
       "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"created\":-1}},{\"$limit\":25}]",
       "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
     },
-    "pipeline\u0000$ = { topByScore: $$.$sort({ score: -1 }).$limit(10) };": {
-      "entry": "pipeline",
-      "src": "$ = { topByScore: $$.$sort({ score: -1 }).$limit(10) };",
-      "kind": "now-rejected",
-      "was": "[{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}]}}]",
-      "now": "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a cha",
-      "reason": "intended: a stage named where a VALUE belongs is refused by its own row's text, which names the pipeline and chain spellings that work. The shipped compiler answered from the pipeline assembler instead, so the message did not name the stage."
-    },
     "pipeline\u0000$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };": {
       "entry": "pipeline",
       "src": "$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };",
@@ -16860,9 +16852,9 @@
     "pipeline\u0000$ = {\n        topByScore: $$.$sort({ score: -1 }).$limit(10),\n        recent:     $$.filter(o => o.createdAt >= \"2026-01-01\"),\n        byStatus:   $$.$group({ _id: $.status, n: $sum(1) })\n      };": {
       "entry": "pipeline",
       "src": "$ = {\n        topByScore: $$.$sort({ score: -1 }).$limit(10),\n        recent:     $$.filter(o => o.createdAt >= \"2026-01-01\"),\n        byStatus:   $$.$group({ _id: $.status, n: $sum(1) })\n      };",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}],\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"2026-01-01\"}}}],\"byStatus\":[{\"$group\":{\"_id\":\"$status\",\"n\":{\"$sum\":1}}}]}}]",
-      "now": "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a cha",
+      "now": "[{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}],\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"2026-01-01\",\"$not\":{\"$type\":\"array\"}}}}],\"byStatus\":[{\"$group\":{\"_id\":\"$status\",\"n\":{\"$sum\":1}}}]}}]",
       "reason": "intended: a stage named where a VALUE belongs is refused by its own row's text, which names the pipeline and chain spellings that work. The shipped compiler answered from the pipeline assembler instead, so the message did not name the stage."
     },
     "pipeline\u0000$.ratings.countBy()": {
@@ -19782,7 +19774,7 @@
       "src": "$$.$limit();",
       "kind": "message",
       "was": "'.$limit(<body>)' takes exactly one argument — the stage body, got 0.",
-      "now": "'$limit'(body) requires exactly 1 argument, got 0",
+      "now": ".$limit(body) requires exactly 1 argument, got 0",
       "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
     },
     "pipeline\u0000$$.$limit(5, 6);": {
@@ -19790,7 +19782,7 @@
       "src": "$$.$limit(5, 6);",
       "kind": "message",
       "was": "'.$limit(<body>)' takes exactly one argument — the stage body, got 2.",
-      "now": "'$limit'(body) requires exactly 1 argument, got 2",
+      "now": ".$limit(body) requires exactly 1 argument, got 2",
       "reason": "message: both refuse the argument count or a literal of the wrong type or range; the new wording is the one every slot check shares."
     },
     "pipeline\u0000$$?.$match({ a: 1 });": {
@@ -19804,9 +19796,9 @@
     "pipeline\u0000$ = { k: $$.filter(d => d.a === 1).$limit(3) };": {
       "entry": "pipeline",
       "src": "$ = { k: $$.filter(d => d.a === 1).$limit(3) };",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$facet\":{\"k\":[{\"$match\":{\"a\":1}},{\"$limit\":3}]}}]",
-      "now": "'$limit' is a pipeline stage, not an expression — MongoDB has no '$limit' expression operator, so '{ $limit: … }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(…);') or as a cha",
+      "now": "[{\"$facet\":{\"k\":[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":3}]}}]",
       "reason": "intended: a chain on the stream where a value belongs is the `$facet` road, a stated pending; the compiler says so instead of running a stream cell on a value record."
     },
     "pipeline\u0000$$.filter(o => o.x > 0);": {
@@ -19908,9 +19900,9 @@
     "pipeline\u0000$$.filter({ status: \"shipped\" });\n$ = {\n  topByScore: $$.toSorted({ score: -1 }).take(10),\n  recent:     $$.filter(o => o.createdAt >= new Date(\"2026-01-01\")),\n  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),\n};": {
       "entry": "pipeline",
       "src": "$$.filter({ status: \"shipped\" });\n$ = {\n  topByScore: $$.toSorted({ score: -1 }).take(10),\n  recent:     $$.filter(o => o.createdAt >= new Date(\"2026-01-01\")),\n  byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),\n};",
-      "kind": "now-rejected",
+      "kind": "output",
       "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}],\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\"}}}],\"byStatus\":[{\"$group\":{\"_id\":\"$status\",\"n\":{\"",
-      "now": "sortSpec is not a function",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}},{\"$facet\":{\"topByScore\":[{\"$sort\":{\"score\":-1}},{\"$limit\":10}],\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"«date:2026-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":",
       "reason": "intended: a chain on the stream where a value belongs is the `$facet` road, a stated pending; the compiler says so instead of running a stream cell on a value record."
     },
     "pipeline\u0000\n$$.filter(p => p.season === \"2026\" && p.score > 0)\n  .slice(40, 60)\n  .map(p => ({ player: p.name, score: p.score, rank: p.rank }));\n      ": {
@@ -20668,9 +20660,9 @@
     "pipeline\u0000$$ = $$.push({ a: 1 });": {
       "entry": "pipeline",
       "src": "$$ = $$.push({ a: 1 });",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": "'.push(...)' isn't a chain method. To append documents mid-chain use '.concat(...)', which emits the same '$unionWith' — e.g. '$$.filter(<pred>).concat({ … })'. ('$$.push(...)' does work as a top-level statement of its o",
-      "now": "'.push()' isn't available on '$$' — appends by mutating. Use '.concat(...)' mid-chain, which emits the same '$unionWith'.",
+      "now": "[{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"a\":1}]}]}}]",
       "reason": "message: both refuse the method on the stream; the new text is the row's own."
     },
     "pipeline\u0000$$ = $$.filter(d => d.a > 1);": {
@@ -21326,7 +21318,7 @@
       "src": "$.x = $$$$.analytics.orders.filter(o => o.userId === $._id)",
       "kind": "message",
       "was": "'$$$$.<db>.<coll>' is only usable as a cross-database $out destination ('$$$$.<db>.<coll> = $$'). Cross-database READS aren't supported (a $lookup/$unionWith with a '{ db, coll }' namespace is rejected by a standalone / ",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;": {
@@ -21334,7 +21326,7 @@
       "src": "let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.analytics.orders' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federat",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000$.stats = $$$.users.filter(u => u.active).map(u => ({ id: u._id, name: u.name }));": {
@@ -21446,7 +21438,7 @@
       "src": "$.x = $$$$.other.orders.toSorted({ x: -1 });",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.other.orders' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation ",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000$.x = $$$.orders.filter({ uid: 1 });": {
@@ -21702,7 +21694,7 @@
       "src": "$.x = $$$$.db.c.aggregate((o) => { $sort({ a: 1 }); });",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.db.c' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation only). R",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000$$$.c.aggregate((o) => { $limit(5); })": {
@@ -21742,7 +21734,7 @@
       "src": "$.x = $$$$.dw.orders.head().aggregate((o) => { $limit(1); });",
       "kind": "message",
       "was": ".aggregate() on a .head() result is not meaningful — .head() returns a single value, not a collection to aggregate. Move .aggregate(...) ahead of it ('$$$$.dw.orders.aggregate((o) => { ... }).head()'), or drop .head() to",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000$.x = $$$.orders.filter(o => o.v > 0).sort({ t: 1 }).aggregate((o) => { $limit(1); });": {
@@ -21950,7 +21942,7 @@
       "src": "[ $ = $$$$.analytics.users.find(u => u._id === $.userId) ]",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.analytics.users' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federati",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000[ $ = $$$.users.filter(u => u.active) ]": {
@@ -22134,7 +22126,7 @@
       "src": "$$ = $$$$.analytics.events.filter(e => e.type === \"purchase\");",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.analytics.events' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federat",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000let cutoff = $.min; $$ = $$$.t.filter(o => true); $.flagged = cutoff;": {
@@ -22246,7 +22238,7 @@
       "src": "$$ = $$$$.analytics.events.filter(e => e.userId === $._id);",
       "kind": "message",
       "was": "Cross-database reads aren't supported: '$$$$.analytics.events' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federat",
-      "now": "A read of another DATABASE isn't supported: a '$lookup' joins a collection of the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>.find(…)' — and run ",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
       "reason": "message: same refusal — a cross-database read — reworded."
     },
     "pipeline\u0000$.byStatus = $$$.orders.filter(o => o.userId === $._id).countBy(\"status\");": {
@@ -22624,6 +22616,734 @@
       "was": "{\"function\":\"$x\"}",
       "now": "{\"$expr\":{\"$eq\":[\"$function\",\"$x\"]}}",
       "reason": "shippedBug: a runtime read inside a raw query document (`{ userId: $.other }`) was the string `\"$other\"` to the server — a literal that matches nothing; it is lifted into `$expr` now, the constant entries staying native."
+    },
+    "pipeline\u0000$ = { big: $$.filter(d => { const t = $.total; return t > 5; }) };": {
+      "entry": "pipeline",
+      "src": "$ = { big: $$.filter(d => { const t = $.total; return t > 5; }) };",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '$$.filter(<predicate>)' in a `$ = { ... }` $facet branch is not supported — use the lambda parameter (e.g. 'd.total') to reference the current document. Inside this predicate, the lambda's parameter `",
+      "now": "[{\"$facet\":{\"big\":[{\"$match\":{\"$expr\":{\"$let\":{\"vars\":{\"t\":\"$total\"},\"in\":{\"$gt\":[\"$$t\",5]}}}}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$.s.trim().push(1)": {
+      "entry": "pipeline",
+      "src": "$.s.trim().push(1)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "''push'()' is not available on a receiver whose type jsmql cannot prove — it is defined on 'array', 'stream'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000const pi = () => 3.14; $ = { x: pi() };": {
+      "entry": "pipeline",
+      "src": "const pi = () => 3.14; $ = { x: pi() };",
+      "kind": "output",
+      "was": "[{\"$replaceWith\":{\"x\":{\"$let\":{\"vars\":{},\"in\":3.14}}}}]",
+      "now": "[{\"$replaceWith\":{\"x\":3.14}}]",
+      "reason": "equivalent: the fold settles a call of a constant function to its value; a body that reads another declared name stays a function and is inlined where it is called."
+    },
+    "pipeline\u0000const f = (_, n) => n + 1; $.y = f($.a, $.b);": {
+      "entry": "pipeline",
+      "src": "const f = (_, n) => n + 1; $.y = f($.a, $.b);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"y\":{\"$let\":{\"vars\":{\"v_\":\"$a\",\"n\":\"$b\"},\"in\":{\"$add\":[\"$$n\",1]}}}}}]",
+      "now": "[{\"$set\":{\"y\":{\"$let\":{\"vars\":{\"v__5f\":\"$a\",\"n\":\"$b\"},\"in\":{\"$add\":[\"$$n\",1]}}}}}]",
+      "reason": "intended: a compiler-emitted variable name is an injective encoding of the JavaScript name (names.ts `mongoVarName`), so `_` becomes `v__5f` and two distinct names can never collide."
+    },
+    "pipeline\u0000const compute = (x) => x; $ = { a: comput($.n) };": {
+      "entry": "pipeline",
+      "src": "const compute = (x) => x; $ = { a: comput($.n) };",
+      "kind": "message",
+      "was": "Unknown function 'comput(...)'. Did you mean 'compute(...)'? Declare it first with `const comput = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$comput(...)`; for a method, `receiver.comput(..",
+      "now": "Unknown function 'comput(...)'. Declare it first with `const comput = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$comput(...)`; for a method, `receiver.comput(...)`.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000function foo(a) { return a }": {
+      "entry": "pipeline",
+      "src": "function foo(a) { return a }",
+      "kind": "message",
+      "was": "A reusable function declaration (`function foo(…) { … }` / `const foo = (…) => …`) is only valid inside a pipeline. Add at least one more statement that calls `foo` (e.g. `function foo(…) { … } $ = { … }`, or `const foo ",
+      "now": "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };": {
+      "entry": "pipeline",
+      "src": "const f = (x) => x; const f = (y) => y + 1; $ = { a: f($.n) };",
+      "kind": "message",
+      "was": "Function `f` is already declared earlier in this pipeline. Re-declaration in the same scope is not allowed — pick a different name.",
+      "now": "`function f` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000let total = $.amount; const total = (x) => x; $ = { a: total($.n) };": {
+      "entry": "pipeline",
+      "src": "let total = $.amount; const total = (x) => x; $ = { a: total($.n) };",
+      "kind": "message",
+      "was": "Function `total` collides with a `let total` binding already in scope. Rename one — a reusable function and a value binding can't share a name.",
+      "now": "`function total` is already declared earlier in this block — re-declaration in the same scope is not allowed; pick a different name.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000const f = (x) => x * 2": {
+      "entry": "pipeline",
+      "src": "const f = (x) => x * 2",
+      "kind": "message",
+      "was": "A reusable function declaration (`function f(…) { … }` / `const f = (…) => …`) is only valid inside a pipeline. Add at least one more statement that calls `f` (e.g. `function f(…) { … } $ = { … }`, or `const f = …; $ = {",
+      "now": "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });": {
+      "entry": "pipeline",
+      "src": "$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}},{\"$out\":\"dest\"}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$out\":\"dest\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.dest = $$.aggregate(o => { $match($.x === 1); });": {
+      "entry": "pipeline",
+      "src": "$$$.dest = $$.aggregate(o => { $match($.x === 1); });",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '.aggregate(o => …)' isn't supported — use the lambda parameter (e.g. 'o.x') to reference each input document. Inside this callback, the lambda parameter IS the current document.",
+      "now": "[{\"$match\":{\"x\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$out\":\"dest\"}]",
+      "reason": "intended: a shape the shipped compiler refused — a chain on `$$` in a facet branch's block, an outer `let` read inside a facet branch, `$$.length` in a facet branch or a function body (root count, HR4), `$$.push` inside a facet branch (level 0), `$$.indexStats({})` (the server takes the empty document). See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$$.push(...$$$.c.aggregate((o) => { $match(o.uid === $._id); }));": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$.c.aggregate((o) => { $match(o.uid === $._id); }));",
+      "kind": "message",
+      "was": "$$.push(...$$$.c.aggregate(pipeline)) — sub-pipeline reads the local document (`$.<field>`), but MongoDB's `$unionWith` has no `let` slot. The union sub-pipeline can only reference foreign-document fields. Move the local",
+      "now": "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = ",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.active = $$.filter(u => u.tier === 'gold');": {
+      "entry": "pipeline",
+      "src": "$$$.active = $$.filter(u => u.tier === 'gold');",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$out\":\"active\"}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$out\":\"active\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$match($.active === true); $sort({ joined: 1 }); $$$.snapshot = $$;": {
+      "entry": "pipeline",
+      "src": "$match($.active === true); $sort({ joined: 1 }); $$$.snapshot = $$;",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$sort\":{\"joined\":1}},{\"$out\":\"snapshot\"}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"joined\":1}},{\"$out\":\"snapshot\"}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.x = $$; $.y = 1;": {
+      "entry": "pipeline",
+      "src": "$$$.x = $$; $.y = 1;",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.",
+      "now": "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.a = $$; $$$.b = $$;": {
+      "entry": "pipeline",
+      "src": "$$$.a = $$; $$$.b = $$;",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.",
+      "now": "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.a.b = $$;": {
+      "entry": "pipeline",
+      "src": "$$$.a.b = $$;",
+      "kind": "message",
+      "was": "'$$$.<a>.<b>' has too many segments for a same-database $out target — use '$$$$.<db>.<coll>' (four $) for a cross-database write, or '$$$.<coll>' (three $) for the local database.",
+      "now": "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$$.x = $$;": {
+      "entry": "pipeline",
+      "src": "$$$$.x = $$;",
+      "kind": "message",
+      "was": "'$$$$.<x>' is missing the collection — write '$$$$.<db>.<coll>' (db, then collection), or use '$$$.<coll>' (three $) for the local database.",
+      "now": "'$$$$.<db>' names a database; write the collection too: '$$$$.<db>.<coll> = $$' — or '$$$.<coll> = $$' for the current database.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$$.a.b.c = $$;": {
+      "entry": "pipeline",
+      "src": "$$$$.a.b.c = $$;",
+      "kind": "message",
+      "was": "'$$$$.<a>.<b>.<c>' has too many segments for a $out target — '$out' writes to one collection in one database, so '$$$$.<db>.<coll>' is the deepest form.",
+      "now": "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$[someVar] = $$;": {
+      "entry": "pipeline",
+      "src": "$$$[someVar] = $$;",
+      "kind": "message",
+      "was": "'$out' target must be a literal collection name — use '$$$.<coll>' or '$$$[\"<coll>\"]', not a runtime expression. If you need a parameterised target, use 'jsmql.compile' and pass the name in.",
+      "now": "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$[\"<coll>\"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.unknownMethod();": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.unknownMethod();",
+      "kind": "message",
+      "was": "'$$.unknownMethod(...)' isn't a recognised chain method for a '$out' RHS. Add the equivalent stage call before the '$out' — either chained ('$$.$<stage>({ … })') or as its own statement.",
+      "now": "'.unknownMethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.mpa(d => d.x);": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.mpa(d => d.x);",
+      "kind": "message",
+      "was": "'$$.mpa(...)' isn't a recognised chain method for a '$out' RHS. Did you mean '.map()'? Add the equivalent stage call before the '$out' — either chained ('$$.$<stage>({ … })') or as its own statement.",
+      "now": "'.mpa()' is not a method of the stream '$$'. Did you mean '.map()'? A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.fliter({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.fliter({ a: 1 });",
+      "kind": "message",
+      "was": "'$$.fliter(...)' isn't a recognised chain method for a '$out' RHS. Did you mean '.filter()'? Add the equivalent stage call before the '$out' — either chained ('$$.$<stage>({ … })') or as its own statement.",
+      "now": "'.fliter()' is not a method of the stream '$$'. Did you mean '.filter()'? A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.wibble();": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.wibble();",
+      "kind": "message",
+      "was": "'$$.wibble(...)' isn't a recognised chain method for a '$out' RHS. Add the equivalent stage call before the '$out' — either chained ('$$.$<stage>({ … })') or as its own statement.",
+      "now": "'.wibble()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.reduce((a, d) => a + d.n, 0);": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.reduce((a, d) => a + d.n, 0);",
+      "kind": "message",
+      "was": "'$$.reduce(...)' isn't a recognised chain method for a '$out' RHS. Use '$group({ ... })' as a separate stage before the '$out' instead.",
+      "now": "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.flat();": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.flat();",
+      "kind": "message",
+      "was": "'$$.flat(...)' isn't a recognised chain method for a '$out' RHS. Use '$unwind' as a separate stage before the '$out' instead.",
+      "now": "'.flat()' isn't available on '$$' — flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $.someField;": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $.someField;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.coll = $$.filter(o => o.x === $.threshold);": {
+      "entry": "pipeline",
+      "src": "$$$.coll = $$.filter(o => o.x === $.threshold);",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '$$.filter(<predicate>)' in a '$out' write chain is not supported — use the lambda parameter (e.g. 'o.threshold') to reference the current document. Inside this predicate, the lambda's parameter `o` IS",
+      "now": "[{\"$match\":{\"$expr\":{\"$eq\":[\"$x\",\"$threshold\"]}}},{\"$out\":\"coll\"}]",
+      "reason": "intended: a shape the shipped compiler refused — a chain on `$$` in a facet branch's block, an outer `let` read inside a facet branch, `$$.length` in a facet branch or a function body (root count, HR4), `$$.push` inside a facet branch (level 0), `$$.indexStats({})` (the server takes the empty document). See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$$$.archive = $$.filter(d => d.active === false).slice(0, 100);": {
+      "entry": "pipeline",
+      "src": "$$$.archive = $$.filter(d => d.active === false).slice(0, 100);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":false}},{\"$limit\":100},{\"$out\":\"archive\"}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":false,\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":100},{\"$out\":\"archive\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.top = $$.filter(d => d.active === true).toSorted((a, b) => b.score - a.score).slice(0, 10);": {
+      "entry": "pipeline",
+      "src": "$$$.top = $$.filter(d => d.active === true).toSorted((a, b) => b.score - a.score).slice(0, 10);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$sort\":{\"score\":-1}},{\"$limit\":10},{\"$out\":\"top\"}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"score\":-1}},{\"$limit\":10},{\"$out\":\"top\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.live = $$.reject({ archived: true });": {
+      "entry": "pipeline",
+      "src": "$$$.live = $$.reject({ archived: true });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}},{\"$out\":\"live\"}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}},{\"$out\":\"live\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.live = $$.filter(d => d.tier === 'gold').reject({ archived: true }).take(10);": {
+      "entry": "pipeline",
+      "src": "$$$.live = $$.filter(d => d.tier === 'gold').reject({ archived: true }).take(10);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"tier\":\"gold\"}},{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}},{\"$limit\":10},{\"$out\":\"live\"}]",
+      "now": "[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}},{\"$limit\":10},{\"$out\":\"live\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.live = $$.reject(function (d) { return d.archived === true; });": {
+      "entry": "pipeline",
+      "src": "$$$.live = $$.reject(function (d) { return d.archived === true; });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$archived\",true]}}}},{\"$out\":\"live\"}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"archived\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}},{\"$out\":\"live\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000  $$$.a.b = $$;": {
+      "entry": "pipeline",
+      "src": "  $$$.a.b = $$;",
+      "kind": "message",
+      "was": "'$$$.<a>.<b>' has too many segments for a same-database $out target — use '$$$$.<db>.<coll>' (four $) for a cross-database write, or '$$$.<coll>' (three $) for the local database.",
+      "now": "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.archive = $$.filter(d => d.a > 1).$sort({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$$.archive = $$.filter(d => d.a > 1).$sort({ a: 1 });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":{\"$gt\":1}}},{\"$sort\":{\"a\":1}},{\"$out\":\"archive\"}]",
+      "now": "[{\"$match\":{\"a\":{\"$gt\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"a\":1}},{\"$out\":\"archive\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$.archive = $$.$out(\"other\");": {
+      "entry": "pipeline",
+      "src": "$$$.archive = $$.$out(\"other\");",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.",
+      "now": "'$out' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.archive = $$.$match({ s: \"x\" }).$documents([{ x: 1 }]);": {
+      "entry": "pipeline",
+      "src": "$$$.archive = $$.$match({ s: \"x\" }).$documents([{ x: 1 }]);",
+      "kind": "message",
+      "was": "'$documents' must be the first stage in a pipeline — it produces the pipeline's source documents, so nothing can run before it. Move it to the front, or remove the stage(s) that precede it.",
+      "now": "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.archive = $$.$prject({ a: 1 });": {
+      "entry": "pipeline",
+      "src": "$$$.archive = $$.$prject({ a: 1 });",
+      "kind": "message",
+      "was": "'$prject' is not a known aggregation stage. Did you mean '$project'?",
+      "now": "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$ = { a: $$.filter(d => d.x === 1) }": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter(d => d.x === 1) }",
+      "kind": "output",
+      "was": "[{\"$facet\":{\"a\":[{\"$match\":{\"x\":1}}]}}]",
+      "now": "[{\"$facet\":{\"a\":[{\"$match\":{\"x\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$ = { k: $$.aggregate(o => { $collStats({}); }) };": {
+      "entry": "pipeline",
+      "src": "$ = { k: $$.aggregate(o => { $collStats({}); }) };",
+      "kind": "message",
+      "was": "'$collStats' is not allowed inside a '$facet' sub-pipeline. Move it to the outer (top-level) pipeline.",
+      "now": "'$collStats' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$ = { k: $$.aggregate(o => { $facet({ inner: [{ $limit: 1 }] }); }) };": {
+      "entry": "pipeline",
+      "src": "$ = { k: $$.aggregate(o => { $facet({ inner: [{ $limit: 1 }] }); }) };",
+      "kind": "message",
+      "was": "'$facet' is not allowed inside a '$facet' sub-pipeline. Move it to the outer (top-level) pipeline.",
+      "now": "'$facet' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.dest = $$.aggregate(o => { $out(\"x\"); });": {
+      "entry": "pipeline",
+      "src": "$$$.dest = $$.aggregate(o => { $out(\"x\"); });",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.",
+      "now": "'$out' writes the pipeline's output and has to be its last stage, and '$out' already is. A pipeline writes to one destination — keep one of them.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.dest = $$.aggregate(o => { $merge({ into: \"m\" }); });": {
+      "entry": "pipeline",
+      "src": "$$$.dest = $$.aggregate(o => { $merge({ into: \"m\" }); });",
+      "kind": "message",
+      "was": "'$merge' must be the last stage in a pipeline. Move it to the end of the chain, or remove the links after it.",
+      "now": "'$out' writes the pipeline's output and has to be its last stage, and '$merge' already is. A pipeline writes to one destination — keep one of them.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.dest = $$.aggregate(o => { $match(o.a === 1); $sort({ b: 1 }); });": {
+      "entry": "pipeline",
+      "src": "$$$.dest = $$.aggregate(o => { $match(o.a === 1); $sort({ b: 1 }); });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"a\":1}},{\"$sort\":{\"b\":1}},{\"$out\":\"dest\"}]",
+      "now": "[{\"$match\":{\"a\":{\"$eq\":1,\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"b\":1}},{\"$out\":\"dest\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$ = { k: $$.$out(\"x\") };": {
+      "entry": "pipeline",
+      "src": "$ = { k: $$.$out(\"x\") };",
+      "kind": "message",
+      "was": "'$out' is not allowed inside a '$facet' sub-pipeline. Move it to the outer (top-level) pipeline.",
+      "now": "'$out' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$ = { recent: $$.filter(o => o.createdAt >= \"2026-01-01\") };": {
+      "entry": "pipeline",
+      "src": "$ = { recent: $$.filter(o => o.createdAt >= \"2026-01-01\") };",
+      "kind": "output",
+      "was": "[{\"$facet\":{\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"2026-01-01\"}}}]}}]",
+      "now": "[{\"$facet\":{\"recent\":[{\"$match\":{\"createdAt\":{\"$gte\":\"2026-01-01\",\"$not\":{\"$type\":\"array\"}}}}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$ = { recent: $$.filter(o => $.x > 5) };": {
+      "entry": "pipeline",
+      "src": "$ = { recent: $$.filter(o => $.x > 5) };",
+      "kind": "now-accepted",
+      "was": "'$.<field>' inside '$$.filter(<predicate>)' in a `$ = { ... }` $facet branch is not supported — use the lambda parameter (e.g. 'o.x') to reference the current document. Inside this predicate, the lambda's parameter `o` I",
+      "now": "[{\"$facet\":{\"recent\":[{\"$match\":{\"x\":{\"$gt\":5,\"$not\":{\"$type\":\"array\"}}}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$ = { a: $$.filter(() => true) };": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter(() => true) };",
+      "kind": "now-accepted",
+      "was": "'$$.filter(<predicate>)' in a `$ = { ... }` $facet branch must take exactly one parameter — write '$$.filter(o => …)' (the param name is your choice). The param represents each document. Got 0.",
+      "now": "[{\"$facet\":{\"a\":[{\"$match\":{\"$expr\":true}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$ = { a: $$.filter((a, b) => a.x > 5) };": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter((a, b) => a.x > 5) };",
+      "kind": "now-accepted",
+      "was": "'$$.filter(<predicate>)' in a `$ = { ... }` $facet branch must take exactly one parameter — write '$$.filter(o => …)' (the param name is your choice). The param represents each document. Got 2.",
+      "now": "[{\"$facet\":{\"a\":[{\"$match\":{\"x\":{\"$gt\":5,\"$not\":{\"$type\":\"array\"}}}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$ = { a: $$.filter(o => o.x > 0), b: 1 };": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter(o => o.x > 0), b: 1 };",
+      "kind": "message",
+      "was": "`$ = { ... }` $facet pattern: every value must be a `$$` chain — `$$.filter(<predicate>)`, a stage call (`$$.$match({ … })`), or any chain of them. Entry 'b' is something else. Either convert it to a `$$` chain or move i",
+      "now": "'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: 'b' is not a chain on '$$'. Make it one ('b: $$.filter(…)'), or move it out of the object.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$ = { a: $$.filter(o => true), ...rest };": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter(o => true), ...rest };",
+      "kind": "message",
+      "was": "`$ = { ... }` $facet pattern: spread entries are not allowed. Every value must be a `$$` chain.",
+      "now": "A '$facet' is written branch by branch; '...' cannot spread branches in. Name each one: '$ = { k: $$.filter(…) }'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$ = { a: $$.filter(o => o.x > 0), a: $$.filter(o => o.y > 0) };": {
+      "entry": "pipeline",
+      "src": "$ = { a: $$.filter(o => o.x > 0), a: $$.filter(o => o.y > 0) };",
+      "kind": "message",
+      "was": "`$ = { ... }` $facet pattern: duplicate key 'a'. Facet names must be unique.",
+      "now": "'a' names two '$facet' branches, and JavaScript would keep only the last. Give each branch its own name.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;": {
+      "entry": "pipeline",
+      "src": "let n = $.threshold; $ = { hot: $$.filter(o => o.score > 0) }; $.copy = n;",
+      "kind": "message",
+      "was": "`n` is a `let` binding and can't be read after `$facet` — the stage replaces the document. Inline the expression into the `$facet` body, or rebind after the stage with another `let`.",
+      "now": "`n` is a `let` binding and can't be read after `$facet` — that stage replaced the document that carried it. Assign it again after the stage (`n = …`), or carry the value as a field of the new document.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$$.dw.archive = $$.filter({ status: \"expired\" });": {
+      "entry": "pipeline",
+      "src": "$$$$.dw.archive = $$.filter({ status: \"expired\" });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"expired\"}},{\"$out\":{\"db\":\"dw\",\"coll\":\"archive\"}}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"expired\",\"$not\":{\"$type\":\"array\"}}}},{\"$out\":{\"db\":\"dw\",\"coll\":\"archive\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$$$.reporting.daily_revenue = $$\n  .filter({ status: \"shipped\" })\n  .$group({ _id: { $dateTrunc: { date: \"$placedAt\", unit: \"day\" } }, revenue: $sum(\"$total\"), orders: $sum(1) })\n  .$sort({ _id: -1 });\n      ": {
+      "entry": "pipeline",
+      "src": "\n$$$$.reporting.daily_revenue = $$\n  .filter({ status: \"shipped\" })\n  .$group({ _id: { $dateTrunc: { date: \"$placedAt\", unit: \"day\" } }, revenue: $sum(\"$total\"), orders: $sum(1) })\n  .$sort({ _id: -1 });\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"status\":\"shipped\"}},{\"$group\":{\"_id\":{\"$dateTrunc\":{\"date\":\"$placedAt\",\"unit\":\"day\"}},\"revenue\":{\"$sum\":\"$total\"},\"orders\":{\"$sum\":1}}},{\"$sort\":{\"_id\":-1}},{\"$out\":{\"db\":\"reporting\",\"coll\":\"daily_revenue\"}}",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"shipped\",\"$not\":{\"$type\":\"array\"}}}},{\"$group\":{\"_id\":{\"$dateTrunc\":{\"date\":\"$placedAt\",\"unit\":\"day\"}},\"revenue\":{\"$sum\":\"$total\"},\"orders\":{\"$sum\":1}}},{\"$sort\":{\"_id\":-1}},{\"$out\":{\"db\":\"re",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$$$.quarantine.bad_orders = $$.reject({ valid: true });": {
+      "entry": "pipeline",
+      "src": "$$$$.quarantine.bad_orders = $$.reject({ valid: true });",
+      "kind": "output",
+      "was": "[{\"$match\":{\"$expr\":{\"$not\":{\"$eq\":[\"$valid\",true]}}}},{\"$out\":{\"db\":\"quarantine\",\"coll\":\"bad_orders\"}}]",
+      "now": "[{\"$match\":{\"$nor\":[{\"valid\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}]}},{\"$out\":{\"db\":\"quarantine\",\"coll\":\"bad_orders\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$.filter({ active: true });\n$$.push(\n  { _id: \"system\", name: \"System\", role: \"synthetic\" },\n  { _id: \"anon\",   name: \"Anonymous\", role: \"synthetic\" },\n  ...$$$.archive_users.filter({ deleted: true })\n);\n$sort({ name: 1 });\n$limit(50);\n      ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ active: true });\n$$.push(\n  { _id: \"system\", name: \"System\", role: \"synthetic\" },\n  { _id: \"anon\",   name: \"Anonymous\", role: \"synthetic\" },\n  ...$$$.archive_users.filter({ deleted: true })\n);\n$sort({ name: 1 });\n$limit(50);\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"_id\":\"system\",\"name\":\"System\",\"role\":\"synthetic\"},{\"_id\":\"anon\",\"name\":\"Anonymous\",\"role\":\"synthetic\"}]}]}},{\"$unionWith\":{\"coll\":\"archive_users\",\"p",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"_id\":\"system\",\"name\":\"System\",\"role\":\"synthetic\"},{\"_id\":\"anon\",\"name\":\"Anonymous\",\"role\":\"synthetic\"}]}]}},{\"$unio",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$match($.active === false && $.lastSeen < new Date(\"2025-01-01\"));\n$$$$.dw.archive_users = $$;\n      ": {
+      "entry": "pipeline",
+      "src": "\n$match($.active === false && $.lastSeen < new Date(\"2025-01-01\"));\n$$$$.dw.archive_users = $$;\n      ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":false,\"lastSeen\":{\"$lt\":\"«date:2025-01-01T00:00:00.000Z»\"}}},{\"$out\":{\"db\":\"dw\",\"coll\":\"archive_users\"}}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":false,\"$not\":{\"$type\":\"array\"}},\"lastSeen\":{\"$lt\":\"«date:2025-01-01T00:00:00.000Z»\",\"$not\":{\"$type\":\"array\"}}}},{\"$out\":{\"db\":\"dw\",\"coll\":\"archive_users\"}}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000\n$$.filter({ region: \"AU\" });\n$$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);\n        ": {
+      "entry": "pipeline",
+      "src": "\n$$.filter({ region: \"AU\" });\n$$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);\n        ",
+      "kind": "output",
+      "was": "[{\"$match\":{\"region\":\"AU\"}},{\"$match\":{\"amount\":{\"$gt\":100}}},{\"$unionWith\":\"archive_transactions\"}]",
+      "now": "[{\"$match\":{\"region\":{\"$eq\":\"AU\",\"$not\":{\"$type\":\"array\"}}}},{\"$match\":{\"amount\":{\"$gt\":100,\"$not\":{\"$type\":\"array\"}}}},{\"$unionWith\":\"archive_transactions\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$ = { peers: $$.filter(u => u.n === $$.length) };": {
+      "entry": "pipeline",
+      "src": "$ = { peers: $$.filter(u => u.n === $$.length) };",
+      "kind": "now-accepted",
+      "was": "'$$.length' (the root stream count) isn't available here yet [DEF-033] — it works at the top level and inside a top-level '$lookup' (predicate, block, or '.map' chain, captured into '$lookup.let'), but not yet in a '$fac",
+      "now": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$facet\":{\"peers\":[{\"$match\":{\"$expr\":{\"$eq\":[\"$n\",\"$__jsmql.length\"]}}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000const f = () => $$.length; $.n = f()": {
+      "entry": "pipeline",
+      "src": "const f = () => $$.length; $.n = f()",
+      "kind": "now-accepted",
+      "was": "'$$.length' isn't supported inside a reusable function body yet [DEF-033]. Read it at the top level of the pipeline (e.g. `let n = $$.length;`) and pass the value in as a parameter.",
+      "now": "[{\"$setWindowFields\":{\"output\":{\"__jsmql.length\":{\"$count\":{}}}}},{\"$set\":{\"n\":{\"$let\":{\"vars\":{},\"in\":\"$__jsmql.length\"}}}},{\"$unset\":\"__jsmql\"}]",
+      "reason": "intended: a shape the shipped compiler refused — a chain on `$$` in a facet branch's block, an outer `let` read inside a facet branch, `$$.length` in a facet branch or a function body (root count, HR4), `$$.push` inside a facet branch (level 0), `$$.indexStats({})` (the server takes the empty document). See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$$ = $$.concat($$$.archive.find(u => u._id === 'X'));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.concat($$$.archive.find(u => u._id === 'X'));",
+      "kind": "output",
+      "was": "[{\"$unionWith\":{\"coll\":\"archive\",\"pipeline\":[{\"$match\":{\"_id\":\"X\"}},{\"$limit\":1}]}}]",
+      "now": "[{\"$unionWith\":{\"coll\":\"archive\",\"pipeline\":[{\"$match\":{\"_id\":{\"$eq\":\"X\",\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":1}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.filter(o => o.active === true).concat(...$$$.archive);": {
+      "entry": "pipeline",
+      "src": "$$ = $$.filter(o => o.active === true).concat(...$$$.archive);",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$unionWith\":\"archive\"}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$unionWith\":\"archive\"}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$ = $$.concat();": {
+      "entry": "pipeline",
+      "src": "$$ = $$.concat();",
+      "kind": "message",
+      "was": ".concat(...) requires at least one argument — a document literal ('{...}'), a spread of '$$$.<coll>[.filter(pred)]', or '$$$.<coll>.find(pred)'.",
+      "now": "Nothing to add to the stream: give a document ('$$.push({ … })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$ = $$.concat(...$$$.archive.find(u => u._id === 'X'));": {
+      "entry": "pipeline",
+      "src": "$$ = $$.concat(...$$$.archive.find(u => u._id === 'X'));",
+      "kind": "message",
+      "was": "$$.push(...arg) was given `...$$$.archive.find(pred)` — `.find` returns a single document, not an array, so spreading isn't meaningful (JS would `TypeError`). Drop the `...` to append the matched document, or switch to `",
+      "now": "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.collStats({ storageStats: {} }); $match($.shard === 'a')": {
+      "entry": "pipeline",
+      "src": "$$.collStats({ storageStats: {} }); $match($.shard === 'a')",
+      "kind": "output",
+      "was": "[{\"$collStats\":{\"storageStats\":{}}},{\"$match\":{\"shard\":\"a\"}}]",
+      "now": "[{\"$collStats\":{\"storageStats\":{}}},{\"$match\":{\"shard\":{\"$eq\":\"a\",\"$not\":{\"$type\":\"array\"}}}}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$match($.x > 1); $$.indexStats()": {
+      "entry": "pipeline",
+      "src": "$match($.x > 1); $$.indexStats()",
+      "kind": "message",
+      "was": "'$$.indexStats(...)' produces the pipeline's source documents (`$indexStats`), so it must be the first stage. Move it to the front of the pipeline.",
+      "now": "'$indexStats' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.currentOp()": {
+      "entry": "pipeline",
+      "src": "$$.currentOp()",
+      "kind": "message",
+      "was": "'currentOp' is a cluster-scoped system stage — write '$$$$.currentOp(...)' (the '$$$$' cluster reference, run on the admin database), not '$$'.",
+      "now": "'.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$.currentOp()": {
+      "entry": "pipeline",
+      "src": "$$$.currentOp()",
+      "kind": "message",
+      "was": "'currentOp' is a cluster-scoped system stage — write '$$$$.currentOp(...)' (the '$$$$' cluster reference, run on the admin database), not '$$$'.",
+      "now": "'$$$' is the database, and no stage runs on it alone: '.currentOp()' runs on the collection ('$$.currentOp()') or the cluster ('$$$$.currentOp()') — its row says which.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$$$.indexStats()": {
+      "entry": "pipeline",
+      "src": "$$$$.indexStats()",
+      "kind": "message",
+      "was": "'indexStats' is a collection-scoped system stage — write '$$.indexStats(...)' (the '$$' collection reference, run on db.coll.aggregate()), not '$$$$'.",
+      "now": "'.indexStats()' is not available on a 'cluster' — it is defined on 'stream'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.shardedDataDistribution()": {
+      "entry": "pipeline",
+      "src": "$$.shardedDataDistribution()",
+      "kind": "message",
+      "was": "'shardedDataDistribution' is a cluster-scoped system stage — write '$$$$.shardedDataDistribution(...)' (the '$$$$' cluster reference, run on the admin database), not '$$'.",
+      "now": "'.shardedDataDistribution()' is not available on a 'stream' — it is defined on 'cluster'.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.indexStats({})": {
+      "entry": "pipeline",
+      "src": "$$.indexStats({})",
+      "kind": "now-accepted",
+      "was": "'$$.indexStats()' takes no options — call it with no arguments.",
+      "now": "[{\"$indexStats\":{}}]",
+      "reason": "intended: a shape the shipped compiler refused — a chain on `$$` in a facet branch's block, an outer `let` read inside a facet branch, `$$.length` in a facet branch or a function body (root count, HR4), `$$.push` inside a facet branch (level 0), `$$.indexStats({})` (the server takes the empty document). See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$$.collStats(true)": {
+      "entry": "pipeline",
+      "src": "$$.collStats(true)",
+      "kind": "message",
+      "was": "'$$.collStats(...)' expects an options object literal (e.g. `$$.collStats({ ... })`), not a boolean literal.",
+      "now": "'collStats' expects a document, but got a boolean.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.collStats({}, {})": {
+      "entry": "pipeline",
+      "src": "$$.collStats({}, {})",
+      "kind": "message",
+      "was": "'$$.collStats(...)' takes at most one options object, but got 2 arguments.",
+      "now": ".collStats([options]) requires 0 or 1 arguments, got 2",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$match($.active === true); $$.push(...$$$.archive); $sort({ name: 1 })": {
+      "entry": "pipeline",
+      "src": "$match($.active === true); $$.push(...$$$.archive); $sort({ name: 1 })",
+      "kind": "output",
+      "was": "[{\"$match\":{\"active\":true}},{\"$unionWith\":\"archive\"},{\"$sort\":{\"name\":1}}]",
+      "now": "[{\"$match\":{\"active\":{\"$eq\":true,\"$not\":{\"$type\":\"array\"}}}},{\"$unionWith\":\"archive\"},{\"$sort\":{\"name\":1}}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.push(...$$$.archive_users.aggregate(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$.archive_users.aggregate(o => { $match(o.tier === 'gold'); $sort({ joined: -1 }); $limit(100); }))",
+      "kind": "output",
+      "was": "[{\"$unionWith\":{\"coll\":\"archive_users\",\"pipeline\":[{\"$match\":{\"tier\":\"gold\"}},{\"$sort\":{\"joined\":-1}},{\"$limit\":100}]}}]",
+      "now": "[{\"$unionWith\":{\"coll\":\"archive_users\",\"pipeline\":[{\"$match\":{\"tier\":{\"$eq\":\"gold\",\"$not\":{\"$type\":\"array\"}}}},{\"$sort\":{\"joined\":-1}},{\"$limit\":100}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.push($$$.archive_users.find(u => u._id === 'ABC'))": {
+      "entry": "pipeline",
+      "src": "$$.push($$$.archive_users.find(u => u._id === 'ABC'))",
+      "kind": "output",
+      "was": "[{\"$unionWith\":{\"coll\":\"archive_users\",\"pipeline\":[{\"$match\":{\"_id\":\"ABC\"}},{\"$limit\":1}]}}]",
+      "now": "[{\"$unionWith\":{\"coll\":\"archive_users\",\"pipeline\":[{\"$match\":{\"_id\":{\"$eq\":\"ABC\",\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":1}]}}]",
+      "reason": "intended: the array ruling reaches a `$match` body, because a stage's predicate lowers through the same filter target. See the SR2 paragraph in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.push(...$$$$.archive.users.filter(u => u.deleted))": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$$.archive.users.filter(u => u.deleted))",
+      "kind": "message",
+      "was": "Cross-database reads aren't supported: '$$$$.archive.users' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push(...$$$$.archive.users)": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$$.archive.users)",
+      "kind": "message",
+      "was": "Cross-database reads aren't supported: '$$$$.archive.users' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects (that shape is Atlas Data Federation",
+      "now": "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipel",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push({ a: 1 }, $$$.coll.find(p => p._id === 'X'), ...$$$.other.filter(o => o.tier === 'gold'))": {
+      "entry": "pipeline",
+      "src": "$$.push({ a: 1 }, $$$.coll.find(p => p._id === 'X'), ...$$$.other.filter(o => o.tier === 'gold'))",
+      "kind": "output",
+      "was": "[{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"a\":1}]}]}},{\"$unionWith\":{\"coll\":\"coll\",\"pipeline\":[{\"$match\":{\"_id\":\"X\"}},{\"$limit\":1}]}},{\"$unionWith\":{\"coll\":\"other\",\"pipeline\":[{\"$match\":{\"tier\":\"gold\"}}]}}]",
+      "now": "[{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"a\":1}]}]}},{\"$unionWith\":{\"coll\":\"coll\",\"pipeline\":[{\"$match\":{\"_id\":{\"$eq\":\"X\",\"$not\":{\"$type\":\"array\"}}}},{\"$limit\":1}]}},{\"$unionWith\":{\"coll\":\"other\",\"pipeline\":[{\"$match\"",
+      "reason": "intended: the array ruling reaches a `$match` a stream method emits, because a predicate lowers through the same filter target. See SR2 in docs/LANG_RULES.md."
+    },
+    "pipeline\u0000$$.push($$$.archive.filter(o => o.active))": {
+      "entry": "pipeline",
+      "src": "$$.push($$$.archive.filter(o => o.active))",
+      "kind": "message",
+      "was": "$$.push(...) was given `$$$.archive.filter(pred)` without `...` — that would push the whole array as a single document. Use `$$.push(...$$$.archive.filter(pred))` to append every matching document, or switch to `.find(pr",
+      "now": "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it — '$$.push(...$$$.<coll>.filter(pred))' — to push every match, or write '.find(pred)' for the first one.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push(...$$$.archive.find(o => o._id === 'X'))": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$.archive.find(o => o._id === 'X'))",
+      "kind": "message",
+      "was": "$$.push(...arg) was given `...$$$.archive.find(pred)` — `.find` returns a single document, not an array, so spreading isn't meaningful (JS would `TypeError`). Drop the `...` to append the matched document, or switch to `",
+      "now": "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match.",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push(42)": {
+      "entry": "pipeline",
+      "src": "$$.push(42)",
+      "kind": "message",
+      "was": "$$.push(...) argument must be a document literal (`{ ... }`), a `$$$.<coll>.find(pred)` scalar, or a spread of `$$$.<coll>[.filter(pred)]`. Got a number literal — collections only hold documents.",
+      "now": "A stream holds documents, and this is a number. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push(null)": {
+      "entry": "pipeline",
+      "src": "$$.push(null)",
+      "kind": "message",
+      "was": "$$.push(...) argument must be a document literal (`{ ... }`), a `$$$.<coll>.find(pred)` scalar, or a spread of `$$$.<coll>[.filter(pred)]`. Got `null` — collections only hold documents.",
+      "now": "A stream holds documents, and this is a null. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push(...$$$.coll.filter(o => o.x === $.y))": {
+      "entry": "pipeline",
+      "src": "$$.push(...$$$.coll.filter(o => o.x === $.y))",
+      "kind": "message",
+      "was": "$$.push(...$$$.coll.filter(pred)) — predicate references the local document (`$.<field>`), but MongoDB's `$unionWith` has no `let` slot. The union sub-pipeline can only reference foreign-document fields. Move the local-d",
+      "now": "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = ",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$$.push()": {
+      "entry": "pipeline",
+      "src": "$$.push()",
+      "kind": "message",
+      "was": "$$.push() requires at least one argument — a document literal (`{...}`), a spread of `$$$.<coll>[.filter(pred)]`, or `$$$.<coll>.find(pred)`.",
+      "now": "Nothing to add to the stream: give a document ('$$.push({ … })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$.x = $$.push(...$$$.coll)": {
+      "entry": "pipeline",
+      "src": "$.x = $$.push(...$$$.coll)",
+      "kind": "message",
+      "was": "'$$' (current collection) is statement-only and supports '.push(...)', '.filter(...)' in the facet pattern, and '$$ = <expr>' as a top-level assignment. Write `$$.push({...})`, `$$.push(...$$$.<coll>[.filter(pred)])`, or",
+      "now": "A chain on '$$' is a stream of documents, not a value. To branch the stream write '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep the documents, chain them as a statement: '$$.filter(…)",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })": {
+      "entry": "pipeline",
+      "src": "$.users = $$$.users.aggregate(u => { $$.push(...$$$.archive); })",
+      "kind": "message",
+      "was": "'$$$.<coll>' must be either followed by a stream chain and consumed as a value (a $lookup read — any lodash stream method may head the chain, e.g. '.filter(pred)' / '.toSorted(...)', and '.aggregate((o) => { ... })' runs",
+      "now": "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '",
+      "reason": "message: same refusal, reworded by the facet, union and out roads."
+    },
+    "pipeline\u0000[{ $facet: { archive: [$$.push(...$$$.archive)] } }]": {
+      "entry": "pipeline",
+      "src": "[{ $facet: { archive: [$$.push(...$$$.archive)] } }]",
+      "kind": "now-accepted",
+      "was": "'$$.push(...)' inside a sub-pipeline ('$lookup.pipeline', '$unionWith.pipeline', '$facet.*') is not supported — $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage ",
+      "now": "[{\"$facet\":{\"archive\":[{\"$unionWith\":\"archive\"}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000$ = { k: $$.push({ a: 1 }) };": {
+      "entry": "pipeline",
+      "src": "$ = { k: $$.push({ a: 1 }) };",
+      "kind": "now-accepted",
+      "was": "'.push(...)' isn't a chain method. To append documents mid-chain use '.concat(...)', which emits the same '$unionWith' — e.g. '$$.filter(<pred>).concat({ … })'. (the statement form '$$.push(...)' isn't available inside a",
+      "now": "[{\"$facet\":{\"k\":[{\"$unionWith\":{\"pipeline\":[{\"$documents\":[{\"a\":1}]}]}}]}}]",
+      "reason": "intended: `$.` is the root document at every depth (HR4) and a `$facet` branch runs over the root documents, so `$.x` inside a branch IS the branch's document and lowers as a plain path; the shipped compiler refused it. A predicate takes any parameter count. See docs/specs/emit-pass.md § The facet, union and out roads; every read-only shape runs on mongod 8.3.7 in test/compiler-sugars.test.ts."
+    },
+    "pipeline\u0000const f = (a) => a + 1; $.v = f(1);": {
+      "entry": "pipeline",
+      "src": "const f = (a) => a + 1; $.v = f(1);",
+      "kind": "output",
+      "was": "[{\"$set\":{\"v\":{\"$let\":{\"vars\":{\"a\":1},\"in\":{\"$add\":[\"$$a\",1]}}}}}]",
+      "now": "[{\"$set\":{\"v\":2}}]",
+      "reason": "equivalent: the fold settles a call of a constant function to its value; a body that reads another declared name stays a function and is inlined where it is called."
     }
   }
 }

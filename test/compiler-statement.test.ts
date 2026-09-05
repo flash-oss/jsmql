@@ -534,7 +534,10 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // road would emit a bare stage — a filter on the wrong collection.
     // a read of another collection with nowhere to go is refused, not a bare stage on the wrong collection
     expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(/gives it no destination/);
-    expect(() => pipeline("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toThrow(PendingLowering);
+    expect(compiled("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
+      { $match: { a: { $eq: 1, $not: { $type: "array" } } } },
+      { $out: "dest" },
+    ]);
   });
 });
 

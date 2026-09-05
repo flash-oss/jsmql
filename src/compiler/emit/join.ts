@@ -102,7 +102,7 @@ function documentBody(link: Link, env: Env): boolean {
  * deeper: its Env crosses a `$lookup` boundary with a fresh Capture, so every
  * read of the outer document inside it is interned into `let`.
  */
-export function lookupOf(node: Expr, env: Env, S: JoinServices): Lookup {
+export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" | "$unionWith" = "$lookup"): Lookup {
   // `.length`, `.total`, `[0]` after the links read the joined value; the chain
   // proper is the outermost method call under them.
   let head: Expr = node;
@@ -110,8 +110,9 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices): Lookup {
     head = head.object;
   }
   const { from, links, pos } = foreignChain(head);
-  const capture = new Capture(env.level);
-  const body = env.enter({ stage: "$lookup", path: ["pipeline"], capture }, new Chain());
+  // A `$unionWith` body has no `let`: its capture is null, and a read of the outer document inside it is refused.
+  const capture = over === "$lookup" ? new Capture(env.level) : null;
+  const body = env.enter({ stage: over, path: ["pipeline"], capture }, new Chain());
   let one: Lookup["one"] = false;
   let yields: "array" | "object" = "array";
   let peeledTo: Expr = links.length > 0 ? links[0].object : node;
@@ -149,8 +150,8 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices): Lookup {
   const complete = rest.length === 0 && head === node;
   return {
     complete,
+    let: capture !== null && capture.any ? capture.vars : null,
     from,
-    let: capture.any ? capture.vars : null,
     pipeline: body.chain.close(),
     one,
     yields,
