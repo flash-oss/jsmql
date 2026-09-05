@@ -41,6 +41,21 @@ import {
   DATE_PARTS_ISO,
   DATE_PARTS_ISO_MARKERS,
   dateOptions,
+  distinctKeysExpr,
+  firstOf,
+  iterateeKeys,
+  joinedWith,
+  jsTruth,
+  lastOf,
+  negate,
+  reverseArrayOf,
+  singleArrayArg,
+  sizeOf,
+  sliceArray,
+  sliceString,
+  stringKeyExpr,
+  takeDropWhile,
+  uniqByReduce,
 } from "./mql.ts";
 import type {
   Expr,
@@ -573,6 +588,12 @@ function padded(
       in: { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] },
     },
   };
+}
+
+/** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
+function identity(bind: (hint: string) => Minted): { as: string; ref: string; in: unknown } {
+  const x = bind("x");
+  return { as: x.as, ref: x.ref, in: x.ref };
 }
 
 export const NAMES = {
@@ -6238,7 +6259,31 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
+    expr: {
+      perFamily: {
+        array: {
+          args: {
+            sig: "searchValue",
+            exact: 1,
+            noCallback: {
+              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
+            },
+          },
+          emit: ({ recv, args, value }) => ({ $indexOfArray: [recv, value(args[0])] }),
+        },
+        string: {
+          args: {
+            sig: "searchValue",
+            exact: 1,
+            noCallback: {
+              0: "'.indexOf()' searches for a VALUE, not by a function. To test elements against a predicate write '.findIndex(x => …)'.",
+            },
+          },
+          emit: ({ recv, args, value }) => ({ $indexOfCP: [recv, value(args[0])] }),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: unsupported("'.indexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.indexOf()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.indexOf();'",
@@ -6299,7 +6344,31 @@ export const NAMES = {
         return queryOwnValue(target, { $in: values }, OWN_VALUE);
       },
     },
-    expr: pending("src/methods/", { sig: "searchValue", exact: 1 }),
+    expr: {
+      perFamily: {
+        array: {
+          args: {
+            sig: "searchValue",
+            exact: 1,
+            noCallback: {
+              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
+            },
+          },
+          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), recv] }),
+        },
+        string: {
+          args: {
+            sig: "searchValue",
+            exact: 1,
+            noCallback: {
+              0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
+            },
+          },
+          emit: ({ recv, args, value }) => ({ $gte: [{ $indexOfCP: [recv, value(args[0])] }, 0] }),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: unsupported("'.includes()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.includes()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.includes();'",
@@ -6317,7 +6386,21 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "index", exact: 1 }),
+    expr: {
+      perFamily: {
+        array: {
+          args: { sig: "index", exact: 1 },
+          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
+        },
+        string: {
+          args: { sig: "index", exact: 1 },
+          emit: ({ recv, args, value }) => ({
+            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
+          }),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: unsupported("'.at()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.at()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.at();'",
@@ -6333,7 +6416,22 @@ export const NAMES = {
     returns: { string: "string", array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "start[, end]", allowed: [0, 1, 2] }),
+    expr: {
+      perFamily: {
+        stream: unsupported(
+          "'.slice()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.slice(…);').",
+        ),
+        array: {
+          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
+          emit: ({ recv, args, value, bind }) => sliceArray(recv, args, value, bind),
+        },
+        string: {
+          args: { sig: "start[, end]", allowed: [0, 1, 2], slotType: { 0: "int", 1: "int" } },
+          emit: ({ recv, args, value }) => sliceString(recv, args, value),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: {
       args: {
         sig: "start[, end]",
@@ -6367,7 +6465,22 @@ export const NAMES = {
     returns: { array: "array", string: "string", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "...items", atLeast: 1, spread: true }),
+    expr: {
+      perFamily: {
+        stream: unsupported(
+          "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(…);').",
+        ),
+        array: {
+          args: { sig: "...items", atLeast: 1, spread: true },
+          emit: ({ recv, args, value }) => ({ $concatArrays: [recv, ...args.map((a) => value(a))] }),
+        },
+        string: {
+          args: { sig: "...items", atLeast: 1, spread: true },
+          emit: ({ recv, args, value }) => ({ $concat: [recv, ...args.map((a) => value(a))] }),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: inCode("src/compiler/emit/union.ts"),
     statement: unsupported(
       "'.concat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.concat();'",
@@ -6402,7 +6515,7 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => reverseArrayOf(recv) },
     stream: because(
       "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
     ),
@@ -6433,7 +6546,29 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] }),
+    expr: {
+      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] },
+      emit: ({ recv, args, sortSpec, callback, bind }) => {
+        if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
+        const ask = sortSpec(args[0]);
+        if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        // a computed key: sort `{ k, v }` pairs by the key, then take the values back
+        const cb = callback(ask.key, "value");
+        const p = bind("p");
+        return {
+          $map: {
+            input: {
+              $sortArray: {
+                input: { $map: { input: recv, as: cb.as, in: { k: cb.in, v: cb.ref } } },
+                sortBy: { k: ask.dir },
+              },
+            },
+            as: p.as,
+            in: `${p.ref}.v`,
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
       emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape),
@@ -6465,7 +6600,29 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] }),
+    expr: {
+      args: { sig: '["field" | keyFn | [fields]]', allowed: [0, 1] },
+      emit: ({ recv, args, sortSpec, callback, bind }) => {
+        if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
+        const ask = sortSpec(args[0], false);
+        if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        // a computed key: sort `{ k, v }` pairs by the key, then take the values back
+        const cb = callback(ask.key, "value");
+        const p = bind("p");
+        return {
+          $map: {
+            input: {
+              $sortArray: {
+                input: { $map: { input: recv, as: cb.as, in: { k: cb.in, v: cb.ref } } },
+                sortBy: { k: ask.dir },
+              },
+            },
+            as: p.as,
+            in: `${p.ref}.v`,
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: '"field" | [fields] | keyFn', exact: 1 },
       // An object here is a lodash matcher, not directions — the reader refuses it.
@@ -6496,7 +6653,27 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] }),
+    expr: {
+      args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
+      emit: ({ recv, args, orderBy, callback, bind }) => {
+        const ask = orderBy(args[0], args[1]);
+        if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        const cb = callback(ask.key, "value");
+        const p = bind("p");
+        return {
+          $map: {
+            input: {
+              $sortArray: {
+                input: { $map: { input: recv, as: cb.as, in: { k: cb.in, v: cb.ref } } },
+                sortBy: { k: ask.dir },
+              },
+            },
+            as: p.as,
+            in: `${p.ref}.v`,
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: "keys[, orders] | { field: dir }", allowed: [1, 2] },
       emit: ({ args, orderBy, slot, reshape }) => sortStages(orderBy(args[0], args[1]), slot, reshape),
@@ -6515,7 +6692,45 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "start[, deleteCount, ...items]", atLeast: 1 }),
+    expr: {
+      args: {
+        sig: "start[, deleteCount, ...items]",
+        atLeast: 1,
+        slotType: { 0: "int", 1: "int" },
+        slotRange: { 0: [0, Infinity], 1: [0, Infinity] },
+      },
+      emit: ({ recv, args, value, bind }) => {
+        const arr = bind("arr");
+        const start = bind("start");
+        const tail = bind("tailStart");
+        const items = args.slice(2).map((a) => value(a));
+        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : start.ref;
+        return {
+          $let: {
+            vars: { [arr.as]: recv, [start.as]: value(args[0]) },
+            in: {
+              $let: {
+                vars: { [tail.as]: tailStart },
+                in: {
+                  $concatArrays: [
+                    { $slice: [arr.ref, start.ref] },
+                    items,
+                    {
+                      // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: arr.ref }, tail.ref] }, 0] },
+                        { $slice: [arr.ref, tail.ref, { $subtract: [{ $size: arr.ref }, tail.ref] }] },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        };
+      },
+    },
     stream: because("addresses elements by position. Use '.filter(<pred>)' or '.slice(start, end)'."),
     statement: unsupported(
       "'.toSpliced()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toSpliced();'",
@@ -6533,7 +6748,33 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "index, value", exact: 2 }),
+    expr: {
+      args: { sig: "index, value", exact: 2, slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value, bind }) => {
+        const arr = bind("arr");
+        const idx = bind("idx");
+        const val = bind("val");
+        const after = { $add: [idx.ref, 1] };
+        return {
+          $let: {
+            vars: { [arr.as]: recv, [idx.as]: value(args[0]), [val.as]: value(args[1]) },
+            in: {
+              $concatArrays: [
+                { $slice: [arr.ref, idx.ref] },
+                [val.ref],
+                {
+                  $cond: [
+                    { $gt: [{ $subtract: [{ $size: arr.ref }, after] }, 0] },
+                    { $slice: [arr.ref, after, { $subtract: [{ $size: arr.ref }, after] }] },
+                    [],
+                  ],
+                },
+              ],
+            },
+          },
+        };
+      },
+    },
     stream: because("replaces the element at an index. Use '.map(d => …)' with a condition on the document."),
     statement: unsupported(
       "'.with()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.with();'",
@@ -6549,7 +6790,12 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "depth", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "depth", allowed: [0, 1], constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, 1] } },
+      emit: ({ recv }) => ({
+        $reduce: { input: recv, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } },
+      }),
+    },
     stream: because(
       "flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",
     ),
@@ -6573,7 +6819,19 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
+    expr: {
+      args: { sig: "callback", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "value");
+        return {
+          $reduce: {
+            input: { $map: { input: cb.input, as: cb.as, in: cb.in } },
+            initialValue: [],
+            in: { $concatArrays: ["$$value", "$$this"] },
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: "callback", exact: 1 },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
@@ -6602,7 +6860,13 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "callback", atLeast: 0 }),
+    expr: {
+      args: { sig: "callback", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "value");
+        return { $map: { input: cb.input, as: cb.as, in: cb.in } };
+      },
+    },
     stream: {
       args: { sig: "callback", exact: 1 },
       emit: ({ args, document }) => [{ $replaceWith: document(args[0]) }],
@@ -6629,7 +6893,17 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
+    expr: {
+      args: { sig: "predicate", atLeast: 0 },
+      emit: ({ args, callback, bind }) => {
+        const cb = callback(args[0], "truth");
+        const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
+        if (!cb.paired) return kept;
+        // the pairs `[i, x]` were filtered; the elements come back out
+        const p = bind("pair");
+        return { $map: { input: kept, as: p.as, in: { $arrayElemAt: [p.ref, 1] } } };
+      },
+    },
     stream: { args: { sig: "predicate", exact: 1 }, emit: ({ args, predicate }) => [{ $match: predicate(args[0]) }] },
     statement: unsupported(
       "'.filter()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.filter();'",
@@ -6650,7 +6924,14 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
+    expr: {
+      args: { sig: "predicate", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "truth");
+        const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, 0] };
+        return cb.paired ? { $arrayElemAt: [picked, 1] } : picked;
+      },
+    },
     stream: unsupported(
       "'.find(...)' is not allowed in a chain on '$' \u2014 '.find' returns a single element in JS, but pipelines are arrays. Use '$.filter(<predicate>).take(1)' for the first match.",
     ),
@@ -6690,7 +6971,14 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
+    expr: {
+      args: { sig: "predicate", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "truth");
+        const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, -1] };
+        return cb.paired ? { $arrayElemAt: [picked, 1] } : picked;
+      },
+    },
     stream: because(
       "returns ONE element, so the result is a value rather than a stream. For a one-document stream use '.sort(<key>)' then '.take(1)'.",
     ),
@@ -6734,7 +7022,27 @@ export const NAMES = {
       // MEASURED: $.s.toLowerCase().lastIndexOf("x") is refused. Two families,
       // two answers — one flat cell hid the refusal, which is the useful fact.
       perFamily: {
-        array: pending("src/methods/", { sig: "searchValue", exact: 1 }),
+        array: {
+          args: { sig: "searchValue", exact: 1 },
+          emit: ({ recv, args, value, bind }) => {
+            const needle = value(args[0]);
+            const arr = bind("arr");
+            const rev = bind("revIdx");
+            return {
+              $let: {
+                vars: { [arr.as]: recv },
+                in: {
+                  $let: {
+                    vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
+                    in: cond({ $eq: [rev.ref, -1] }, -1, {
+                      $subtract: [{ $subtract: [{ $size: arr.ref }, 1] }, rev.ref],
+                    }),
+                  },
+                },
+              },
+            };
+          },
+        },
         string: unsupported(
           ".lastIndexOf() on strings isn't supported — MongoDB's $indexOfCP is forward-only. Use $op($indexOfCP, str, needle) for first-match indexing.",
         ),
@@ -6742,7 +7050,22 @@ export const NAMES = {
       // A receiver that cannot be proven takes the array form: the string form
       // is refused on its own, so nothing is lost, and a string that reaches
       // `$indexOfArray` is the server's error — as a wrong receiver is in JavaScript.
-      uncertain: pending("src/methods/", { sig: "searchValue", exact: 1 }),
+      uncertain: ({ recv, args, value, bind }) => {
+        const needle = value(args[0]);
+        const arr = bind("arr");
+        const rev = bind("revIdx");
+        return {
+          $let: {
+            vars: { [arr.as]: recv },
+            in: {
+              $let: {
+                vars: { [rev.as]: { $indexOfArray: [reverseArrayOf(arr.ref), needle] } },
+                in: cond({ $eq: [rev.ref, -1] }, -1, { $subtract: [{ $subtract: [{ $size: arr.ref }, 1] }, rev.ref] }),
+              },
+            },
+          },
+        };
+      },
     },
     stream: unsupported("'.lastIndexOf()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
@@ -6776,7 +7099,15 @@ export const NAMES = {
         return q === null ? null : queryOwnValue(path, { $elemMatch: q }, FIELD_VALUE);
       },
     },
-    expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
+    expr: {
+      args: { sig: "predicate", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "truth");
+        // a missing array is no elements; the pairs already are an array
+        const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
+        return { $anyElementTrue: { $map: { input, as: cb.as, in: cb.in } } };
+      },
+    },
     stream: unsupported("'.some()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.some()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.some();'",
@@ -6794,7 +7125,15 @@ export const NAMES = {
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", atLeast: 0 }),
+    expr: {
+      args: { sig: "predicate", atLeast: 0 },
+      emit: ({ args, callback }) => {
+        const cb = callback(args[0], "truth");
+        // a missing array is no elements; the pairs already are an array
+        const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
+        return { $allElementsTrue: { $map: { input, as: cb.as, in: cb.in } } };
+      },
+    },
     stream: unsupported("'.every()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.every()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.every();'",
@@ -6856,7 +7195,10 @@ export const NAMES = {
     returns: "string",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "separator", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "separator", allowed: [0, 1] },
+      emit: ({ recv, args, value }) => joinedWith(recv, args.length === 1 ? value(args[0]) : ","),
+    },
     stream: because(
       "joins elements into ONE string, so the result is a value rather than a stream. Valid in a value position: 'const s = $$.map(d => d.name).join(\", \")'.",
     ),
@@ -6874,7 +7216,16 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      // JavaScript joins an array with "," and stringifies the rest; `$toString` of an array fails on the server
+      emit: ({ recv, bind }) => {
+        const v = bind("v");
+        return {
+          $let: { vars: { [v.as]: recv }, in: cond({ $isArray: v.ref }, joinedWith(v.ref, ","), { $toString: v.ref }) },
+        };
+      },
+    },
     stream: unsupported("'.toString()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.toString()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toString();'",
@@ -8159,7 +8510,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $sum: recv }) },
     stream: unsupported("'.sum()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.sum()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sum();'",
@@ -8175,7 +8526,7 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $avg: recv }) },
     stream: unsupported("'.mean()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.mean()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.mean();'",
@@ -8194,7 +8545,7 @@ export const NAMES = {
     expr: {
       // MEASURED: Math.max($.a, $.b) → {"$max":["$a","$b"]}; $.rows.max() takes none.
       perFamily: {
-        array: pending("src/methods/", { sig: "", none: true }),
+        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $max: recv }) },
         Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
       },
     },
@@ -8216,7 +8567,7 @@ export const NAMES = {
     expr: {
       // MEASURED: Math.min($.a, $.b) → {"$min":["$a","$b"]}; $.rows.min() takes none.
       perFamily: {
-        array: pending("src/methods/", { sig: "", none: true }),
+        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $min: recv }) },
         Math: pending("src/codegen.ts", { sig: "...values", atLeast: 1, spread: true }),
       },
     },
@@ -8237,7 +8588,13 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee }) => {
+        const it = iteratee(args[0]);
+        return { $sum: { $map: { input: recv, as: it.as, in: it.in } } };
+      },
+    },
     stream: unsupported("'.sumBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.sumBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sumBy();'",
@@ -8255,7 +8612,13 @@ export const NAMES = {
     returns: "number",
     where: ["value", "group"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee }) => {
+        const it = iteratee(args[0]);
+        return { $avg: { $map: { input: recv, as: it.as, in: it.in } } };
+      },
+    },
     stream: unsupported("'.meanBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.meanBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.meanBy();'",
@@ -8273,7 +8636,26 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee, bind }) => {
+        const it = iteratee(args[0]);
+        const sorted = bind("sorted");
+        return {
+          $let: {
+            vars: {
+              [sorted.as]: {
+                $sortArray: {
+                  input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
+                  sortBy: { k: 1 },
+                },
+              },
+            },
+            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, 0] } } },
+          },
+        };
+      },
+    },
     stream: unsupported("'.minBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.minBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.minBy();'",
@@ -8291,7 +8673,26 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee, bind }) => {
+        const it = iteratee(args[0]);
+        const sorted = bind("sorted");
+        return {
+          $let: {
+            vars: {
+              [sorted.as]: {
+                $sortArray: {
+                  input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
+                  sortBy: { k: 1 },
+                },
+              },
+            },
+            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, -1] } } },
+          },
+        };
+      },
+    },
     stream: unsupported("'.maxBy()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.maxBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.maxBy();'",
@@ -8307,7 +8708,7 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
       emit: () => [
@@ -8335,7 +8736,10 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind),
+    },
     stream: {
       args: { sig: "iteratee", exact: 1 },
       // "First" follows the stream's current order; sort first when it matters.
@@ -8358,7 +8762,7 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
       emit: () => [
@@ -8388,7 +8792,10 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "iteratee", exact: 1 }),
+    expr: {
+      args: { sig: "iteratee", exact: 1 },
+      emit: ({ recv, args, iteratee, bind }) => uniqByReduce(recv, iteratee(args[0]), bind),
+    },
     stream: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ args, reshape }) => [
@@ -8412,7 +8819,14 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "...values", atLeast: 1 }),
+    expr: {
+      args: { sig: "...values", atLeast: 1 },
+      emit: ({ recv, args, value, bind }) => {
+        const values = args.map((a) => value(a));
+        const item = bind("item");
+        return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, values] }] } } };
+      },
+    },
     stream: because("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
     statement: unsupported(
       "'.without()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.without();'",
@@ -8428,7 +8842,13 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => {
+        const other = value(args[0]);
+        return { $setUnion: [{ $setDifference: [recv, other] }, { $setDifference: [other, recv] }] };
+      },
+    },
     stream: because("compares against a second array. Compare against a collection with '$$$.<coll>.find(<pred>)'."),
     statement: unsupported(
       "'.xor()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.xor();'",
@@ -8446,7 +8866,20 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
+    expr: {
+      args: { sig: "other, iteratee", exact: 2 },
+      emit: ({ recv, args, value, iteratee, bind }) => {
+        const it = iteratee(args[1]);
+        const keys = bind("otherKeys");
+        const inOther = { $in: [it.in, keys.ref] };
+        return {
+          $let: {
+            vars: { [keys.as]: iterateeKeys(value(args[0]), it) },
+            in: { $filter: { input: recv, as: it.as, cond: { $not: [inOther] } } },
+          },
+        };
+      },
+    },
     stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported(
       "'.differenceBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.differenceBy();'",
@@ -8466,7 +8899,20 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
+    expr: {
+      args: { sig: "other, iteratee", exact: 2 },
+      emit: ({ recv, args, value, iteratee, bind }) => {
+        const it = iteratee(args[1]);
+        const keys = bind("otherKeys");
+        const inOther = { $in: [it.in, keys.ref] };
+        return {
+          $let: {
+            vars: { [keys.as]: iterateeKeys(value(args[0]), it) },
+            in: { $filter: { input: recv, as: it.as, cond: inOther } },
+          },
+        };
+      },
+    },
     stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and keep the matches."),
     statement: unsupported(
       "'.intersectionBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.intersectionBy();'",
@@ -8486,7 +8932,11 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
+    expr: {
+      args: { sig: "other, iteratee", exact: 2 },
+      emit: ({ recv, args, value, iteratee, bind }) =>
+        uniqByReduce({ $concatArrays: [recv, value(args[0])] }, iteratee(args[1]), bind),
+    },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
       "'.unionBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.unionBy();'",
@@ -8504,7 +8954,30 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other, iteratee", exact: 2 }),
+    expr: {
+      args: { sig: "other, iteratee", exact: 2 },
+      emit: ({ recv, args, value, iteratee, bind }) => {
+        const it = iteratee(args[1]);
+        const other = value(args[0]);
+        const a = bind("a");
+        const b = bind("b");
+        const aKeys = bind("aKeys");
+        const bKeys = bind("bKeys");
+        const aNotInB = { $filter: { input: a.ref, as: it.as, cond: { $not: [{ $in: [it.in, bKeys.ref] }] } } };
+        const bNotInA = { $filter: { input: b.ref, as: it.as, cond: { $not: [{ $in: [it.in, aKeys.ref] }] } } };
+        return {
+          $let: {
+            vars: { [a.as]: recv, [b.as]: other },
+            in: {
+              $let: {
+                vars: { [aKeys.as]: iterateeKeys(a.ref, it), [bKeys.as]: iterateeKeys(b.ref, it) },
+                in: uniqByReduce({ $concatArrays: [aNotInB, bNotInA] }, it, bind),
+              },
+            },
+          },
+        };
+      },
+    },
     stream: because("compares against a second array. Compare against a collection with '$$.<coll>.find(<pred>)'."),
     statement: unsupported(
       "'.xorBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.xorBy();'",
@@ -8520,7 +8993,13 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const item = bind("item");
+        return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
+      },
+    },
     stream: because(
       "drops falsy elements. Every stream element is a document, which is never falsy — use '.reject(<pred>)' for the condition you mean.",
     ),
@@ -8538,7 +9017,16 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv }) => ({
+        $reduce: {
+          input: recv,
+          initialValue: [],
+          in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+        },
+      }),
+    },
     stream: because(
       "flattens nested ARRAYS; a stream holds documents. Use '.flatMap(d => d.<field>)' to expand an array field into documents.",
     ),
@@ -8556,7 +9044,14 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "size", exact: 1 }),
+    expr: {
+      args: { sig: "size", exact: 1, constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, Infinity] } },
+      emit: ({ recv, args, value, bind }) => {
+        const size = value(args[0]);
+        const i = bind("i");
+        return { $map: { input: { $range: [0, sizeOf(recv), size] }, as: i.as, in: { $slice: [recv, i.ref, size] } } };
+      },
+    },
     stream: because(
       "groups elements into ARRAYS of n, so the result is a stream of arrays rather than documents. Collect into one document first: '$$ = [{ all: $$.map(d => d) }];'.",
     ),
@@ -8574,7 +9069,10 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value }) => ({ $slice: [recv, args.length === 0 ? 1 : value(args[0])] }),
+    },
     stream: {
       args: {
         sig: "[n=1]",
@@ -8603,7 +9101,14 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value, bind }) => {
+        const n = args.length === 0 ? 1 : value(args[0]);
+        const arr = bind("arr");
+        return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, n, { $max: [1, { $size: arr.ref }] }] } } };
+      },
+    },
     stream: {
       args: {
         sig: "[n=1]",
@@ -8632,7 +9137,10 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value }) => ({ $slice: [recv, negate(args.length === 0 ? 1 : value(args[0]))] }),
+    },
     stream: because(
       "counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
     ),
@@ -8652,7 +9160,15 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value, bind }) => {
+        const n = args.length === 0 ? 1 : value(args[0]);
+        const arr = bind("arr");
+        const keep = { $max: [0, { $subtract: [{ $size: arr.ref }, n] }] };
+        return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, keep] } } };
+      },
+    },
     stream: because("counts from the END. Sort by the opposite key and use '.drop(n)'."),
     statement: unsupported(
       "'.dropRight()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.dropRight();'",
@@ -8670,7 +9186,13 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const arr = bind("arr");
+        return { $let: { vars: { [arr.as]: recv }, in: { $slice: [arr.ref, 1, { $max: [1, { $size: arr.ref }] }] } } };
+      },
+    },
     stream: { args: { sig: "", none: true }, emit: () => [{ $skip: 1 }] },
     statement: unsupported(
       "'.tail()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.tail();'",
@@ -8686,7 +9208,18 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const arr = bind("arr");
+        return {
+          $let: {
+            vars: { [arr.as]: recv },
+            in: { $slice: [arr.ref, { $max: [0, { $subtract: [{ $size: arr.ref }, 1] }] }] },
+          },
+        };
+      },
+    },
     stream: because(
       "drops the LAST element, which needs the whole stream buffered. Sort by the opposite key and use '.drop(1)'.",
     ),
@@ -8704,7 +9237,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
     stream: unsupported("'.head()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.head()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.head();'",
@@ -8720,7 +9253,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
     stream: unsupported("'.first()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.first()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.first();'",
@@ -8736,7 +9269,7 @@ export const NAMES = {
     returns: "unknown",
     where: ["value", "group", "window"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
     stream: unsupported("'.last()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.last()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.last();'",
@@ -8752,7 +9285,21 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=0]", allowed: [0, 1] }),
+    expr: {
+      perFamily: {
+        array: {
+          args: { sig: "[n=0]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => ({ $arrayElemAt: [recv, args[0] === undefined ? 0 : value(args[0])] }),
+        },
+        string: {
+          args: { sig: "[n=0]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => ({
+            $substrCP: [recv, args[0] === undefined ? 0 : normaliseSliceIndex(args[0], value(args[0]), recv), 1],
+          }),
+        },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: unsupported("'.nth()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.nth()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.nth();'",
@@ -8768,7 +9315,13 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      perFamily: {
+        array: { args: { sig: "", none: true }, emit: ({ recv }) => sizeOf(recv) },
+        object: { args: { sig: "", none: true }, emit: ({ recv }) => sizeOf({ $objectToArray: recv }) },
+      },
+      uncertain: () => "$$REMOVE",
+    },
     stream: unsupported("'.size()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.size()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.size();'",
@@ -8793,7 +9346,13 @@ export const NAMES = {
     // order until a sort gives it one. An array in a value slot is already ordered.
     only: ["afterSort"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate, bind }) => {
+        const p = predicate(args[0]);
+        return takeDropWhile(recv, p, false, bind);
+      },
+    },
     stream: pending("src/stream-methods.ts"),
     statement: unsupported(
       "'.takeWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.takeWhile();'",
@@ -8820,7 +9379,13 @@ export const NAMES = {
     // order until a sort gives it one. An array in a value slot is already ordered.
     only: ["afterSort"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate, bind }) => {
+        const p = predicate(args[0]);
+        return takeDropWhile(recv, p, true, bind);
+      },
+    },
     stream: pending("src/stream-methods.ts"),
     statement: unsupported(
       "'.dropWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.dropWhile();'",
@@ -8840,7 +9405,13 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate, bind }) => {
+        const p = predicate(args[0]);
+        return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, false, bind));
+      },
+    },
     stream: because("scans from the END. Sort by the opposite key and use '.takeWhile(<pred>)'."),
     statement: unsupported(
       "'.takeRightWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.takeRightWhile();'",
@@ -8860,7 +9431,13 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate, bind }) => {
+        const p = predicate(args[0]);
+        return reverseArrayOf(takeDropWhile(reverseArrayOf(recv), p, true, bind));
+      },
+    },
     stream: because("scans from the END. Sort by the opposite key and use '.dropWhile(<pred>)'."),
     statement: unsupported(
       "'.dropRightWhile()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.dropRightWhile();'",
@@ -8878,7 +9455,18 @@ export const NAMES = {
     returns: { array: "unknown", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const arr = bind("arr");
+        return {
+          $let: {
+            vars: { [arr.as]: recv },
+            in: { $arrayElemAt: [arr.ref, { $floor: { $multiply: [{ $rand: {} }, { $size: arr.ref }] } }] },
+          },
+        };
+      },
+    },
     stream: { args: { sig: "", none: true }, emit: () => [{ $sample: { size: 1 } }] },
     statement: unsupported(
       "'.sample()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sample();'",
@@ -8894,7 +9482,27 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[n=1]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[n=1]", allowed: [0, 1], slotType: { 0: "int" }, slotRange: { 0: [0, Infinity] } },
+      emit: ({ recv, args, value, bind }) => {
+        const n = args.length === 0 ? 1 : value(args[0]);
+        const shuf = bind("shuffled");
+        const item = bind("item");
+        return {
+          $let: {
+            vars: {
+              [shuf.as]: {
+                $sortArray: {
+                  input: { $map: { input: recv, as: item.as, in: { k: { $rand: {} }, v: item.ref } } },
+                  sortBy: { k: 1 },
+                },
+              },
+            },
+            in: { $map: { input: { $slice: [shuf.ref, n] }, as: item.as, in: `${item.ref}.v` } },
+          },
+        };
+      },
+    },
     stream: {
       args: {
         sig: "[n=1]",
@@ -8921,7 +9529,22 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "values", exact: 1 }),
+    expr: {
+      args: { sig: "values", exact: 1 },
+      emit: ({ recv, args, value, bind }) => {
+        const values = value(args[0]);
+        const i = bind("i");
+        return {
+          $arrayToObject: {
+            $map: {
+              input: { $range: [0, sizeOf(recv)] },
+              as: i.as,
+              in: { k: { $toString: { $arrayElemAt: [recv, i.ref] } }, v: { $arrayElemAt: [values, i.ref] } },
+            },
+          },
+        };
+      },
+    },
     stream: because("builds ONE object from keys and values, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.zipObject()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.zipObject();'",
@@ -8939,7 +9562,12 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "...arrays", atLeast: 1 }),
+    expr: {
+      args: { sig: "...arrays", atLeast: 1 },
+      emit: ({ recv, args, value }) => ({
+        $zip: { inputs: [recv, ...args.map((a) => value(a))], useLongestLength: true },
+      }),
+    },
     stream: because(
       "pairs elements positionally across arrays. A stream has no positions to pair on — join on a key instead with '$$$.<coll>.find(<pred>)'.",
     ),
@@ -8957,7 +9585,26 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const t = bind("t");
+        const j = bind("j");
+        const row = bind("row");
+        return {
+          $let: {
+            vars: { [t.as]: recv },
+            in: {
+              $map: {
+                input: { $range: [0, { $size: { $ifNull: [{ $arrayElemAt: [t.ref, 0] }, []] } }] },
+                as: j.as,
+                in: { $map: { input: t.ref, as: row.as, in: { $arrayElemAt: [row.ref, j.ref] } } },
+              },
+            },
+          },
+        };
+      },
+    },
     stream: because("transposes into ONE array of arrays, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.unzip()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.unzip();'",
@@ -9027,7 +9674,13 @@ export const NAMES = {
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[iteratee]", allowed: [0, 1] },
+      emit: ({ recv, args, iteratee, bind }) => {
+        const it = args[0] === undefined ? identity(bind) : iteratee(args[0]);
+        return { $arrayToObject: { $map: { input: recv, as: it.as, in: { k: stringKeyExpr(it.in), v: it.ref } } } };
+      },
+    },
     stream: {
       args: { sig: "iteratee", exact: 1 },
       // Last wins, as lodash's does; "last" follows the stream's current order.
@@ -9062,7 +9715,19 @@ export const NAMES = {
     expr: {
       // MEASURED: Object.groupBy($.items) is refused — the discriminator is required.
       perFamily: {
-        array: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
+        array: {
+          args: { sig: "[iteratee]", allowed: [0, 1] },
+          emit: ({ recv, args, iteratee, bind }) => {
+            const it = args[0] === undefined ? identity(bind) : iteratee(args[0]);
+            const key = bind("key");
+            const filtered = { $filter: { input: recv, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
+            return {
+              $arrayToObject: {
+                $map: { input: distinctKeysExpr(recv, it), as: key.as, in: { k: key.ref, v: filtered } },
+              },
+            };
+          },
+        },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value — see its 'stream' cell."),
         Object: pending("src/codegen.ts", { sig: "items, x => key", exact: 2 }),
       },
@@ -9093,7 +9758,19 @@ export const NAMES = {
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "[iteratee]", allowed: [0, 1] }),
+    expr: {
+      args: { sig: "[iteratee]", allowed: [0, 1] },
+      emit: ({ recv, args, iteratee, bind }) => {
+        const it = args[0] === undefined ? identity(bind) : iteratee(args[0]);
+        const key = bind("key");
+        const filtered = { $filter: { input: recv, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
+        return {
+          $arrayToObject: {
+            $map: { input: distinctKeysExpr(recv, it), as: key.as, in: { k: key.ref, v: { $size: filtered } } },
+          },
+        };
+      },
+    },
     stream: {
       args: { sig: "iteratee", exact: 1 },
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 }),
@@ -9114,7 +9791,16 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate }) => {
+        const p = predicate(args[0]);
+        return [
+          { $filter: { input: recv, as: p.as, cond: p.in } },
+          { $filter: { input: recv, as: p.as, cond: { $not: [p.in] } } },
+        ];
+      },
+    },
     stream: unsupported("'.partition()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.partition()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.partition();'",
@@ -9138,7 +9824,13 @@ export const NAMES = {
     returns: { array: "array", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "predicate", exact: 1 }),
+    expr: {
+      args: { sig: "predicate", exact: 1 },
+      emit: ({ recv, args, predicate }) => {
+        const p = predicate(args[0]);
+        return { $filter: { input: recv, as: p.as, cond: { $not: [p.in] } } };
+      },
+    },
     stream: {
       args: { sig: "predicate", exact: 1 },
       // The COMPLEMENT of the predicate's own clause — `$nor`, as `!p` is.
@@ -9400,7 +10092,21 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "", none: true }),
+    expr: {
+      args: { sig: "", none: true },
+      emit: ({ recv, bind }) => {
+        const p = bind("p");
+        return {
+          $arrayToObject: {
+            $map: {
+              input: recv,
+              as: p.as,
+              in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }],
+            },
+          },
+        };
+      },
+    },
     stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'",
@@ -9655,7 +10361,11 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "lower, upper", exact: 2 }),
+    expr: {
+      // a number and a date clamp the same way, so one cell serves both families
+      args: { sig: "lower, upper", exact: 2 },
+      emit: ({ recv, args, value }) => ({ $min: [{ $max: [recv, value(args[0])] }, value(args[1])] }),
+    },
     stream: unsupported("'.clamp()' has no stream form: it produces a value, not a stream of documents."),
     statement: unsupported(
       "'.clamp()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.clamp();'",
@@ -9763,7 +10473,10 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $setIntersection: [recv, value(args[0])] }),
+    },
     stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
     statement: unsupported(
       "'.intersection()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.intersection();'",
@@ -9781,7 +10494,10 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value }) => ({ $setUnion: [recv, value(args[0])] }),
+    },
     stream: because("merges a second array. Append another source with '.concat(...)' — that is '$unionWith'."),
     statement: unsupported(
       "'.union()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.union();'",
@@ -9797,7 +10513,14 @@ export const NAMES = {
     returns: "array",
     where: ["value"],
     filter: viaFallback,
-    expr: pending("src/methods/", { sig: "other", exact: 1 }),
+    expr: {
+      args: { sig: "other", exact: 1 },
+      emit: ({ recv, args, value, bind }) => {
+        const other = value(args[0]);
+        const item = bind("item");
+        return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
+      },
+    },
     stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported(
       "'.difference()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.difference();'",

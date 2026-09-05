@@ -206,3 +206,170 @@ export function dateOptions(arg: Expr | undefined, value: (e: Expr) => unknown):
   }
   return out;
 }
+
+// ── arrays ───────────────────────────────────────────────────────────────────
+
+/** A literal array as ONE operand: `{ $size: [1, 2] }` is two operands to the server, `{ $size: [[1, 2]] }` one. */
+export const singleArrayArg = (operand: unknown): unknown => (Array.isArray(operand) ? [operand] : operand);
+export const sizeOf = (a: unknown): Record<string, unknown> => ({ $size: singleArrayArg(a) });
+export const firstOf = (a: unknown): Record<string, unknown> => ({ $first: singleArrayArg(a) });
+export const lastOf = (a: unknown): Record<string, unknown> => ({ $last: singleArrayArg(a) });
+export const reverseArrayOf = (a: unknown): Record<string, unknown> => ({ $reverseArray: singleArrayArg(a) });
+
+/** JavaScript's truth of a lowered value: not missing, null, false, "" or 0. */
+export const jsTruth = (value: unknown): unknown => ({
+  $and: [
+    { $ne: [{ $ifNull: [value, null] }, null] },
+    { $ne: [value, false] },
+    { $ne: [value, ""] },
+    { $ne: [value, 0] },
+  ],
+});
+
+/** `0 - n`, folded for a constant. */
+export const negate = (n: unknown): unknown => (typeof n === "number" ? -n : { $subtract: [0, n] });
+
+/** A group key as the string a document key must be; `null` for a missing one, as lodash spells it. */
+export const stringKeyExpr = (value: unknown): unknown => ({ $ifNull: [{ $toString: value }, "null"] });
+
+/** An iteratee over an array: the element variable and the body reading it. */
+export type Iter = { as: string; ref: string; in: unknown };
+
+/** The distinct keys an iteratee yields over the array, as strings. */
+export const distinctKeysExpr = (arr: unknown, it: Iter): unknown => ({
+  $setUnion: [{ $map: { input: arr, as: it.as, in: stringKeyExpr(it.in) } }, []],
+});
+/** Every key an iteratee yields over the array. */
+export const iterateeKeys = (arr: unknown, it: Iter): unknown => ({ $map: { input: arr, as: it.as, in: it.in } });
+
+/** lodash `uniqBy`: the first element per key, in order — one `$reduce` carrying the keys seen. */
+export function uniqByReduce(input: unknown, it: Iter, mint: (hint: string) => Minted): unknown {
+  const key = mint("key");
+  const keyExpr = it.in === it.ref ? "$$this" : { $let: { vars: { [it.as]: "$$this" }, in: it.in } };
+  return {
+    $getField: {
+      field: "out",
+      input: {
+        $reduce: {
+          input,
+          initialValue: { seen: [], out: [] },
+          in: {
+            $let: {
+              vars: { [key.as]: keyExpr },
+              in: {
+                $cond: [
+                  { $in: [key.ref, "$$value.seen"] },
+                  "$$value",
+                  {
+                    seen: { $concatArrays: ["$$value.seen", [key.ref]] },
+                    out: { $concatArrays: ["$$value.out", ["$$this"]] },
+                  },
+                ],
+              },
+            },
+          },
+        },
+      },
+    },
+  };
+}
+
+/** lodash `takeWhile` / `dropWhile`: the prefix a predicate holds over, kept or dropped. */
+export function takeDropWhile(arrExpr: unknown, pred: Iter, drop: boolean, mint: (hint: string) => Minted): unknown {
+  const arr = mint("arr");
+  const fi = mint("fi");
+  const preds = { $map: { input: arr.ref, as: pred.as, in: { $cond: [pred.in, true, false] } } };
+  const body = drop
+    ? { $cond: [{ $eq: [fi.ref, -1] }, [], { $slice: [arr.ref, fi.ref, { $size: arr.ref }] }] }
+    : { $cond: [{ $eq: [fi.ref, -1] }, arr.ref, { $slice: [arr.ref, fi.ref] }] };
+  return {
+    $let: {
+      vars: { [arr.as]: arrExpr },
+      in: { $let: { vars: { [fi.as]: { $indexOfArray: [preds, false] } }, in: body } },
+    },
+  };
+}
+
+/** A JavaScript slice index on an array of `size`: negative counts from the end, both ends clamped. */
+export function resolveSliceIndex(node: Expr, lowered: unknown, size: unknown): unknown {
+  const lit = literalIndexValue(node);
+  if (lit !== null) {
+    if (lit === 0) return 0;
+    if (lit > 0) return { $min: [lit, size] };
+    return { $max: [{ $subtract: [size, -lit] }, 0] };
+  }
+  return { $cond: [{ $lt: [lowered, 0] }, { $max: [{ $add: [lowered, size] }, 0] }, { $min: [lowered, size] }] };
+}
+
+/** `arr.slice(start[, end])` on an array value. */
+export function sliceArray(
+  recv: unknown,
+  args: readonly Expr[],
+  value: (e: Expr) => unknown,
+  mint: (hint: string) => Minted,
+): unknown {
+  if (args.length === 0) return recv;
+  const startNode = args[0];
+  const startLit = literalIndexValue(startNode);
+  if (args.length === 1) {
+    if (startLit !== null && startLit < 0) return { $slice: [recv, startLit] };
+    if (startLit === 0) return recv;
+    const arr = mint("arr");
+    return {
+      $let: {
+        vars: { [arr.as]: recv },
+        in: { $slice: [arr.ref, value(startNode), { $max: [1, { $size: arr.ref }] }] },
+      },
+    };
+  }
+  const endNode = args[1];
+  const endLit = literalIndexValue(endNode);
+  if (startLit !== null && startLit >= 0 && endLit !== null && endLit >= 0) {
+    if (startLit === 0) return { $slice: [recv, endLit] };
+    if (endLit <= startLit) return [];
+    return { $slice: [recv, startLit, endLit - startLit] };
+  }
+  if (startLit === 0) {
+    const arr = mint("arr");
+    return {
+      $let: {
+        vars: { [arr.as]: recv },
+        in: { $slice: [arr.ref, resolveSliceIndex(endNode, value(endNode), { $size: arr.ref })] },
+      },
+    };
+  }
+  const arr = mint("arr");
+  const k = mint("k");
+  const f = mint("f");
+  const count = { $subtract: [f.ref, k.ref] };
+  return {
+    $let: {
+      vars: { [arr.as]: recv },
+      in: {
+        $let: {
+          vars: {
+            [k.as]: resolveSliceIndex(startNode, value(startNode), { $size: arr.ref }),
+            [f.as]: resolveSliceIndex(endNode, value(endNode), { $size: arr.ref }),
+          },
+          in: { $cond: [{ $gt: [count, 0] }, { $slice: [arr.ref, k.ref, { $max: [count, 1] }] }, []] },
+        },
+      },
+    },
+  };
+}
+
+/** `arr.join(sep)`: every element as a string, joined — an empty array is "". */
+export const joinedWith = (recv: unknown, separator: unknown): unknown => ({
+  $reduce: {
+    input: recv,
+    initialValue: "",
+    in: cond(
+      { $eq: ["$$value", ""] },
+      { $toString: "$$this" },
+      { $concat: ["$$value", separator, { $toString: "$$this" }] },
+    ),
+  },
+});
+
+/** `{ $eq: [{ $type: v }, "string"] }` — the string test a dual-receiver dispatch uses. */
+export const isStringType = (operand: unknown): object => ({ $eq: [{ $type: operand }, "string"] });

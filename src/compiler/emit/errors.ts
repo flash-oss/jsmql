@@ -641,6 +641,13 @@ export const reduceWrapMisplaced = (pos: number): CodegenError =>
     pos,
   );
 
+/** `.map(5)` — an array callback is an arrow with an expression body. */
+export const notAnArrowCallback = (name: string, pos: number): CodegenError =>
+  new CodegenError(`'.${name}((x[, i[, arr]]) => …)' takes an arrow with an expression body.`, pos);
+
+export const tooManyCallbackParams = (name: string, got: number, pos: number): CodegenError =>
+  new CodegenError(`'.${name}()' callbacks take at most 3 parameters (element, index, array); got ${got}.`, pos);
+
 /** `.mapValues(5)` — an object iteratee is a one- or two-parameter arrow. */
 export const objIterateeShape = (name: string, pos: number): CodegenError =>
   new CodegenError(`'.${name}((value[, key]) => …)' takes a one- or two-parameter arrow with an expression body.`, pos);

@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — feat(compiler): the array method cells — callbacks, slices, the dual receivers, lodash's array helpers
+
+Seventy-three more rows carry their value cell: the array callbacks (`.map` … `.flatMap`, with an index read turning the input into `[i, x]` pairs of a `$zip`), the slices (`.take` … `.fromPairs`), the reshapes (`.toSorted` and its kin, a computed key sorting `{ k, v }` pairs), the methods two prototypes share (`.indexOf`, `.includes`, `.at`, `.slice`, `.concat`, `.size`, `.toString`, `.join`, `.clamp`) and lodash's array helpers (`.sumBy` … `.dropRightWhile`). The cells receive two more services — `callback(cb, mode)` for the one-to-three-parameter array callback, and the sort readers `sortSpec`/`orderBy` the stream cells already had — and the pure builders (`sliceArray`, `uniqByReduce`, `takeDropWhile`, `joinedWith`, …) joined `src/registry/mql.ts`.
+
+**Where the receiver's family is not provable, the registry's one dispatch decides.** `$.x.includes(3)` is a `$switch` on `$type` — the array cell, the string cell, `$$REMOVE` for anything else — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string form on a number. `.toString()` reads the receiver's type at run time too: JavaScript joins an array with "," and the server refuses `$toString` of an array, so the shipped bare `$toString` failed exactly there. A receiver PROVEN to be one family runs that cell alone, as before. Every refusal is a fact on `args` — `slotRange` for a count, `constant` for `.chunk`'s size, `noCallback` for `.includes(x => …)` — and the pending ratchet fell to 217.
+
 ## 2026-09-05 — feat(compiler): the string, number, date and object method cells
 
 Seventy-four method rows now carry their value cell in the registry — the string family (`.trim` … `.truncate`), lodash's string helpers (`.camelCase` … `.escape`), `.inRange`, the sixteen date accessors, the date family (`.plus` … `.set`) and the object family (`.mapValues` … `.omit`) — each measured byte-equal with the shipped output for every accepted spelling, and every spelling run on mongod against the value JavaScript gives (`test/compiler-methods.test.ts`). The pure builders they share (`strLenOf`, `normaliseSliceIndex`, `wordsExpr`, `dateOptions`, …) moved into `src/registry/mql.ts`, a leaf, so the registry still imports nothing outside itself. The pending ratchet fell from 365 to 291.

@@ -511,11 +511,19 @@ describe("compiler/emit/join — the refusals name the way out", () => {
   it("a body over a stage with no `let` cannot read the outer document", () => {
     expect(() => pipeline('$unionWith({ coll: "orders", pipeline: [$match($.a > 1)] });')).toThrow(/has no 'let'/);
   });
-  it("says which forms are not built yet", () => {
-    // a value-position `.map` over the joined array is the value road's `.map`, still pending
-    expect(() => pipeline("$.t = $$$.orders.filter(o => o.userId === $._id).map(o => o.total);")).toThrow(
-      PendingLowering,
-    );
+  it("reads a value `.map` over the joined array with the value road's cell", () => {
+    expect(
+      compiled("$.t = $$$.orders.filter(o => o.userId === $._id).map(o => o.total);", [
+        { _id: 1, t: [10, 20] },
+        { _id: 2, t: [5] },
+        { _id: 3, t: [] },
+        { _id: 4, t: [] },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $set: { t: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } },
+      { $unset: "__jsmql" },
+    ]);
   });
 });
 

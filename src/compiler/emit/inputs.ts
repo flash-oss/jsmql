@@ -16,7 +16,9 @@ import {
   blockWhereValueExpected,
   mapMustReturnDocument,
   needsPipeline,
+  notAnArrowCallback,
   objIterateeShape,
+  tooManyCallbackParams,
   notAFieldOfTheDocument,
   notAnArrow,
   unfilledParam,
@@ -38,7 +40,7 @@ export const childEnv = (env: Env, node: object, key: string): Env => env.at(edg
  * an index or collection parameter is a different lowering, and no row that
  * reaches this constructor states one.
  */
-function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; in: unknown } {
+function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { as: string; ref: string; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined) {
     internalError("a renderer asked for a callback body from an argument that is not an expression arrow");
   }
@@ -46,7 +48,74 @@ function callback(cb: Expr, env: Env, read: (body: Expr, e: Env) => unknown): { 
     internalError(`a renderer asked for a one-parameter callback and the arrow has ${cb.params.length}`);
   }
   const bound = env.param(cb.params[0], "unknown", cb.pos);
-  return { as: bound.as, in: read(cb.body, childEnv(bound.env, cb, "body")) };
+  return { as: bound.as, ref: bound.ref, in: read(cb.body, childEnv(bound.env, cb, "body")) };
+}
+
+/** Does the arrow's body read its parameter `name`? */
+function readsParam(node: unknown, name: string): boolean {
+  if (node === null || typeof node !== "object") return false;
+  if (Array.isArray(node)) return node.some((n) => readsParam(n, name));
+  const n = node as { type?: string; name?: string } & Record<string, unknown>;
+  if (n.type === "Ident" && n.name === name) return true;
+  return Object.entries(n).some(([k, v]) => k !== "type" && readsParam(v, name));
+}
+
+/**
+ * An ARRAY callback — `(x[, i[, arr]]) => …` — as what a `$map`/`$filter` takes.
+ * The element is the parameter; an index READ makes the input the `[i, x]` pairs
+ * of a `$zip`, and the array parameter is the receiver bound by name.
+ */
+function arrayCallback(
+  cb: Expr,
+  recv: unknown,
+  env: Env,
+  read: (body: Expr, e: Env) => unknown,
+  name: string,
+): { input: unknown; as: string; ref: string; paired: boolean; in: unknown } {
+  if (cb.type !== "Lambda" || cb.body === undefined) throw notAnArrowCallback(name, (cb as { pos: number }).pos);
+  if (cb.params.length > 3) throw tooManyCallbackParams(name, cb.params.length, cb.pos);
+  const [elem, index, arr] = cb.params;
+  const usesIndex = index !== undefined && readsParam(cb.body, index);
+  if (!usesIndex) {
+    const bound = env.param(elem ?? "_", "unknown", cb.pos);
+    let bodyEnv = bound.env;
+    const vars: Record<string, unknown> = {};
+    if (arr !== undefined) {
+      const a = bodyEnv.param(arr, "array", cb.pos);
+      vars[a.as] = recv;
+      bodyEnv = a.env;
+    }
+    const body = read(cb.body, childEnv(bodyEnv, cb, "body"));
+    return {
+      input: recv,
+      as: bound.as,
+      ref: bound.ref,
+      paired: false,
+      in: arr === undefined ? body : { $let: { vars, in: body } },
+    };
+  }
+  const pair = env.fresh("pair");
+  let bodyEnv = pair.env;
+  const vars: Record<string, unknown> = {};
+  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
+  bodyEnv = x.env;
+  const i = bodyEnv.param(index, "number", cb.pos);
+  vars[i.as] = { $arrayElemAt: [pair.ref, 0] };
+  bodyEnv = i.env;
+  if (arr !== undefined) {
+    const a = bodyEnv.param(arr, "array", cb.pos);
+    vars[a.as] = recv;
+    bodyEnv = a.env;
+  }
+  const size = { $size: Array.isArray(recv) ? [recv] : recv };
+  return {
+    input: { $zip: { inputs: [{ $range: [0, size] }, recv] } },
+    as: pair.as,
+    ref: pair.ref,
+    paired: true,
+    in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } },
+  };
 }
 
 /**
@@ -75,7 +144,10 @@ export function exprInputs(
     value,
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
-    predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; in: Truth },
+    predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
+    callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name),
+    sortSpec: (e, objects) => sortSpecOf(e, name, objects),
+    orderBy: (keys, orders) => orderBySpec(keys, orders, name),
     objIteratee: (cb) => {
       if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length < 1 || cb.params.length > 2) {
         throw objIterateeShape(name, (cb as { pos: number }).pos);

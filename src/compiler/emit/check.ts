@@ -365,6 +365,10 @@ export function checkSlots(
       );
     }
   }
+  for (const [i, message] of Object.entries(args.noCallback ?? {})) {
+    const e = operands[Number(i)];
+    if (e !== undefined && e.type === "Lambda") throw new CodegenError(message, e.pos);
+  }
   for (const i of args.dateFormat ?? []) {
     const e = operands[i];
     if (e !== undefined && e.type === "StringLiteral") checkDateFormat(name, e.value, e.pos);

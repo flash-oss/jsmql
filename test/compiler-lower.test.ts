@@ -207,7 +207,7 @@ describe("compiler/emit/lower — calls", () => {
   });
 
   it("throws a typed PendingLowering for a row still marked pending", () => {
-    expect(() => expr("$.items.map(x => x * 1.1)")).toThrow(PendingLowering);
+    expect(() => expr("$.items.findIndex(x => x > 1)")).toThrow(PendingLowering);
   });
 
   it("refuses a name from a closed set with a suggestion", () => {

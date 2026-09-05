@@ -186,16 +186,16 @@ describe("compiler/emit/filter — methods and operators", () => {
   });
 
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
-    // The query cell answers null, and the fallback asks the VALUE lowering — which for
-    // the array methods is still the registry's `pending`, so that is what arrives.
+    // The query cell answers null, and the fallback asks the VALUE lowering, which
+    // arrives under `$expr`.
     // A receiver PROVEN to be no string is refused before either: `$abs` returns a number.
     expect(() => filter('$abs($.n).startsWith("A")')).toThrow(/not available on a 'number'/);
-    expect(() => filter("$.items.every(i => i.q > 2)")).toThrow(PendingLowering);
-    expect(() => filter("$.items.some(i => i.q > $.min)")).toThrow(PendingLowering);
+    expect(filter("$.items.every(i => i.q > 2)")).toHaveProperty("$expr");
+    expect(filter("$.items.some(i => i.q > $.min)")).toHaveProperty("$expr");
     // inside $elemMatch the OUTER document has no path: `$.flag` must not become the element's `flag`
-    expect(() => filter("$.items.some(i => i.q > 2 && $.flag === true)")).toThrow(PendingLowering);
+    expect(filter("$.items.some(i => i.q > 2 && $.flag === true)")).toHaveProperty("$expr");
     // and an OUTER element's fields are not the inner element's
-    expect(() => filter("$.a.some(i => i.b.some(j => i.c === 1))")).toThrow(PendingLowering);
+    expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toHaveProperty("$expr");
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
       a: { $elemMatch: { b: { $elemMatch: { c: { $eq: 1, $not: { $type: "array" } } } } } },
     });

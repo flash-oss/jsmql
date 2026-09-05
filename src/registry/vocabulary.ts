@@ -578,6 +578,8 @@ export type Arity = {
   body?: Readonly<Record<number, BodyRule>>;
   /** A string literal in the slot is a MongoDB date format — its `%` specifiers are checked. */
   dateFormat?: readonly number[];
+  /** An arrow in the slot is refused with this message — `.includes(x => …)` searches a VALUE; the predicate method is named. */
+  noCallback?: Readonly<Record<number, string>>;
 };
 
 /**
@@ -866,10 +868,25 @@ export type ExprIn = {
   value: (e: Expr) => unknown;
   /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
   truth: (e: Expr) => Truth;
-  /** A callback whose body is a value: `{ as, in }`, the parameter bound as `$$as`. */
-  iteratee: (cb: Expr) => { as: string; in: unknown };
+  /** A callback whose body is a value: `{ as, ref, in }`, the parameter bound as `$$as` (`ref`). */
+  iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
+  /**
+   * An ARRAY callback of one to three parameters — `(x[, i[, arr]]) => …` — as
+   * the input to iterate, the variable to iterate as, and the body. When the index
+   * is read the input is the pairs `[i, x]` (`$zip` with a `$range`) and `paired`
+   * says so, so a cell that returns an element unwraps it. `mode` reads the body
+   * as a value or as a condition.
+   */
+  callback: (
+    cb: Expr,
+    mode: "value" | "truth",
+  ) => { input: unknown; as: string; ref: string; paired: boolean; in: unknown };
+  /** A sort argument as `{ field: dir }` keys, or a computed key function with its direction. */
+  sortSpec: (e: Expr, objects?: boolean) => SortAsk;
+  /** lodash's `orderBy(keys, orders)`. */
+  orderBy: (keys: Expr, orders: Expr | undefined) => SortAsk;
   /** A callback whose body is a condition. */
-  predicate: (cb: Expr) => { as: string; in: Truth };
+  predicate: (cb: Expr) => { as: string; ref: string; in: Truth };
   /**
    * A callback over a document's `{ k, v }` pairs — `(value[, key]) => …` — as
    * the pair variable's name and the body reading `value` and `key` from it:
