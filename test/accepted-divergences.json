@@ -1,5 +1,9 @@
 {
-  "reference": { "commit": "46afc8d", "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355", "dirty": false },
+  "reference": {
+    "commit": "46afc8d",
+    "srcTree": "14a6a3dbbef165649d32cc210f5ea16934cad355",
+    "dirty": false
+  },
   "rows": {
     "expr\u0000$$ = $$.countBy(String)": {
       "entry": "expr",
@@ -20600,6 +20604,30 @@
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
       "now": "A pipeline is one or more statements: `;`-separated ('$match(…); $sort({…});') or a bracketed list of stages ('[$match(…), $sort({…})]'). This source is a single expression — pass it to jsmql() for a filter, or jsmql.exp",
       "reason": "message: both refuse a source that is not a pipeline; the new wording says what a pipeline IS and how to spell one, instead of naming the entry point that was called."
+    },
+    "expr\u0000typeof $.a === \"function\"": {
+      "entry": "expr",
+      "src": "typeof $.a === \"function\"",
+      "kind": "now-rejected",
+      "was": "{\"$eq\":[{\"$type\":\"$a\"},\"function\"]}",
+      "now": "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
+      "reason": "intended: by the developer's ruling, `typeof` compares against MongoDB's type names and nothing else. \"function\" is not one, and the shipped compiler lowered it to a test that quietly matched nothing; it is refused now with the nearest MongoDB name."
+    },
+    "filter\u0000typeof $.a === \"function\"": {
+      "entry": "filter",
+      "src": "typeof $.a === \"function\"",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$eq\":[{\"$type\":\"$a\"},\"function\"]}}",
+      "now": "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
+      "reason": "intended: by the developer's ruling, `typeof` compares against MongoDB's type names and nothing else. \"function\" is not one, and the shipped compiler lowered it to a test that quietly matched nothing; it is refused now with the nearest MongoDB name."
+    },
+    "pipeline\u0000[$match(typeof $.fn === \"function\")]": {
+      "entry": "pipeline",
+      "src": "[$match(typeof $.fn === \"function\")]",
+      "kind": "now-rejected",
+      "was": "[{\"$match\":{\"$expr\":{\"$eq\":[{\"$type\":\"$fn\"},\"function\"]}}}]",
+      "now": "'typeof' compares against one of MongoDB's type names, and \"function\" is not one. Did you mean 'javascript'? For absence, write 'x === undefined'.",
+      "reason": "intended: by the developer's ruling, `typeof` compares against MongoDB's type names and nothing else. \"function\" is not one, and the shipped compiler lowered it to a test that quietly matched nothing; it is refused now with the nearest MongoDB name."
     }
   }
 }

@@ -798,15 +798,6 @@ export const BSON_TYPE_ALIASES: readonly string[] = [
 ];
 
 /**
- * JavaScript's `typeof` spelling → the BSON alias. `typeof` says "boolean";
- * MongoDB says "bool". `typeof x === "undefined"` is ABSENCE in JavaScript, and
- * `$type` answers "missing" for an absent field — never the deprecated BSON
- * `undefined` type, which the query `$type: "undefined"` would test (measured:
- * it matched none of six documents without the field).
- */
-export const JS_TYPEOF_TO_BSON: Readonly<Record<string, string>> = { boolean: "bool", undefined: "missing" };
-
-/**
  * An umbrella alias → the concrete types the aggregation `$type` EXPRESSION can
  * return for it. The query form takes the umbrella; the expression form compares
  * against what `$type` answers, and it answers "int" or "double", never "number".
@@ -817,11 +808,28 @@ export const TYPE_GROUPS: Readonly<Record<string, readonly string[]>> = {
   number: ["double", "int", "long", "decimal"],
 };
 
-/** The alias a `typeof x === "<spelling>"` test names, or null when the query language has none. */
+/**
+ * The alias a `typeof x === "<spelling>"` test names, or null when it is not one
+ * of MongoDB's type names. The developer's ruling: a `typeof` comparison speaks
+ * MongoDB's vocabulary and nothing else — `"bool"`, not `"boolean"`; and
+ * `"undefined"` IS a MongoDB type, the deprecated BSON one. Absence has its own
+ * spelling, `x === undefined`. A spelling that is not a MongoDB type is refused
+ * with the nearest one, never lowered to a test that quietly matches nothing.
+ */
 export function typeAliasOf(spelling: string): string | null {
-  const alias = JS_TYPEOF_TO_BSON[spelling] ?? spelling;
-  return alias === "missing" || BSON_TYPE_ALIASES.includes(alias) ? alias : null;
+  return BSON_TYPE_ALIASES.includes(spelling) ? spelling : null;
 }
+
+/**
+ * The MongoDB name a JavaScript `typeof` answer points at, for the REFUSAL's
+ * hint only — none of these is accepted. "boolean" is too far from "bool" for
+ * the generic suggestion to find, and the developer who wrote it meant exactly that.
+ */
+export const TYPEOF_HINTS: Readonly<Record<string, string>> = {
+  boolean: "bool",
+  bigint: "long",
+  function: "javascript",
+};
 
 export type ExprIn = {
   /** This entry's own key. See FilterIn.name. */

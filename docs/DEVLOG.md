@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-05 — fix(compiler): `typeof` speaks MongoDB's type names, and nothing else
+
+The developer's ruling on the type vocabulary: MongoDB's types only, no JavaScript ones. `typeof $.a === "bool"` is the test; `"boolean"`, `"function"`, `"symbol"` and every other spelling MongoDB's `$type` does not know is refused with the nearest name — `'typeof' compares against one of MongoDB's type names, and "boolean" is not one. Did you mean "bool"?` — where before it lowered to a test that quietly matched nothing. Both roads refuse it at the one site they share.
+
+Two spellings change meaning with it. `"boolean"` is no longer accepted as a courtesy alias. `"undefined"` IS a MongoDB type — the deprecated BSON one — and means it now, where it had meant absence; absence keeps its own spelling, `$.a === undefined`, which lowers to `$exists` and to `$type … "missing"` as before. The JavaScript oracle carries `typeof $.a === "undefined"` as a divergence with that reason.
+
+The other three questions put to the developer needed no code. Arithmetic over a field of mixed type fails on the server, and that is the developer's own problem by design — the language does not guard every operation. `.some(i => i > 2)` was never a semantics question: it is not built yet, and lands with the `.some` value form. And an array at a path PREFIX reading as absent on the query road and mapping over the array on the expression road stays as it is, for the same reason.
+
+---
+
 ## 2026-09-05 — fix(compiler): one road for both spellings of a stage, and eight more body facts measured
 
 The differential harness's own report drove this: every row where the shipped compiler REFUSED and the new one accepted was a shape the server refuses too.

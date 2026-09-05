@@ -15,7 +15,7 @@ import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { ObjectId } from "../../objectid.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
-import { TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
+import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import {
@@ -844,8 +844,8 @@ function typeofComparison(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env)
   const o = pick(left, right) ?? pick(right, left);
   if (o === null) return null;
   const alias = typeAliasOf(o.alias);
-  // An alias the query language does not know keeps the raw comparison.
-  if (alias === null) return null;
+  // A name MongoDB does not know would lower to a test that quietly matches nothing.
+  if (alias === null) throw E.notAMongoType(o.alias, BSON_TYPE_ALIASES, right.pos);
   const negated = node.op === "!==";
   const actual = { $type: lowerValue(o.operand, env) };
   // The expression `$type` answers a CONCRETE type: an umbrella alias is a membership test.

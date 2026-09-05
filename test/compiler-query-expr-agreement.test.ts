@@ -62,7 +62,7 @@ const AGREE: readonly string[] = [
   '$.d > new Date("2024-01-01")',
   '$.d >= new Date("2024-06-01")',
   'typeof $.a === "string"',
-  'typeof $.a !== "boolean"',
+  'typeof $.a !== "bool"',
   "$.a === 1 || $.b === 2",
   "$.b === 2 && $.n > 1",
   "!($.a === 1)",

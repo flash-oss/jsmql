@@ -42,12 +42,16 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a === null")).toEqual({ a: { $type: "null", $not: { $type: "array" } } });
     expect(filter("$.a !== null")).toEqual({ $or: [{ a: { $not: { $type: "null" } } }, { a: { $type: "array" } }] });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
-    // `typeof x === "undefined"` is absence, never the deprecated BSON `undefined` type
-    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $exists: false } });
-    expect(filter('typeof $.a !== "undefined"')).toEqual({ a: { $exists: true } });
+    // `typeof` speaks MongoDB's type names: "undefined" IS one, the deprecated BSON
+    // type. Absence has its own spelling, `x === undefined`.
+    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $type: "undefined", $not: { $type: "array" } } });
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
     expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string", $not: { $type: "array" } } });
-    expect(filter('typeof $.a === "boolean"')).toEqual({ a: { $type: "bool", $not: { $type: "array" } } });
+    expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool", $not: { $type: "array" } } });
+    // A name MongoDB does not know is refused with the nearest one, never lowered
+    // to a test that quietly matches nothing.
+    expect(() => filter('typeof $.a === "boolean"')).toThrow(/not one\. Did you mean 'bool'\?/);
+    expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
     expect(filter('typeof $.a !== "number"')).toEqual({
       $or: [{ a: { $not: { $type: "number" } } }, { a: { $type: "array" } }],
     });
@@ -64,7 +68,6 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$abs($.a) === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     expect(filter("$.a in [1, 2]")).toEqual({ $expr: { $in: ["$a", [1, 2]] } });
-    expect(filter('typeof $.a === "function"')).toEqual({ $expr: { $eq: [{ $type: "$a" }, "function"] } });
     // `.length` is a LENGTH, which `$size` (arrays only) cannot say for a string
     expect(filter("$.arr.length > 2")).toMatchObject({ $expr: { $gt: [expect.anything(), 2] } });
   });

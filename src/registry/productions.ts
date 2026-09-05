@@ -240,8 +240,6 @@ function comparesALength(input: FilterIn): boolean {
 function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null {
   const typed = typeTest(input);
   if (typed !== null) {
-    // `typeof x === "undefined"` is a presence test: the query language spells absence `$exists`.
-    if (typed.alias === "missing") return presenceQuery(typed.path, negated);
     // The `array` spelling asks whether the value IS an array, so it excludes none.
     if (typed.alias === "array") {
       return negated

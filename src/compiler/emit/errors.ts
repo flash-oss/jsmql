@@ -8,6 +8,7 @@
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import type { Arity, Position } from "../../registry/vocabulary.ts";
+import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
 import { spreadAlternativeOf } from "../rows.ts";
@@ -408,3 +409,13 @@ export const forbiddenInContainer = (name: string, container: string, pos: numbe
     `'${name}' cannot stand inside '${container}' — the server refuses a write stage in a sub-pipeline. Run it as a stage of the outer pipeline instead.`,
     pos,
   );
+
+/** `typeof x === "boolean"` — a spelling that is not one of MongoDB's type names. */
+export const notAMongoType = (spelling: string, aliases: readonly string[], pos: number): CodegenError => {
+  const hint = TYPEOF_HINTS[spelling];
+  const suggestion = hint !== undefined ? ` Did you mean '${hint}'?` : didYouMean(spelling, aliases, (s) => s);
+  return new CodegenError(
+    `'typeof' compares against one of MongoDB's type names, and "${spelling}" is not one.${suggestion} For absence, write 'x === undefined'.`,
+    pos,
+  );
+};

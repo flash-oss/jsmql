@@ -98,7 +98,8 @@ describe("compiler/emit/lower — operators", () => {
 
   it("lowers the presence and type tests through the predicate vocabulary", () => {
     expect(expr("$.a !== undefined")).toEqual({ $ne: [{ $type: "$a" }, "missing"] });
-    expect(expr('typeof $.a === "boolean"')).toEqual({ $eq: [{ $type: "$a" }, "bool"] });
+    expect(expr('typeof $.a === "bool"')).toEqual({ $eq: [{ $type: "$a" }, "bool"] });
+    expect(() => expr('typeof $.a === "boolean"')).toThrow(/Did you mean 'bool'\?/);
     expect(expr("$.a == null")).toEqual({ $in: [{ $type: "$a" }, ["null", "missing"]] });
     expect(() => expr("$.a == 1")).toThrow(/only allowed against null/);
   });
