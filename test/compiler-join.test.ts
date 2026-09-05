@@ -606,3 +606,13 @@ describe("compiler/emit/join — the server runs every pipeline this file assert
     expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
   });
 });
+
+describe("compiler/emit/join — hoists of a lowering that is taken back", () => {
+  it("stamps the root count once when the chain goes on after the join", () => {
+    const out = pipeline(
+      "$.o = $$$.orders.filter(o => o.i < $$.length).map((o, i, coll) => o.i + coll.length)",
+    ) as Record<string, unknown>[];
+    expect(out.filter((s) => "$setWindowFields" in s)).toHaveLength(1);
+    expect(out[1]).toMatchObject({ $lookup: { let: { jsmql_s0_length: "$__jsmql.length" } } });
+  });
+});

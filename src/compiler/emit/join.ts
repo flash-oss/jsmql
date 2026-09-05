@@ -215,8 +215,15 @@ export function joinWrite(
   env: Env,
   S: JoinServices,
 ): { stages: Stage[]; yields: "array" | "object" } | null {
+  // The body's lowering may hoist onto the outer chains (`$$.length` stamps the
+  // root stream). When the chain goes on, the value road lowers the body again,
+  // so what this attempt hoisted is taken back — else the stamp lands twice.
+  const marks = [env.chain, env.rootChain].map((c) => [c, c.hoisted.length] as const);
   const l = lookupOf(node, env, S);
-  if (!l.complete) return null;
+  if (!l.complete) {
+    for (const [c, n] of marks) c.hoisted.length = n;
+    return null;
+  }
   const stages: Stage[] = [lookupStage(l, path)];
   if (l.one !== false) stages.push(unwrap(path, l.one));
   return { stages, yields: l.yields };

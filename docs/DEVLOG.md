@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — fix(compiler): one stream-length stamp, no empty `$let`
+
+Two emit warts, both found by probing `$$.length` at every depth. A write whose join chain goes on after the `$lookup` (`$.o = $$$.orders.filter(o => o.i < $$.length).map(…)`) lowered the body twice — once to learn the chain is not complete, once on the value road — and each lowering hoisted the `$setWindowFields` stamp, so the pipeline carried it twice. The first attempt now takes its hoists back (`joinWrite` in `src/compiler/emit/join.ts`). And a call with no parameters (`const half = () => $$.length / 2; … half()`) wrapped its body in `{ $let: { vars: {}, in: … } }`; a `$let` that binds nothing is dropped (`applyLambda` in `src/compiler/emit/lower.ts`).
+
+---
+
 ## 2026-09-06 — refactor: the shipped compiler is gone
 
 Thirty source modules — `codegen.ts`, `pipeline.ts`, `lookup-translation.ts`, `stream-methods.ts`, `methods/`, the `mql-*` builders, the old lexer, parser and AST, the validators and the sugar translators — are removed; nothing imported them since the swap. The globals generator reads the registry now: `src/compiler/rows.ts` exposes the vocabulary it types (`streamMethodNames`, `valueMethodNames`, `valueMethodReturns`, `valueTerminalMethodNames`, `nativeDateMethodNames`, `requiredReceiverFamily`), each derived from the rows' cells and `on` — a method chains on `$` because its row has a stream RULE, ends a `$$.<coll>` chain with a value because it has an array value rule and no stream rule — so `src/globals.ts` cannot drift from what the compiler accepts. `src/operators.ts` and `src/stages.ts` stay as the operator and stage shapes the generator reads.

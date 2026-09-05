@@ -199,9 +199,11 @@ describe("compiler/emit/lower — calls", () => {
   });
 
   it("inlines a declared function and refuses recursion", () => {
+    // a call with no parameters binds nothing, so no `$let` wraps the body
     expect(expr("(() => { const y = $.a * 2; return y + 1 })()")).toEqual({
-      $let: { vars: {}, in: { $let: { vars: { y: { $multiply: ["$a", 2] } }, in: { $add: ["$$y", 1] } } } },
+      $let: { vars: { y: { $multiply: ["$a", 2] } }, in: { $add: ["$$y", 1] } },
     });
+    expect(expr("(() => $.a * 2)()")).toEqual({ $multiply: ["$a", 2] });
     expect(expr("((x) => x * $.a)(2)")).toEqual({ $let: { vars: { x: 2 }, in: { $multiply: ["$$x", "$a"] } } });
   });
 

@@ -699,7 +699,9 @@ function applyLambda(
       pos,
     });
   }
-  return { $let: { vars, in: lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body")) } };
+  const body = lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body"));
+  // a call with no parameters binds nothing: an empty `$let` would only wrap the body
+  return Object.keys(vars).length === 0 ? body : { $let: { vars, in: body } };
 }
 
 function operatorCall(node: Extract<Expr, { type: "OperatorCall" }>, env: Env): unknown {
