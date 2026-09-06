@@ -15,7 +15,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
 - Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
 
-**Counts.** Open: 27. Decided-against: 9. As of 2026-08-15.
+**Counts.** Open: 29. Decided-against: 9. As of 2026-09-06.
 
 ---
 
@@ -164,6 +164,30 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** open
 - **Effort.** M
+
+### DEF-034 — Constant folding for the array and string reshapers
+
+- **What's blocked.** A constant expression whose every operand is a literal settles to its value at compile time, and a few reshapers do not: `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands instead of the answer.
+- **Target lowering.** `$.r = [[1, 2], [3]].flat();` → `[{ $set: { r: [1, 2, 3] } }]`, the way `[3, 1, 2].sortBy(x => x)` already settles to `[1, 2, 3]`.
+- **Why blocked.** Each reshaper needs its JavaScript answer written as an evaluator in `src/compiler/passes/fold-methods.ts`, and each must agree with the server for every input the fold admits — the fold is only correct where MongoDB and JavaScript answer alike, which is why the unequal-length `zipWith`, a mixed-type comparison and an empty read are withheld on purpose.
+- **Attempted approaches.** The families that DO fold are stated as evaluators; these are the ones nobody wrote yet. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor of 0.85.
+- **Success criteria.** The floor rises, and each newly folded family agrees with the server's answer for the same input (`test/compiler-fold-agrees.test.ts` compares on mongod).
+- **Rejection site(s).** None — the compiler emits correct, larger MQL. The floor comment in `test/fold-consistency.test.ts` carries the tag.
+- **Spec.** `docs/specs/emit-pass.md` § the fold.
+- **Status.** open
+- **Effort.** S per family.
+
+### DEF-035 — A negative start for `.toSpliced()`
+
+- **What's blocked.** JavaScript counts a negative start from the end (`[1, 2, 3].toSpliced(-1, 1)` → `[1, 2]`); jsmql refuses it.
+- **Target lowering.** The start is resolved against the receiver's length before it reaches `$slice`, so `-1` means `$size - 1`, matching what `.slice(-3)` already does.
+- **Why blocked.** The row states `slotRange` from 0, one fact for every slot; a from-the-end start needs the length in hand, which makes the emitted document a `$let` over the receiver rather than a direct `$slice` — the cost has to be paid only when the argument is actually negative.
+- **Attempted approaches.** None.
+- **Success criteria.** `$.a.toSpliced(-1, 1)` compiles, and `test/compiler-methods.test.ts` shows the server's answer equal to JavaScript's for a negative start, a negative start past the length, and a zero count.
+- **Rejection site(s).** The `slotRange` refusal on the `toSpliced` row in `src/registry/names.ts`, tagged `[DEF-035]`.
+- **Spec.** `docs/LANGUAGE.md` § Array methods.
+- **Status.** open
+- **Effort.** S
 
 ---
 

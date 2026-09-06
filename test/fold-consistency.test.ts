@@ -367,7 +367,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     // gate stopped gating without anything going red.
     // Withheld by design: a zipWith over lists of unequal length, a comparison across types, a read that
     // finds nothing. Not yet folded: precision rounding, .flat(), .truncate(), .split(""), a sort of documents, a
-    // shorthand predicate — each answers at run time.
+    // shorthand predicate — each answers at run time. [DEF-034]
     expect(compared).toBeGreaterThanOrEqual(Math.floor(ALL_CASES.length * 0.85));
   });
 });

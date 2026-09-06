@@ -10,6 +10,14 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — docs: the two coverage gaps the restored suites measured are open rows
+
+Running the previous compiler's corpus over this compiler measured two gaps that are neither bugs nor decisions, so they are open rows rather than prose. DEF-034: a constant expression settles to its value where an evaluator exists, and a few reshapers have none — `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor, which the row's work raises. DEF-035: `.toSpliced()` refuses a negative start that JavaScript counts from the end, because resolving one needs the receiver's length in hand and the row states a slot range from zero.
+
+Neither is a correctness fault: the compiler emits correct, larger MQL for the first and a message naming the constraint for the second.
+
+---
+
 ## 2026-09-06 — test: the feature suites of the previous compiler assert this compiler's output
 
 The suites that came with the previous compiler — `codegen`, `pipeline`, `lookup`, `stream-methods`, `match-translation`, `stage-validation`, `union`, `out`, `update-filter`, `functions`, `let-bindings`, `callback-block`, `const-folding`, `fold-consistency`, `implicit-pipeline`, `literal-passthrough`, `parity`, `permutations`, `query-expr-agreement`, `stream-length`, `system-stages`, `assert` — are back in `test/`, with their inputs unchanged and their expected MQL regenerated from this compiler. The inputs are the contract: several thousand JSMQL programs that a developer wrote once and that must keep compiling. The MQL they expect is the compiler's lowering, which this compiler states differently in places (a `$lookup` always through `let` + `pipeline`, a computed `$group` key through `__jsmql` fields, JavaScript's own answer for a constant fold), so every `toEqual` was rewritten by `scripts/regen-expectations.mjs` and reviewed as a diff, and every case whose polarity changed — refused then, accepted now, or the reverse — was judged one by one (`scripts/convert-expectations.mjs` flips the mechanical ones; a KEEP pattern protects the refusals the suite must keep). Two suites were not kept: `ast-walk` and `methods-grid` asserted the internals of modules that no longer exist (a walker's node count, a method table's rows); the behaviour they guarded is asserted by the `compiler-*` and `registry-*` suites. Inside the kept suites, the `describe` blocks that reached into the removed compiler's exports (`generateImplicitPipeline`, the stream-method table, the stage-cell table) were dropped for the same reason.

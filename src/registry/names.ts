@@ -6999,6 +6999,7 @@ export const NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
+        // JavaScript counts a negative start from the end; resolving one needs the receiver's length. [DEF-035]
         slotRange: { 0: [0, Infinity], 1: [0, Infinity] },
       },
       emit: ({ recv, args, value, bind }) => {
