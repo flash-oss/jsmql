@@ -111,8 +111,15 @@ describe("array-shape operators", () => {
 
   // …but the single-value form still compiles as a query predicate under a field.
   it("comparison single arg → valid query single-value form under a field (HR2)", () => {
-    expect(jsmql("{ x: $gt($.y) }")).toEqual({ x: { $gt: "$y" } });
+    // A CONSTANT operand is the developer's own MQL and passes through as written.
     expect(jsmql("{ score: $lte(80) }")).toEqual({ score: { $lte: 80 } });
+    expect(jsmql('{ x: $gt("$y") }')).toEqual({ x: { $gt: "$y" } });
+    // A field READ has no query form — the query language would compare the field
+    // with the two-character string — so it takes the operator's expression twin,
+    // as the document spelling of the same operator already did. One operator, one
+    // meaning, whichever way it is spelled.
+    expect(jsmql("{ x: $gt($.y) }")).toEqual({ $expr: { $gt: ["$x", "$y"] } });
+    expect(jsmql("{ x: { $gt: $.y } }")).toEqual({ $expr: { $gt: ["$x", "$y"] } });
   });
 
   it("$in dual form: single array → query, two args → aggregation", () => {
@@ -328,9 +335,13 @@ describe("comparison-operator arity is aggregation-only (query single-value form
   });
 
   it("allows the single-value / array form as a query predicate (not aggregation)", () => {
-    expect(jsmql("{ age: $gt($.x) }")).toEqual({ age: { $gt: "$x" } });
     expect(jsmql("{ tier: $eq(5) }")).toEqual({ tier: { $eq: 5 } });
-    expect(jsmql("$match({ age: $gte($.threshold) });")).toEqual([{ $match: { age: { $gte: "$threshold" } } }]);
+    // A field read takes the expression twin. MEASURED: { age: { $gt: "$x" } } compares
+    // the field with the two-character string and matches nothing.
+    expect(jsmql("{ age: $gt($.x) }")).toEqual({ $expr: { $gt: ["$age", "$x"] } });
+    expect(jsmql("$match({ age: $gte($.threshold) });")).toEqual([
+      { $match: { $expr: { $gte: ["$age", "$threshold"] } } },
+    ]);
   });
 
   it("the valid 2-operand aggregation form is unaffected", () => {
@@ -8721,7 +8732,9 @@ describe("Filter dispatch (no semicolons)", () => {
     });
 
     it("an operator-call value produces a clean query operator (not a malformed $expr)", () => {
-      expect(jsmql("{ age: $gt($.x) }")).toEqual({ age: { $gt: "$x" } });
+      expect(jsmql('{ age: $gt("adult") }')).toEqual({ age: { $gt: "adult" } });
+      // a field READ is the one operand with no query form, and it lifts whole
+      expect(jsmql("{ age: $gt($.x) }")).toEqual({ $expr: { $gt: ["$age", "$x"] } });
     });
   });
 

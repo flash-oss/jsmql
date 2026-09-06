@@ -38,6 +38,7 @@ import {
   positionalKeysOf,
   productionForOperator,
   onlyInsideOf,
+  liftsToOf,
 } from "../rows.ts";
 
 /**
@@ -124,27 +125,35 @@ function rawQuery(node: Extract<Expr, { type: "ObjectLiteral" }>, env: Env): Que
       continue;
     }
     const key = staticKey(e)!;
-    if (isRuntimeRead(e.value)) {
-      lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
+    // The value either APPLIES operators to the field — `{ $gte: … }`, `$gte(…)` — or
+    // IS what the field is compared with. The two take different lifts, so the shape
+    // decides first.
+    const ops = operatorEntries(e.value);
+    if (ops !== null) {
+      const runtime = ops.filter((o) => readsAtRunTime(o.value));
+      if (runtime.length === 0) {
+        kept.push(e);
+        continue;
+      }
+      // `{ createdAt: { $gte: $.since } }` — an operator with a runtime operand takes its
+      // expression twin; the operators with a constant operand stay native beside it.
+      for (const o of runtime) {
+        const twin = liftsToOf(o.op);
+        if (twin === undefined) throw E.runtimeInQueryOperator(o.op, o.pos);
+        const clause = { [twin.op]: ["$" + key, lowerValue(o.value, valueEnv)] };
+        lifted.push(twin.negated === true ? { $not: [clause] } : clause);
+      }
+      if (e.value.type === "ObjectLiteral") {
+        const stay = e.value.entries.filter((o) => o.type === "KeyValueEntry" && !readsAtRunTime(o.value));
+        if (stay.length > 0) kept.push({ ...e, value: { ...e.value, entries: stay } });
+      }
       continue;
     }
-    // `{ createdAt: { $gte: $.since } }` — the operators with a runtime operand lift, the rest stay.
-    if (
-      e.value.type === "ObjectLiteral" &&
-      e.value.entries.some((o) => o.type === "KeyValueEntry" && isRuntimeRead(o.value))
-    ) {
-      const stay: Array<(typeof e.value.entries)[number]> = [];
-      for (const o of e.value.entries) {
-        if (o.type !== "KeyValueEntry" || !isRuntimeRead(o.value)) {
-          stay.push(o);
-          continue;
-        }
-        const op = staticKey(o);
-        if (op === null || !LIFTABLE.has(op)) throw E.runtimeInQueryOperator(op ?? "?", o.pos);
-        const operand = lowerValue(o.value, valueEnv);
-        lifted.push(op === "$nin" ? { $not: [{ $in: ["$" + key, operand] }] } : { [op]: ["$" + key, operand] });
-      }
-      if (stay.length > 0) kept.push({ ...e, value: { ...e.value, entries: stay } });
+    // A COMPARED VALUE. The query language takes it as written only when nothing inside
+    // it is read at run time: `{ a: [1, $.b] }` would compare the field with the
+    // four-character string "$b", so the whole comparison moves into `$expr`.
+    if (readsAtRunTime(e.value)) {
+      lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
       continue;
     }
     kept.push(e);
@@ -163,14 +172,35 @@ const NEAR: ReadonlySet<string> = new Set(["$near", "$nearSphere"]);
 /** The top-level query operators whose operand is a list of query documents. */
 const LOGICAL: ReadonlySet<string> = new Set(["$and", "$or", "$nor"]);
 
-/** The query operators whose expression twin takes `[field, operand]`. */
-const LIFTABLE: ReadonlySet<string> = new Set(["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"]);
+/**
+ * The operators a raw query value applies to its field, or null when the value is one
+ * the field is COMPARED with. `{ $gte: $.since }` is the document spelling and
+ * `$gte($.since)` the call; HR2 says the two are one thing, so both answer here. A
+ * document whose keys are not all `$`-named is a value, not a set of operators.
+ */
+function operatorEntries(e: Expr): ReadonlyArray<{ op: string; value: Expr; pos: number }> | null {
+  if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
+    return [{ op: e.name, value: e.args[0] as Expr, pos: e.pos }];
+  }
+  if (e.type !== "ObjectLiteral" || e.entries.length === 0) return null;
+  const out: Array<{ op: string; value: Expr; pos: number }> = [];
+  for (const entry of e.entries) {
+    const key = staticKey(entry);
+    if (entry.type !== "KeyValueEntry" || key === null || !key.startsWith("$")) return null;
+    out.push({ op: key, value: entry.value, pos: entry.pos });
+  }
+  return out;
+}
 
 /**
- * Is this value read at RUN time — a field, a bound name, an access or a call on
- * one — rather than a constant, a literal document or the developer's own operator?
+ * Is anything inside this value read at RUN time — a field, a bound name, an access or
+ * a call on one — rather than a constant, a regex, or the developer's own operator?
+ *
+ * The question DESCENDS. A read is the field's name as a plain string in a query slot,
+ * so it has no query form wherever it sits, and `{ a: $.b }`, `{ a: [1, $.b] }`,
+ * `{ a: [{ x: $.b }] }` and `{ a: { x: { y: $.b } } }` are one case, not four.
  */
-function isRuntimeRead(e: Expr): boolean {
+function readsAtRunTime(e: Expr): boolean {
   switch (e.type) {
     case "FieldRef":
     case "Ident":
@@ -179,6 +209,10 @@ function isRuntimeRead(e: Expr): boolean {
     case "MethodCall":
     case "CallExpression":
       return constantIn(e) === null;
+    case "ArrayLiteral":
+      return e.elements.some((el) => el.type !== "SpreadElement" && readsAtRunTime(el as Expr));
+    case "ObjectLiteral":
+      return e.entries.some((o) => o.type === "KeyValueEntry" && readsAtRunTime(o.value));
     default:
       return false;
   }

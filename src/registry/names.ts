@@ -421,6 +421,19 @@ type MongoSpec<
    * language, and nowhere else.
    */
   operandPosition?: Position;
+  /**
+   * The EXPRESSION twin this query operator lifts to when its operand is read at
+   * run time, taking `[<field path>, <operand>]`. A query document compares a field
+   * with a CONSTANT — `{ a: { $gte: "$since" } }` matches the four-character string —
+   * so an operand the compiler cannot settle has no query form and moves into
+   * `$expr`. Stated only where the twin means the same thing. MEASURED, over
+   * `{ a: 5, since: 3 }`:
+   *   { a: { $gte: "$since" } }              → []
+   *   { $expr: { $gte: ["$a", "$since"] } }  → the document
+   * `$nin` states `$in` negated, because the expression language has no `$nin`.
+   * An operator that states nothing keeps the refusal that names the rewrite.
+   */
+  liftsTo?: { op: string; negated?: true };
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
@@ -1411,6 +1424,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$eq" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1433,6 +1447,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$ne" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1455,6 +1470,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$gt" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1477,6 +1493,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$gte" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1499,6 +1516,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$lt" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1521,6 +1539,7 @@ export const NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$lte" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -2328,6 +2347,7 @@ export const NAMES = {
     category: "array",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$in" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -11812,6 +11832,7 @@ export const NAMES = {
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
     where: ["filter"],
+    liftsTo: { op: "$in", negated: true },
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$nin' is a query operator with no aggregation-expression form. '$nin' is a field-level query operator: write it under a field, e.g. '{ <field>: $nin(…) }'.",

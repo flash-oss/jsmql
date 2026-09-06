@@ -316,3 +316,62 @@ describe("compiler/emit/filter — methods and operators", () => {
     expect(filter("$.a > -1")).toEqual({ a: { $gt: -1, $not: { $type: "array" } } });
   });
 });
+
+describe("compiler/emit/filter — a read inside a raw query value has no query form", () => {
+  // The query language compares a field with a CONSTANT, so `$.b` in a query slot is
+  // the two-character string "$b" and the filter matches nothing. The question is
+  // asked at every depth: an array, a document, a nesting of both.
+  it("lifts the whole comparison when a read sits anywhere inside the value", () => {
+    expect(filter("{ a: $.b }")).toEqual({ $expr: { $eq: ["$a", "$b"] } });
+    expect(filter("{ a: [1, $.b] }")).toEqual({ $expr: { $eq: ["$a", [1, "$b"]] } });
+    expect(filter("{ a: [[1, $.b]] }")).toEqual({ $expr: { $eq: ["$a", [[1, "$b"]]] } });
+    expect(filter("{ a: [{ x: $.b }] }")).toEqual({ $expr: { $eq: ["$a", [{ x: "$b" }]] } });
+    expect(filter("{ a: { x: { y: $.b } } }")).toEqual({ $expr: { $eq: ["$a", { x: { y: "$b" } }] } });
+  });
+
+  it("an operator with a runtime operand takes its expression twin, in either spelling", () => {
+    expect(filter("{ a: { $gte: $.since } }")).toEqual({ $expr: { $gte: ["$a", "$since"] } });
+    expect(filter("{ a: $gte($.since) }")).toEqual({ $expr: { $gte: ["$a", "$since"] } });
+    expect(filter("{ a: { $in: [$.b] } }")).toEqual({ $expr: { $in: ["$a", ["$b"]] } });
+  });
+
+  it("`$nin` lifts to `$in` negated — the expression language has no `$nin`", () => {
+    expect(filter("{ a: { $nin: [$.b] } }")).toEqual({ $expr: { $not: [{ $in: ["$a", ["$b"]] }] } });
+  });
+
+  it("the operators with a constant operand stay native beside the lifted one", () => {
+    expect(filter("{ a: { $gte: $.s, $lt: 9 } }")).toEqual({ a: { $lt: 9 }, $expr: { $gte: ["$a", "$s"] } });
+  });
+
+  it("each branch of `$and` / `$or` / `$nor` lifts on its own", () => {
+    expect(filter("{ $and: [{ a: [1, $.b] }] }")).toEqual({ $and: [{ $expr: { $eq: ["$a", [1, "$b"]] } }] });
+    expect(filter("{ $nor: [{ a: [1, $.b] }] }")).toEqual({ $nor: [{ $expr: { $eq: ["$a", [1, "$b"]] } }] });
+  });
+
+  it("an operator with no expression twin is refused, and names the rewrite", () => {
+    expect(() => filter("{ a: { $all: [$.b] } }")).toThrow(/compares against a constant in a query document/);
+    expect(() => filter("{ a: { $elemMatch: { x: $.b } } }")).toThrow(
+      /compares against a constant in a query document/,
+    );
+  });
+
+  it("raw MQL with no read passes through, byte for byte", () => {
+    for (const src of [
+      "{ a: 1 }",
+      "{ a: [1, 2] }",
+      "{ a: { $gt: 1 } }",
+      "{ a: { $size: 2 } }",
+      "{ a: { $exists: true } }",
+      "{ a: { $type: 'string' } }",
+      "{ a: { $mod: [4, 0] } }",
+      "{ a: { $not: { $eq: 1 } } }",
+      "{ a: { $all: [1, 2] } }",
+      "{ a: { $elemMatch: { x: 2 } } }",
+      "{ a: $gt(1) }",
+      '{ x: $gt("$y") }',
+    ]) {
+      expect(() => filter(src)).not.toThrow();
+      expect(JSON.stringify(filter(src))).not.toContain("$expr");
+    }
+  });
+});

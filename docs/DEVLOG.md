@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): a read inside a raw query value lifts, at every depth
+
+`{ a: [1, $.b] }` emitted `{ a: [1, "$b"] }`. The query language compares a field with a constant, so `"$b"` there is the two-character string and the filter matched nothing, where JavaScript's `a === [1, b]` matches. `{ $nor: [{ a: [1, $.b] }] }` was worse still: it returned the very document it must exclude. The single-read form `{ a: $.b }` was already right, so one document could hold both readings.
+
+The compiler asked the wrong question. `isRuntimeRead` was a switch over six node types, and an array literal was not one of them; the operator branch looked one level into an object literal and no further. The question is not what node type a value is but whether anything INSIDE it is read at run time, so the predicate descends now — an array, a document, and any nesting of the two are one case, not four. The dispatch runs on the value's shape first: a value that applies operators to the field (`{ $gte: … }`, or the call `$gte(…)`, which HR2 says is the same thing) takes the expression twin its row states in `liftsTo`, and a value the field is compared with takes `$eq` whole. `$nin` states `$in` negated, because the expression language has no `$nin`. The hard-coded name set in the emitter is gone with the rest.
+
+An operator whose row states no twin — `$all`, `$elemMatch` — is refused with the rewrite named, rather than emitted wrong. Every case was run on mongod and returns JavaScript's own answer.
+
+One consequence is worth naming on its own: `{ x: $gt($.y) }` now lifts, where it used to pass through as `{ x: { $gt: "$y" } }`. That old output compares the field with the two-character string, so it matched nothing; the document spelling of the same operator already lifted, and HR2 says the two spellings are one operator. A CONSTANT operand — `$gt("$y")`, `$lte(80)` — is the developer's own MQL and still passes through untouched.
+
+---
+
 ## 2026-09-07 — fix(compiler): a value terminal over a joined collection gives one document, and says so
 
 `$$.orders.head().map(x => x)` compiled to `$map` over `{ $first: … }`. A `$lookup.as` array holds documents, so `.head()` gives one document, and mongod stops the query with "input to $map must be an array not object". The defect was data-dependent and therefore worse than a plain refusal: over an empty foreign collection the same pipeline runs and writes null, so it passes in a development database and aborts the query in production. Eleven terminals behaved this way — `head`, `first`, `last`, `at`, `nth`, `findLast`, `min`, `max`, `minBy`, `maxBy` — and every array method on the document that followed. Only `.find(p)` was right, because it travels the `picksOne` route, which already types the slot.

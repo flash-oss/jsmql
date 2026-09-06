@@ -1303,6 +1303,12 @@ $.age > 18                          // { $gt: ["$age", 18] }
 $.age >= 21                         // { $gte: ["$age", 21] }
 $.score < 50                        // { $lt: ["$score", 50] }
 $.score <= 100                      // { $lte: ["$score", 100] }
+// In a raw query document a field READ has no query form: the query language compares
+// against a constant, so "$b" there is the two-character string. Such a value lifts whole:
+//   { a: [1, $.b] }        → { $expr: { $eq: ["$a", [1, "$b"]] } }
+//   { a: { $gte: $.since } } → { $expr: { $gte: ["$a", "$since"] } }
+// A value with no read in it is your own MQL and passes through as written.
+
 $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]] }
 // in a filter (no ';'), a constant list is the native query operator — the '$not' keeps JavaScript's
 // meaning, a test of the scalar, where MongoDB's '$in' alone would also match an array field holding the value:

@@ -364,6 +364,11 @@ export function operandPositionOf(name: string): Position | undefined {
   return (row(name) as { operandPosition?: Position } | undefined)?.operandPosition;
 }
 
+/** The expression twin a QUERY operator lifts to when its operand is read at run time, or undefined. */
+export function liftsToOf(name: string): { op: string; negated?: true } | undefined {
+  return (row(name) as { liftsTo?: { op: string; negated?: true } } | undefined)?.liftsTo;
+}
+
 /**
  * A STAGE's stated body rule, or undefined while the row still says `pending`.
  * A stage's body is its own field, not the `shape.object` an operator uses.
