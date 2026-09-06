@@ -13,7 +13,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
-import { PendingLowering } from "../src/compiler/emit/errors.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with

@@ -15,7 +15,6 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection, type Db } from "mongodb";
 import { expr, pipeline } from "../src/compiler/index.ts";
-import { PendingLowering } from "../src/compiler/emit/errors.ts";
 
 const URI = "mongodb://127.0.0.1:27017";
 

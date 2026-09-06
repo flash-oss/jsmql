@@ -370,12 +370,11 @@ export function liftsToOf(name: string): { op: string; negated?: true } | undefi
 }
 
 /**
- * A STAGE's stated body rule, or undefined while the row still says `pending`.
+ * A STAGE's stated body rule, or undefined when the row states none.
  * A stage's body is its own field, not the `shape.object` an operator uses.
  */
 export function stageBodyRuleOf(name: string): BodyRule | undefined {
-  const body = (row(name) as { body?: BodyRule | { pending: string } } | undefined)?.body;
-  return body !== undefined && !("pending" in body) ? body : undefined;
+  return (row(name) as { body?: BodyRule } | undefined)?.body;
 }
 
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
@@ -524,11 +523,11 @@ export function onlyInsideOf(name: string, position: Position): readonly string[
 // value methods from these, so the generated `src/globals.ts` cannot drift from
 // the registry: what a row states here is what the editor completes.
 
-/** Is this cell a RULE — something that lowers — rather than a refusal, a pending or an in-code marker? */
+/** Is this cell a RULE — something that lowers — rather than a refusal or an in-code marker? */
 function isRuleCell(cell: unknown): boolean {
   if (cell === null || typeof cell !== "object") return false;
   const c = cell as Record<string, unknown>;
-  if ("unsupported" in c || "pending" in c || "inCode" in c || "because" in c) return false;
+  if ("unsupported" in c || "inCode" in c || "because" in c) return false;
   if ("perFamily" in c) return Object.values(c.perFamily as Record<string, unknown>).some(isRuleCell);
   if ("byArgs" in c) return Object.values(c.byArgs as Record<string, unknown>).some(isRuleCell);
   return "emit" in c || "uncertain" in c;

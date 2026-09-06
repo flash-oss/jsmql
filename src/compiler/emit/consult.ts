@@ -30,7 +30,6 @@ type Cell =
   | { unsupported: string }
   | { fallback: "expr" }
   | { composedInto: readonly string[] }
-  | { pending: string }
   | { perFamily: Record<string, Cell> }
   | { byArgs: Readonly<Record<string, unknown>> }
   | Record<string, unknown>;
@@ -85,8 +84,6 @@ export type Verdict =
   | { kind: "fallback"; name: string; position: Position }
   /** Legal only folded into another construct, which is named. */
   | { kind: "composedOnly"; name: string; position: Position; owners: readonly string[] }
-  /** A real answer exists but still lives in the old compiler. */
-  | { kind: "pending"; name: string; position: Position; livesIn: string }
   /** A lowering must run. `cell` is handed on untouched; only emit/ reads it. */
   | { kind: "lower"; name: string; position: Position; cell: unknown }
   /**
@@ -136,7 +133,6 @@ function readCell(name: string, position: Position, cell: unknown): Verdict {
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name, position, owners: cell.composedInto as readonly string[] };
   }
-  if (typeof cell.pending === "string") return { kind: "pending", name, position, livesIn: cell.pending };
   return { kind: "lower", name, position, cell };
 }
 

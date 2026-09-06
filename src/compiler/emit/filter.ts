@@ -284,7 +284,7 @@ function rawValue(e: Expr, env: Env): unknown {
  * One predicate leaf: the row's query cell, or null. The row is the production
  * for an operator (`===`), or the name for a method (`.includes`) or an operator
  * call (`$sampleRate`). A cell that is not a rule — `viaFallback`, `composedInto`
- * on its own, a pending — is null here and becomes `$expr`.
+ * on its own — is null here and becomes `$expr`.
  */
 function leaf(node: Expr, env: Env): QueryDoc | null {
   let name: string | undefined;

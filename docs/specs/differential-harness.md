@@ -135,7 +135,7 @@ template-tag form, whose inputs are runtime values rather than static source.
 `--cur src/compiler/index.ts` compares a module whose named exports ARE the entry
 points with the shipped `jsmql`, and `--entry expr` narrows the run to one. Two
 outcomes are SKIPS under `--cur`, each verified rather than trusted: a
-`PendingLowering` whose row's cell for that position states `pending: <livesIn>`,
+a source that belongs to another target of the compiler under test,
 and a statement-shaped source — one the expression parser refuses and the
 statement parser accepts, or one the shipped `expr` answers with a pipeline. The
 per-slice judgement rules live in [emit-pass.md](emit-pass.md) § The acceptance

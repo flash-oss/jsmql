@@ -644,8 +644,7 @@ row quotes the row.
 
 `node scripts/diff-compilers.mjs --cur src/compiler/index.ts --entry expr`
 compares the new `expr` with the shipped one over the harvested corpus. A
-lowering the registry still marks `pending` is a verified SKIP (the row's cell
-must state `pending: <livesIn>`); a statement-shaped source — one the
+statement-shaped source — one the
 expression parser refuses and the statement parser accepts, or one the shipped
 `expr` answers with a pipeline — is the statement slice's, and skipped. Every
 other divergence is a row in `test/accepted-divergences.json` with a reason:

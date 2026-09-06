@@ -17,7 +17,7 @@
 // This is where MQL enters the language side. tokens.ts and keywords.ts hold none.
 
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
-import { composedInto, inCode, pending, unsupported, viaFallback } from "./vocabulary.ts";
+import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
 import { FIELD_VALUE, NOT_OWN_VALUE, OWN_VALUE, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";

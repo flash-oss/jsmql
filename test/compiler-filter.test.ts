@@ -7,7 +7,6 @@
 
 import { describe, expect, it } from "vitest";
 import { filter } from "../src/compiler/index.ts";
-import { PendingLowering } from "../src/compiler/emit/errors.ts";
 
 const TRUTHY = (v: unknown) => ({
   $and: [{ $ne: [{ $ifNull: [v, null] }, null] }, { $ne: [v, false] }, { $ne: [v, ""] }, { $ne: [v, 0] }],

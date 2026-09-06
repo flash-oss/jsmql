@@ -14,7 +14,7 @@
 // number because `.ceil()` is — and on a row with two or more it takes the runtime
 // dispatch, with the row's own `uncertain` as the default. A name never decides.
 
-import type { Arity, BsonType, Emit, Family, FieldFamily, Pending, Refusal, Rule } from "../../registry/vocabulary.ts";
+import type { Arity, BsonType, Emit, Family, FieldFamily, Refusal, Rule } from "../../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
@@ -78,7 +78,7 @@ export function shapeOf(args: readonly Expr[], constants: Constants = new Map())
 export type Branch = {
   readonly family: FieldFamily;
   readonly guard: (recv: unknown) => unknown;
-  readonly rule: AnyRule | Pending;
+  readonly rule: AnyRule;
 };
 
 /** The one answer. Every variant is final except `rule` and `dispatch`, which name what to run. */
@@ -89,10 +89,9 @@ export type Selected =
       readonly kind: "dispatch";
       readonly name: string;
       readonly branches: readonly Branch[];
-      readonly otherwise: AnyEmit | Refusal | Pending;
+      readonly otherwise: AnyEmit | Refusal;
     }
   | { readonly kind: "refused"; readonly name: string; readonly message: string; readonly needsSubject: boolean }
-  | { readonly kind: "pending"; readonly name: string; readonly livesIn: string }
   | { readonly kind: "fallback"; readonly name: string }
   | { readonly kind: "composedOnly"; readonly name: string; readonly owners: readonly string[] }
   | { readonly kind: "noCell"; readonly name: string }
@@ -133,7 +132,6 @@ const isFieldFamily = (f: string): f is FieldFamily => (FIELD_FAMILIES as readon
 // ── reading a cell's parts ───────────────────────────────────────────────────
 
 const isRefusal = (v: unknown): v is Refusal => isObj(v) && typeof v.unsupported === "string";
-const isPending = (v: unknown): v is Pending => isObj(v) && typeof v.pending === "string";
 const isRule = (v: unknown): v is AnyRule => isObj(v) && typeof v.emit === "function" && isObj(v.args);
 
 /** Does `n` satisfy the rule's count? The `reject` map is read first: it is the more specific answer. */
@@ -153,19 +151,12 @@ function countOf(name: string, args: Arity, n: number): Selected | null {
   return ok ? null : { kind: "wrongCount", name, got: n, args };
 }
 
-/** A resolved branch — rule, refusal or pending — checked against the argument list. */
+/** A resolved branch — a rule or a refusal — checked against the argument list. */
 function settle(name: string, branch: unknown, shaped: Shaped, count: number): Selected {
   if (isRefusal(branch)) {
     return { kind: "refused", name, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
   }
-  if (isPending(branch)) {
-    // The argument rule is a registry fact and holds even while the lowering is
-    // not here — so the count is refused before the lowering is asked for.
-    const bad = branch.args === undefined || shaped.kind === "spread" ? null : countOf(name, branch.args, count);
-    return bad ?? { kind: "pending", name, livesIn: branch.pending };
-  }
-  if (!isRule(branch))
-    internalError(`the row '${name}' holds a cell part that is neither a rule, a refusal nor a pending`);
+  if (!isRule(branch)) internalError(`the row '${name}' holds a cell part that is neither a rule nor a refusal`);
   if (shaped.kind === "spread") {
     if (branch.args.spread === true) {
       internalError(`a spread reached '${name}', whose rule reads one array argument — the desugar pass packs it`);
@@ -252,22 +243,19 @@ function fromPerFamily(
     if (branch === undefined) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
     return settle(name, branch, shaped, count);
   }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain) || isPending(uncertain))) {
+  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
     internalError(`the row '${name}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
   }
   const out: Branch[] = [];
   for (const family of fieldFamilies) {
     const branch = branches[family];
     if (isRefusal(branch) || branch === undefined) continue;
-    if (!isRule(branch) && !isPending(branch))
-      internalError(`the row '${name}' holds an unreadable '${family}' branch`);
-    if (isRule(branch)) {
-      const bad = shaped.kind === "spread" ? settle(name, branch, shaped, count) : countOf(name, branch.args, count);
-      if (bad !== null && bad.kind !== "rule") return bad;
-    }
-    out.push({ family, guard: guardFor(family, isRule(branch) ? (branch.alsoTypes ?? []) : []), rule: branch });
+    if (!isRule(branch)) internalError(`the row '${name}' holds an unreadable '${family}' branch`);
+    const bad = shaped.kind === "spread" ? settle(name, branch, shaped, count) : countOf(name, branch.args, count);
+    if (bad !== null && bad.kind !== "rule") return bad;
+    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
-  return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal | Pending };
+  return { kind: "dispatch", name, branches: out, otherwise: uncertain as AnyEmit | Refusal };
 }
 
 /**
@@ -286,8 +274,6 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
       return { kind: "fallback", name };
     case "composedOnly":
       return { kind: "composedOnly", name, owners: verdict.owners };
-    case "pending":
-      return { kind: "pending", name, livesIn: verdict.livesIn };
     case "noCell":
       return { kind: "noCell", name };
     case "perFamily":

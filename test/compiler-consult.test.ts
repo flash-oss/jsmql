@@ -30,8 +30,7 @@ describe("compiler/emit/consult — `where` and the cells cannot disagree", () =
     const wrong = pairs()
       .filter(([n, p]) => {
         if (listedIn(n, p)) return false;
-        const kind = consult(n, p).kind;
-        return kind === "lower" || kind === "pending";
+        return consult(n, p).kind === "lower";
       })
       .map(([n, p]) => `${n} @ ${p}`);
     expect(wrong).toEqual([]);

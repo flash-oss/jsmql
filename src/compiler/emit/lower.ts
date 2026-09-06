@@ -638,7 +638,6 @@ function runDispatch(
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
-    if ("pending" in rule) throw new E.PendingLowering(name, position, rule.pending, node.pos);
     checkSlots(name, rule.args, args);
     return rule.emit(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
   };
@@ -647,7 +646,6 @@ function runDispatch(
   let fallback: unknown;
   if (typeof otherwise === "function")
     fallback = otherwise(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
-  else if ("pending" in otherwise) throw new E.PendingLowering(name, position, otherwise.pending, node.pos);
   else
     throw E.refusalFor(
       { kind: "refused", name, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },

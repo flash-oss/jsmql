@@ -8,7 +8,7 @@
 // test/registry-contracts.test.ts runs it.
 
 import type { Cell, ExprIn, Family, FilterIn, FilterOut, OutOf, Truth } from "../../src/registry/vocabulary.ts";
-import { pending, unsupported } from "../../src/registry/vocabulary.ts";
+import { unsupported } from "../../src/registry/vocabulary.ts";
 import type { FieldSlot, MongoVar, VarRef } from "../../src/compiler/emit/names.ts";
 import { Scope, mongoVarName, systemRef } from "../../src/compiler/emit/names.ts";
 import { Chain, Env, type Site } from "../../src/compiler/emit/env.ts";
@@ -30,14 +30,10 @@ export const oneFamily: Value<"array" | "Math"> = { perFamily: { array: R, Math:
 // @ts-expect-error — one field family: the receiver IS that family by the row's own claim
 export const oneFamilyOverstated: Value<"array" | "Math"> = { perFamily: { array: R, Math: R }, uncertain: () => 1 };
 
-// A refusal and a pending are decisions too.
+// A refusal is a decision too.
 export const uncertainRefused: Value<"array" | "string"> = {
   perFamily: { array: R, string: R },
   uncertain: unsupported("cannot tell"),
-};
-export const uncertainPending: Value<"array" | "string"> = {
-  perFamily: { array: R, string: R },
-  uncertain: pending("src/x.ts"),
 };
 
 // ── `byArgs`: keyed, `constant` never a rule, the leftover stated ─────────────
@@ -45,7 +41,7 @@ export const uncertainPending: Value<"array" | "string"> = {
 export const keyed: Value<"array"> = {
   byArgs: { dynamic: R, constant: unsupported("did not fold"), otherwise: unsupported("no") },
 };
-// a constant may be lowered (`Number("3")` converts on the server, a double), refused, or pending
+// a constant may be lowered (`Number("3")` converts on the server, a double) or refused
 export const constantLowered: Value<"array"> = { byArgs: { constant: R, otherwise: unsupported("no") } };
 // @ts-expect-error — the leftover class is stated, so a hole is a decision
 export const noLeftover: Value<"array"> = { byArgs: { dynamic: R } };

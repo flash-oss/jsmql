@@ -15,24 +15,6 @@ import { callbackParamsOf, isFieldProperty, spreadAlternativeOf } from "../rows.
 
 export { CodegenError, UnknownIdentifierError };
 
-/**
- * A lowering the registry says still lives in the old compiler. Typed, so the
- * differential gate can tell a slice that has not reached a construct from one
- * that refuses it — and verify the claim against the row.
- */
-export class PendingLowering extends CodegenError {
-  readonly name_: string;
-  readonly position: Position;
-  readonly livesIn: string;
-  constructor(name: string, position: Position, livesIn: string, pos: number) {
-    super(`'${name}' in ${position} position is not lowered by src/compiler yet — it still lives in ${livesIn}.`, pos);
-    this.name = "PendingLowering";
-    this.name_ = name;
-    this.position = position;
-    this.livesIn = livesIn;
-  }
-}
-
 /** The argument signature as a message spells it: `.slice(start[, end])`. */
 const signature = (spelled: string, args: Arity): string => `${spelled}(${args.sig})`;
 
@@ -75,8 +57,6 @@ export function refusalFor(
         ),
         pos,
       );
-    case "pending":
-      return new PendingLowering(sel.name, position, sel.livesIn, pos);
     case "unknown":
       return new CodegenError(
         `Unknown ${container === "" ? "name" : "method"} '${spelled}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
@@ -424,26 +404,6 @@ export const spreadInStageList = (pos: number): CodegenError =>
     "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
     pos,
   );
-
-/**
- * The statement CONSTRUCTS this compiler has not built yet, each naming the
- * module it still lives in.
- *
- * Stated as data for two reasons. The differential harness can VERIFY a "not
- * yet" instead of trusting one — a lowering cannot dodge a comparison by
- * claiming to be pending. And the list emptying is what finishing the statement
- * target means, so the work left is countable rather than remembered. A name a
- * ROW could carry belongs in the row's own cell instead; these are constructs,
- * which no row names.
- */
-export const PENDING_CONSTRUCTS: Readonly<Record<string, string>> = { "a function declaration": "src/codegen.ts" };
-
-/** A statement form this compiler does not lower yet. See `PENDING_CONSTRUCTS`. */
-export function pendingStatement(what: string, pos: number): CodegenError {
-  const livesIn = PENDING_CONSTRUCTS[what];
-  if (livesIn === undefined) internalError(`'${what}' is not a stated pending construct`);
-  return new PendingLowering(what, "statement", livesIn, pos);
-}
 
 /** A stage the server accepts only as the pipeline's first, written after something else. */
 export const mustBeFirstStage = (name: string, pos: number): CodegenError =>

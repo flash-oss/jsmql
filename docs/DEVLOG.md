@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — refactor: the words the old compiler left behind, part one — the pending machinery
+
+A registry cell could say `pending(<file>)`: the fact is stated, the lowering still lives in the module the string names, and a ratchet test counts the cells down. That was the migration's own scaffolding. Every lowering arrived, the ratchet reached zero, and the scaffolding stayed — a type in the vocabulary, an arm on three cell shapes, a verdict in `consult`, a branch in `select`, two throws in `lower`, an error class, a skip class in the differential gate, and a ratchet test counting a thing that cannot occur.
+
+One entry survived in code: `PENDING_CONSTRUCTS` named a function declaration as unbuilt and pointed at `src/codegen.ts`. Both halves were false — `function double(x) { return x * 2 }` compiles, and that file was deleted with the rest of the old compiler. Nothing called the function that read the list.
+
+It is all gone. `Cell` now reads: named in `where` means a renderer or `inCode(<the file that builds it>)`; absent from `where` means a refusal that says why. The differential gate keeps one skip class, for a source that belongs to another target of the compiler under test, and no longer needs the row to corroborate a claim about itself.
+
+---
+
 ## 2026-09-07 — fix(compiler): a read inside a raw query value lifts, at every depth
 
 `{ a: [1, $.b] }` emitted `{ a: [1, "$b"] }`. The query language compares a field with a constant, so `"$b"` there is the two-character string and the filter matched nothing, where JavaScript's `a === [1, b]` matches. `{ $nor: [{ a: [1, $.b] }] }` was worse still: it returned the very document it must exclude. The single-read form `{ a: $.b }` was already right, so one document could hold both readings.

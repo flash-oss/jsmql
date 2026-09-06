@@ -1081,23 +1081,8 @@ export type SugarIn = {
 export type Emit<In, Out> = (input: In) => Out;
 
 /**
- * A declarative fact that has not moved into the registry yet, naming where it
- * still lives. Distinct from `unsupported` — that is a permanent answer, this is
- * a temporary one. A ratchet test counts these and may only let the count fall.
- */
-export type Pending = {
-  pending: string;
-  /** The argument rule, which IS derived and correct even while the lowering is not here. */
-  args?: Arity;
-};
-
-export const pending = (livesIn: string, args?: Arity): Pending =>
-  args === undefined ? { pending: livesIn } : { pending: livesIn, args };
-
-/**
- * The renderer is CODE, by design, and this names the file. Not `Pending`: a
- * pending cell is a fact that has yet to move into a row, and a ratchet counts
- * those down to zero. This cell never moves, because the lowering reads its
+ * The renderer is CODE, by design, and this names the file. The cell never moves
+ * into a row, because the lowering reads its
  * NEIGHBOURS — the operand types for `+` (`$add` or `$concat`), the truth of
  * the left side for `&&`, the receiver's shape for `x[0]` — and a single row
  * cannot see any of that. A row states that the construct exists and where it
@@ -1245,11 +1230,11 @@ type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] 
  * `$.price.ceil()` is a number because `.ceil()` is, and stating an `uncertain`
  * would be a second answer to a question with one.
  *
- * `Refusal` and `Pending` are answers too — "cannot tell which" is a decision.
+ * A `Refusal` is an answer too — "cannot tell which" is a decision.
  */
 export type Uncertain<F extends Family, In, Out> =
   IsUnion<Extract<F, FieldFamily>> extends true
-    ? { uncertain: Emit<In, Out> | Refusal | Pending }
+    ? { uncertain: Emit<In, Out> | Refusal }
     : { uncertain?: never };
 
 /**
@@ -1257,10 +1242,10 @@ export type Uncertain<F extends Family, In, Out> =
  * ordered: two rows cannot overlap, and the leftover is STATED.
  */
 export type ByArgs<In, Out> = {
-  none?: Rule<In, Out> | Pending;
-  multiple?: Rule<In, Out> | Pending;
+  none?: Rule<In, Out>;
+  multiple?: Rule<In, Out>;
   /** One object literal, which must carry `keys` — `Array.from({ length: n })`. */
-  object?: { keys: readonly string[] } & (Rule<In, Out> | Pending);
+  object?: { keys: readonly string[] } & Rule<In, Out>;
   /**
    * A constant that REACHES a row is one the fold did not settle: a value with
    * no source spelling (a Date, an ObjectId — settled by the evaluator at the
@@ -1269,8 +1254,8 @@ export type ByArgs<In, Out> = {
    * (`Number("3")` is a double; a folded `3` would be an int — a rule, so the
    * server converts).
    */
-  constant?: Rule<In, Out> | Refusal | Pending;
-  dynamic?: Rule<In, Out> | Pending;
+  constant?: Rule<In, Out> | Refusal;
+  dynamic?: Rule<In, Out>;
   /** Every class no key above claims. Stated, so a leftover is a decision and not a hole. */
   otherwise: Refusal;
 };
@@ -1285,19 +1270,13 @@ export type ByArgs<In, Out> = {
  */
 export type Emitter<F extends Family, In, Out> =
   | Rule<In, Out>
-  /**
-   * A family may be `Pending` here, not only a rule or a refusal. `Object.keys`
-   * works and `$.arr.keys()` is refused, and the working half still lives in
-   * src/codegen.ts — without `Pending` the row had to invent an emitter for it.
-   */
-  | ({ perFamily: Record<F, Rule<In, Out> | Refusal | Pending> } & Uncertain<F, In, Out>)
+  /** One answer per family: a rule where the method applies, a refusal where it does not. */
+  | ({ perFamily: Record<F, Rule<In, Out> | Refusal> } & Uncertain<F, In, Out>)
   /**
    * Dispatch on the ARGUMENT SHAPE — the third axis, alongside position
    * (`where`) and receiver (`on`). `ObjectId()` mints one, `ObjectId("<hex>")`
    * is a live BSON value, `ObjectId($.id)` is `$toObjectId`: same name, same
-   * receiver, same position, three different MQL. A row may be `Pending`
-   * instead of a rule: the shape and the arity are registry facts, the lowering
-   * is code.
+   * receiver, same position, three different MQL.
    */
   | { byArgs: ByArgs<In, Out> };
 
@@ -1309,14 +1288,9 @@ export type Emitter<F extends Family, In, Out> =
 export type Lists<W extends readonly string[], K extends string> = K extends W[number] ? true : false;
 
 /**
- * Named in `where` ⇒ a real renderer, or `pending(<where it still lives>)`.
- * Absent from `where` ⇒ a refusal, with no escape hatch.
- *
- * The asymmetry is deliberate. `Pending` is allowed only on the half that is
- * about WHERE THE CODE SITS, never on the half that is about WHETHER THE
- * FEATURE APPLIES: a position `where` omits must still say why, so the
- * migration can move lowerings without ever softening an applicability claim.
- * A ratchet test counts the `Pending` cells and may only let the count fall.
+ * Named in `where` ⇒ a real renderer, or `inCode(<the file that builds it>)`.
+ * Absent from `where` ⇒ a refusal, with no escape hatch. A position `where`
+ * omits must still say WHY, so no applicability claim is ever left unstated.
  */
 export type Cell<
   Listed extends boolean,
@@ -1330,7 +1304,7 @@ export type Cell<
    * while checking nothing, which is how two dangling owners went unnoticed.
    */
   C extends readonly string[] = readonly never[],
-> = Listed extends true ? Emitter<F, In, Out> | Pending | InCode : NonEmitter<F, C>;
+> = Listed extends true ? Emitter<F, In, Out> | InCode : NonEmitter<F, C>;
 
 /**
  * The answer for a position `where` omits. One answer for every family, or one
