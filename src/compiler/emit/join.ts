@@ -198,7 +198,15 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name = `#join${slot.path}`;
-  const bound = env.bind(name, { ref: { kind: "field", slot }, type: l.yields, mutable: false, pos: l.pos });
+  // A `$lookup.as` array always holds the foreign collection's documents, so a
+  // terminal that answers one ELEMENT of it — `.head()`, `.maxBy(k)` — is a document.
+  const bound = env.bind(name, {
+    ref: { kind: "field", slot },
+    type: l.yields,
+    elements: l.yields === "array" ? "object" : "unknown",
+    mutable: false,
+    pos: l.pos,
+  });
   const rebased = rebase(node, l.peeledTo, { type: "Ident", name, pos: l.pos } as Expr);
   // the rest of the chain is a VALUE over the slot, wherever the chain stood
   return lowerValue(rebased, bound.at({ at: "value" }));

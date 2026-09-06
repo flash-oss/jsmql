@@ -728,6 +728,7 @@ function applyLambda(
     bodyEnv = bodyEnv.bind(fnName, {
       ref: { kind: "dropped", message: E.recursiveFunction(fnName, pos).message, replaced: false },
       type: "unknown",
+      elements: "unknown",
       mutable: false,
       pos,
     });

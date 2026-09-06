@@ -139,6 +139,14 @@ export type Binding = {
   readonly ref: Ref;
   /** The provable type, or "unknown" — the chain type-check reads this. */
   readonly type: Kind | "unknown";
+  /**
+   * What ONE element of this binding is, or "unknown". A method whose row
+   * answers `returns: "element"` — `.head()`, `.find(p)`, `.maxBy(k)` — has this
+   * kind, so the value that follows it is typed and the wrong method on it is
+   * refused. Only a binding that can SHOW its elements states one: a
+   * `$lookup.as` array holds the foreign collection's documents.
+   */
+  readonly elements: Kind | "unknown";
   /** `let` is mutable, everything else is not. */
   readonly mutable: boolean;
   /** Where the binding was made, for the message that names it. */
@@ -298,7 +306,7 @@ export class Scope {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);

@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): a value terminal over a joined collection gives one document, and says so
+
+`$$.orders.head().map(x => x)` compiled to `$map` over `{ $first: … }`. A `$lookup.as` array holds documents, so `.head()` gives one document, and mongod stops the query with "input to $map must be an array not object". The defect was data-dependent and therefore worse than a plain refusal: over an empty foreign collection the same pipeline runs and writes null, so it passes in a development database and aborts the query in production. Eleven terminals behaved this way — `head`, `first`, `last`, `at`, `nth`, `findLast`, `min`, `max`, `minBy`, `maxBy` — and every array method on the document that followed. Only `.find(p)` was right, because it travels the `picksOne` route, which already types the slot.
+
+The registry owned the word and nothing carried it. `Returns` has an `"element"` member whose own comment names these rows, but only `min` and `max` stated it and the resolver erased it to "unknown". The rows state it now, a `Binding` carries `elements` beside `type`, the `$lookup` slot states `elements: "object"`, and `resolveReturns` answers a receiver's element kind in place of the erasure. The refusal is then the one `.find(p)` already produced, with a new arm on the hint table that names the field read as the way out.
+
+The proof travels only as far as it can be shown. `elementsRead` answers for a PLAIN read of a binding and for nothing else, so `$$.c.map(f).head()` — where the link replaced the elements — stays unproven, and a field path (`$.items.head()`) proves nothing, as SR2 requires.
+
+---
+
 ## 2026-09-06 — docs: the two coverage gaps the restored suites measured are open rows
 
 Running the previous compiler's corpus over this compiler measured two gaps that are neither bugs nor decisions, so they are open rows rather than prose. DEF-034: a constant expression settles to its value where an evaluator exists, and a few reshapers have none — `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor, which the row's work raises. DEF-035: `.toSpliced()` refuses a negative start that JavaScript counts from the end, because resolving one needs the receiver's length in hand and the row states a slot range from zero.

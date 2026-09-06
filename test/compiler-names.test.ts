@@ -139,6 +139,7 @@ describe("compiler/emit/names — I2: a read resolves in scope or is the develop
     expect(b.scope.lookup("_id", 0)).toEqual({
       ref: { kind: "var", ref: "$$v__5fid" },
       type: "number",
+      elements: "unknown",
       mutable: false,
       pos: 4,
     });

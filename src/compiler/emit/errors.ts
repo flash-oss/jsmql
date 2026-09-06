@@ -94,9 +94,11 @@ export function refusalFor(
             ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
             : sel.got === "number" && takesString
               ? ` Render the number as a string first: '.toString()'.`
-              : sel.got === "bool"
-                ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
-                : "";
+              : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
+                ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.`
+                : sel.got === "bool"
+                  ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
+                  : "";
       // a property (`.length`) is spelled without the call parentheses
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);

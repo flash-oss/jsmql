@@ -216,6 +216,7 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda, expanding: lambda.body === undefined },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: decl.pos,
       }),
@@ -246,7 +247,13 @@ function letStages(decl: LetDecl, env: Env): Step {
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
   const bind = (type: Declared["type"]): Env =>
-    env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
+    env.bind(decl.name, {
+      ref: { kind: "field", slot },
+      type,
+      elements: "unknown",
+      mutable: decl.kind === "let",
+      pos: decl.pos,
+    });
   // `const f = (x) => …` the fold did not settle — its body reads another declared
   // name — is a function like `function f(x) { … }`: a name for a body, no stage.
   if (decl.value.type === "Lambda") {
@@ -255,6 +262,7 @@ function letStages(decl: LetDecl, env: Env): Step {
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === undefined },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: decl.pos,
       }),
@@ -642,6 +650,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       const binding: Declared = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
         type: kindOf(op.value, inner),
+        elements: "unknown",
         mutable: true,
         pos: op.target.pos,
       };

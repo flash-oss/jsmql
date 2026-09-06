@@ -1965,6 +1965,72 @@ describe("$$$.coll.aggregate — error cases", () => {
   // `$trim` over a document is a shape mongod refuses at execution time. Emitting
   // it broke HR3; these are the shapes that used to reach the server and fail.
 
+  describe("a value terminal over a joined stream gives ONE DOCUMENT, and the array methods are refused on it", () => {
+    // Every terminal whose row answers `returns: "element"`. The slot holds the
+    // foreign collection's documents, so the element is a document.
+    for (const terminal of [
+      "head()",
+      "first()",
+      "last()",
+      "at(0)",
+      "nth(1)",
+      "findLast(o => o.total > 1)",
+      "min()",
+      "max()",
+      'minBy("total")',
+      'maxBy("total")',
+    ]) {
+      it(`refuses '.map()' after '.${terminal}'`, () => {
+        expect(() => jsmql(`$.r = $$$.orders.${terminal}.map(x => x);`)).toThrow(
+          /'\.map\(\)' is not available on a 'object'/,
+        );
+      });
+    }
+
+    // Every method family the server refuses over a document, each with its own operator.
+    for (const [method, spelling] of [
+      ["filter", ".filter(x => x.total > 1)"],
+      ["some", ".some(x => x.total > 1)"],
+      ["join", '.join(",")'],
+      ["reduce", ".reduce((a, b) => a + b, 0)"],
+      ["flat", ".flat()"],
+      ["sum", ".sum()"],
+      ["take", ".take(1)"],
+      ["includes", ".includes(1)"],
+    ]) {
+      it(`refuses '${method}' on the document a terminal gives`, () => {
+        expect(() => jsmql(`$.r = $$$.orders.head()${spelling};`)).toThrow(
+          new RegExp(`'\\.${method}\\(\\)' is not available on a 'object'`),
+        );
+      });
+    }
+
+    it("names the way out: a field of the document, or no terminal at all", () => {
+      expect(() => jsmql("$.r = $$$.orders.head().map(x => x);")).toThrow(
+        /A document is not a list: read one of its fields \('\.<field>'\), or drop the terminal/,
+      );
+    });
+
+    it("a field read and a document method on the same terminal still compile", () => {
+      expect(jsmql("$.r = $$$.orders.head().total;")).toEqual([
+        { $lookup: { from: "orders", pipeline: [], as: "__jsmql.tmp.0" } },
+        { $set: { r: { $getField: { field: "total", input: { $first: "$__jsmql.tmp.0" } } } } },
+        { $unset: "__jsmql" },
+      ]);
+    });
+
+    it("a link that REPLACES the elements leaves them unproven, so the array methods stay open", () => {
+      // `.map` peels into the sub-pipeline and the slot still holds documents; the
+      // proof belongs to the binding, and only a plain read of it carries one.
+      expect(() => jsmql("$.r = $$$.orders.map(o => ({ t: o.total })).head().t;")).not.toThrow();
+    });
+
+    it("a field path proves nothing, so an in-document array keeps its methods", () => {
+      // SR2: `$.items` has no provable type, so `.head()` over it is not a document.
+      expect(() => jsmql("$.r = $.items.head().map(x => x);")).not.toThrow();
+    });
+  });
+
   it("$$ = source-switch rejects an outer-doc $. reference (no let slot)", () => {
     expect(jsmql('$$ = $$$.orders.aggregate((o) => { $match(o.userId === $._id); $group({ _id: "$s" }); });')).toEqual([
       {

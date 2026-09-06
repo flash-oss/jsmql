@@ -44,16 +44,38 @@ export function familyOfKind(k: Known): FieldFamily | null {
   }
 }
 
-/** The kind a `Returns` states for a receiver of `family`. */
-function resolveReturns(r: Returns, receiver: Known, family: FieldFamily | "regexp" | "set" | string | null): Known {
+/**
+ * The kind a `Returns` states for a receiver of `family`. `element` is the kind of
+ * ONE element of the receiver, which only the receiver can supply — "unknown" when
+ * it cannot show one.
+ */
+function resolveReturns(
+  r: Returns,
+  receiver: Known,
+  family: FieldFamily | "regexp" | "set" | string | null,
+  elements: Known = "unknown",
+): Known {
   if (typeof r === "string") {
     if (r === "same") return receiver;
-    if (r === "element") return "unknown";
+    if (r === "element") return elements;
     return r;
   }
   const byFamily = family === null ? undefined : (r as Record<string, Kind | "element" | "unknown">)[family];
-  if (byFamily === undefined || byFamily === "element") return "unknown";
+  if (byFamily === undefined) return "unknown";
+  if (byFamily === "element") return elements;
   return byFamily;
+}
+
+/**
+ * The kind of ONE element of what a node reads, from a binding that states it.
+ *
+ * A PLAIN read only. A method between the binding and the terminal replaces the
+ * elements — `$$$.orders.map(o => o.total).head()` reads a total, not a document —
+ * and this module never answers with a kind it cannot show.
+ */
+function elementsRead(node: Expr, env: Env): Known {
+  if (node.type !== "Ident" || !env.scope.has(node.name)) return "unknown";
+  return env.lookup(node.name, node.pos).elements;
 }
 
 /** The receiver family a node names as SOURCE, before any kind: a namespace, a regex, a set — or null. */
@@ -108,13 +130,19 @@ export function kindOf(node: Expr, env: Env): Known {
     case "MemberAccess": {
       // A property row (`.length`, `Math.PI`) states its result; a field read proves nothing.
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
-        return resolveReturns(returnsOf(node.name), kindOf(node.object, env), receiverFamilyOf(node.object, env));
+        return resolveReturns(
+          returnsOf(node.name),
+          kindOf(node.object, env),
+          receiverFamilyOf(node.object, env),
+          elementsRead(node.object, env),
+        );
       }
       return "unknown";
     }
     case "MethodCall": {
       const family = receiverFamilyOf(node.object, env);
-      if (family !== null) return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family);
+      if (family !== null)
+        return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family, elementsRead(node.object, env));
       // An unproven receiver: the call is on one of the families the row is spelled
       // on, or a server error — so its result is what the row states when every
       // such family states the same (`.size()` is a number on an array and on an

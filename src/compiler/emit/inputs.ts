@@ -173,6 +173,7 @@ function reducerCallback(
     bodyEnv = bodyEnv.bind(acc, {
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
+      elements: "unknown",
       mutable: false,
       pos: cb.pos,
     });
@@ -186,6 +187,7 @@ function reducerCallback(
       bodyEnv = bodyEnv.bind(elem, {
         ref: { kind: "var", ref: reduceVar("this") },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos,
       });
@@ -352,7 +354,13 @@ export function filterInputs(
       // The element is the root inside `$elemMatch`: the parameter stands for the document.
       const bodyEnv = argEnv
         .element(cb.params[0])
-        .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+        .bind(cb.params[0], {
+          ref: { kind: "document" },
+          type: "unknown",
+          elements: "unknown",
+          mutable: false,
+          pos: cb.pos,
+        });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },
     value: (e) => read.lowerValue(e, argEnv),
@@ -374,7 +382,13 @@ export function filterInputs(
       }
       const bodyEnv = argEnv
         .element(cb.params[0])
-        .bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+        .bind(cb.params[0], {
+          ref: { kind: "document" },
+          type: "unknown",
+          elements: "unknown",
+          mutable: false,
+          pos: cb.pos,
+        });
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name, cb.pos);
       return q;
@@ -421,7 +435,13 @@ export function stageInputs(
     // The parameters open the callback's block: a `let` of the same name inside it collides.
     let e = argEnv.block();
     if (cb.params.length >= 1) {
-      e = e.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+      e = e.bind(cb.params[0], {
+        ref: { kind: "document" },
+        type: "unknown",
+        elements: "unknown",
+        mutable: false,
+        pos: cb.pos,
+      });
     }
     if (cb.params.length >= 2) {
       e = e.bind(cb.params[1], {
@@ -431,6 +451,7 @@ export function stageInputs(
           replaced: false,
         },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos,
       });
@@ -441,6 +462,7 @@ export function stageInputs(
       e = e.bind(cb.params[2], {
         ref: { kind: "streamHandle", source: cb },
         type: "stream",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos,
       });
