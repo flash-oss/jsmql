@@ -632,3 +632,22 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
     for (const src of Object.keys(NEEDS_MORE_THAN_A_SERVER)) expect(RUNS, src).toContain(src);
   });
 });
+
+describe("compiler/emit/statement — a root write of a provable array fans out", () => {
+  it("an array-returning method on an unproven field is an array, so `$ = $.items.map(…)` fans out", () => {
+    expect(pipeline("$ = $.items.map(x => ({ v: x }))")).toEqual([
+      { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { v: "$$x" } } } } },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
+    // a field alone proves nothing: it stays one document
+    expect(pipeline("$ = $.items")).toEqual([{ $replaceWith: "$items" }]);
+  });
+  it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
+    expect(pipeline('const ids = $.tags.uniq(); $.y = ids.includes("a")')).toEqual([
+      { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
+      { $set: { y: { $in: ["a", "$__jsmql.var.ids"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});

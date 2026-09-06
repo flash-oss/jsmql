@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — fix(compiler): a method on an unproven receiver has the kind its one family states
+
+`$ = $.items.map(x => ({ v: x }))` emitted `{ $replaceWith: { $map: … } }` — an array as the new root, which the server refuses — because `kindOf` answered "unknown" for a method call whose receiver the registry cannot type, and the fan-out (`$set` a slot, `$unwind`, `$replaceWith`) is keyed on a provable array. The same gap left `const ids = $.tags.uniq()` untyped, so `ids.includes("a")` took the dual-receiver `$switch` form. A method spelled on ONE document-field family (`.map`, `.uniq`, … on `array`) is a call on that family or a server error, never a call on another, so its result is what the row states for that family: `soleFieldFamilyOf` in `src/compiler/rows.ts`, read by `kindOf` (`src/compiler/emit/types.ts`) when the receiver's family is unproven. A method on several families (`.length`, `.slice`) stays unknown and keeps the dual form.
+
+---
+
 ## 2026-09-06 — fix(compiler): an injected `"$…"` string is a literal in every slot the server evaluates
 
 `jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })` emitted `[{ $set: { x: "$b" } }]`, and the server read the field `b` — user input had become a field reference, which HR1's gate exists to prevent. The gate exempted every pipeline program because the shipped compiler did (measured, and copied as a fact); the exemption was the shipped compiler's defect. The gate now asks only where the string stands: a value slot the server evaluates — an expression, a `$set` value, a stage body, a `$group` key — wraps it (`{ $literal: "$b" }`); a query slot and an update DOCUMENT take the string as written, because they evaluate nothing (`jsmql.update` → `{ $set: { x: "$b" } }` stores the string; measured). A `"$…"` string written in the SOURCE is unchanged: it is MongoDB's field path, as HR1 states, and `docs/LANGUAGE.md` § `$literal` now says so instead of describing an automatic wrap the compiler does not do.

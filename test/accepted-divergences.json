@@ -6450,7 +6450,7 @@
       "src": "\n$.recentCoPurchaseOrders = $$$.orders\n  .toSorted({ createdAt: -1 })\n  .take(200)\n  .filter(o => o.productIds.includes($._id));\n      ",
       "kind": "output",
       "was": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$sort\":{\"createdAt\":-1}},{\"$limit\":200},{\"$match\":{\"$expr\":{\"$cond\":{\"if\":{\"$isArray\":\"$productIds\"},\"then\":{\"$in\":[\"$$jsmql_f0__id\",\"$productIds\"]",
-      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$sort\":{\"createdAt\":-1}},{\"$limit\":200},{\"$match\":{\"$expr\":{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$productIds\"},[\"array\"]]},\"then\":{\"$in",
+      "now": "[{\"$lookup\":{\"from\":\"orders\",\"let\":{\"jsmql_f0__id\":\"$_id\"},\"pipeline\":[{\"$sort\":{\"createdAt\":-1}},{\"$limit\":200},{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$productI",
       "reason": "intended: the receiver's family is not provable, so the registry's one runtime dispatch decides — a `$switch` on `$type` with a cell per family and `$$REMOVE` for the rest — where the shipped compiler wrote a two-way `$cond` on `$isArray` and ran the string cell on a number."
     },
     "pipeline\u0000\n$$.filter({ status: \"paid\" });\n$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));\n      ": {
@@ -6458,7 +6458,7 @@
       "src": "\n$$.filter({ status: \"paid\" });\n$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));\n      ",
       "kind": "output",
       "was": "[{\"$match\":{\"status\":\"paid\"}},{\"$set\":{\"__jsmql.tmp.1\":{\"$map\":{\"input\":\"$lineItems\",\"as\":\"li\",\"in\":{\"orderId\":\"$_id\",\"sku\":\"$$li.sku\",\"revenue\":{\"$multiply\":[\"$$li.qty\",\"$$li.price\"]}}}}}},{\"$unwind\":\"$__jsmql.tmp.1\"},{",
-      "now": "[{\"$match\":{\"status\":{\"$eq\":\"paid\",\"$not\":{\"$type\":\"array\"}}}},{\"$replaceWith\":{\"$map\":{\"input\":\"$lineItems\",\"as\":\"li\",\"in\":{\"orderId\":\"$_id\",\"sku\":\"$$li.sku\",\"revenue\":{\"$multiply\":[\"$$li.qty\",\"$$li.price\"]}}}}}]",
+      "now": "[{\"$match\":{\"status\":{\"$eq\":\"paid\",\"$not\":{\"$type\":\"array\"}}}},{\"$set\":{\"__jsmql.tmp.0\":{\"$map\":{\"input\":\"$lineItems\",\"as\":\"li\",\"in\":{\"orderId\":\"$_id\",\"sku\":\"$$li.sku\",\"revenue\":{\"$multiply\":[\"$$li.qty\",\"$$li.price\"]}}}}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "pipeline\u0000\n$ = [\"sender\", \"recipient\"].map(party => {\n  const leg = $.legs?.[party];\n  const score = leg?.riskScore;\n  return score ? { party, score, band: score > 50 ? \"high\" : \"low\" } : null;\n}).filter(Boolean);\n      ": {

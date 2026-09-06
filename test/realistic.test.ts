@@ -1462,22 +1462,30 @@ $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.p
         },
       },
       {
-        $replaceWith: {
-          $map: {
-            input: "$lineItems",
-            as: "li",
-            in: {
-              orderId: "$_id",
-              sku: "$$li.sku",
-              revenue: {
-                $multiply: [
-                  "$$li.qty",
-                  "$$li.price",
-                ],
+        $set: {
+          "__jsmql.tmp.0": {
+            $map: {
+              input: "$lineItems",
+              as: "li",
+              in: {
+                orderId: "$_id",
+                sku: "$$li.sku",
+                revenue: {
+                  $multiply: [
+                    "$$li.qty",
+                    "$$li.price",
+                  ],
+                },
               },
             },
           },
         },
+      },
+      {
+        $unwind: "$__jsmql.tmp.0",
+      },
+      {
+        $replaceWith: "$__jsmql.tmp.0",
       },
     ]);
   });
@@ -6221,52 +6229,225 @@ $.recentCoPurchaseOrders = $$$.orders
             {
               $match: {
                 $expr: {
-                  $switch: {
-                    branches: [
-                      {
-                        case: {
-                          $in: [
+                  $and: [
+                    {
+                      $ne: [
+                        {
+                          $ifNull: [
                             {
-                              $type: "$productIds",
+                              $switch: {
+                                branches: [
+                                  {
+                                    case: {
+                                      $in: [
+                                        {
+                                          $type: "$productIds",
+                                        },
+                                        [
+                                          "array",
+                                        ],
+                                      ],
+                                    },
+                                    then: {
+                                      $in: [
+                                        "$$jsmql_f0__id",
+                                        "$productIds",
+                                      ],
+                                    },
+                                  },
+                                  {
+                                    case: {
+                                      $in: [
+                                        {
+                                          $type: "$productIds",
+                                        },
+                                        [
+                                          "string",
+                                        ],
+                                      ],
+                                    },
+                                    then: {
+                                      $gte: [
+                                        {
+                                          $indexOfCP: [
+                                            "$productIds",
+                                            "$$jsmql_f0__id",
+                                          ],
+                                        },
+                                        0,
+                                      ],
+                                    },
+                                  },
+                                ],
+                                default: "$$REMOVE",
+                              },
                             },
-                            [
-                              "array",
+                            null,
+                          ],
+                        },
+                        null,
+                      ],
+                    },
+                    {
+                      $ne: [
+                        {
+                          $switch: {
+                            branches: [
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
+                              },
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
+                              },
                             ],
-                          ],
+                            default: "$$REMOVE",
+                          },
                         },
-                        then: {
-                          $in: [
-                            "$$jsmql_f0__id",
-                            "$productIds",
-                          ],
-                        },
-                      },
-                      {
-                        case: {
-                          $in: [
-                            {
-                              $type: "$productIds",
-                            },
-                            [
-                              "string",
+                        false,
+                      ],
+                    },
+                    {
+                      $ne: [
+                        {
+                          $switch: {
+                            branches: [
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
+                              },
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
+                              },
                             ],
-                          ],
+                            default: "$$REMOVE",
+                          },
                         },
-                        then: {
-                          $gte: [
-                            {
-                              $indexOfCP: [
-                                "$productIds",
-                                "$$jsmql_f0__id",
-                              ],
-                            },
-                            0,
-                          ],
+                        "",
+                      ],
+                    },
+                    {
+                      $ne: [
+                        {
+                          $switch: {
+                            branches: [
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
+                              },
+                              {
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
+                              },
+                            ],
+                            default: "$$REMOVE",
+                          },
                         },
-                      },
-                    ],
-                    default: "$$REMOVE",
-                  },
+                        0,
+                      ],
+                    },
+                  ],
                 },
               },
             },

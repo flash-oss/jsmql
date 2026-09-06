@@ -14,7 +14,14 @@ import type { Expr, Kind, Returns } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
-import { constructedFamilyOf, isCallable, namespaceNames, productionForOperator, returnsOf } from "../rows.ts";
+import {
+  constructedFamilyOf,
+  isCallable,
+  namespaceNames,
+  productionForOperator,
+  returnsOf,
+  soleFieldFamilyOf,
+} from "../rows.ts";
 import { ObjectId } from "../../objectid.ts";
 import { isMqlShaped } from "../passes/inject.ts";
 
@@ -104,8 +111,14 @@ export function kindOf(node: Expr, env: Env): Known {
       }
       return "unknown";
     }
-    case "MethodCall":
-      return resolveReturns(returnsOf(node.name), kindOf(node.object, env), receiverFamilyOf(node.object, env));
+    case "MethodCall": {
+      const family = receiverFamilyOf(node.object, env);
+      if (family !== null) return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family);
+      // An unproven receiver: a method spelled on ONE field family is a call on that
+      // family or a server error, so its result is what the row states for it.
+      const sole = soleFieldFamilyOf(node.name);
+      return sole === null ? "unknown" : resolveReturns(returnsOf(node.name), sole as Known, sole);
+    }
     case "OperatorCall":
       return resolveReturns(returnsOf(node.name), "unknown", null);
     case "CallExpression":

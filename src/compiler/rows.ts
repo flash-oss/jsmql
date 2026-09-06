@@ -287,6 +287,19 @@ type EmitRow = {
 const emitRow = (name: string): EmitRow | undefined =>
   (ROWS[name] as EmitRow | undefined) ?? ((PRODUCTIONS as Record<string, unknown>)[name] as EmitRow | undefined);
 
+/**
+ * The ONE document-field family a method's row is spelled on, or null when it is
+ * spelled on several (or on none). A receiver the registry cannot type still
+ * has this family when the call is valid at all: `.map` on an unproven field is
+ * a call on an array, or a server error — never a call on a string.
+ */
+export function soleFieldFamilyOf(name: string): Family | null {
+  const fams = families(row(name)?.on);
+  if (fams === undefined || fams === "any") return null;
+  const fields = fams.filter((f) => f !== "stream");
+  return fields.length === 1 ? fields[0] : null;
+}
+
 /** The result type a name states, or "unknown" when it states none. */
 export function returnsOf(name: string): Returns {
   return emitRow(name)?.returns ?? "unknown";
