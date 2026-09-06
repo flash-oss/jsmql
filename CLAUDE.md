@@ -111,6 +111,7 @@ docs/
   specs/          Implementation specs — canonical for per-feature internals (see docs/CLAUDE.md for the index).
 test/
   compiler-*.test.ts   The compiler's suites, one per phase or road; several compare every construct with JavaScript's own answer on a live mongod.
+  codegen / pipeline / lookup / stream-methods / match-translation / …  The feature suites: JSMQL inputs with the MQL each emits, regenerated per shape change with scripts/regen-expectations.mjs. See test/CLAUDE.md.
   registry-*.test.ts   The registry's audits: type contracts, cross-references, the pending ratchet, facts measured on mongod.
   realistic.test.ts    Full-feature compile-time examples (assert emitted MQL; referenced from README; the playground's source).
   strict-api / security / error-pos / cli / mongoose / site   The public API's contracts.
@@ -122,6 +123,7 @@ scripts/
   diff-compilers.mjs            The acceptance gate: the working tree against the reference checkout, every divergence classified and reasoned. See docs/specs/differential-harness.md.
   build-cjs.mjs                 Bundles dist/cjs/*.cjs via esbuild for the `require` condition.
   merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict.
+  regen-expectations.mjs        Rewrite a suite's expected MQL with the compiler's answers (reviewed as a diff); convert-expectations.mjs flips the polarity of the cases it lists.
   sync-playground.mjs           Build the committed pure-ESM bundle dist/jsmql.js + generate playground.html (skeleton + realistic examples).
   hook-post-edit-realistic.sh   PostToolUse dispatcher that runs sync-playground.
 ```

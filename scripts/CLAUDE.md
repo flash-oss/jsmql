@@ -44,6 +44,10 @@ Auto-resolves `git merge` conflicts on `docs/DEVLOG.md`. Splits both sides on `-
 
 PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-playground.mjs` when Claude Code's Edit/Write tool touches `test/realistic.test.ts` (the example source) or `playground_skeleton.html` (the playground UI source). Keeps the generated `playground.html` (and, since it re-runs the bundle, `dist/jsmql.js`) in sync within a single commit. (Despite the name, it dispatches on both files — kept for the stable settings.json reference.) It does **not** fire on `src/` edits — those need a manual `npm run sync:playground` to refresh `dist/jsmql.js`.
 
+### `regen-expectations.mjs` / `convert-expectations.mjs`
+
+Two reviewers' tools for the suites, run by hand and never on a hook. `regen-expectations.mjs test/<suite>.test.ts` rewrites every `expect(<call>).toEqual(<literal>)` (and `toStrictEqual` / `toBe` / `toThrow(<matcher>)`) with the answer the working-tree compiler gives for the same call, through the TypeScript AST — for a deliberate change of emitted shape that would otherwise be a hundred identical hand edits. A call whose polarity changed (a throw where a value was asserted, or a value where a throw was) is listed and left alone. `convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]` is the mechanical half of that judgement: it flips the polarity of every listed case except those whose source matches a KEEP pattern — the refusals the suite must keep asserting. Both outputs are reviewed as a diff before they are committed: a wrong answer regenerates as well as a right one, so the script proves consistency with the compiler, never correctness (a running `mongod` proves that — see [test/CLAUDE.md](../test/CLAUDE.md)).
+
 ## Conventions
 
 - Scripts are `.mjs` (ESM) and may import directly from `src/*.ts` files; Node 22.18+ / 24.3+'s native type-stripping handles the TS syntax without a flag (unflagged in 22.18.0 LTS and 24.3.0; stable in 25.2.0).
