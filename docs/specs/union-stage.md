@@ -24,7 +24,7 @@ for the user-facing reference.
 | `...$$$.<coll>.filter(pred)` | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>] } }` |
 | `$$$.<coll>.find(pred)` (no spread) | `{ $unionWith: { coll: "<coll>", pipeline: [<translated pred>, { $limit: 1 }] } }` |
 | `{ inline document }` (one or more, consecutive) | `{ $unionWith: { pipeline: [{ $documents: [<docs>] }] } }` (consecutive inline docs batch into one stage) |
-| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace is Atlas-Data-Federation-only; `requireSameDbColl` throws (message matches `/Cross-database reads aren't supported/`, redirects to `...$$$.<coll>`) |
+| `...$$$$.<db>.<coll>[.filter(pred)]` | **rejected** — a `{ db, coll }` `$unionWith` namespace is Atlas-Data-Federation-only; the join road refuses it ("A read of another DATABASE isn't supported …") and redirects to `...$$$.<coll>` |
 | `$$$$.<db>.<coll>.find(pred)` | **rejected** — same cross-database read rejection as the line above |
 
 Source order across the argument list is preserved exactly. A `{...}` between
@@ -33,19 +33,14 @@ inline batch whenever a collection-sourced argument arrives.
 
 ### Predicate translation
 
-For expression-body predicates, the body is rewritten via
-`extractLetsFromExpr` (the same helper `$lookup`'s pipeline-form uses) and
-then run through `translateMatchBody` — the same engine `$match` uses. The
-result is an index-friendly `{ field: value }` query document inside the
-inner `$match`, not a blanket `{ $expr: … }` wrap. Untranslatable residuals
-still ride in `$expr`, side-by-side with the translated portion:
+An expression-body predicate lowers through the filter road ([filter-mode.md § The filter road](filter-mode.md)) with the parameter as the document, so the inner `$match` is the same index-friendly query document `$match` gets everywhere; a clause with no native form rides in `$expr` beside the translated ones:
 
 | Predicate body | Inner stage |
 |---|---|
-| `o._id === "X"` | `{ $match: { _id: "X" } }` |
-| `o.tier === "gold"` | `{ $match: { tier: "gold" } }` |
-| `o.active` (truthiness) | `{ $match: { $expr: "$active" } }` (no query-form equivalent) |
-| `o.active && o.tier === "gold"` | `{ $match: { tier: "gold", $expr: "$active" } }` |
+| `o._id === "X"` | `{ $match: { _id: { $eq: "X", $not: { $type: "array" } } } }` |
+| `o.tier === "gold"` | `{ $match: { tier: { $eq: "gold", $not: { $type: "array" } } } }` |
+| `o.active` (truthiness) | `{ $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] }, { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } }` — the JavaScript truthiness test |
+| `o.active && o.tier === "gold"` | `{ $match: { tier: { $eq: "gold", $not: … }, $expr: { … } } }` |
 
 Block-body predicates pass through verbatim — each statement is lowered to a
 stage exactly as it would be at the top level. The body is lowered by the join
@@ -55,19 +50,7 @@ only what differs — the stage's shape and its missing `let`.
 
 ### `$unionWith` has no `let`
 
-`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The union
-translator detects any local-document (`$.x`) reference in the predicate and
-throws a precise error pointing the user at the documented fix: move the
-local filter to a `$match(...)` stage *before* `$$.push(...)`.
-
-Concretely, the union predicate translator (`translateUnionPredicate` in
-[`src/compiler/emit/union.ts`](../../src/compiler/emit/union.ts)):
-
-1. Calls `extractLetsFromExpr` / `extractLetsFromPipeline` to get the
-   rewritten body and the let-variable map.
-2. If `Object.keys(letVars).length > 0` → throw `correlatedPushPredicateMessage`.
-3. Otherwise run `translateMatchBody` and emit a single `$match` stage (or
-   pass the block stages through unchanged).
+`$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so a read of the outer document or of an outer binding inside it is refused rather than silently misread: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.length` there ([stream-length.md](stream-length.md)).
 
 ## AST and parser
 
@@ -83,24 +66,16 @@ or `[` after `$$` already accommodates `.push(...)`.
 
 ## Error catalog
 
-All errors below set `.pos` to the offending node (the receiver, the spread
-argument, the inline doc, or the entire push call as appropriate).
-
-| Trigger | Message excerpt |
+| Trigger | Message |
 |---|---|
-| `$$.foo`, `$$["x"]` (member / index access — no `.push`) | `'$$' (current collection) is statement-only and only supports '.push(...)'. Write $$.push({...}), $$.push(...$$$.<coll>[.filter(pred)]), or $$.push($$$.<coll>.find(pred)) as a top-level Pipeline statement…` |
-| `$$.pop(...)` (wrong method) | Handled by the bare-statement stream-chain branch (`applyStreamMethods` → `unknownStreamMethod` in `pipeline.ts`), not the union code: `'.pop(...)' is not a chainable stream method on '$$'. … subsequent methods must come from the stream-method registry (the message lists it). ('.push(...)' appends documents as a statement → $unionWith.)` |
-| `$.x = $$.push(...)` (RHS / value position) | `'$$' (current collection) is statement-only … '$$.push(...)' cannot appear on a RHS or inside another expression.` |
-| `$$.push()` (no args) | `$$.push() requires at least one argument — a document literal ({…}), a spread of $$$.<coll>[.filter(pred)], or $$$.<coll>.find(pred).` |
-| `$$.push($$$.coll.filter(p))` (forgot `...`) | `$$.push(...) was given $$$.<coll>.filter(pred) without ... — that would push the whole array as a single document. Use $$.push(...$$$.<coll>.filter(pred)) to append every matching document, or switch to .find(pred) if you meant the first match.` |
-| `$$.push(...$$$.coll.find(p))` (spurious `...`) | `$$.push(...arg) was given ...$$$.<coll>.find(pred) — .find returns a single document, not an array, so spreading isn't meaningful (JS would TypeError). Drop the ... to append the matched document, or switch to ...$$$.<coll>.filter(pred) to append every match.` |
-| `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | `$$.push(...) argument must be a document literal ({…}), a $$$.<coll>.find(pred) scalar, or a spread of $$$.<coll>[.filter(pred)]. Got a number/string/null literal — collections only hold documents.` |
-| `$$.push(...$$$.coll.filter(o => o.x === $.y))` (correlated) | `$$.push(...$$$.<coll>.filter(pred)) — predicate references the local document ($.<field>), but MongoDB's $unionWith has no let slot. The union sub-pipeline can only reference foreign-document fields. Move the local-doc filter to a $match(...) stage before $$.push(...).` |
-| `$$.push(...$$$$.<db>.<coll>[.filter(p)])` / `$$.push($$$$.<db>.<coll>.find(p))` (cross-database) | `Cross-database reads aren't supported: '$$$$.<db>.<coll>' would emit a $lookup/$unionWith with a '{ db, coll }' namespace, which a standalone / replica-set / sharded MongoDB rejects … write '$$$.<coll>' (drop the '$$$$.<db>.' prefix) … (Cross-database WRITES still work: '$$$$.<db>.<coll> = $$' lowers to $out.)` — thrown at the shared `requireSameDbColl` choke point in `src/compiler/emit/join.ts`. |
-| `$$.push(...)` inside a lookup `.aggregate` block | `'$$.push(...)' inside a lookup's '.aggregate' block is not supported — $$.push appends documents to the outer collection's stream via '$unionWith', but the stages would land inside '$lookup.pipeline'. Hoist the push to a sibling stage in the outer pipeline.` |
-| `$$.push(...)` inside a `$facet.*` / `$lookup.pipeline` / `$unionWith.pipeline` sub-pipeline | `'$$.push(...)' inside a sub-pipeline (…) is not supported — $$.push emits '$unionWith' stages against the current (outer) collection. Hoist the push to a sibling stage in the outer pipeline.` |
-| `jsmql.filter("$$.push(...)")` / `jsmql.expr(...)` | `<apiName>() does not allow '$$.push(...)' — collection unions are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() to compose '$unionWith' stages.` |
-| `jsmql.update("$$.push(...)")` | `jsmql.update() does not allow '$$.push(...)' (collection union): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the union in a regular aggregation pipeline (jsmql.pipeline()) — '$unionWith' isn't allowed inside an update.` |
+| `$$.push($$$.coll.filter(p))` (forgot `...`) | "'$$.push($$$.<coll>.filter(pred))' would push the whole array as one document. Spread it — '$$.push(...$$$.<coll>.filter(pred))' — to push every match, or write '.find(pred)' for the first one." |
+| `$$.push(...$$$.coll.find(p))` (spurious `...`) | "'.find(pred)' gives ONE document, which JavaScript would not spread. Drop the '...' to push the match, or write '...$$$.<coll>.filter(pred)' to push every match." |
+| `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | "A stream holds documents, and this is a number. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)')." |
+| `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
+| `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
+| `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
+| `jsmql.filter("$$.push(...)")` | "jsmql.filter() expects a Filter (the document \`db.coll.find(filter)\` takes), but received a top-level 'push' stage call. Use jsmql.pipeline()." |
+| `jsmql.update("$$.push(...)")` | "An update document is made of writes … This is neither." |
 
 ## Server-version note
 
@@ -119,7 +94,7 @@ pushes work on every version that supports `$unionWith` (4.4+).
   `$$.push(...$$$$.<db>.<coll>...)` / `$$.push($$$$.<db>.<coll>.find(...))`
   does not emit a `{ db, coll }` `$unionWith` namespace (that shape is
   Atlas-Data-Federation-only and a regular server rejects it at runtime);
-  it throws at the shared `requireSameDbColl` choke point — see
+  the join road refuses it — see
   [`docs/specs/lookup-stage.md`](./lookup-stage.md) § Cross-database reads
   are rejected. The cross-database `$out` write is unaffected.
 - **Auto-`$documents`-only `$unionWith` server-version guard.** No compile-time

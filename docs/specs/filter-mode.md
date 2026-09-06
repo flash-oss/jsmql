@@ -2,100 +2,56 @@
 
 ## What this covers
 
-The top-level dispatch rule that turns a no-semicolon input into a MongoDB **Filter** (the document `db.coll.find(filter)` takes as its first argument), and the integration with the existing Pipeline dispatch.
+The rule that turns a program into a MongoDB **Filter** (the document `db.coll.find(filter)` takes) rather than a **Pipeline** (the stage array `db.coll.aggregate(pipeline)` takes), and the road that lowers a filter.
 
 Terminology follows the Node.js MongoDB driver: **Filter** for `find()`, **Pipeline** for `aggregate()`.
 
 User-facing reference: [docs/LANGUAGE.md → Output dispatch](../LANGUAGE.md#output-dispatch-filter-vs-pipeline).
 
-## Rule
+## The decision
 
-`lowerWithCtx` in [src/index.ts](../../src/index.ts) dispatches on the parsed `Program` shape:
+Which of the two documents a program becomes is decided once, for the WHOLE program, by `shapeOf` in [src/compiler/passes/shape.ts](../../src/compiler/passes/shape.ts). It is not punctuation: `$.a = 1` is a pipeline with no `;` in it, and `const a = 1; $.x === a` is a filter with two.
 
-| AST shape | Lowering | Output |
+| Program | Shape | Why |
 |---|---|---|
-| `Pipeline` (input contains `;`) | `generateImplicitPipeline` | `object[]` — Pipeline (stage array) |
-| `UpdateFilter` (top-level `$.x = …` / `delete $.x`) | `generateUpdateFilter` | `object` — `$set` / `$unset` (update document) |
-| `ArrayLiteral` whose first element is a stage shape | `generatePipeline` | `object[]` — legacy bracketed Pipeline |
-| **anything else (a bare expression)** | **`generateFilter`** | `object` — a Filter document |
+| a write (`$.x = …`, `delete $.x`), a `let` / `const` / function declaration, a `;`-separated run | pipeline | a statement by its node type |
+| a chain on a context reference (`$$.filter(…)`, `$$$.orders.find(…)`, `$$ = …`) | pipeline | a stream is a pipeline wherever it stands |
+| a name whose row has a `statement` or `stream` form and NO value form (`$match(…)`, `{ $match: … }`) | pipeline | a stage is not a value |
+| `Object.assign($.p, …)` / `Object.assign(binding, …)` | pipeline | it writes its first argument; a merged object is truthy, so as a filter it would keep every document |
+| declarations followed by ONE expression (`const cutoff = 18; $.age > cutoff`) | filter | a prelude the fold inlines, then the filter |
+| a bracketed literal | its FIRST element decides | `[$match(…), 1]` is a pipeline that refuses element 1; `[1, $match(…)]` an array |
+| anything else — a predicate, a value, a raw `{ … }` document | filter | |
 
-The previous default for the last bucket was `generateWithCtx(ast)`, which emitted an aggregation expression (`{ $gt: ["$x", 1] }`). The new default emits a Filter document instead.
+`src/index.ts` reads the shape and lowers through the matching road; the strict entries (`jsmql.filter`, `jsmql.pipeline`, `jsmql.expr`, `jsmql.update`) refuse the other shape with the entry that takes it ([strict-shape-entries.md](strict-shape-entries.md)).
 
-**The `UpdateFilter` row has exceptions, and they are a closed rule rather than a list.** A statement-shaped *sugar* whose LHS isn't a field path — `$ = …`, `$$ = …`, `$$$.<coll> = …` — parses into an `UpdateFilter` when the user writes it without a trailing `;`, because a lone statement has no `;` to dispatch on. Each such sugar is a Pipeline statement, not an update op, so `lowerProgram` detects it (`updateFilterHasReplaceRoot`, `updateFilterHasReplaceStream`, `containsOutAssign`, …) and reroutes it through `generateImplicitPipeline` as a synthetic one-statement `Pipeline`. The invariant: **a sugar's output never depends on whether the user typed the trailing `;`.** When you add a statement-shaped sugar with a non-field-path LHS, add its detector to those reroute sites — and to the matching site in `lowerToPipelineStages`, so `jsmql.pipeline()` / `jsmql.update()` agree with `jsmql()`. Each sugar's own spec owns the lowering; see [replace-stream-stage.md](replace-stream-stage.md) § Single statement with no trailing `;` for the worked example.
+## The filter road
 
-## `generateFilter`
+[src/compiler/emit/filter.ts](../../src/compiler/emit/filter.ts) lowers a filter; the same road lowers a `$match` body, so `find()` and `$match` produce the same document for the same input. The rules, in the order they apply:
 
-Lives in [src/index.ts](../../src/index.ts). Reuses [`translateMatchBody`](../../src/compiler/emit/filter.ts) — the same translator the `$match` stage already runs — so the Filter and `$match` paths produce the same shapes for the same input.
+1. **A raw document passes through (HR1).** A top-level `{ … }` is the developer's own query document: `{ age: { $gt: 18 } }` → `{ age: { $gt: 18 } }`, untouched. A `$op(…)` call with a query form (`$exists($.a)`, `$gt($.a, 1)`, `$regex($.s, "x", "i")`) lowers to its query clause — MongoDB's reading, no array exclusion.
+2. **A JavaScript spelling reads the field's OWN value.** Every field-vs-constant pair the query language can express becomes a clause that also excludes an array — `$.age > 18` → `{ age: { $gt: 18, $not: { $type: "array" } } }` — because the query language matches any element of an array and JavaScript compares the value. A negation is a two-branch `$or` (`$.x !== null` → `{ $or: [{ x: { $not: { $type: "null" } } }, { x: { $type: "array" } }] }`): an array field is *not equal* to the literal and must match. The index on the field is still used.
+3. **`&&` merges clauses on distinct fields into one document**; a repeated field, or a clause with no native form, rides in `$expr`.
+4. **`||` lowers per branch.** Each branch is lowered on its own, so a native branch stays native beside an `$expr` branch: `$.tags === "red" || $.qty * $.price > 100` → `{ $or: [{ tags: { $eq: "red", $not: … } }, { $expr: { $gt: … } }] }`. A leaf's form never changes because of a sibling.
+5. **Anything without a native form is `{ $expr: <expression> }`** — a method call (`$.name.trim() === "alice"`), a field-to-field comparison (`$.a === $.b`), a value that is not a predicate (`$.a + $.b`, lowered as the JavaScript truthiness test). `$expr` is a legal top-level filter operator, so the output is always a valid filter.
 
-```ts
-function generateFilter(ast: Expr, ctx: GenerateCtx): object {
-  const t = translateMatchBody(ast, { bindings: ctx.bindings });
-  if (t.residual === null) return t.query;
-  const exprPart = { $expr: generateWithCtx(t.residual, ctx) };
-  if (Object.keys(t.query).length === 0) return exprPart;
-  return { ...t.query, ...exprPart };
-}
-```
+The per-operator query cells (`filter` on each row in [src/registry/names.ts](../../src/registry/names.ts)) state the native forms; [emit-pass.md § The filter road](emit-pass.md) holds the full table and the measured divergences from the expression road.
 
-**A top-level object literal is a raw query document (HR1).** Before the predicate translator runs, `generateFilter` short-circuits an `ObjectLiteral` root and emits it verbatim — `{ age: { $gt: 18 } }` → `{ age: { $gt: 18 } }`, `{ age: $gt($.x) }` → `{ age: { $gt: "$x" } }`, `{ a: 1 }` → `{ a: 1 }`. A bare `{ … }` in `db.coll.find(…)` position *is* the query document, so it passes through unchanged (no `$expr` wrap), exactly as a `$match` stage body does. See [docs/LANG_RULES.md](../LANG_RULES.md) (HR1).
+## Stage calls without a `;`
 
-For any *other* expression (a predicate like `$.age > 18`, or a non-predicate like `$abs(42)`), `translateMatchBody` runs and there are three cases:
-
-1. **Fully translatable** (residual is `null`) → return the query document directly. Indexable on every conjunct.
-2. **Fully untranslatable** (query is empty) → return `{ $expr: <aggExpr> }`. `$expr` is a legal top-level Filter operator, so the output is a valid Filter for any non-predicate expression too.
-3. **Mixed** (both have content) → emit a query document with the translatable conjuncts plus an `$expr` for the residual. The query-doc conjuncts stay indexable; the residual evaluates in expression form.
-
-## Stage-call auto-wrap (no `;` required)
-
-Before falling into Filter dispatch, `lowerWithCtx` checks `detectStageIntent(ast)` for two shapes that are almost always Pipeline intent rather than a legitimate Filter:
-
-1. A top-level `OperatorCall` whose name is a registered stage (`$match(...)`, `$project(...)`, `$sort(...)`, …).
-2. A top-level single-key `ObjectLiteral` whose key is a registered stage name (`{ $match: ... }` — the form a copy-paste from MongoDB Compass produces).
-
-When matched, `lowerWithCtx` wraps the bare `Expr` into a synthetic `Pipeline` AST node (`{ type: "Pipeline", stmts: [ast], pos: ast.pos }`) and routes it through `generateImplicitPipeline`. So `jsmql("$match($.age > 18)")` produces `[{ $match: { age: { $gt: 18 } } }]` — the same output as the explicit `;` form (`jsmql("$match($.age > 18);")`) — without any `;` discipline at the call site.
-
-| Input | AST after parse | Output |
-|---|---|---|
-| `$match($.age > 18)` (no `;`) | `OperatorCall { $match }` (bare `Expr`) | `[{ $match: { age: { $gt: 18 } } }]` — auto-wrap |
-| `$match($.age > 18);` | `Pipeline { stmts: [OperatorCall] }` | `[{ $match: { age: { $gt: 18 } } }]` — explicit |
-| `{ $match: $.age > 18 }` (no `;`) | `ObjectLiteral` (bare `Expr`) | `[{ $match: { age: { $gt: 18 } } }]` — auto-wrap |
-
-Re-using `generateImplicitPipeline` means stage-specific behaviour (the `$match` index-friendly query-translator; sub-pipeline recursion for `$lookup` / `$unionWith` / `$facet`; the let-binding scope rules) runs identically to the explicit `;` path. Auto-wrap is purely a surface-syntax accommodation — the lowering machinery is unchanged.
-
-Without this auto-wrap, the bare expression would silently produce `{ $expr: { $match: { $eq: ["$age", 18] } } }` — a syntactically valid Filter, but `$match` isn't an aggregation expression, so the document is useless at query time. Earlier revisions of this spec threw a `CodegenError("$match is a Pipeline stage, … add a trailing ;")` from `generateFilter` to catch the same footgun, but a throw is a worse DX than a silent right-thing: the user's straightforward expression now compiles to the right MQL instead of failing with an error message they'd then have to act on.
-
-`jsmql.expr()` deliberately does **not** auto-wrap. A stage call passed to `jsmql.expr()` is unusual enough that silently routing through Pipeline mode there would mask a real mistake — `jsmql.expr()`'s contract is "raw aggregation expression," and stages aren't aggregation expressions.
+A single stage call (`$match($.age > 18)`) or a single stage document (`{ $match: … }` — the form a copy from Compass produces) is a pipeline by the table above, so `jsmql("$match($.age > 18)")` produces `[{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]` — the same output as the `;` form. `jsmql.expr()` does not take a stage: its contract is a raw aggregation expression, and a stage is not one.
 
 ## Function form
 
-[`Parser.parseFunctionInput`](../../src/compiler/parse/parser.ts) already classifies the arrow's body shape:
-
-- **Expression-body arrow** (`({ $ }) => <expr>`) → returns a single `Expr` program → routes to `generateFilter`.
-- **Block-body arrow** (`({ $ }) => { stmt; stmt; }`) → returns a `Pipeline` program → routes to `generateImplicitPipeline`.
-
-No additional wiring in this module — the body-shape split already mirrored the string form's `;` split before this change; only the no-`;` codepath needed updating.
-
-## Pipeline-mode stage-call requirement
-
-Pipeline mode rejects bare expressions as statements with an actionable error. Owned by [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) `formatNotAStageError` + the `looksLikePredicate` heuristic: when the offending element is a comparison/logical/unary-`!` `Expr`, the error names `$match` as the wrapper:
-
-```text
-Element <i> of Pipeline is not a stage call. To filter documents on a
-predicate, wrap it as `$match(...)` — e.g. `$match($.age > 18)`.
-Pipeline statements must be stage calls; available stages: …
-```
-
-The error carries the offending node's `.pos`, so `.validate()` consumers can underline the span (per the [`.pos` invariant](../../CLAUDE.md#1-priority-developer-experience)).
+The parser reads an arrow's body shape: an expression body (`({ $ }) => <expr>`) is the program that expression is, a block body (`({ $ }) => { stmt; stmt; }`) is a `Pipeline` program. The shape rule then applies to the program exactly as it does to a string.
 
 ## Edge cases
 
-- **`$expr` in Filters is legal.** MongoDB accepts `{ $expr: <aggExpr> }` at the top level of a Filter, so the residual wrapping is always safe; no separate "strict Filter" mode is needed.
-- **Source `$`-strings pass through; no auto-`$literal` (HR1).** A `"$x"` typed in source is the field ref `$x` everywhere — query-doc slot (`$.x === "$y"` → `{ x: "$y" }`) **and** the `$expr` residual (`$concat($.a, "$b") === $.c` → `{ $expr: { $eq: [{ $concat: ["$a", "$b"] }, "$c"] } }`) alike. The only wrap is HR1's runtime-injected exception (`jsmql.compile` params / template-tag `${…}`), applied by `safeBoundValue` in expression position. See [docs/LANG_RULES.md](../LANG_RULES.md) (HR1).
-- **`new Date(<static-args>)` is compile-time folded** in query-doc position. `$.createdAt >= new Date("2026-01-01")` lowers to `{ createdAt: { $gte: <Date instance> } }`, not `{ createdAt: { $gte: { $toDate: "2026-01-01" } } }`. The latter would NOT work — MongoDB's query language treats `{ $toDate: "..." }` as a literal subdocument, never matching anything. The fold only fires when all `new Date(...)` (and any nested `Date.UTC(...)`) arguments are themselves compile-time literals; otherwise the comparison falls back to `$expr` (which DOES evaluate `$toDate`). The full rule lives in [emit-pass.md](emit-pass.md).
-- **`$.field.length`-style "method-as-property" access** is currently treated as a static field path by the match translator's `asFieldPath()` walk, so `$.tags.length < 5` translates to `{ "tags.length": { $lt: 5 } }`. That's a pre-existing edge case in the match translator (it predates this change) and is documented in [emit-pass.md](emit-pass.md).
-- **Update filters stay update ops.** Top-level `$.x = …` and `delete $.x` still route to `generateUpdateFilter`. They aren't Filters or Pipeline stages; the dispatch leaves them untouched.
+- **`$expr` in filters is legal.** MongoDB accepts `{ $expr: <aggExpr> }` at the top level of a filter, so the residual wrapping is always safe.
+- **Source `$`-strings pass through; no automatic `$literal` (HR1).** A `"$y"` typed in source is the field path `$y` everywhere — in a query slot (`$.x === "$y"` → `{ x: { $eq: "$y", $not: { $type: "array" } } }`, which the server compares as a string, as any query value) and in the `$expr` residual (`$concat($.a, "$b") === $.c` → `{ $expr: { $eq: [{ $concat: ["$a", "$b"] }, "$c"] } }`). The one wrap is HR1's gate for a value that arrives at run time — a `jsmql.compile` parameter, a template `${…}` — which `injectedNeedsLiteral` in [src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) wraps in `$literal` wherever the server would evaluate it, and leaves as written in a query slot.
+- **`new Date(<constant args>)` is folded** in a query slot: `$.createdAt >= new Date("2026-01-01")` lowers to `{ createdAt: { $gte: <Date>, $not: … } }`, never `{ $gte: { $toDate: … } }` — the query language would read that as a literal sub-document and match nothing.
+- **`$.tags.length < 5` is an `$expr`.** `.length` has no query form: it is a value (`$size` on an array, `$strLenCP` on a string — the dual-receiver `$switch`), so the comparison rides in `$expr`.
+- **A write is a pipeline.** `$.x = …` and `delete $.x` are statements by the table above; `jsmql()` returns the `$set` / `$unset` pipeline, `jsmql.update()` the update document ([update-filter.md](update-filter.md)).
 
 ## Compile and validate
 
-- `jsmql.compile(fn)(params)` runs through the same `lowerWithCtx`, so parameterised queries automatically get the new dispatch. The function-input shape (expression vs block body) drives the choice exactly as the one-shot call does.
-- `jsmql.validate(input)` likewise shares the dispatch path — no extra wiring.
+`jsmql.compile(fn)(params)` and `jsmql.validate(input)` run the same passes, so a parameterised or validated program is shaped exactly as the one-shot call shapes it.

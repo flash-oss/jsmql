@@ -6,121 +6,59 @@ The three strict-shape variants of `jsmql()` exported from [src/index.ts](../../
 
 - `jsmql.filter(input)` — returns a Filter document; throws on any Pipeline-shaped input.
 - `jsmql.pipeline(input)` — returns a Pipeline stage array; throws on a bare expression that would lower to a Filter.
-- `jsmql.update(input)` — returns the update DOCUMENT `db.coll.updateOne(filter, update)` takes: the object form (`{ $set: …, $inc: …, $push: … }`), every value a compile-time constant. Writes become their operators (`$.n += 2` → `$inc`, `$.tags.push(x)` → `$push`, `delete $.a` → `$unset`, `$.b = $.a; delete $.a` → `$rename`), and a value computed from the document is refused with the pipeline form named — `jsmql()` / `jsmql.pipeline()` lower the same writes to a `$set` / `$unset` pipeline, which `updateOne` accepts too. Lowering: [emit-pass.md § The update-document target](emit-pass.md#the-update-document-target).
+- `jsmql.update(input)` — returns the update DOCUMENT `db.coll.updateOne(filter, update)` takes: the object form (`{ $set: …, $inc: …, $push: … }`), every value a compile-time constant. Writes become their operators (`$.n += 2` → `$inc`, `$.tags.push(x)` → `$push`, `delete $.a` → `$unset`, …); a value computed from the document is refused with the pipeline form — see [update-filter.md § The update document](update-filter.md).
+
+`jsmql.expr(input)` is the fourth shape: one aggregation expression, no Filter wrapper and no `$expr` envelope; it refuses a stage, a write and a stream chain, naming the entry that takes each.
 
 User-facing reference: [docs/LANGUAGE.md → Strict-shape entry points](../LANGUAGE.md#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate).
 
 ## Why they exist
 
-`jsmql()` is polymorphic — it dispatches Filter or Pipeline from the top-level shape of the parsed program (see [filter-mode.md](filter-mode.md) and [aggregation-stages.md](aggregation-stages.md)). The polymorphic surface is the right default when the same source string might legitimately produce either shape. At most real call sites, however, the expected shape is fixed by the driver method being called: `find()` wants a Filter, `aggregate()` wants a Pipeline, `updateOne()` / `updateMany()` want the pipeline form of an update document. When the shape is fixed and the input is wrong (a typoed `$.x = 1` where a filter was meant, an off-by-one stage list, a misplaced `$match` inside an update pipeline), the polymorphic surface silently lowers to the *other* shape — which the driver then sends to MongoDB with a footgun-shaped result. The strict entry points turn each of those into a compile-time error with an actionable message.
+`jsmql()` is polymorphic — it dispatches Filter or Pipeline from the shape of the parsed program (see [filter-mode.md](filter-mode.md)). The polymorphic surface is the right default when the same source may legitimately be either; a driver call site that takes exactly one shape wants a silent mis-dispatch to be an error instead. The strict entries add no lowering of their own: they narrow what is accepted.
 
 ## Dispatch
 
-Each entry point is a thin wrapper over the shared `dispatchInput` helper (used by `jsmql()` and `jsmql.expr()` too), parameterised on a `lower` callback that enforces the shape contract:
+Every entry runs the same passes — lex, parse, inject the call's values, fold, desugar, position — and one `lowerMode(mode, api, program, values)` in [src/index.ts](../../src/index.ts) picks the road by `mode`:
 
-| Entry point | `lower` callback | Return type |
-|---|---|---|
-| `jsmql.filter` | `lowerFilterStrict` | `object` |
-| `jsmql.pipeline` | `lowerPipelineStrict` | `object[]` |
-| `jsmql.update` | `lowerUpdateStrict` | `object[]` |
+| Mode | Entry | Accepts | Lowers through |
+|---|---|---|---|
+| `auto` | `jsmql()`, `jsmql.compile` | anything | the shape rule ([shape.ts](../../src/compiler/passes/shape.ts)): a filter program to the filter road, a pipeline program to the statement road |
+| `filter` | `jsmql.filter` | a filter-shaped program | the filter road ([filter.ts](../../src/compiler/emit/filter.ts)) |
+| `pipeline` | `jsmql.pipeline` | a pipeline-shaped program | the statement road ([statement.ts](../../src/compiler/emit/statement.ts)) |
+| `update` | `jsmql.update` | a `,`-run of writes and update operators | the update document ([update.ts](../../src/compiler/emit/update.ts)) |
+| `expr` | `jsmql.expr` | one expression, or a `const` prelude and one expression | the value road ([lower.ts](../../src/compiler/emit/lower.ts)) |
 
-`dispatchInput` itself stays parametric on the polymorphic `JsmqlOutput = object | object[]` union; the narrow return type is asserted in the per-API wrapper (`as object` / `as object[]`), keeping the shared helper from leaking caller-specific shape knowledge.
+A program of the other shape is refused by `wrongShape(api, received)`, whose message names the entry, what it expects, what it received and the entry that takes it — the same sentence for the one-shot call, the `.compile` builder (spelled as the builder, `jsmql.filter.compile()`) and the CLI shape flags.
 
-## `lowerFilterStrict`
+```
+jsmql.filter("$match($.age > 18)")
+// ✗ jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a top-level '$match' stage call. Use jsmql.pipeline().
 
-Refuses every Pipeline-shaped AST root and routes the rest through the same `generateFilter` lowerer that `jsmql()`'s no-`;` branch uses:
+jsmql.pipeline("$.age > 18")
+// ✗ jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline.
 
-| AST shape | Action |
-|---|---|
-| `Pipeline` | throw — name the `;`-Pipeline case, point at `jsmql.pipeline()` / `jsmql()` |
-| `UpdateFilter` | throw — name the update-op chain, point at `jsmql.update()` / `jsmql()` |
-| `ArrayLiteral` whose first element is a stage shape (`isPipelineAst`) | throw — name the Pipeline array case |
-| Bare expression with `detectStageIntent !== null` (top-level `$match(...)` / `{ $match: ... }` / …) | throw — name the stage; for `$match` add a hint to drop the wrapper |
-| Anything else | lower via `generateFilter` — same translation as the no-`;` branch of `jsmql()` |
-
-The accepted branch is identical to `jsmql()`'s — index-friendly conjuncts go to a query document, the untranslatable residual rides in a top-level `$expr`. The strict entry point adds zero new lowering paths; it only narrows what it accepts.
-
-## `lowerPipelineStrict` / `lowerUpdateStrict`
-
-Both delegate to a single shared helper, `lowerToPipelineStages(ast, ctx, apiName)`:
-
-| AST shape | Action |
-|---|---|
-| `Pipeline` | `generateImplicitPipeline(ast, ctx)` |
-| `UpdateFilter` | `generateUpdateFilter(ast, ctx)` — wrap the bare-doc result in `[…]` if it's a single stage |
-| `ArrayLiteral` matching `isPipelineAst` | `generatePipeline(ast, ctx)` |
-| Bare expression with `detectStageIntent !== null` | wrap as a single-element `Pipeline` and lower via `generateImplicitPipeline` — same auto-wrap rule `jsmql()` uses |
-| Anything else (bare expression that would have lowered to a Filter) | throw, naming `apiName` and pointing at `jsmql.filter()` |
-
-`lowerPipelineStrict` returns the stages directly. `lowerUpdateStrict` runs one extra pass over the resulting array, comparing each stage's top-level key against `UPDATE_PIPELINE_STAGES`:
-
-```ts
-const UPDATE_PIPELINE_STAGES = new Set<string>([
-  "$addFields",
-  "$project",
-  "$replaceRoot",
-  "$replaceWith",
-  "$set",
-  "$unset",
-]);
+jsmql.expr("$.score = 100")
+// ✗ jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a write (`$.x = …`, `delete $.x`). Use jsmql.update() for an update document, or jsmql.pipeline() for a `$set` / `$unset` pipeline.
 ```
 
-The set is alphabetically ordered in the source so the error message it renders stays deterministic — tests can pin the exact ordering of the allowed-stage list. Any stage not in the set produces a `CodegenError` naming the offending stage and its index in the pipeline:
-
-```text
-jsmql.update() rejected '$sort' (stage 1): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.
-```
-
-`let` bindings compose cleanly: they lower to `$set: { "__jsmql.var.<name>": ... }` plus a trailing `$unset: "__jsmql"` (see [let-bindings.md](let-bindings.md)), both of which are in the whitelist.
-
-**Lookup syntax is pre-rejected.** A `$$$.<coll>` chain lowers to `$lookup` (+ follow-up) stages — MongoDB does not permit `$lookup` in the aggregation-pipeline update form (cross-checked against the [`db.collection.updateOne`](https://www.mongodb.com/docs/manual/reference/method/db.collection.updateOne/#update-with-aggregation-pipeline) documentation). `lowerUpdateStrict` runs `containsLookupCall` before codegen and throws a targeted message that names the right entry point (`jsmql.pipeline()`) instead of the generic post-codegen "rejected `$lookup`" whitelist error. The whitelist itself stays as-is and is the second line of defence. See [lookup-stage.md](lookup-stage.md).
-
-**`$out` sugar is pre-rejected outside Pipeline mode.** `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` lowers to a `$out` write. `$out` isn't in the update-pipeline whitelist (it's a stream write, not a per-document update), so the post-codegen whitelist still rejects it as a second line of defence. But `lowerFilterStrict` and `lowerExprWithCtx` also run `containsOutAssign` up front and surface an "use Pipeline mode" hint that names the right entry point — without the pre-check, the user would see the bare-`DatabaseRef` / bare-`ClusterRef` codegen error, which mentions `$lookup` and `$out` but doesn't tell them which mode to switch to. Additionally, `lowerWithCtx` and `lowerToPipelineStages` reroute an `UpdateFilter`-shaped input that contains `$out` sugar through the pipeline lowerer (the bare `generateUpdateFilter` path doesn't know about `$out`). See [out-stage.md](out-stage.md).
+The update road refuses on its own terms, because an update document is not a shape the shape rule knows: a value computed from the document ("A document-form update takes constants: the server reads '$b' there as the string, not the field. To compute from the document, use the pipeline form …"), a stage ("'$match' is not valid in an update document — see its 'where'."), and anything that is neither a write nor an update operator — `assert`, a join, `$$.push`, a stream chain ("An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.").
 
 ## Parameterised form: `*.compile`
 
-Each strict entry carries a `.compile` builder — `jsmql.filter.compile`,
-`jsmql.pipeline.compile`, `jsmql.update.compile` (and, for symmetry,
-`jsmql.expr.compile`) — the parse-once / bind-many form of that entry, narrowed
-to the same output type. They share a single engine, `makeCompile(lower,
-apiName)` in [src/index.ts](../../src/index.ts), parameterised on the same
-`lower` callback the one-shot entry uses:
+Each strict entry carries a `.compile` builder — `jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`, and `jsmql.expr.compile` — the parse-once / bind-many form of that entry, narrowed to the same output type. The arrow is parsed once (eagerly); the returned closure injects the per-call values as `Injected` nodes ([inject.ts](../../src/compiler/passes/inject.ts)) and runs the same `lowerMode`, so the shape contract is re-enforced on every call with the identical message. Binding mechanics — the destructure pattern, the refused values (`undefined`, a function, a symbol, a non-finite number, a circular structure), values as literals never syntax — are those of `jsmql.compile`; see [function-form-params.md](function-form-params.md). The one per-builder difference is the wrong-input-type `TypeError`, which names the builder (`jsmql.filter.compile() expects an arrow function …`).
 
-| Builder | `lower` | Return type |
-|---|---|---|
-| `jsmql.compile` | `lowerWithCtx` | `JsmqlOutput` (polymorphic) |
-| `jsmql.expr.compile` | `lowerExprWithCtx` | `JsmqlOutput` |
-| `jsmql.filter.compile` | `lowerFilterStrict` | `object` |
-| `jsmql.pipeline.compile` | `lowerPipelineStrict` | `object[]` |
-| `jsmql.update.compile` | `lowerUpdateStrict` | `object[]` |
-
-The arrow is parsed once (eagerly); the returned closure resolves the per-call
-params into `ParamRef` bindings and runs `lower`. Because the shape lowerer is
-the *same* one the one-shot entry uses, the shape contract is re-enforced on
-every call — a parameterised arrow whose body lowers to the wrong shape throws
-the identical actionable error (`jsmql.pipeline() expects a Pipeline …`, the
-update-stage whitelist rejection, …). Binding mechanics — destructure-pattern
-params, `null`-free value validation, the inline-JSON-literal (never `$let`)
-output — are shared verbatim with `jsmql.compile`; see
-[function-form-params.md](function-form-params.md). The only per-entry
-difference is the wrong-input-type `TypeError`, which names the actual builder
-(`jsmql.filter.compile() expects an arrow function …`).
-
-The CLI uses these for `--arg` / `--argjson` combined with a shape flag — see
-[cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow
-string directly (validating its shape with the bound values stubbed to `null`),
-so `--validate` with params needs no separate `validate.compile`.
+The CLI uses these for `--arg` / `--argjson` combined with a shape flag — see [cli.md § Parameters](cli.md). `jsmql.validate` accepts a parameterised-arrow string directly (validating its shape with the bound values stubbed to `null`), so `--validate` with params needs no separate `validate.compile`.
 
 ## Error messages
 
-Every rejection error carries the offending position from the AST root (`ast.pos`) so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:
+Every rejection carries the offending node's position, so editor tooling can underline the source region. The messages follow the DX rules in the root `CLAUDE.md`:
 
-- **Name the API.** Every error starts with `jsmql.filter()` / `jsmql.pipeline()` / `jsmql.update()` — the user knows which call to look at.
-- **Name the shape that was found.** `;`-separated Pipeline / update-op chain / Pipeline array / top-level '$match' stage call — not a generic "wrong shape" complaint.
-- **Suggest the right call.** Each error names an alternative: the other strict entry point, the polymorphic `jsmql()`, or — when the user almost certainly wrote a $match by reflex — drop the wrapper and call `jsmql.filter()` on the predicate directly.
+- **Name the API.** Every error starts with `jsmql.filter()` / `jsmql.pipeline()` / `jsmql.update()` / `jsmql.expr()` — the user knows which call to look at.
+- **Name the shape that was found.** A `;`-separated Pipeline, a write, a stream chain, a top-level '$match' stage call — not a generic "wrong shape" complaint.
+- **Suggest the right call.** Each error names an alternative: the other strict entry, the polymorphic `jsmql()`, or — when the user almost certainly wrote a `$match` by reflex — drop the wrapper and call `jsmql.filter()` on the predicate directly.
 
 ## When to update this spec
 
-- A new top-level Program shape (beyond `Expr`, `UpdateFilter`, `Pipeline`) — extend the dispatch tables.
-- A change to the set of stages allowed inside an aggregation-pipeline update — keep `UPDATE_PIPELINE_STAGES` aligned with the MongoDB documentation linked in the source comment.
-- A change to the polymorphic `jsmql()` dispatch (in [filter-mode.md](filter-mode.md) / [aggregation-stages.md](aggregation-stages.md)) — make sure the strict entry points still mirror the same accept/reject decisions, just with `throw` in place of the auto-route.
+- A new program shape (beyond expression, write, `Pipeline`) — extend the mode table and the shape rule in [filter-mode.md](filter-mode.md).
+- A change to what an update document takes — the table in [update-filter.md](update-filter.md) and the refusals above.
+- A change to the polymorphic `jsmql()` dispatch — make sure the strict entries still mirror the same accept/reject decisions, with `throw` in place of the other road.

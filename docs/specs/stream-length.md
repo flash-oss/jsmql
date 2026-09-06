@@ -18,9 +18,11 @@ MQL has no inline "count of the current stream" operator — cardinality is a
 stream aggregate, not a per-document value. So `$$.length` is **materialised**:
 a `$setWindowFields` with a full-partition `$count` stamps the count onto every
 document under the reserved system slot `__jsmql.length` (see
-[`src/namespace.ts`](../../src/namespace.ts)), after which codegen reads it back
-as the field path `"$__jsmql.length"` (`generateStreamLength` in
-[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts)).
+[`src/namespace.ts`](../../src/namespace.ts)), after which the read is the field
+path `"$__jsmql.length"`. The `length` row's cell in [`src/registry/names.ts`](../../src/registry/names.ts)
+places the stamp through the `hoist` service — ahead of the statement that
+holds the read, on the ROOT chain — and answers with the path the Env renders
+for it.
 
 ```json
 { "$setWindowFields": { "output": { "__jsmql.length": { "$count": {} } } } }
@@ -93,51 +95,30 @@ count.
 A `$$$.<coll>.filter(p).map((o, _i, coll) => …)` chain runs its `.map` as a
 per-foreign-doc transform *inside* the `$lookup.pipeline`. There, `coll` (the 3rd
 callback param) names the **filtered foreign sub-stream**, and `coll.length` is
-its document count — materialised by the *same* `streamLengthStage()`
-(`$setWindowFields` `$count` → `__jsmql.length`, the single shape in
-[`src/namespace.ts`](../../src/namespace.ts)) one level down, stamped immediately
-before the `.map`'s `$replaceWith`. `MAP.lower` (src/registry/names.ts) prepends it
-when `coll.length` is read, and binds the handle via
-`GenerateCtx.substreamLengthHandles` (`coll → "$__jsmql.length"`), which
-`generateLengthAccess` resolves directly (no `$size` — the count field is always
-present). Placement is automatic: the chain assembler appends each method's
-stages in order, so the count reflects the sub-stream *at that chain point*
-(post-filter, post-`.slice`, …). The object `$replaceWith` drops the scratch
-field, so no inner `$unset` is needed for `.map`. Verified on live mongod.
+its document count — the same `$setWindowFields` `$count` → `__jsmql.length` stamp
+(the single shape in [`src/namespace.ts`](../../src/namespace.ts)), placed one level
+down, on the body's own chain, ahead of the stage that reads it. The parameter is
+a `streamHandle` binding in the body's Env, and its `.length` is that inner count.
+Placement is automatic: the chain appends each link's stages in order, so the count
+reflects the sub-stream *at that chain point* (post-filter, post-`.slice`, …), and the
+body's own trailing `{ $unset: "__jsmql" }` keeps the scratch field out of the `as`
+array. Verified on mongod.
 
-Only `.length` is available on the handle — a stream has no materialised array to
-index or iterate — and the **index** (2nd) param is never available (MongoDB
-streams have no per-doc index; it may be present-but-unused only to reach the 3rd
-param). Both rejections are permanent (no DEF row): there is no HR3-safe stream
-index, and the array-form is reached via the materialised path instead.
-
-**Inside a lookup sub-pipeline.** The same 3rd-arg handle works in an `.aggregate`
-block — `$.orders = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); assert(coll.length > 0, "…"); })`.
-There the block lowers to the `$lookup.pipeline` (via `lowerBlock` →
-`generateImplicitPipeline`, which already runs the materialiser since `lowerBlock`
-uses `container: "top"`), `buildBlockBodyPredicate` binds `coll` via
-`substreamLengthHandles`, and the materialiser stamps the `$setWindowFields`
-ahead of the statement that reads `coll.length` (here the `assert` `$match`).
-Because the block keeps the foreign documents (a filter doesn't reshape), the
-trailing `{ $unset: "__jsmql" }` fires *inside* the sub-pipeline so the count
-field doesn't leak into the `as` array. The same index / non-`.length`
-rejections apply (checked in `buildBlockBodyPredicate`).
+Only `.length` and a chain are available on the handle — a stream has no
+materialised array to index — and the **index** (2nd) param is never available
+(MongoDB streams have no per-document index; it may be present-but-unused only to
+reach the 3rd param). Neither has an HR3-safe lowering.
 
 ## `$$.length` (ROOT count) inside a `$lookup` — captured into `$lookup.let`
 
-`$$` is **always the ROOT/top-level stream**, regardless of nesting depth
-(mirroring `$` = root document); an inner sub-stream count uses the 3rd-arg
-handle above, never the `$$` sigil. So `$$.length` *inside* a top-level `$lookup`
-means the root count: jsmql materialises it at the top (`isStreamLengthNode` /
-`containsStreamLength` detect the `$$.length` *anywhere* in the statement,
-including inside the sub-pipeline, so the top-level materialiser fires), then the
-lookup **captures** the root field into its `$lookup.let` as a depth-stamped
-`jsmql_s0_length: "$__jsmql.length"`, and codegen reads `$$.length` back as `$$jsmql_s0_length`
-(via `GenerateCtx.rootStreamLengthVar`, set by `captureRootStreamLength` in
-src/compiler/emit/join.ts). This is wired into every top-level lookup body — the
-expression-body predicate (`translatePredicate`), the `$.x =` chained pivot
-(`tryExtractChainedLookup`), and the `$$ =` replace-stream pivot (pipeline.ts) —
-so `$$.length` works in all three. Verified on mongod (counts correct, no leak).
+`$$` is **always the ROOT stream**, regardless of nesting depth (mirroring `$` =
+root document); an inner sub-stream count uses the 3rd-arg handle above, never the
+`$$` sigil. So `$$.length` *inside* a `$lookup` body means the root count: the
+`hoist` service places the stamp on the ROOT chain, and the Env renders the read
+through the body's `let` capture — `let: { jsmql_s0_length: "$__jsmql.length" }`,
+read as `$$jsmql_s0_length` — one hop per lookup level, exactly as an outer field
+read is carried ([lookup-stage.md § The join road](lookup-stage.md)). Verified on
+mongod (counts correct, no leak).
 
 Distinct paths, no collision: the root count rides a `$$`-**variable**
 (`jsmql_s0_length`), an inner sub-stream count rides the `$__jsmql.length` **field**, so a

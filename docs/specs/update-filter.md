@@ -93,61 +93,46 @@ Formatters wrap assignment expressions in parens when they appear in array eleme
 
 Downstream:
 
-- **Top level**: `parse()` checks for `expr.type === "AssignExpr"` after `parseExpression` returns and wraps it in a `UpdateFilter`. So `jsmql("($.a = 5)")` works identically to `jsmql("$.a = 5")`.
-- **Pipeline element**: `parseArrayLiteral` already pushes whatever `parseExpression` returns; `ArrayElement` allows `AssignExpr`; `pipeline.ts` `isStageCandidate` returns true for it; the coalescer takes over.
-- **Inside a real expression** (e.g. `1 + ($.a = 5)`): the AssignExpr bubbles through the cascade and eventually reaches `_generateBody`. A defensive check at the top of that function throws `CodegenError("Assignment is a statement, not a value …")` with a clear, actionable message.
+- **Top level**: the parser wraps a lone `AssignExpr` in a `UpdateFilter`, so `jsmql("($.a = 5)")` works identically to `jsmql("$.a = 5")` — a pipeline by the shape rule.
+- **Pipeline element**: an array literal takes the write as an element (`[$.a = 1, $sort({ a: 1 })]`), and the write road coalesces it with its neighbours.
+- **Inside a real expression** (`1 + ($.a = 5)`): a write is a statement, and the parser refuses the `=` where an expression is expected (`Expected ')' but got '='`).
 
-## Codegen
+## Lowering
 
-`src/compiler/emit/lower.ts` exports two update op entry points:
+Three roads read a write, by the program it stands in.
 
-- `generateUpdateFilter(prog)` — top-level entry from `lowerProgram` in `src/index.ts`. Emits a single stage object (one group) or a stage array (2+ groups), matching the existing 1-stage-vs-pipeline output convention.
-- `generateUpdateOpGroups(muts)` — used by `pipeline.ts` when update ops appear inline in a pipeline array. Returns an array of stage objects without the unwrap step.
+### The pipeline: `writeStages`
 
-### `jsmql()` vs `jsmql.expr()` wrap
+`writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers a `,`-run of writes (`$.a = 1, $.b = 2`) to the fewest stages that keep JavaScript's left-to-right meaning. It walks the run and opens a new group when:
 
-`generateUpdateFilter`'s "single stage object or stage array" output is the **raw** shape. The two top-level entry points then differ on whether they wrap the single-object case:
+1. **The kind changes** — assignment ↔ delete. `delete $.a, $.b = 1, delete $.c` → `[{ $unset: "a" }, { $set: { b: 1 } }, { $unset: "c" }]`.
+2. **A path collides** — the new write's path equals, contains or is contained by a path the group already writes. `$.a = 1, $.a = 2` → two `$set`s; so does `$.a.b = 1, $.a = {}`.
+3. **A write reads what the group wrote** — `$.a = 1, $.b = $.a` → `[{ $set: { a: 1 } }, { $set: { b: "$a" } }]`, so `b` sees the new `a` exactly as JavaScript would. A `"$a"` the developer typed is the field `a` (HR1) and ends the group the same way.
 
-- **`jsmql()`** (`lowerWithCtx` in `src/index.ts`) — checks `ast.type === "UpdateFilter"` after lowering and, if the result is not already an array, wraps it in a single-element array (`[{ $set: ... }]`). Rationale: the second argument to `db.coll.updateOne(filter, update)` is treated by MongoDB as an aggregation pipeline only when it is an array. The bare-document form treats RHS values as literals, so a computed expression like `$.name.toUpperCase()` would be stored as the literal object `{ $toUpper: "$name" }` instead of evaluating. Always returning a pipeline from `jsmql()` makes the call site safe regardless of whether the RHS is a literal or an expression.
-- **`jsmql.expr()`** (`lowerExprWithCtx`) — passes the raw output through unchanged. The bare-document shape is exactly what fits inside a hand-written pipeline stage body (`{ $addFields: { x: jsmql.expr(…) } }`) or in any context where the caller controls the surrounding structure.
+Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "path" }` for one path and `{ $unset: ["a", "b"] }` for several — the string form is the shorter valid one. An object-literal value is emitted as `{ $mergeObjects: [<object>] }`, because a literal sub-document in `$set` MERGES into the existing field on the server where a JavaScript assignment replaces it ([emit-pass.md § the write road](emit-pass.md)). A `;` between writes is a stage boundary, never a same-stage separator.
 
-The 2+-group case (multi-stage) is already an array from `generateUpdateFilter`, so both entry points produce identical output. The wrap-or-no-wrap policy only differs for the single-group case.
+`jsmql()` and `jsmql.pipeline()` return these stages; a lone write with no `;` is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)). `jsmql.expr()` refuses a write, naming the two entries that take one.
 
-### Coalescing
+### The update document: `lowerUpdate`
 
-`groupUpdateOps(muts)` walks the list left-to-right and starts a new group when:
+`jsmql.update()` lowers the same run through `lowerUpdate` in [src/compiler/emit/update.ts](../../src/compiler/emit/update.ts) to the update DOCUMENT `updateOne(filter, update)` takes — one key per update operator, constants only:
 
-1. **Kind change** — assignment ↔ delete.
-2. **Path collision** — the new write path equals or is a parent/child of any prior write in the group (detected by `pathsCollide`, which compares dotted strings).
-3. **Read-after-write** (assignments only) — the new RHS reads any path the current group has written. Reads are collected by `collectUpdateOpReads(expr)`, which walks all expression node types and records every foldable field path (`tryFieldPath` reconstructs dotted strings the same way `asFieldPath` does, but without the leading `$`).
+| Write | Operator |
+|---|---|
+| `$.a = <constant>` | `$set` |
+| `$.n += k` / `-=` / `++` / `--` | `$inc` |
+| `$.n *= k` | `$mul` |
+| `delete $.a` | `$unset: { a: "" }` |
+| `$.t = new Date()` | `$currentDate: { t: true }` |
+| `$.n = Math.min($.n, k)` / `Math.max` | `$min` / `$max` |
+| `$.tags.push(x)` / `.pop()` / `.shift()` | `$push` / `$pop` |
+| `$inc({ n: 2 })`, `{ $set: { a: 1 } }` | merged in as written |
 
-Each group emits one stage:
+A value computed from the document is refused — the server reads `"$b"` in an update document as the string — with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` accepts as well. Two writes to one path, and anything that is not a write or an update operator (a stage, `assert`, a stream chain), are refused too.
 
-- All-`AssignExpr` group → `{ $set: { writePath: gen(value), … } }`
-- All-`DeleteStmt` group → `{ $unset: "path" }` (size 1) or `{ $unset: ["a", "b", …] }` (size 2+). MongoDB pipeline `$unset` accepts both shapes; the string form is more compact and matches handwritten output.
+### Mutators and `Object.assign`
 
-The codegen never inspects the original compound operator — by the time it runs, `+=` has been desugared to `=` plus `BinaryExpr`. This keeps `_generate`'s switch simple and lets the existing arithmetic codegen handle type-aware `$add`/`$concat` etc.
-
-## Pipeline integration
-
-There are two pipeline forms, with one important behavioural difference:
-
-- **Bracketed `[…]`** — `isStageCandidate` in `src/compiler/emit/statement.ts` returns true for `AssignExpr` and `DeleteStmt`, so a pipeline whose first element is a bare update op (`[$.a = 1, $sort({a: 1})]`) is still detected as a pipeline. `generatePipeline` walks elements left-to-right with a `updateBuffer`. Consecutive update op elements accumulate; non-update op stages flush the buffer through `generateUpdateOpGroups` (so the same coalescing rule that runs at the top level also runs between pipeline stages) and then push their own compiled stage.
-- **Implicit `;`-separated** — `generateImplicitPipeline` in `src/compiler/emit/statement.ts` lowers each `;`-separated statement in isolation. A `UpdateFilter` chunk goes through `generateUpdateFilter` (which already handles RAW splits inside its `,`-grouped chain); a stage expression goes through the same single-element path used for bracketed pipelines. Adjacent update op statements **never** coalesce across `;` — the boundary is hard. Comma-grouped update ops inside one `;` chunk still coalesce via the usual rules.
-
-### Mutating-method desugar
-
-`AssignExpr`s also enter the lowering path via the statement-position mutator rewrite (see [emit-pass.md § Mutators at statement position](emit-pass.md#mutators-at-statement-position)). Before classifying a statement as an Expr, both pipeline loops call `tryRewriteMutatorCall` from `codegen.ts`; if it returns a synthetic `AssignExpr`, that node enters the same UpdateOp coalescer the explicit-`=` path uses. From the coalescer's perspective the two sources are indistinguishable — chained mutators on the same field (`$.events.push(x); $.events.sort(e => e.t);`) split on read-after-write the same way `$.events = …; $.events = …` already does. There is no separate "mutator stage" type.
-
-### `Object.assign` at statement position
-
-A bare `Object.assign(target, ...sources)` statement is JavaScript's *mutating* merge — it writes the merged object back into `target`. `classifyObjectAssignStmt` (in `src/compiler/emit/statement.ts`) runs in both pipeline loops, right after the array-mutator rewrite, and dispatches on the first argument:
-
-- **Writable field path** (`$.profile`, `$.a.b`) → returns a synthetic `AssignExpr { target, value: <the whole ObjectCall> }`. Because the call's first argument *is* the target, generating that `ObjectCall` yields `$mergeObjects[<target>, ...sources]`, so the assignment lowers to `{ $set: { <path>: { $mergeObjects: [<read>, ...sources] } } }` and rides the same coalescer as `$.x = …` and the array mutators.
-- **In-scope `let`/`const` binding** → emits its own `{ $set: { <slot>: <gen(ObjectCall)> } }` directly (after flushing the update buffer and hoisting any buried `$lookup`s through `extractLookupCalls`). It deliberately does **not** route through the `ParamRef` reassignment path in `tryLowerAssignSugar`, so the `const`-reassignment guard there is bypassed — mutating a `const`-bound object is legal JS (only *rebinding* it via `=` is not). The binding case is owned by [let-bindings.md § Object.assign mutation](let-bindings.md).
-- **Anything else** (no first argument, a spread target, an object literal, an undeclared identifier) → a `reject` classification carrying an actionable `CodegenError` (`pos` = the call's offset) that names a valid target.
-
-Expression-position `Object.assign` never reaches this classifier (it's nested inside stage bodies / `$match` / etc.) and lowers to `$mergeObjects` through `generateObjectCall` unchanged.
+A mutating method at statement position — `$.tags.push(x)`, `$.items.sort()`, `$.s.trimStart()` — is the write it means: the desugar pass ([desugar-pass.md](desugar-pass.md)) rewrites a call whose row states a `mutatorForm` to the `AssignExpr` of its value form (`$.tags = $.tags.concat([x])`), and the roads above lower that. `Object.assign(target, …sources)` standing alone is JavaScript's mutating merge and is read the same way, on a field (`$.p` → `{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }`) and on a `let` binding (`Object.assign(p, …)` → a `$set` of the binding's slot); with a fresh object as the target (`Object.assign({}, $.a)`) it is a value. In an expression it is `$mergeObjects` throughout.
 
 ## Error message conventions
 
@@ -172,5 +157,5 @@ Expression-position `Object.assign` never reaches this classifier (it's nested i
 
 ## Tests
 
-- `test/update ops.test.ts` — focused unit tests, one case per behavior.
+- `test/compiler-statement.test.ts` (the pipeline) and `test/compiler-update.test.ts` (the update document) — one case per behaviour, each run on `mongod` and compared with JavaScript's answer.
 - `test/realistic.test.ts` — at least one realistic end-to-end example combining update ops with pipeline-style usage.

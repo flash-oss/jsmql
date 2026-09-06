@@ -10,7 +10,7 @@ Every rule below applies identically to the strict-shape `.compile` builders (`j
 
 ## Accepted input
 
-`jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseFunctionInput()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`({ $ }) => …\` … as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
+`jsmql.compile()` accepts either an arrow function or a **string** containing the arrow source text. The function form goes through `Function.prototype.toString.call` to obtain the source; the string form is passed through unchanged. Both paths converge on the same `Parser.parseEntry()` call, so every rule below applies identically. A string without an arrow shape surfaces the same `FunctionInputError` the function-form path would have raised (`"jsmql expects an arrow function \`({ $ }) => …\` … as the function-form input."`). Anything that is neither a function nor a string throws `TypeError` from the entry point in [`src/index.ts`](../../src/index.ts).
 
 Placeholder syntaxes inside the string (`${name}`, `$1`, etc.) are **not** supported — the destructure pattern remains the single parameter-declaration mechanism. Adding inline placeholders would violate the strict-JS-subset invariant (`${id}` is not valid JS outside a template literal) and silently collide with real template literals: a user writing `` jsmql.compile(`… ${id} …`) `` with backticks would have `id` resolved by JS before jsmql ever saw the string.
 
@@ -34,7 +34,7 @@ When both appear, the only legal order is `(params, { $, … })`. Shorter combin
 
 ## Parser
 
-[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parseFunctionInput` returns `{ program, bindings }` (type `FunctionInputResult`). The body is parsed exactly as today; the new work happens in `parseParameterList` (replacing the old `skipParameterList`).
+[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parseEntry` returns `{ program, bindings }` (type `FunctionInputResult`). The body is parsed exactly as today; the new work happens in `parseParameterList` (replacing the old `skipParameterList`).
 
 `parseParameterList` walks each top-level slot inside the parens, calling `parseParameterSlot` for each:
 
@@ -64,68 +64,37 @@ Two alternatives were considered and rejected:
 
 Rejecting defaults entirely keeps the rule simple and the surface honest: **the only way values reach a compiled query is through the params object at call time.** For a runtime fallback the user writes `q({ minAge: input ?? 18 })`; for a hardcoded value the template tag already inlines literals (`` jsmql`$.age > ${18}` ``).
 
-## Codegen
+## Lowering
 
-[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — `GenerateCtx` gains an optional `bindings` field: `ReadonlyMap<string, unknown>`. Helpers:
+A parameter is a VALUE, never syntax. `inject` in [src/compiler/passes/inject.ts](../../src/compiler/passes/inject.ts) runs before the fold: every identifier the arrow's params destructure is replaced by the value the call supplied — as a literal node when the source could have spelled it (a number, a string, a boolean, `null`, a Date, an ObjectId, an array or object of such), and as an `Injected` node otherwise ([src/registry/ast.ts](../../src/registry/ast.ts)). From there the value is an ordinary constant: the fold folds it, the filter road compares it natively (`$match($.age >= minAge)` with `{ minAge: 21 }` → `{ $match: { age: { $gte: 21, $not: { $type: "array" } } } }`), a member read on an object parameter is a read of the value (`q.min`), and a `"$…"` string is wrapped in `$literal` wherever the server would evaluate it (HR1's gate — [aggregation-stages.md § `$`-string pass-through](aggregation-stages.md)).
 
-- `extendCtx(ctx, params)` preserves `bindings` alongside `reduceRemap`, `pipelineLets`, `droppedLets`.
-- `freshSubPipelineCtx(outer)` — **carries `bindings` across the sub-pipeline boundary**, unlike `pipelineLets`. Sub-pipelines run against a different document, so `let` bindings (per-document state) can't follow them; function-form bindings (compile-time constants) can and should.
-- `withBindings(ctx, bindings)` returns a new ctx with the bindings map set. Called once from `src/index.ts` at the top of each compiled invocation.
+### Shadowing
 
-`ParamRef` resolution gains a new tier (innermost-wins ordering):
-
-1. `ctx.reduceRemap` → `$$<remapped>` (`.reduce()` parameter rename).
-2. `ctx.lambdaParams` → `$$name` (lambda scope).
-3. `ctx.pipelineLets` → `$<fieldPath>` (pipeline-let binding; stored under `__jsmql.var.<name>`).
-4. **NEW** `ctx.bindings` → emit the value directly as a JSON literal.
-5. `ctx.droppedLets` → precise "let X can't be read after $stage" error.
-6. → `UnknownIdentifierError`.
-
-Bindings and `pipelineLets` are name-disjoint by construction (see [§ Name-collision rule](#name-collision-rule)), so the relative position of (3) and (4) only affects code clarity, not behaviour for valid programs.
-
-### Lambda-param shadowing
-
-A lambda parameter inside the body legitimately shadows a binding of the same name. `.map(x => x * 2)` inside a body with `{ x }` binding resolves `x` to the lambda's `$$x`, not the outer literal. This falls out of the ordering above without special handling.
-
-### Name-collision rule
-
-[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) — `lowerLetDecl` rejects a `let <name> = …` declaration whose `name` is already in `ctx.bindings`. Two strict-mode rules in JS already prevent the case from arising through legitimate arrow source (parameter and `let` cannot share a name in the same scope), so the check is defensive — but it produces a clear error if the function ever reaches codegen through any other path:
-
-> `let <name>` shadows a function-form parameter binding of the same name. Rename one — parameter bindings are compile-time constants supplied at call time, `let` bindings are per-document values derived from a stage expression; mixing them under one name would be ambiguous.
-
-### `$match` index-friendly translation
-
-[`src/compiler/emit/filter.ts`](../../src/compiler/emit/filter.ts) — `translateMatchBody` accepts an optional `TranslateCtx` with the same `bindings` map. The literal-detecting helpers (`anyEqualityLiteral`, `anyOrderedLiteral`) recognise a `ParamRef` whose name is in `ctx.bindings` as if it were a literal AST node, looking the value up at translation time.
-
-This lets `$match($.age >= minAge)` with `{ minAge: 21 }` emit the index-friendly `{ $match: { age: { $gte: 21 } } }` instead of falling back to `{ $match: { $expr: { $gte: ["$age", 21] } } }`. The same type-divergence rules apply as for plain literals — booleans/null are accepted for equality but not for `<`/`>` (where they'd produce silent surprises). See [emit-pass.md](emit-pass.md) for the broader translator.
+A callback parameter inside the body shadows a parameter of the same name, as JavaScript's scoping says: `.map(x => x * 2)` in a body with `{ x }` bound reads the callback's `x`. A `let` of a parameter's name is JavaScript's own error (`Identifier 'a' has already been declared`), so it never reaches the compiler.
 
 ## index.ts — entry points
 
 [`src/index.ts`](../../src/index.ts) — `jsmql` is exposed as a callable with attached properties built via `Object.assign` (since the strippable-TS rule in [src/CLAUDE.md](../../src/CLAUDE.md) forbids `namespace`):
 
 ```
-jsmql                     // existing one-shot: string / function / template tag
-jsmql.compile(fn)         // NEW: parameterised, reusable
-jsmql.validate(input)     // MOVED: was top-level export
+jsmql                     // one-shot: string / function / template tag
+jsmql.compile(fn)         // parameterised, reusable
+jsmql.validate(input)     // { valid, errors } instead of a throw
 ```
 
-`jsmql.validate` accepts every shape `jsmql.compile` accepts (in addition to the one-shot string / function / template-tag shapes from `jsmql()`), so editor tooling can pre-flight a parameterised arrow before passing it to `jsmql.compile`. Inside `validateInput`, when the input is a function the parser is invoked directly (instead of delegating to `jsmqlDispatch`, which rejects compile-form arrows in the one-shot path), and each `ParamBinding` is resolved to a `null` placeholder before `lowerWithCtx` runs — values don't affect syntactic validity, only that bound names resolve as `ParamRef` rather than unknown identifiers. There is intentionally no `jsmql.validate.compile` sub-namespace: the compile *invocation* path (`jsmql.compile(fn)(params)`) remains throw-style, since per-call binding errors carry the caller's runtime values and belong in normal error handling, not the structured-result surface.
+`jsmql.validate` accepts every shape `jsmql.compile` accepts (in addition to the one-shot string / function / template-tag shapes from `jsmql()`), so editor tooling can pre-flight a parameterised arrow before passing it to `jsmql.compile`; the parameters are stubbed to `null` for the check.
 
-`compileFunction` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — then parses once via `parseFunctionInput`, and returns a closure that:
+`jsmql.compile` resolves the arrow source — `Function.prototype.toString.call` for a function input, the trimmed string itself for a string input — and parses it once (`parseEntry` → the params, the toolbox names and the program). The returned closure, per call:
 
-1. Loops over each `ParamBinding`, looking up `b.key` on the params object. Missing keys throw `UnknownIdentifierError` whose message names both `b.key` and `b.name` (when aliased) so the user can find either side.
-2. Validates each present value via `validateInterpolatable` (factored out of `stringifyInterpolation` so the template-tag and compile paths share the same JSON-safety guarantee). Failures throw `JsmqlInterpolationError` with the binding key.
-3. Builds a `ctx.bindings` map keyed by the *body* identifier name (`b.name`) and lowers the AST through `lowerWithCtx`.
+1. Looks each destructured key up on the params object. A missing key is refused, naming the key: "'minAge' is a parameter of this query and was not supplied. Pass it: jsmql.compile(fn)({ minAge: … })."
+2. Checks each value (`checkValue`, shared with the template tag): `undefined`, a function, a symbol, a non-finite number and a circular structure are refused by slot (`JsmqlInterpolationError`, with the key on `.key`).
+3. Injects the values, folds, desugars, positions, and lowers through the same `lowerMode` the one-shot entry uses ([strict-shape-entries.md](strict-shape-entries.md)), so a compiled program is shaped and refused exactly as the one-shot form is.
 
-`jsmql.compile(fn)` is the parse-once-bind-many surface: each compiled callable captures the parsed AST in its closure, so repeated calls only walk the AST with fresh bindings. The one-shot `jsmql(fn)` form, by contrast, re-parses on every call — there is no implicit cache (see [architecture.md](architecture.md#no-implicit-cache-for-jsmqlfn)).
+`jsmql.compile(fn)` is the parse-once-bind-many surface: each compiled callable captures the parsed program in its closure, so repeated calls inject fresh values into the same tree. The one-shot `jsmql(fn)` form re-parses on every call.
 
 ### Error mapping
 
-`errorToValidationResult` keeps the per-error-class branch table in one place behind `jsmql.validate()`. The compile-form arrow *is* routed through it (validate accepts the same input shape as `jsmql.compile`), but the compile *invocation* path is not — `jsmql.compile(fn)(params)` stays throw-style, by design.
-
-`augmentForFunctionInput` appends two pointers to any `UnknownIdentifierError` raised through the function-form path: the `jsmql.compile(fn)({ x: … })` form for compile-time bindings, and the `` jsmql`… ${x} …` `` form for one-shot template-tag interpolation. The original "Unknown identifier 'X'" message is preserved verbatim.
-
-`FunctionInputError` carries a `.pos` field set at every throw site to the offset of the offending token in the stringified arrow source (e.g. the `async` keyword for async rejection, the spread token for `{ ...rest }`, the offending separator for malformed param lists). `errorToValidationResult` forwards that offset into `ValidationError.pos` so callers using `.validate()` on a stored arrow string can underline the failing region in the source.
+`jsmql.validate()` turns every compiler error class into a `ValidationError` with a `.pos`; the compile *invocation* path throws, because a call-time failure (a missing or refused value) is the caller's error, not a source error.
 
 ## Validation rules summary
 

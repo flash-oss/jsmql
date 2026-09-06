@@ -36,7 +36,6 @@ docs/LANGUAGE.md::features not yet implemented or rejected
 # The lookup spec keeps a categorical "## Future work" header. The
 # stream-method reducer guard below is a separate, unrelated rejection.
 # -----------------------------------------------------------------------------
-docs/specs/lookup-stage.md::## Future work
 
 # -----------------------------------------------------------------------------
 # The one $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
@@ -51,18 +50,13 @@ docs/specs/out-stage.md::Out of scope for now.
 # -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
-docs/specs/stream-methods.md::## Out of scope
 docs/specs/union-stage.md::Out of scope — the explicit
-docs/specs/context-references.md::## Future work
 docs/specs/aggregation-stages.md::## Out of scope (future work)
-docs/specs/system-stages.md::## Out of scope
-docs/specs/system-stages.md::context-references.md → Future work
 
 # -----------------------------------------------------------------------------
 # Decisions section in DEFERRED.md is referenced via §B headers in specs.
 # These specs cite the rejection reasoning without needing a [DEF-NNN] tag.
 # -----------------------------------------------------------------------------
-docs/specs/lookup-stage.md::Bare lambda parameter 'o' in a $lookup predicate is not yet supported
 
 # -----------------------------------------------------------------------------
 # Stale doc references (fork landed the feature but didn't clean up wording).

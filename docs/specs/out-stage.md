@@ -18,13 +18,15 @@ $$$$.dw.archive = $$.filter(u => !u.active);
 The LHS names *where* documents are written using the existing context-ref
 prefixes (`$$$` = same-database, `$$$$` = cross-database / cluster). The
 RHS is a chain rooted at `$$` (the current pipeline): bare `$$` writes the
-stream unchanged; chained methods — `.filter(<predicate>)`, any method in the
-`STREAM_METHODS` registry, or a stage link (`$$.$sort({ … })`) — contribute one
-pipeline stage each before the trailing `$out`.
+stream unchanged; chained methods — `.filter(<predicate>)`, any method with a
+`stream` cell ([stream-methods.md](stream-methods.md)), or a stage link
+(`$$.$sort({ … })`) — contribute their stages before the trailing `$out`.
 
-Statement-only and last-stage-only: nothing may follow the `$out` sugar
-in a pipeline. A `sawOut` flag in the lowerer trips on emission and
-throws on any subsequent statement with a position-bearing error.
+Statement-only and last-stage-only: nothing may follow the `$out` sugar in a
+pipeline. The stage is FILED as the chain's terminal rather than emitted, so the
+`__jsmql` cleanup precedes it and it is still written last; a later statement is
+refused with a position-bearing error ("Nothing can follow '$out': it writes the
+pipeline's output and the server requires it last. Move this statement above it.").
 
 ## Convention: why a distinct LHS prefix?
 
@@ -57,58 +59,17 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 | `$$$.top10 = $$.$sort({ score: -1 }).$limit(10);` | `[{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]` (chained stages) |
 | `$match(<pred>); $$$.coll = $$;` | `[{ $match: <pred> }, { $out: "coll" }]` (preceding stages compose normally) |
 
-## Detection
+## The target
 
-`detectOutAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the LHS
-shape on an `AssignExpr.target`:
+`outTarget` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads an `AssignExpr` whose target is rooted at `$$$` (the current database) or `$$$$` (the cluster) through dot or string-literal-bracket steps:
 
-```ts
-// One step of static (dot or string-literal-bracket) member access.
-// Each step's `name` is statically extracted; computed brackets are
-// rejected outright (the destination must be statically known).
-type AccessStep =
-  | { ok: true; name: string; object: Expr }
-  | { ok: false; indexPos: number };
-```
+- `$$$.<coll>` / `$$$["<coll>"]` — exactly one step: the collection in the current database.
+- `$$$$.<db>.<coll>` (any bracket combination) — exactly two steps: a database and a collection.
+- A name may also be a `jsmql.compile` parameter or template slot holding a string (`$$$[coll] = $$`), because the value is known when the pipeline is built.
 
-The walk:
+Everything else is refused, each with the form that works: a computed bracket (`$$$[$.x] = $$` — "The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in."), too many segments (`$$$.a.b = $$` — "Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$')."), a database alone (`$$$$.db = $$` — "'$$$$.<db>' names a database; write the collection too …").
 
-1. `findContextRefLeaf(target)` — walks through `MemberAccess` /
-   `IndexAccess` nesting to a `DatabaseRef` / `ClusterRef` leaf. Returns
-   `null` for any chain that isn't `$$$`/`$$$$`-rooted; the surrounding
-   pipeline branch then falls through to the existing lookup / update-op
-   paths.
-2. Leaf is `DatabaseRef` → expect **exactly one** access step:
-   `$$$.<coll>` or `$$$["<coll>"]`. Two or more segments throws the
-   "too many segments for a same-database $out target" error pointing
-   at `$$$$.<db>.<coll>`.
-3. Leaf is `ClusterRef` → expect **exactly two** access steps:
-   `$$$$.<db>.<coll>` (any bracket combination). One segment is "missing
-   the collection"; three or more is "too many segments".
-4. Any access step whose index is not a `StringLiteral` (a computed
-   bracket) throws the "literal collection name" error with a hint
-   pointing at `jsmql.compile` for parameterised destinations.
-
-The detector is called from three sites in `src/compiler/emit/statement.ts`, mirroring
-the `isReplaceRootAssign` pattern:
-
-- `generatePipeline` (the bracketed `[ … ]` form) — line ~228.
-- `generateImplicitPipeline` (the `;`-separated form, via
-  `lowerUpdateFilterWithLookups`).
-- `lowerUpdateFilterWithLookups` (one `,`-chained `UpdateFilter`
-  statement) — line ~830.
-
-The interception fires **after** `isReplaceRootAssign` and **before**
-`detectLookupCall` in each site: the LHS shape is unambiguous against
-both alternatives (`$ = …` has an empty-path FieldRef target, `$out` has
-a `DatabaseRef`/`ClusterRef`-rooted target with no method call;
-`$$$.<coll>.find/filter(…)` has a method call on the same chain).
-
-`containsOutAssign(node)` is the cheap mode-gate walk used by
-`rejectOutOutsidePipeline` in `src/index.ts` to surface a precise
-"Pipeline-mode only" error for `jsmql.filter()` / `jsmql.expr()` and
-to reroute `jsmql.update()` / `jsmql()`'s bare-UpdateFilter path
-through the pipeline lowerer.
+The target's shape is unambiguous against its neighbours: `$ = …` has the bare-`$` target, a field write a `$.`-rooted one, and a join (`$$$.<coll>.find(…)`) is a value, never a target.
 
 ## Validation
 
@@ -116,88 +77,27 @@ through the pipeline lowerer.
 |---|---|
 | `$$$.<a>.<b> = …` (three `$`, two LHS segments) | `'$$$.<a>.<b>' has too many segments for a same-database \$out target — use '$$$$.<db>.<coll>' (four $) for a cross-database write, or '$$$.<coll>' (three $) for the local database.` |
 | `$$$$.<x> = …` (four `$`, one LHS segment) | `'$$$$.<x>' is missing the collection — write '$$$$.<db>.<coll>' (db, then collection), or use '$$$.<coll>' (three $) for the local database.` |
-| `$$$$.<a>.<b>.<c> = …` (three or more segments after `$$$$`) | `'$$$$.<a>.<b>.<c>' has too many segments for a \$out target — '\$out' writes to one collection in one database, so '$$$$.<db>.<coll>' is the deepest form.` |
-| `$$$[<non-literal>] = …` (computed bracket on the LHS) | `'\$out' target must be a literal collection name — use '$$$.<coll>' or '$$$["<coll>"]', not a runtime expression. If you need a parameterised target, use 'jsmql.compile' and pass the name in.` |
+| `$$$$.<a>.<b>.<c> = …` (three or more segments) | `Too many segments for a collection to write: one name for the current database ('$$$.<coll> = $$'), a database and a name for another ('$$$$.<db>.<coll> = $$').` |
+| `$$$[<non-literal>] = …` (computed bracket on the LHS) | `The collection is named when the pipeline is written: '$$$.<coll>' or '$$$["<coll>"]'. To choose it at run time, build the pipeline with 'jsmql.compile' and pass the name in.` |
 | RHS not rooted at `$$` (e.g. `$$$.coll = $.x`) | `The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.` |
-| Chain method in neither the stream-method registry nor the stage-link form | `'$$.<method>(...)' isn't a recognised chain method for a '\$out' RHS.[ Did you mean '.<near-miss>()'?] <workaround>` — the workaround is the method's entry in `STAGE_EQUIVALENT_HINT` when it has one (a JS method a stream chain deliberately lacks, e.g. `.reduce` → `$group({ … })`), else the generic "add the equivalent stage call, chained or as its own statement". A method the registry *does* carry must never be listed in that table: the table is only reached when `lookupStreamMethod` returns null, so an entry for a working method is unreachable. |
+| A link whose row has no `stream` cell | the stream road's refusal, with the nearest name that has one ([stream-methods.md](stream-methods.md)) |
 | `$$.filter(<predicate>)` arity wrong | `'$$.filter(<predicate>)' takes exactly one predicate argument, got N.` |
 | `$$.filter(<not-a-predicate>)` | `'$$.filter(<predicate>)' in a '\$out' write chain takes a single arrow predicate ('o => …'), a matches-object ('{ active: true }'), a field name ('"active"'), or a ["field", value] pair.` (shared gate — see [emit-pass.md](emit-pass.md)) |
-| `$.x` reference inside the `$$.filter` predicate | Shared message from `localRefInPredicateMessage`: names the lambda's own parameter for an arrow spelling, and redirects a shorthand spelling to the arrow form (a shorthand has no parameter the user could write). |
-| Statement appears after the `$out` sugar in the same pipeline | `'\$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position N), or remove it.` |
-| Two `$$$.<coll> = …` statements in one pipeline | Same as above — caught by the shared `sawOut` guard. |
-| `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | `jsmql.<mode>() does not allow '\$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '\$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '\$out' stages.` |
-| `$$$.<coll> = …` inside `jsmql.update(…)` | Defers to the existing update-pipeline whitelist error: `jsmql.update() rejected '\$out': MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, …` |
+| `$.x` inside the `$$.filter` predicate | `$.` is the document the predicate runs over (HR4), so it lowers like the parameter — no refusal; the two spellings mean the same field |
+| A statement after the `$out` sugar in the same pipeline | `Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.` |
+| Two `$$$.<coll> = …` statements in one pipeline | The same refusal — the second follows the first. |
+| `$$$.<coll> = …` inside `jsmql.filter(…)` / `jsmql.expr(…)` | Refused as a write: `… but received a write (\`$.x = …\`, \`delete $.x\`). Use jsmql.update() for an update document, or jsmql.pipeline() for a \`$set\` / \`$unset\` pipeline.` |
+| `$$$.<coll> = …` inside `jsmql.update(…)` | `A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.` |
 
 All errors carry a meaningful `.pos` (target node's `pos` for LHS shape
 errors, RHS node's `pos` for chain errors, offending later statement's
 `pos` for the trailing-stage guard).
 
-## RHS chain methods
+## The chain
 
-The chain dispatch in `lowerChainMethod` handles `.filter(<predicate>)`
-inline (it reuses the index-friendly `$match` translator), and routes every
-other method through the shared `STREAM_METHODS` registry from
-[`src/registry/names.ts`](../../src/registry/names.ts): `.slice`, `.map`,
-`.toSorted`, `.flatMap`, `.concat`. The chain walker in `lowerOutChain`
-recurses into `MethodCall.object` first, then emits the current layer's
-stage, so source order is preserved. Chained pipeline stages
-(`$$.$sort({ … })`) compose too: a `$out` chain runs at the OUTER pipeline
-level, so a stage link is an ordinary top-level stage placed before the write,
-lowered by running its one-statement block through the same `SubPipelineLowerer`
-the statement form uses. Placement is checked with `isLastInContainer: false`,
-because the `$out` itself always follows — which is what rejects a second write
-stage in the chain.
+The RHS is lowered by the stream road (`streamStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)): each link's `stream` cell appends its stages to the pipeline, in source order, and the `$out` is filed as the terminal. So a `$out` chain accepts exactly the links a bare `$$.<chain>;` accepts, and lowers each to the same MQL — a stage link (`$$.$sort({ … })`) is the stage, `.filter(p)` / `.reject(p)` lower through the filter road with the parameter as the document (`$$$.live = $$.reject(p)` emits the same negated `$match` that `$$.reject(p);` does), `.take(n)` is `$limit`, and a second write stage in the chain is refused because the `$out` always follows.
 
-`.filter`'s and `.reject`'s **argument** first goes through `requireStreamPredicate`
-— the shared local-`$$` predicate gate — so a `$out` chain accepts exactly the
-predicate spellings the `$$ =` stream and a `$facet` branch do, and lowers each to
-the same MQL. See [emit-pass.md](emit-pass.md) § the local-`$$`
-predicate gate.
-
-`.reject` is `.filter` negated (via the shared `negateStreamPredicate`), so the two
-share one branch in `lowerChainMethod` and stay in lockstep here exactly as they do
-in a `$$ =` chain: `$$$.live = $$.reject(p)` emits the same `$match: { $expr: { $not:
-… } }` that `$$ = $$.reject(p)` does, then the trailing `$out`.
-
-The normalised lambda then reuses the same predicate translator that `$match`, the
-`$facet` variant of `$ = { … }`, and the union-form sub-pipelines all
-use (`extractLetsFromExpr` / `extractLetsFromPipeline` from
-[`src/compiler/emit/join.ts`](../src/compiler/emit/join.ts) +
-`translateMatchBody` from
-[`src/compiler/emit/filter.ts`](../src/compiler/emit/filter.ts)). Two body
-shapes:
-
-- **Expression body** (`d => d.active`): translatable conjuncts emit
-  index-friendly `{ field: value }` query syntax; the untranslatable
-  residual rides in a `$expr` alongside.
-- **Block body** (`d => { $sort(…); $limit(…); }`): each statement
-  becomes a stage in the prefix, lowered by the shared
-  `SubPipelineLowerer` (the same one lookup/union/facet use). A fresh
-  sub-pipeline ctx is used so outer let scopes don't cross the lambda
-  boundary, matching the facet behaviour.
-
-`$.<field>` references inside the predicate are rejected — the lambda's parameter
-IS the current document, so allowing both spellings would invite drift. The message
-comes from the shared `localRefInPredicateMessage`, which mirrors the facet-form and
-`$$ =` rejections and (crucially) never names the gate's synthetic parameter back at
-a user who wrote a shorthand.
-
-### Adding more chain methods
-
-A new chain method is **not** a `$out`-specific branch — it goes in the shared
-`STREAM_METHODS` registry ([`src/registry/names.ts`](../../src/registry/names.ts),
-which owns the vocabulary and its lowering), and `lowerChainMethod` picks it up with
-no change here. That is what makes a `$out` chain accept the same methods a `$$ =`
-chain does. `lowerChainMethod` keeps its own branch only for the three shapes the
-registry does not cover: the stage-link form, and the `.filter` / `.reject` pair
-(whose predicate goes through the shared gate — see above).
-
-When a method lands in the registry, remove any entry it has in
-`STAGE_EQUIVALENT_HINT`: that table is only consulted after `lookupStreamMethod`
-returns null, so an entry for a working method is unreachable and would sit there
-advertising a workaround for something that already works. The table is the single
-source of truth for the "use this stage instead" hint, and holds only JS methods a
-stream chain deliberately lacks.
+Adding a chain method is not a `$out`-specific change: give the method's row a `stream` cell ([stream-methods.md § Adding a method](stream-methods.md)) and every head — the bare stream, a join, a `$out` chain — reads it.
 
 ## Mode gates
 
@@ -205,26 +105,14 @@ stream chain deliberately lacks.
 
 | Entry point | Behaviour |
 |---|---|
-| `jsmql("…")` with `;` (Pipeline) | Allowed. |
-| `jsmql.pipeline("…")` | Allowed — UpdateFilter-shaped input is rerouted via `containsOutAssign` so the lookup-aware pipeline integration intercepts the assignment. |
-| `jsmql("…")` without `;` (UpdateFilter) | Rerouted to Pipeline lowering via `containsOutAssign` in `lowerWithCtx`. |
-| `jsmql.filter("…")` | Rejected with a precise "use Pipeline mode" hint. |
-| `jsmql.expr("…")` | Rejected with the same hint. |
-| `jsmql.update("…")` | Rejected via the existing update-pipeline whitelist error (`$out` isn't in the list of stages MongoDB accepts inside `db.coll.updateOne(filter, update)`). |
+| `jsmql("…")`, with or without `;` | Allowed — a write is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)). |
+| `jsmql.pipeline("…")` | Allowed. |
+| `jsmql.filter("…")` / `jsmql.expr("…")` | Refused as a write, with `jsmql.pipeline()` named. |
+| `jsmql.update("…")` | Refused: "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'." |
 
 ## Parser interaction
 
-Two small changes in [`src/compiler/parse/parser.ts`](../src/compiler/parse/parser.ts):
-
-1. **`validateUpdateTarget`** now also accepts the `$out` LHS shape via a
-   new `isOutTarget(target)` helper — chains of `MemberAccess` /
-   `IndexAccess` rooted at `DatabaseRef` / `ClusterRef`. Shape-only check;
-   segment-count and computed-bracket diagnostics live in codegen.
-2. **`parseContextRef`** now allows bare `$$` (CollectionRef) at the
-   parse level so `$$$.coll = $$` can have a bare RHS. The typo case
-   `$$foo` (no separator, just an Ident next) is still rejected at parse
-   time. `$$$` / `$$$$` keep the strict pre-check — bare uses of those
-   have no meaning anywhere.
+The parser ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)) accepts a write target rooted at `$$$` / `$$$$` through `MemberAccess` / `IndexAccess` steps — a shape check only; the segment-count and computed-bracket refusals are the emit phase's — and a bare `$$` as a value, so `$$$.coll = $$` has its RHS. The typo `$$foo` (no separator, an identifier next) is still refused at parse time, and bare `$$$` / `$$$$` have no meaning anywhere.
 
 No new tokens, no new AST nodes.
 
@@ -239,15 +127,12 @@ No new tokens, no new AST nodes.
 
 ## Design notes
 
-- **Multi-method RHS chains.** `lowerChainMethod` routes everything outside its own
-  three shapes (stage link, `.filter`, `.reject`) through the shared
-  `STREAM_METHODS` registry, so registry methods compose freely before the trailing
-  `$out` — see [Adding more chain methods](#adding-more-chain-methods).
-- **Bound destination via `jsmql.compile`.** `$$$[boundColl] = $$`
-  resolves the bracket-index at compile time when `boundColl` is a string-typed
-  parameter binding (via `ctx.bindings`). Non-string bindings surface a
-  "parameter binding must be a string" error.
-- **Pre-emit "is this a stage-clearing stage?" classification.**
-  `$out` is terminal, so the in-pipeline let scope is irrelevant after
-  emission. The `sawOut` guard ensures no subsequent statement runs;
-  no separate scope-clearing is needed.
+- **Multi-method RHS chains.** The stream road lowers every link through its row's
+  `stream` cell, so methods compose freely before the trailing `$out` — see
+  [The chain](#the-chain).
+- **Bound destination via `jsmql.compile`.** `$$$[boundColl] = $$` resolves the
+  bracket index when the pipeline is built, from a string-valued parameter; any other
+  value is refused as a collection name.
+- **No scope-clearing after `$out`.** `$out` is the chain's terminal, so the
+  in-pipeline binding scope is irrelevant after it; a later statement is refused
+  before it could read anything.

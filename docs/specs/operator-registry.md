@@ -1,126 +1,51 @@
 # Operator Registry
 
-`src/operators.ts` is the single source of truth for how MongoDB operators are mapped to MQL output shapes, and the canonical catalog of every MongoDB expression and accumulator operator jsmql knows about.
+Two files carry what jsmql knows about MongoDB's expression, accumulator and query operators, and each owns a different fact.
 
-Each entry has three required fields plus one optional flag:
+- [`src/registry/names.ts`](../../src/registry/names.ts) — **how an operator lowers.** Every `$op` is a `$op: mongo({ … })` row: where it may stand (`where`), one cell per position (`expr`, `filter`, `group`, `window`, `stream`, `statement`, `updateDoc`, `body`), its argument rule (`args`: a signature and the counts it takes, or `byArgs` for a call whose shape follows its arguments), the keys of an object-form operator, and `returns` — the kind of its result, measured on a running `mongod`. A cell either states a lowering or refuses with the alternative. The compiler reads nothing else to lower a call; [emit-pass.md](emit-pass.md) is the spec of that reading.
+- [`src/operators.ts`](../../src/operators.ts) — **the catalog.** Every operator's `category` (from `OPERATOR_CATEGORIES`), one-sentence `description` lifted from the vendored spec, and the flags the generated types need (`accumulatorOnly`, `matchOnly`). Its readers are the globals generator (`scripts/generate-globals.mjs`, see [globals-generation.md](globals-generation.md)), the playground sync and the drift tests. Nothing in `src/compiler/` reads it.
 
-| Field | Purpose |
-|---|---|
-| `shape` | One of five [shapes](#shapes); decides how the operator's MQL value is structured. |
-| `category` | A label from `OPERATOR_CATEGORIES` (see below). Used for documentation grouping; not consumed by codegen. |
-| `description` | One-sentence summary, lifted verbatim from the official MongoDB spec where possible. Surfaced in editor tooltips and future docs generation. |
-| `accumulatorOnly?` | Set `true` for operators that have **no** expression form — they only mean something inside `$group` field-value slots or `$setWindowFields.output` bodies (`$push`, `$addToSet`, `$top`/`$topN`, `$bottom`/`$bottomN`, `$median`, `$percentile`, `$accumulator`). Codegen's `checkOperatorContext` gates on this flag, so it is the single source of truth — there is no separate set to keep in sync. Wrap the shape factory with `acc(...)`: `acc(single("array", "…"))`. Operators with *both* forms ($sum, $avg, $max, $min, $stdDev*) leave it unset and stay unrestricted. (Window-only operators are gated separately, by `category === "window"`.) |
+The two agree by test: `test/registry-agrees.test.ts` checks every row against the catalog and the vendored spec, and `test/operator-spec-coverage.test.ts` checks the catalog against `mongodb/mql-specifications`.
 
-The full list of categories — see `OPERATOR_CATEGORIES` in `src/operators.ts`.
+## Call shapes
 
-## Shapes
+A row's `args` states what the call takes; the shapes below are what the rows say, illustrated. Every refusal names the way out.
 
-Every operator has one of five shapes:
-
-### `single` → `{ $op: expr }`
-The operator takes exactly one expression argument. If more or fewer are given, codegen throws.
+**A list operator** (`$add`, `$setUnion`, `$concat`, …) takes two or more operands, or ONE array literal that IS the operand list (HR2's round-trip of `{ $op: [ … ] }`). A lone scalar is refused:
 
 ```
-$abs($.delta)     →  { $abs: "$delta" }
-$not($.active)    →  { $not: "$active" }
+$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }
+$setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }
+$add($.x)               →  ✗ "$add operates on a list of operands — pass two or more ($add(a, b)) or a single array ($add([a, b]))."
+({ $setUnion: $.x })    →  ✗ the same sentence: HR3 governs raw MQL too
 ```
 
-### `array` → `{ $op: [a, b, ...] }`
-A **list-only** operator — it has no single-value form, so its operand is always a list (HR2/HR3 — see [LANG_RULES.md](../LANG_RULES.md)):
-
-- **2+ args** → collected into an array.
-- **1 array literal** → that array IS the operand list (the HR2 round-trip of `{ $op: [...] }`).
-- **1 non-array value** → rejected: a list operator can't take a lone scalar.
+**A comparison operator** takes exactly two operands in an expression and has a query form in a filter:
 
 ```
-$add($.a, $.b, $.c)     →  { $add: ["$a", "$b", "$c"] }      (2+ args → array)
-$setUnion([$.a, $.b])   →  { $setUnion: ["$a", "$b"] }       (1 array literal → unwrapped)
-$ifNull($.x, $.y, 0)    →  { $ifNull: ["$x", "$y", 0] }
-$add($.x)               →  ✗ error  ("$add operates on a list of operands — write $add(a, b) or $add([a, b])")
+$gt($.a, $.b)           →  { $gt: ["$a", "$b"] }              (expression)
+$gt($.a, 1)             →  { a: { $gt: 1 } }                  (filter: MongoDB's reading, no array exclusion)
+$gt($.x)                →  ✗ "'$gt(expr1, expr2)' requires exactly 2 arguments, got 1"
 ```
 
-Operators with a *valid* single-value form (the comparison operators, `$in`) are `flex`, not `array`. The JS spread (`$add(...arr)`) is not accepted on any operator-call form — pass a single array literal instead. (Spread stays supported in JS-method position: `Math.max(...arr)`, `Object.assign(...docs)`.)
+**An object-form operator** (`$trim`, `$dateAdd`, `$regexMatch`, …) takes its keys positionally or as one object literal; an object literal's keys are checked against the row, and a wrong one is refused with the nearest right one:
 
-The same rejection applies to the **raw-object form** — HR3 governs raw MQL too, so `{ $setUnion: $.x }` (a list-only operator key with a non-array value) throws exactly like `$setUnion($.x)`. The check is in `generateStaticObjectEntries` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)): it fires only when the key is a registry `array`-shape operator and the value is not an array literal, so a valid `{ $setUnion: [$.a, $.b] }` passes through untouched (HR1).
-
-### `object` → `{ $op: { k1: a, k2: b } }`
-The operator's MQL form takes an object. The registry entry stores an ordered `keys` array that maps positional argument positions to named keys.
-
-Two calling styles are accepted:
-
-**Positional** — args are mapped to keys in order:
 ```
-$trim($.name, " ")    →  { $trim: { input: "$name", chars: " " } }
-```
-Trailing optional keys may be omitted:
-```
-$trim($.name)         →  { $trim: { input: "$name" } }
-```
-
-**Object-style** — a single object literal naming the keys:
-```
+$trim($.name, " ")                     →  { $trim: { input: "$name", chars: " " } }
 $trim({ input: $.name, chars: " " })   →  { $trim: { input: "$name", chars: " " } }
-```
-**Object-style keys are validated against the registry's closed key set** when the
-operator declares `args` rules (`required ∪ optional`; see
-[emit-pass.md](emit-pass.md)). A missing required key throws,
-and an unrecognised key throws with a `didYouMean` suggestion
-(`$dateAdd({ startdate, … })` → "has no parameter 'startdate'. Did you mean
-'startDate'?"). This catches the common typo/omission footguns the server would
-otherwise reject. Escape hatches for genuinely-undocumented keys: set
-`closedKeys: false` on the operator's `ArgRules`, or call an unknown (not-in-registry)
-operator name, which still passes through unvalidated. The check is literal-gated —
-an object body with a spread is left alone (codegen handles the spread case
-separately), and a non-object-shape operator given a lone object treats it as a
-*value*, never named keys (`$mergeObjects({ a: 1 })`).
-
-### `none` → `{ $op: {} }`
-The operator takes no arguments (e.g. `$rand`).
-
-```
-$rand()    →  { $rand: {} }
+$dateAdd({ startdate: $.t, unit: "day", amount: 1 })
+  →  ✗ "'$dateAdd' has no parameter 'startdate'. Did you mean 'startDate'? Valid keys: startDate, unit, amount, timezone."
 ```
 
-### `flex` → `{ $op: expr }` _or_ `{ $op: [a, b, ...] }`
-The operator legitimately accepts both a single expression and an array of expressions; the output shape is decided by argument count. Two cases use this: (1) accumulator-vs-expression duals (e.g. `$min` — single in `$group`, array in `$project`); (2) **dual-form operators with a single-value query form** — the comparison operators `$eq`/`$ne`/`$gt`/`$gte`/`$lt`/`$lte` and `$in`, where one argument is the valid query shape `{ field: { $gt: v } }` and two-or-more are the aggregation operands (HR2 — see [LANG_RULES.md](../LANG_RULES.md)). This is why a single arg never errors for these (unlike a list-only `array` op such as `$setUnion`, which has no single-value form).
+A lone object literal on an operator that is NOT object-form is a value (`$mergeObjects({ a: 1 })` → `{ $mergeObjects: { a: 1 } }`). A no-argument operator emits `{ $op: {} }` (`$rand()` → `{ $rand: {} }`). An operator with both a single and a list form (`$min`, `$round`, …) is decided by its argument count. The JavaScript spread is refused in every `$op(…)` call; the refusal names the JS form that takes it (`Math.min(...xs)`) or the single-array form.
 
-```
-$min($.scores)            →  { $min: "$scores" }            (1 arg → single)
-$min($.a, $.b, $.c)       →  { $min: ["$a", "$b", "$c"] }   (2+ args → array)
-$round($.price)           →  { $round: "$price" }
-$round($.price, 2)        →  { $round: ["$price", 2] }
-$gt($.x)                  →  { $gt: "$x" }                  (query single-value form)
-$gt($.a, $.b)             →  { $gt: ["$a", "$b"] }          (aggregation operands)
-```
+## `$literal`
 
-The JS spread is not accepted in the `$op(...)` escape hatch (any shape) — `$min(...$.scores)` is rejected; pass a single array (`$min([...])`) or use the JS-method form `Math.min(...$.scores)`, where spread stays supported.
-
-A single object-literal arg is treated as a **value** (the object itself), not as a shape signal. `flex` is not the same as `object`-shape: with `object`-shape, a lone object literal is the operator's structured argument with named keys; with `flex`, it's just one value among potentially many.
-
-```
-$mergeObjects({ a: 1 })   →  { $mergeObjects: { a: 1 } }
-```
-
-Current flex operators — see entries with `shape: FLEX` in `src/operators.ts`.
-
-## `$literal` and the auto-wrap policy
-
-`$literal` is the one operator with a fast-path branch in `generateOperatorCall` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)). Two things make it special:
-
-1. **Direct codegen.** `$literal(arg)` always emits `{ $literal: <generated arg> }` regardless of registry shape. The fast path sits *ahead* of the `style === "object"` branch because the parser tags `$literal({ x: 1 })` as object-style, but we still want to treat the inner object as `$literal`'s argument rather than as named-key wire format.
-2. **`insideLiteral` ctx flag.** The fast path recurses with `{ ...ctx, insideLiteral: true }`. This suppresses the auto-`$literal` safety net described below for the whole subtree, so `$literal({ x: "$foo" })` produces `{ $literal: { x: "$foo" } }` — a literal of a literal would otherwise emit `{ $literal: { x: { $literal: "$foo" } } }`.
-
-The flag is propagated through `extendCtx`, so it survives lambda bodies and other ctx-modifying paths inside `$literal`. `freshSubPipelineCtx` deliberately drops it — a sub-pipeline starts at a fresh scope, no outer `$literal` envelope.
-
-### Auto-`$literal` for `"$..."`-shaped string values
-
-The codegen emits any `StringLiteral` in a value position via `literalSafeString` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)): a string starting with `$` is wrapped in `{ $literal: value }` so MongoDB doesn't read it as a field reference at runtime. Plain strings pass through unchanged. The same `safeBoundValue` helper applies the policy recursively to `jsmql.compile()` parameter bindings (so a `"$foo"` value supplied at call time gets the same protection) — template-tag interpolation already routes through the parser and produces `StringLiteral` nodes, picking up the wrap automatically.
-
-Object **keys** are deliberately *not* wrapped. Keys are part of the JSON wire format, never evaluated by MongoDB as expressions, so `{ "$foo": 1 }` stays verbatim — that's how the user names a field `$foo`. The auto-wrap only fires on `StringLiteral` nodes generated through `_generate`, and key paths go through `entry.key.name` rather than `_generate(entry.key.value, ctx)`.
+`$literal(x)` emits `{ $literal: <x> }` with `x` lowered under the Env's `$literal` envelope, where nothing is an operator or a field reference. A `"$…"` string typed in source is otherwise MongoDB's own field path and passes through (HR1); the one `$literal` the compiler adds on its own is the gate for a value that arrives at run time — see [aggregation-stages.md § `$`-string pass-through](aggregation-stages.md).
 
 ## Unknown operators
 
-If an operator name is not found in the registry, the codegen falls through using these heuristics:
+A `$name` with no row passes through by its argument count, so jsmql runs a MongoDB operator it has no row for yet:
 
 | Args | Output |
 |---|---|
@@ -129,73 +54,28 @@ If an operator name is not found in the registry, the codegen falls through usin
 | one object literal | `{ $op: { key: val, … } }` |
 | two or more | `{ $op: [a, b, …] }` |
 
-This makes jsmql forward-compatible with new MongoDB operators that are not yet in the registry.
+## Query-position-only operators
+
+`$sampleRate` has no expression form on the server. Its row lists `filter` alone: `$match($sampleRate(0.1))` → `[{ $match: { $sampleRate: 0.1 } }]`, and it composes with other clauses (`$.age > 18 && $sampleRate(0.1)`), while an expression position refuses it — "$sampleRate is a query operator — it only works as a '$match' condition … Write it as a predicate: '$match($sampleRate(<value>))'". The catalog carries the same fact as `matchOnly: true`, for the generated types.
+
+## Return kinds
+
+A row's `returns` states the kind of the operator's result — `string`, `number`, `bool`, `array`, `object`, `date` — or `"unknown"` where the kind follows the operands (`$add` is a number or a date; `$first` is whatever the array holds). The chain type-check reads it: `$.s.trim().foo()` is refused when `foo` is not a string method, and a `.length` on an unknown kind is the dual-receiver `$switch`. It is measured on a running `mongod` (`{ $type: { <op>: <args> } }`), never read from the vendored YAML's `type:` field, which is wrong for `$trunc`.
 
 ## Adding an operator
 
-1. Verify the operator exists in `vendor/mql-specifications/definitions/expression/<name>.yaml` (or `definitions/accumulator/`). The spec is vendored on `npm install` via `vendor/fetch-mql-specs.mjs` at a pinned commit; the directory is gitignored. If a new operator isn't there, either bump the pinned commit (in the script) or add it to `REGISTRY_ONLY` in `test/operator-spec-coverage.test.ts` with a documenting comment.
-2. Choose the correct shape (see above).
-3. For `object` shape, list the positional key names in argument order. Optional trailing keys are fine — users can simply omit them.
-4. Lift the `description` from the YAML's `description` field. Trim to one sentence.
-5. Pick a `category` from `OPERATOR_CATEGORIES`.
-6. Add the entry to `OPERATORS` in `src/operators.ts`.
-7. For an `object`-shape operator, add an `OPERATOR_ARG_RULES` row (`required` /
-   `optional` — the closed key set; plus `enums` / `keyTypes` where they apply)
-   so its keys are validated. See [emit-pass.md](emit-pass.md).
-   Verify any new throw against a running `mongod` (HR3).
-8. If the operator's result type is **invariant** — the same category whatever its arguments are — add an `OPERATOR_RETURNS` row. Read the category off a running `mongod` (`{ $type: { <op>: <args> } }`), never from the YAML's `type:` field; see § Operator return types below. Leave it out when the type depends on the arguments.
-9. Add a test case in `test/codegen.test.ts`.
-10. Update `docs/LANGUAGE.md` if the operator is user-facing.
-
-## Operator return types (`OPERATOR_RETURNS`)
-
-`OPERATOR_RETURNS` maps an operator to the one category its result always falls in — `string`, `number`, `bool`, `array`, `object` or `date`. It is the single source of truth for the three type-inference passes in codegen, which derive their name sets from it through `operatorsReturning(cat)` rather than keeping copies of their own: `STRING_OUTPUT_OPS` (string context, `+` → `$concat`), `ARRAY_OUTPUT_OPS` (`isArrayProducing`, which also drives `.length` → `$size` and the `$ = <array>` fan-out) and `BOOL_OUTPUT_OPS` (`isProvablyBool`, which elides a truthiness wrap). The chain type-check in [emit-pass.md](emit-pass.md) reads the table directly.
-
-**The vendored spec is not the authority for this field.** `definitions/expression/trunc.yaml` declares `type: [resolvesToString]`, and mongod returns a **double** — so a generated map would have made `$trunc(…)` string-producing and turned `$trunc($.n, 1) + 1` into a `$concat`. Every row is therefore verified with `{ $type: { <op>: <args> } }` against a running server.
-
-**Absence means "depends on the arguments", and that is load-bearing** — a chain rejection needs certainty, so anything uncertain must stay out: `$add` / `$subtract` (number **or** date), the element readers (`$min`, `$max`, `$first`, `$last`, `$arrayElemAt`) and the pass-throughs (`$ifNull`, `$cond`, `$switch`, `$let`, `$literal`, `$getField`, `$meta`, `$reduce`, `$convert`, `$function`, `$accumulator`).
-
-**But absence also covers "never measured", and the two are different facts.** A re-measurement of all 182 value-producing operators — one `{ $type: <a well-typed call> }` each, plus a second call with a differently-typed operand to test invariance — agreed with every one of the 127 rows here, and found that 32 of the absent ones are invariant after all. The N-readers return an *array* of n elements rather than one element (`$firstN`, `$lastN`, `$minN`, `$maxN`, `$topN`, `$bottomN`), the collectors always do (`$push`, `$addToSet`), the id and hash producers have one type each (`$toObjectId`, `$createObjectId` → objectId; `$hash` → binData; `$hexHash` → string), and the window operators that compute rather than carry are numeric (`$linearFill`, `$expMovingAvg`, `$derivative`, `$integral`, `$covariancePop`, `$covarianceSamp`). Only the ones that carry a value read from elsewhere vary (`$shift`, `$locf`, `$top`, `$bottom`).
-
-`src/registry/names.ts` therefore separates the two: `returns` is stated on exactly the rows whose `where` includes `value`, `group` or `window`, with `"unknown"` where the kind follows the operands. Absence there means "produces no value at all" — a stage, or a query fragment like `$box`. See `MongoSpec.returns` for the measurement process, and [test/compiler-returns-agrees.test.ts](../../test/compiler-returns-agrees.test.ts), which re-measures every row on a live mongod and requires each `"unknown"` to be shown varying.
+The recipe lives in [CLAUDE.md § Adding a new MongoDB operator](../../CLAUDE.md): a row in `names.ts`, an entry in the catalog, a test on `mongod`, the reference.
 
 ## Spec drift protection
 
-`test/operator-spec-coverage.test.ts` runs on every `npm test` and asserts that the registry stays in sync with `mongodb/mql-specifications`. Specifically:
+`test/operator-spec-coverage.test.ts` runs on every `npm test` and asserts that the catalog stays in sync with `mongodb/mql-specifications`:
 
 - Every operator in `definitions/expression/` and `definitions/accumulator/` exists in `OPERATORS`.
 - Every `OPERATORS` entry exists in the spec, except those documented in `REGISTRY_ONLY` (e.g. `$encStr*` Queryable Encryption ops, `$sampleRate` query predicate, `$toUUID/$toObject/$toArray` post-spec converters).
-- For object-shape entries, every positional key name is recognised by the spec for that operator. Set membership only — order may differ to preserve jsmql's API surface.
 - Every entry has a non-empty `description` and a known `category`.
 
 When the test fails, the message names the specific operator and the specific drift; act on it before merging.
 
 ## Generated user-facing types (`src/globals.ts`)
 
-The registry, together with `STAGES` in [`src/stages.ts`](../../src/stages.ts) and the vendored spec, is the input to a build-time generator that emits the ambient-globals module shipped at the `@koresar/jsmql/globals` subpath. See [`globals-generation.md`](globals-generation.md) for the generator's contract and type-mapping rules.
-
-When you add a new operator, the generator picks it up automatically on the next `npm test` / `npm run build`. The drift test in `test/operator-spec-coverage.test.ts` will fail if the committed `src/globals.ts` is stale; running `npm run generate:globals` refreshes it.
-
-## Query-position-only operators (`matchOnly`)
-
-`$sampleRate` has no expression form on the server. Registering it as an ordinary
-expression operator meant `$match($sampleRate(0.1))` lowered through the truthiness wrap
-to `{ $match: { $expr: { $and: [ … { $sampleRate: 0.1 } … ] } } }`, which mongod refuses
-with *Unrecognized expression '$sampleRate'* — an HR3 violation on the very example
-`CLAUDE.md` uses to introduce the `$op(...)` escape hatch.
-
-`matchOnly: true` on the `OperatorDef` is the single source of truth. Two readers:
-
-- **The filter road** (`src/compiler/emit/filter.ts`) lowers it to its bare query form, `{ $sampleRate: 0.1 }`,
-  ahead of every other rule. It composes with ordinary predicates, so
-  `$.age > 18 && $sampleRate(0.1)` merges into one query document and works in `find()`
-  as well as `$match`.
-- **`codegen.ts`** rejects it. Reaching codegen at all proves it was written where the
-  translator does not run, so the rejection needs no context flag — it names the query
-  spelling and the constant-argument requirement.
-
-The argument must be a literal. A query document holds values, and the server requires a
-constant, so a non-literal falls through to `$expr` and meets the codegen rejection.
-
-Raw MQL is untouched: `$match({ $sampleRate: 0.1 })` passes through as always.
-
+The catalog, `STAGES` in [`src/stages.ts`](../../src/stages.ts), the rows' method facts and the vendored spec are the input to the build-time generator that emits the ambient-globals module shipped at `@koresar/jsmql/globals`. See [globals-generation.md](globals-generation.md).

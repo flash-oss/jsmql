@@ -31,20 +31,15 @@ The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
 | Input | Output stage(s) |
 |---|---|
 | `$$ = []` (drop all documents) | `[{ $match: { $expr: false } }]` |
-| `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5 } } }]` |
+| `$$ = [{ a: 1 }, { a: 2 }]` (as the first statement) | `[{ $documents: [{ a: 1 }, { a: 2 }] }]` |
+| `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }]` — the same as the bare chain `$$.filter(t => t.x > 5);` |
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
-| `$$ = $$$.t.filter(t => t.x > 5)` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
-| `$$ = $$$.t.filter(t => true)` (vacuous) | `[{ $match: { $expr: false } }, { $unionWith: "t" }]` (short form) |
-| `$$ = $$$$.db.coll.filter(p)` | **rejected** — a cross-database source-switch would emit `$unionWith`/`$lookup` with a `{ db, coll }` namespace, which a regular MongoDB rejects; `requireSameDbColl` throws and redirects to same-database `$$$.coll`. (Cross-database `$out` writes still work — see [out-stage.md](out-stage.md).) |
-| `$$ = $$$.t.aggregate(t => { $match(t.x > 5); $sort({x:-1}); $limit(3); })` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: {x:{$gt:5}} }, { $sort:{x:-1} }, { $limit:3 }] } }]` (sub-pipeline) |
+| `$$ = $$$.t.filter(t => t.x > 5)` (uncorrelated) | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }] } }]` |
+| `$$ = $$$.t.aggregate(t => { $match(t.x > 5); $sort({ x: -1 }); $limit(3); })` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: … }, { $sort: { x: -1 } }, { $limit: 3 }] } }]` |
+| `$$ = $$$.users.filter(u => u._id === $.userId)` (correlated — the body reads the outer document) | `[{ $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" }, pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }], as: "__jsmql.tmp.0" } }, { $unwind: "$__jsmql.tmp.0" }, { $replaceWith: "$__jsmql.tmp.0" }]` |
+| `$$ = $$$$.db.coll.filter(p)` | **refused** — a cross-database source would need a `{ db, coll }` namespace, which a MongoDB server refuses; the message says to drop the `$$$$.<db>.` prefix ([lookup-stage.md](lookup-stage.md)) |
 
-The two RHS shapes both reuse `lowerStreamFilterPredicate` for predicate
-translation; only the wrapping differs.
-
-`.filter` / `.reject` take their **argument** through the shared local-`$$` predicate
-gate first, so an arrow and its matches-object / field-name / `["field", value]`
-equivalents all lower identically here and in every other container. See
-[emit-pass.md](emit-pass.md) § the local-`$$` predicate gate.
+`.filter` / `.reject` take their argument through the iteratee-shorthand desugar first, so an arrow and its matches-object / field-name / `["field", value]` equivalents all lower identically here and in every other container ([desugar-pass.md](desugar-pass.md)).
 
 ## Bare `$$` as an assignment target
 
@@ -59,122 +54,19 @@ and `MemberAccess` chains.
 
 No new tokens or AST nodes. The shape is `AssignExpr { target: CollectionRef, value: <expr>, pos }`.
 
-## Detection and lowering
+## Lowering
 
-`isReplaceStreamAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the shape:
+`$$ = <expr>` is an `AssignExpr` whose target is the `CollectionRef`, and it is a statement wherever it stands — a lone `$$ = …` with no `;` is a pipeline by the shape rule ([filter-mode.md § The decision](filter-mode.md)), so the polymorphic and the strict entries agree; `jsmql.filter()` refuses it as it refuses every pipeline. `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and hands the value to one of three roads:
 
-```ts
-op.target.type === "CollectionRef"
-```
+- **A chain on `$$`** → the stream road, `streamStages`: the same link-by-link lowering the bare statement `$$.<chain>;` gets, so the two spellings are one program ([stream-methods.md § Where a chain runs](stream-methods.md)). A predicate lowers through the filter road with the parameter as the document.
+- **A chain on `$$$.<coll>`** → the join road, `joinStream` ([lookup-stage.md § The join road](lookup-stage.md)): the chain's links become the sub-pipeline; when the body read the outer document the stream is replaced per outer document (`$lookup` + `$unwind` + `$replaceWith`), else the current stream is dropped (`$match: { $expr: false }`) and the other collection's pipeline unioned in. `.find` is refused here — one document is not a stream.
+- **An array literal** → `$documents`, valid only as the first statement (MongoDB places `$documents` at the head); later, `$$.push(…)` appends documents.
 
-Different from `$ = …` (`FieldRef { path: "" }`) and from field-path
-assignments (`FieldRef { path: <non-empty> }`, `MemberAccess` chains).
-
-The interception fires before the update-op buffer in two places —
-matching the two assignment-loop sites used by `isReplaceRootAssign`:
-
-- `generatePipeline` (the `[ … ]` form)
-- `lowerUpdateFilterWithLookups` (the `;` form and comma-chained `UpdateFilter` ops)
-
-Stream-replace is checked *before* root-replace at each site — the two
-never overlap (different target types), so order doesn't matter for
-correctness; placing stream-replace first keeps the structure readable.
-
-### Single statement with no trailing `;`
-
-A lone `$$ = <expr>` parses as a one-op `UpdateFilter`, **not** a `Pipeline` —
-the top-level `;` that dispatches to Pipeline mode (see
-[filter-mode.md](filter-mode.md)) isn't there. So it never reaches either
-assignment-loop site above, and lands in `generateUpdateFilter`, which has no
-write path for a `CollectionRef` target.
-
-`updateFilterHasReplaceStream(uf)` (in `src/compiler/emit/statement.ts`) detects that
-`UpdateFilter` — the `$$`-target twin of `updateFilterHasReplaceRoot` — and
-`index.ts` reroutes it as a synthetic one-statement `Pipeline`, so the no-`;`
-form emits exactly what the `;`-terminated form emits. Two reroute sites, one
-per dispatcher, which is what keeps the polymorphic and strict entries in
-agreement:
-
-- `lowerProgram` — reached by `jsmql()` and `jsmql.expr()`
-- `lowerToPipelineStages` — reached by `jsmql.pipeline()` and `jsmql.update()`
-
-`$$ = <expr>` **is** Pipeline evidence (the same way `$$$` is for a lookup), so
-the reroute is the fix rather than a rejection — the documented bare-statement
-sugar `$$.<chain>` already auto-wraps to Pipeline with no `;`, and rejecting its
-own desugared spelling would contradict that.
-
-`jsmql.filter()` is the one entry that still throws, as it must — but on a
-dedicated branch naming the stream-replace and pointing at the predicate the
-narrowing form was reaching for, not on the generic update-op-chain message (a
-`$$ =` LHS is not an update op, and jsmql.update() would reject it too).
-
-The RHS rejections below are unaffected by the spelling: an unsupported RHS
-reaches the same `rejectInvalidReplaceStream` message, with the same `.pos`,
-with or without the `;`.
-
-`lowerReplaceStream(el, ctx, lowerBlock)` returns `{ stages, clearLets }`.
-Form B preserves the let scope; form A clears it via
-`clearCtxLets(ctx, "$unionWith")`.
-
-**`$$ = $$$.<coll>.<chain>` accepts any stream-method head.** `lowerChainOnCollection`
-picks between the flat `$unionWith` source-switch and the correlated `$lookup`-pivot on
-`chainHasCorrelatingFilter` — a `.filter`/`.reject` **anywhere** in the chain (not just the
-head) that references `$.<field>`. Both families peel `.filter`/`.reject` at any position;
-the pivot shares `peelForeignChain` with the value-position assembler. Full head/peeler/dispatch
-detail lives in [lookup-stage.md](./lookup-stage.md) § "Any lodash stream method may head the chain".
-
-## Predicate translation
-
-`lowerStreamFilterPredicate(lambda, predicateCtx, lowerBlock)` produces
-the inner `$match` stage list. Same algorithm as the facet form
-(`lowerFacetEntry`) and `$unionWith`'s union-predicate translator:
-
-- **Lambda must take exactly one parameter.** Zero-arg (`() => …`) and
-  multi-arg shapes are rejected — naming the doc lets the `$.<field>`
-  rejection point at the right replacement.
-- **Expression body** runs through `extractLetsFromExpr(body, param)`:
-  - `param.x` rewrites to `FieldRef("x")` (lowers to `"$x"` per JS-faithful field-ref codegen).
-  - Any path rooted at `$` produces a `letVars` entry; we reject those — the lambda param IS the document, so use the param.
-  - The rewritten body runs through `translateMatchBody` (same engine `$match` uses), producing index-friendly query syntax for the translatable half and `$expr` for the residual.
-- **Block body** runs through `extractLetsFromPipeline(block, param)` with the same path-rewriting / `$.<field>`-rejection rules, then `lowerBlock(rewritten, predicateCtx)` emits the block's stages verbatim. A terminal `return <expr>` is not a value here — it is the predicate, folded in as a trailing `$match` by `canonicalPredicateLambda` (and a block that is *only* a return takes the expression path above, since it is the same JavaScript function). See [lookup-stage.md](./lookup-stage.md) § Canonical predicate form.
-
-### Why the caller picks the ctx
-
-Form B's `$match` is a top-level stage in the outer pipeline — its predicate
-must see the outer let scope so `$$ = $$.filter(t => t.x > cutoff)` after a
-prior `let cutoff = …` resolves `cutoff` correctly. The caller passes
-`outerCtx`.
-
-Form A's `$match` lives inside `$unionWith.pipeline` — a sub-pipeline that
-runs in a fresh let scope (per the existing "outer lets don't cross
-sub-pipeline boundaries" rule; `$unionWith` has no `let:` slot to thread
-them through). The caller passes `freshSubPipelineCtx(outerCtx)`.
-
-That difference lives in `lowerReplaceStream`, not in
-`lowerStreamFilterPredicate` — the predicate helper takes whatever ctx the
-caller hands it.
-
-**Source-switch error guidance (`ctx.sourceSwitch`).** Because Form A drops the
-outer context, a reference to it inside the switched-in chain body (e.g. a
-chain `.map`) is unsatisfiable. To turn the otherwise-bare "unknown identifier"
-/ "use the param" failure into actionable DX, `lowerChainOnCollection` seeds
-`ctx.sourceSwitch = { desc, letNames }` on the union sub-pipeline ctx (`desc` =
-the switch, e.g. `$$ = $$$.orders`; `letNames` = the dropped outer bindings).
-Two consumers read it: codegen's identifier resolver (an outer-`let` read →
-"`k` … isn't available inside `$$ = $$$.orders` … correlate with a `.filter`")
-and `.map`'s `rejectLocalDocRef` (a `$.<field>` read → "the outer document … is
-gone; `param.field` here is the switched collection's field, not the root's").
-Both point at the correlated `.filter` form, which lowers to `$lookup` and
-*does* thread outer context (see [lookup-stage.md](lookup-stage.md) §
-Cross-level capture). This is distinct from `droppedLets` (an in-place reshape
-read in a *later* top-level stage): different site (inside the union vs after
-it) and different fix (correlate vs rebind).
+**Bindings after a source switch.** A `$unionWith` body has no `let`, so an outer `let` or a `$.<field>` read inside the switched-in chain is refused with the correlated form (`.filter(u => u.x === $.y)`), which lowers to `$lookup` and does carry the outer document. After the switch the documents are the other collection's, and a `let` bound before it is dropped: a later read is refused precisely (`… can't be read after \`$unionWith\` …`, [let-bindings.md](let-bindings.md)).
 
 ## Rejections
 
-`rejectInvalidReplaceStream(value, ctx)` catalogs the unsupported RHS
-shapes; each error names the two supported forms and redirects where the
-user's intent is recoverable:
+An unsupported RHS is refused with the forms that work:
 
 | Trigger | Message excerpt |
 |---|---|
@@ -184,14 +76,13 @@ user's intent is recoverable:
 | Bare `CollectionRef` / `DatabaseRef` RHS (e.g. `$$ = $$$.t`) | `'$$ = …' RHS must call a stream method. … Any lodash stream method may head the chain (e.g. '$$$.<coll>.toSorted(...).take(...)'), not only '.filter'.` |
 | Anything else | `'$$ = …' RHS must be '$$.<streamMethod>…' … or '$$$.<coll>.<streamMethod>…' …; a '.filter'/'.reject' correlating on '$.<field>' promotes a source switch to a per-outer-doc '$lookup'.` |
 
-Compound assignment (`$$ += 5`, `$$++`) is rejected at parse time by the
-`parseContextRef` sanity guard (the next token after `$$` would be `+=` /
-`++`, neither of which is `.`, `[`, or `=`). The error message names the
-expected followers; users get redirected immediately.
+Compound assignment (`$$ += 5`, `$$++`) is refused at parse time: the token
+after `$$` has to be `.`, `[` or `=`, and the message names the expected
+followers.
 
-`$.<field>` references inside the predicate body are rejected by
-`rejectLocalRefInStreamFilter` with the same "use the lambda parameter"
-pattern the facet form uses.
+A predicate's parameter is the document; `$.<field>` inside it is the OUTER
+document (HR4), which a `$unionWith` body cannot reach — the refusal names the
+correlated `.filter`, which lowers to `$lookup` and carries it.
 
 ## Interaction with `$set` / `$unset`
 
@@ -199,7 +90,7 @@ The update buffer flushes before `$$ = …`, so
 `$.a = 1; $$ = $$.filter(t => t.x > 0); $.b = 2;` emits
 
 ```
-[{ $set: { a: 1 } }, { $match: { x: { $gt: 0 } } }, { $set: { b: 2 } }]
+[{ $set: { a: 1 } }, { $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $set: { b: 2 } }]
 ```
 
 — never one merged `$set` straddling the assignment.

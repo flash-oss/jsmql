@@ -97,162 +97,76 @@ written in `LetDecl.kind` (`"let" | "const"`); declaration, read, scope-tracking
 and cleanup are otherwise keyword-agnostic. The keyword is echoed in the
 re-declaration / shadow / parser error wording.
 
-### Static typing (`const` only)
+### Static typing
 
-`extendCtxLets` records a `const`'s provable static type (`staticBindingType` of
-the initialiser, or `lookupSlotType` for a direct `$$$.<coll>` lookup RHS) in
-`ctx.bindingTypes`, and every receiver-type dispatch downstream reads it — so
-`const ids = $.tags.uniq(); … ids.includes(x)` emits a plain `$in` instead of a
-runtime `$cond` on `$isArray`. A `let` is left untracked on purpose: a later
-reassignment can change its type, so the recorded one would be a lie and the
-conservative runtime dispatch is the honest lowering. Both the type and the
-read-only flag come from the same `kind` argument, which is why the two travel
-together. See [emit-pass.md § `bindingTypes`](emit-pass.md) for the
-consumers and [lookup-stage.md § Correlation-var types](lookup-stage.md) for how a
-type crosses into a `$lookup.pipeline`.
+A binding carries the kind the registry can prove of its initialiser (`kindOf`),
+so a later read dispatches at compile time where the kind is known and takes the
+dual-receiver form where it is not — the same rule every other value follows
+([emit-pass.md](emit-pass.md)). A `const` and a `let` are typed alike at
+declaration; a reassignment writes the same slot.
 
 ### Reassignment
 
 A later `<name> = <expr>` statement (a bare-identifier assignment) reassigns an
-in-scope `let`. Because the name has no `$.` prefix, the parser cannot tell at
-parse time whether it's an assignable `let`, a read-only `const`, or undeclared —
-so `validateUpdateTarget()` **accepts any bare-identifier (`ParamRef`) target**
-and defers the decision to codegen. `tryLowerAssignSugar()`
-([src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)) — the shared `AssignExpr` chokepoint
-for every top-level pipeline form — dispatches on a `ParamRef` target first:
+in-scope `let`. The parser accepts any bare identifier as a write target, and the
+write road (`writeStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)) reads the
+binding:
 
-- **in-scope `let`** → flush the pending update-op buffer, then emit one
-  `{ $set: { "__jsmql.var.<name>": <rewritten RHS> } }` stage. The RHS resolves the
-  binding's own reads through `ctx.pipelineLets` as usual, so `p = p * 0.9`
-  lowers to `{ $set: { "__jsmql.var.p": { $multiply: ["$__jsmql.var.p", 0.9] } } }`.
-  Each reassignment is its own `$set` (a read-after-write needs separate stages),
-  matching how a re-declaring `let` already lowers. `+=` / `++` desugar to a
-  `BinaryExpr` RHS in the parser, so they flow through this same path for free.
-- **in-scope `const`** (`ctx.pipelineConstNames`) → `CodegenError`: *Cannot
-  reassign `x` — it is a `const` binding. Declare it with `let x = …` …*.
-- **dropped by a reshape stage** (`ctx.droppedLets`) → the post-reshape error,
-  reassignment flavour.
-- **undeclared** → *Cannot assign to bare identifier 'x' — it isn't a `let`
-  binding in scope …*.
+- **a `let`** → one `{ $set: { "__jsmql.var.<name>": <value> } }` stage of its own
+  (a read-after-write needs separate stages); the RHS reads the binding's own slot,
+  so `p = p * 0.9` lowers to
+  `{ $set: { "__jsmql.var.p": { $multiply: ["$__jsmql.var.p", 0.9] } } }`.
+  `+=` / `++` desugar to the same write.
+- **a `const`** → refused: "'x' is a 'const' and cannot be assigned again. Declare
+  it with 'let' to write it more than once."
+- **dropped by a replacing stage** → the post-replace error, reassignment flavour.
+- **undeclared** → "Unknown identifier 'y'. Did you mean '$.y'?"
 
-Outside a pipeline (Filter / `jsmql.expr` / update-doc mode) there is no let
-scope, so a bare-identifier assignment never reaches `tryLowerAssignSugar`;
-`targetToPath()` in codegen rejects it with the same "bare identifier" guidance.
+Outside a pipeline (a filter, `jsmql.expr`, an update document) there is no
+binding scope, so a bare-identifier assignment is refused there too.
 
 ### `Object.assign` mutation
 
-`Object.assign(<name>, ...sources)` at statement position is JS's *mutating*
-merge of a binding — the value twin is `<name> = { ...<name>, ...sources }`.
-`classifyObjectAssignStmt` (in `src/compiler/emit/statement.ts`) detects it before the generic
-statement path and emits one `{ $set: { "__jsmql.var.<name>": <gen(ObjectCall)> } }`
-stage; because the call's first argument *is* `<name>`, that generates
-`$mergeObjects["$__jsmql.var.<name>", ...sources]`. Unlike `=` reassignment it is
-**allowed on a `const` binding** — mutating a const-bound object is legal JS,
-only rebinding isn't — so it bypasses the `pipelineConstNames` guard. An
-out-of-scope name is rejected with a "declare it with `let …` first, or write
-`$.<name>`" hint. The field-path sibling (`Object.assign($.x, …)`) and the full
-dispatch table live in [update-filter.md § `Object.assign` at statement
-position](update-filter.md).
+`Object.assign(<name>, ...sources)` at statement position is JavaScript's
+*mutating* merge of a binding — the value twin is `<name> = { ...<name>, ...sources }`.
+It is read as a write of the binding's slot
+(`{ $set: { "__jsmql.var.<name>": { $mergeObjects: ["$__jsmql.var.<name>", …sources] } } }`),
+and — unlike `=` — it is **allowed on a `const`**: mutating a const-bound object is
+legal JavaScript, only rebinding is not. An undeclared name is refused as any
+unknown identifier is. The field-path sibling (`Object.assign($.x, …)`) and the
+shape rule that makes a bare call a write live in
+[update-filter.md § Mutators and `Object.assign`](update-filter.md).
 
-`const`-ness rides on `LetDecl.kind` and is tracked on `GenerateCtx` as
-`pipelineConstNames` (a subset of `pipelineLets`); `clearCtxLets()` resets it
-alongside the lets, and `extendCtxLets(ctx, name, path, kind)` records it on
-declaration.
+## Lowering
 
-## Codegen
+### The binding
 
-The let scope lives on `GenerateCtx` ([src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts)):
+`letStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) lowers `let x = <expr>;` to `{ $set: { "__jsmql.var.x": <value> } }` and binds `x` in the Env's scope to that field slot — `mutable` for `let`, not for `const`, typed with what the registry can prove of the value, so a later read is checked as the value would be. Three values never reach a slot: a constant, which the fold has inlined (`let x = 1; $.y = x` → `[{ $set: { y: 1 } }]`, no slot, no cleanup); a lambda, which is a name for a body (`const f = (x) => …`, inlined at each call like `function f`); and a complete join chain, whose `$lookup` writes the slot as its `as` ([lookup-stage.md](lookup-stage.md)). A second `let x` in one block is refused, as JavaScript refuses it; a binding a stage dropped is still declared, and the way back is `x = …`.
 
-```ts
-type GenerateCtx = {
-  lambdaParams: ReadonlySet<string>;
-  reduceRemap?: ReadonlyMap<string, string>;
-  pipelineLets?: ReadonlyMap<string, string>;  // ident → field path, e.g. "__jsmql.var.total"
-  droppedLets?: ReadonlyMap<string, string>;   // ident → stage that dropped it
-};
+### Scope and resolution
+
+Every name lives in the Env's `Scope` ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts), [src/compiler/emit/names.ts](../../src/compiler/emit/names.ts)); a callback body's Env is made from its parent's, so a body inherits every binding and a callback parameter shadows a `let` of the same name inside the body only. A binding's `ref` says what a read becomes: a `field` slot is a path (`"$__jsmql.var.x"`, or a `let`-captured `$$` variable inside a `$lookup` body), a `var` is a `$$` variable (a callback parameter), a `constant` is its value, a `function` is inlined at the call, a `streamHandle` is the callback's third parameter (the inner stream), and a `dropped` binding carries the refusal a read of it raises. An unknown name is refused with the nearest declared one.
+
+### Stages that replace the document
+
+`afterStages` reads each emitted stage's row: a stage whose `replacesDocument` fact is true (`$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, `$replaceWith`, …) — or `$project` in INCLUSION mode (every value `1` / `true`, `_id: 0` aside) — takes every field-carried binding and the scratch namespace with it. A later read is refused precisely:
+
+```
+let x = $.a; $group({ _id: null }); $.y = x
+// ✗ `x` is a `let` binding and can't be read after `$group` — that stage replaced the document
+//   that carried it. Assign it again after the stage (`x = …`), or carry the value as a field of the new document.
 ```
 
-Helpers (`extendCtxLets`, `clearCtxLets`, `ctxHasLets`, `freshSubPipelineCtx`)
-are pure — they return new ctx objects. Lambda-extending ctx constructions
-(`extendCtx`, the inline reduce/groupBy ctxs in `codegen.ts`) preserve
-`pipelineLets`/`droppedLets`, so a let bound at pipeline scope is visible inside
-nested method-call lambda bodies.
+`$project({ b: 0 })` (exclusion) and `$project({ x: $.y + 1 })` (expression mode) leave the rest of the document, `__jsmql` included, so the bindings survive them.
 
-### Identifier resolution
+### Blocks and sub-pipelines
 
-In the `ParamRef` codegen branch and inside `asFieldPath`, the lookup order is:
+A block over the SAME documents — a `$facet` branch, a top-level callback — shares their fields: the outer bindings are visible there (`let x = $.a; $ = { f: $$.filter(d => d.n > x) }` reads `"$__jsmql.var.x"` inside the branch), and a shadowing `let` is refused, because it would write the outer binding's slot. A body over ANOTHER collection — a `$lookup` — has documents of its own: an outer binding read there is carried through the stage's `let` as `jsmql_v<level>_<name>` and read as a `$$` variable, and the body shadows freely. A `$unionWith` body has no `let`, so an outer read there is refused with the join form that carries the value.
 
-1. `reduceRemap` (innermost — `.reduce()` accumulator/element bindings)
-2. `lambdaParams` (any enclosing `.map(x => …)` etc.)
-3. `pipelineLets` (let bindings in scope)
-4. `droppedLets` → precise "let X can't be read after $Y" error
-5. Otherwise → `UnknownIdentifierError`
+### Cleanup
 
-Lambda parameters intentionally shadow let bindings of the same name *inside
-the lambda body*. Outside the lambda, the let is still visible. This matches
-standard JS lexical-scoping intuition.
-
-## Pipeline lowering
-
-[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) is the orchestrator. Both pipeline
-forms (`[...]` and `;`-separated) walk their statements left-to-right with a
-threaded `GenerateCtx`:
-
-- **LetDecl** → emit `{ $set: { "__jsmql.var.<name>": <gen value with current ctx> } }`,
-  extend ctx via `extendCtxLets`. Re-declaration check happens here.
-- **Update op** (in bracketed form) → buffer for coalescing; flushed through
-  `generateUpdateOpGroups(buf, ctx)` so RHS expressions can read lets.
-- **Update op chain** (in `;`-separated form) → `generateUpdateFilter(stmt, ctx)`.
-- **Stage element** → `stageFromElement(el, i, ctx)`. Stage body is generated
-  with the current ctx. If the stage is in `RESHAPE_CLEARING_STAGES`, the ctx
-  is updated via `clearCtxLets(ctx, stageName)` *after* lowering — so the body
-  can still read lets, but the next stage cannot.
-
-After the last element, if any let was declared (or, more precisely, if either
-the in-scope or dropped maps are non-empty — tracked via an `everHadLet` flag),
-append exactly one `{ $unset: "__jsmql" }`.
-
-### Reshape-clearing stages
-
-```ts
-const RESHAPE_CLEARING_STAGES = new Set([
-  "$group", "$bucket", "$bucketAuto", "$replaceRoot", "$replaceWith",
-]);
-```
-
-These stages either drop the document entirely (`$group`, `$bucket`,
-`$bucketAuto`) or replace its root (`$replaceRoot`, `$replaceWith`). After any
-of them, the `__jsmql` field is gone, so any later reference to a let from
-before the stage would silently coerce to `null` at runtime. The compiler
-prevents that footgun by clearing the let scope and remembering the dropper
-in `droppedLets`, so a later reference produces a precise error instead of a
-silent null.
-
-`$project` is intentionally **not** in this set: inclusion mode would drop
-`__jsmql`, but expression-mode (`{ x: $.y + 1 }`) and exclusion-mode
-(`{ a: 0 }`) leave the rest of the document — including `__jsmql` — intact.
-The compiler conservatively assumes lets survive `$project` and trusts the
-user to know whether their `$project` happens to drop the namespace. (If a
-user references a let after an inclusion-mode `$project` that dropped
-`__jsmql`, they get `null` at runtime — same behaviour as today's manual
-`$.tmp = …` + `delete` pattern.)
-
-### Sub-pipeline boundaries
-
-Stages with sub-pipeline slots (`$lookup.pipeline`, `$unionWith.pipeline`,
-`$facet.*` — declared via `subPipelineFields` in [src/stages.ts](../../src/stages.ts))
-recurse via `generatePipelineWithCtx(value, freshSubPipelineCtx())`. The
-fresh-empty ctx means:
-
-- Outer lets are **not** visible inside a sub-pipeline. A reference to an outer
-  let from inside `$lookup.pipeline` raises `UnknownIdentifierError` — the
-  natural, generic error that already covers "undeclared identifier" cases.
-- A sub-pipeline can declare its own `let`s independently. Its trailing
-  `$unset: "__jsmql"` lives inside the sub-pipeline.
-
-This is conservative — a future version may relax the rule for non-`$facet`
-sub-pipelines where the outer document is in scope — but the current rule keeps the
-semantics predictable and the error path well-defined.
+The chain appends one `{ $unset: "__jsmql" }` when it closes with the namespace still on the documents (`Chain.dirty`): a `let` slot, a join's scratch slot and the stream count share the namespace and the one cleanup. A stage that replaced the document clears the flag, so nothing is unset that is already gone; a program whose `let`s were all folded emits no trace of the machinery.
 
 ## Output stability
 
@@ -267,22 +181,7 @@ the end.
 
 ## Lookup as a `let` RHS
 
-`let x = $$$.coll.find/filter(...)` is recognised in `lowerImplicitPipeline`
-and `lowerPipeline`: instead of materialising the value through the usual
-`$set { __jsmql.var.<name>: <value> }` shape, the `$lookup.as` slot is set
-directly to `__jsmql.var.<name>` and the binding is registered in the same way.
-For chained-on-lookup RHSes (`let n = $$$.coll.filter(p).length`,
-`let s = $$$.tx.filter(p).reduce(fn, init)`), the chained terminal materialises
-into an internal `__jsmql.tmp.<N>` slot first; the let machinery then
-materialises `__jsmql.var.<name>` from that slot in the standard way. See
-[`lookup-stage.md`](./lookup-stage.md) for the chained-terminal lowering table.
-
-Both routes carry the declaration's `kind` (so a `const` lookup binding rejects
-reassignment) and its static type: the direct route types the slot with
-`lookupSlotType` — `.filter` / `.aggregate` leave the `$lookup.as` array in place,
-while `.find` stays untyped because its `$first` overwrite yields `null` on no
-match — and the chained route types the rewritten RHS with `staticBindingType`, so
-a `.uniq()`-terminated chain is an array.
+`let os = $$$.c.filter(p);` uses the binding's own slot as the `$lookup`'s `as` — one stage, no `$set` — and types the binding as the array (`.filter`, `.aggregate`) or the document (`.find`) the chain yields. A chain that goes on (`let n = $$$.c.filter(p).length`, `let s = $$$.tx.filter(p).reduce(fn, init)`) is a VALUE: the `$lookup` is hoisted into a scratch slot ahead of the `let`, and the slot holds the rest of the chain as a value — see [lookup-stage.md § The join road](lookup-stage.md). `const` refuses reassignment on both routes.
 
 ## Deferred
 
@@ -297,32 +196,14 @@ a `.uniq()`-terminated chain is an array.
   match from using the index. The compiler could surface a warning through
   `validate()`, but that requires a warning channel which doesn't exist yet.
   Documented in `LANGUAGE.md` instead.
-- **Outer lets cross into `$lookup.pipeline` / `$unionWith.pipeline`.** These
-  sub-pipelines run on a *different* document (the foreign collection), so
-  the materialised `__jsmql.var.<name>` field doesn't exist there — outer lets
-  legitimately don't cross. (The `$lookup.let` clause is the mechanism to
-  thread per-doc values into those sub-pipelines; jsmql already auto-extracts
-  `$.x` refs into it.)
 
-## Outer lets inside `$facet` sub-pipelines
+## Outer lets inside sub-pipelines
 
-Outer lets **are** visible inside a `$facet` branch. Each branch operates on the
-same input documents that arrived at the outer `$facet` stage, so they still carry
-the `__jsmql.var.<name>` fields the outer lets materialised into. `freshFacetCtx`
-(in `src/compiler/emit/lower.ts`, sibling to `freshSubPipelineCtx`) constructs a fresh
-sub-pipeline ctx that PRESERVES `pipelineLets`; the facet branch lowering in
-`src/compiler/emit/statement.ts` uses it. `test/let-bindings.test.ts` covers the
-let-into-facet shape.
+Stated under [Blocks and sub-pipelines](#blocks-and-sub-pipelines): a `$facet` branch reads the outer binding's field, a `$lookup` body reads it through the stage's `let`, a `$unionWith` body cannot read it.
 
 ## Tests
 
-[test/let-bindings.test.ts](../../test/let-bindings.test.ts) covers basic
-shape, the canonical multi-let example, `$match` `$expr` wrap, `$sort` keys,
-method-lambda interaction, lambda-vs-let shadowing, bracketed form,
-template-tag form, all five reshape-clearing stages, rebind-after-reshape,
-re-declaration, top-level-without-pipeline rejection, single-let-with-`;`
-edge case, value-array rejection, sub-pipeline isolation, outer-lets-not-
-visible-in-sub-pipeline, and `validate()` round-trip for both error classes.
+[test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) covers the binding, reassignment, the fold of a constant `let`, the reads a replacing stage refuses, shadowing, and the cleanup; [test/compiler-join.test.ts](../../test/compiler-join.test.ts) covers a `let` as a `$lookup` slot and the `let` capture inside a body; [test/compiler-env.test.ts](../../test/compiler-env.test.ts) covers the Env's scope rules. Every pipeline they assert on runs on `mongod`.
 
 [test/realistic.test.ts](../../test/realistic.test.ts) carries the canonical
 order-pricing example under `pipeline: order pricing with let bindings +

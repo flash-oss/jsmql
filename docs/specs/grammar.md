@@ -244,10 +244,10 @@ the next stage. Inside an explicit `[…]` pipeline, only `,` is valid (JS
 syntax) and adjacent update op elements coalesce — that is the
 documented difference between the two pipeline forms.
 
-Implemented in `Parser.parse()` (top-level `;` loop) and
-`generateImplicitPipeline` in `src/compiler/emit/statement.ts`. `generatePipeline` (for
-`[…]`) keeps coalescing across elements; `generateImplicitPipeline` (for
-`;`-separated) does not.
+Implemented in the parser's top-level `;` loop and in `writeStages`
+(`src/compiler/emit/statement.ts`), which coalesces a `,`-run of writes into the
+fewest stages that keep their order ([update-filter.md § The pipeline](update-filter.md));
+a `;` is a stage boundary.
 
 ## Strict-JS-subset rule
 
@@ -317,15 +317,15 @@ This rule is implemented in `Parser.parseOperatorCall()`.
 
 ## Field ref — one segment only
 
-`parseFieldRef()` stops after the **first** segment. Subsequent dot accesses are handled by `parsePostfix()` as `MemberAccess` or `MethodCall` nodes. Codegen's `asFieldPath()` helper reconstructs MongoDB dotted field paths transparently:
+The parser stops a field reference after the **first** segment; subsequent dot accesses are `MemberAccess` or `MethodCall` nodes. The value road (`src/compiler/emit/lower.ts`) renders a member chain on a field as one dotted path:
 
-- `$.a.b.c` → AST: `MemberAccess(MemberAccess(FieldRef("a"), "b"), "c")` → codegen: `"$a.b.c"`
+- `$.a.b.c` → AST: `MemberAccess(MemberAccess(FieldRef("a"), "b"), "c")` → `"$a.b.c"`
 
 This enables method chaining: `$.name.trim()` parses as `MethodCall(FieldRef("name"), "trim", [])`.
 
-If `asFieldPath()` can't fold the chain into a single dotted-path string — e.g. the receiver is an `IndexAccess` (`$.items[0].name`), a method call result, or a ternary — codegen falls back to `$getField`:
+When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items[0].name`), a method call result, or a ternary — the member read is `$getField` over the lowered receiver:
 
-- `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → codegen: `{ $getField: { field: "name", input: <bracket-access $cond> } }`
+- `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → `{ $getField: { field: "name", input: <the bracket access: $arrayElemAt on an array, $substrCP on a string, $getField otherwise> } }`
 
 (For numeric array indices specifically, this is the supported replacement for the previously-accepted-but-not-valid-JS form `$.items.0.name`. See "Strict-JS-subset rule" above.)
 
@@ -369,7 +369,7 @@ The parser threads a `BlockArgCtx` (`{ kind: "expr" }` default, `kind: "pipeline
 $let({ d: $.price * 0.1 }, (d) => $.price - d)
 → { $let: { vars: { d: ... }, in: { $subtract: ["$price", "$$d"] } } }
 ```
-A name mismatch (`$let({ x: ... }, (d) => ...)`) compiles, but emits a `$$d` reference with no `vars.d` binding — which MongoDB rejects at runtime. See `generateOperatorCall`'s `$let` intercept in `src/compiler/emit/lower.ts`.
+A name mismatch (`$let({ x: ... }, (d) => ...)`) is refused — "$let's arrow parameters must name its variables: got (d) for vars { x }." — by the `$let` row's cell (`src/registry/names.ts`).
 
 ## IIFE → `$let`
 
@@ -413,26 +413,26 @@ When any operand of a `+` chain is **string-producing**, the entire chain emits 
 
 ## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
 
-The codegen helpers `jsBool(value)`, `isProvablyBool(expr)`, and `generateBool(expr, ctx)` (in `src/compiler/emit/lower.ts`) implement JavaScript's truthy/falsy rules over MQL primitives.
+The `truth` service (`src/compiler/emit/inputs.ts`, over the value road in `src/compiler/emit/lower.ts`) implements JavaScript's truthy/falsy rules over MQL primitives; a renderer whose result is provably a boolean carries the `Truth` brand ([src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)) and passes bare.
 
-- `jsBool(value)` emits `{ $and: [{$ne:[{$ifNull:[v,null]},null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)` so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing → null first, matching JS where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing") and rely on type-bracketed comparison for the cross-type checks (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
-- `generateBool(expr, ctx)` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `emit-pass.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `emit-pass.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
+- The JavaScript test emits `{ $and: [{$ne:[{$ifNull:[v,null]},null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)` so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing → null first, matching JS where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing") and rely on type-bracketed comparison for the cross-type checks (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
+- `truth` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `emit-pass.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `emit-pass.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
 - A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. Same answer (`jsBool(a && b)` is "a truthy AND b truthy"), but the `$cond` is invisible where nothing reads the returned operand, and wrapping it instead would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
-- `isProvablyBool(expr)` returns true when an AST node always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
-- `isBoolValued(value)` asks the same of the **generated** value, for constructs that are boolean only after lowering and so have no bool-shaped AST to inspect: an inlined reusable function or IIFE (a `$let` whose body is a comparison), and a `jsmql.compile` parameter bound to a boolean. A sole key in `BOOL_OUTPUT_OPS`, a JS boolean, or a `$let` whose `in` is itself bool-valued all elide the wrap.
+- An expression is provably boolean when it always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
+- The `Truth` brand asks the same of the **rendered** value, for constructs that are boolean only after lowering and so have no bool-shaped AST to inspect: an inlined reusable function or IIFE (a `$let` whose body is a comparison), and a `jsmql.compile` parameter bound to a boolean. A sole key in `BOOL_OUTPUT_OPS`, a JS boolean, or a `$let` whose `in` is itself bool-valued all elide the wrap.
 
 **Codegen rules:**
 
 | Construct | Output |
 |---|---|
-| `Boolean(x)` | `jsBoolIfNeeded(x)` — bare value when `x` already bool |
-| `!x` | `{$not: jsBoolIfNeeded(x)}`; `!!x` peephole → `jsBool(x)` |
-| `a ? b : c` | `{$cond: {if: jsBoolIfNeeded(a), then: b, else: c}}` |
+| `Boolean(x)` | the truth test — the bare value when `x` is already boolean |
+| `!x` | `{$not: <truth of x>}`; `!!x` → the truth test of `x` |
+| `a ? b : c` | `{$cond: {if: <truth of a>, then: b, else: c}}` |
 | `a && b` (all-bool chain) | `{$and: [...operands]}` (cheap form) |
-| `a && b` (mixed chain, pure-ref or bool LHS) | `{$cond: {if: jsBoolIfNeeded(a), then: b, else: a}}` (operand-preserving) |
+| `a && b` (mixed chain, pure-ref or bool LHS) | `{$cond: {if: <truth of a>, then: b, else: a}}` (operand-preserving) |
 | `a && b` (mixed chain, expensive LHS) | `$let` binds `v = a`, then `$cond` on `$$v` (no double-eval). `v` gensyms against in-scope lambda params (and is MongoDB-valid — lowercase lead). |
 | `a \|\| b` | mirror of `&&` with `$cond` branches swapped |
-| `arr.filter(p)` etc. | predicate body wrapped in `jsBoolIfNeeded` |
+| `arr.filter(p)` etc. | the predicate body through the truth test |
 
 Direct operator escapes (`$toBool($.x)`, `$op($and, …)`, `$cond({…})`) bypass these wrappers — they are explicit MongoDB semantics.
 

@@ -59,11 +59,10 @@ $$$$.listSampledQueries({ namespace:"x" })→ [{ $listSampledQueries: { namespac
 $$$$.shardedDataDistribution()           → [{ $shardedDataDistribution: {} }]
 ```
 
-The optional options-object argument lowers through the same `generateStageBody`
-path every other stage body uses — all nine declare `subPipelineFields: []`, so
-it's a plain recursive object codegen. No argument → an empty `{}` body. The
-options are literal config (booleans, strings, `{user, db}` arrays); no `$.field`
-translation is involved.
+The optional options-object argument lowers through the stage's own `body` rule
+like every other stage body. No argument → an empty `{}` body. The options are
+literal config (booleans, strings, `{user, db}` arrays); no `$.field` translation
+is involved.
 
 `options: false` in the `diagnostic` metadata marks the three stages that take
 *no* options (`$indexStats`, `$planCacheStats`, `$shardedDataDistribution`) — an
@@ -103,10 +102,11 @@ the validation and returns the descriptor.
 ## First-stage-only
 
 A diagnostic produces the stream, so anything emitted before it is a
-contradiction. Both `generatePipeline` and `generateImplicitPipeline` enforce
-`out.length === 0` at the point the diagnostic is lowered and otherwise throw
-`'$$.indexStats(...)' produces the pipeline's source documents (\`$indexStats\`),
-so it must be the first stage.` at the call-site position.
+contradiction. The stage's row states the placement, and the statement road checks
+it against what the chain has emitted, so a diagnostic that is not the first
+statement is refused at the call-site position: "'$indexStats' produces the
+pipeline's source documents, so it has to be the FIRST stage — the server refuses it
+anywhere else. Move it to the top of the program."
 
 ## Error catalog
 
@@ -131,14 +131,5 @@ a usable offset.
 Pipeline-only, like the other source/sugar shapes. `jsmql.pipeline()` accepts a
 diagnostic source stage (auto-wrapped as a one-stage Pipeline). `jsmql.filter()`,
 `jsmql.expr()`, and `jsmql.update()` reach the bare-ref codegen error, which now
-lists the diagnostic forms among the supported shapes for each prefix.
+lists the diagnostic forms among the supported shapes for each prefix. The arrow form type-checks too: `$$` / `$$$$` are ambient globals with the diagnostic methods declared ([globals-generation.md](globals-generation.md)).
 
-## Out of scope
-
-- **Arrow-form / TS types.** `$$`/`$$$`/`$$$$` are not yet ambient globals (see
-  [context-references.md → Future work](./context-references.md#future-work)), so
-  `jsmql(({ $ }) => $$.indexStats())` won't type-check. String form works fully. When
-  the ambient globals land, the diagnostic methods are declared alongside the
-  existing `.push`/`.find` sugar.
-- `$documents` and `$sample` are **not** diagnostics — they're source/regular
-  stages with their own natural forms — and are not part of this surface.

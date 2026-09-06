@@ -46,14 +46,14 @@ type>`. The custom message rides in as the bogus type name.
 - **Fails** → `to` resolves to `<failType>` (a string that is never a valid
   bson type name); `$convert` throws `Unknown type name: <failType>`.
 
-Built by `generateAssertGuardExpr` (the `$convert` expression) in
-[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts); the `$match` wrap is applied in
-[`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) (`lowerStatementTail`).
+Built by the `assert` row's `statement` cell in
+[`src/registry/names.ts`](../../src/registry/names.ts) — the `$convert` guard and the
+`$match` around it — which the statement road emits like any stage.
 
 ### `<cond>`
 
-`generate`d from the condition expression and wrapped in JS-truthiness
-(`jsBoolIfNeeded`) exactly like every other boolean context, so
+Lowered from the condition through the `truth` service exactly like every other
+boolean position (a comparison passes bare, a value gets the JavaScript test), so
 `assert($.active)` treats `0` / `""` / `null` / missing as failing — the JS
 meaning, not MongoDB's.
 
@@ -89,11 +89,10 @@ the error unconditionally; routing it through `$convert.to` avoids that too.
 
 ## Dispatch (call forms)
 
-`assert(...)` is a bare-identifier `CallExpression`. It is recognised as a
-pipeline statement in `lowerStatementTail`, flips array/single-statement input
-into pipeline mode via `isStageCandidate`, and is auto-wrapped into a one-stage
-pipeline by the `jsmql()` / `jsmql.pipeline()` entry points (so no trailing `;`
-is needed). All of these work:
+`assert(...)` is a bare-identifier `CallExpression` whose row lists a `statement`
+form and no value form, so it is a statement wherever it stands: a lone
+`assert(…)` with no `;` is a pipeline by the shape rule
+([filter-mode.md § The decision](filter-mode.md)). All of these work:
 
 - `({ $ }) => { assert($.q >= 0, "m"); $.fee = … }` — multi-statement pipeline
 - `({ $ }) => { assert($.q >= 0, "m") }` — single-statement block
@@ -108,7 +107,7 @@ A user-declared `const assert = …` takes precedence (the built-in yields when
 
 | Input | Error |
 |---|---|
-| expression position (ternary branch, field RHS, nested call) | `'assert(...)' is a pipeline statement, not a value …` (thrown in `generateCallExpression`) |
+| expression position (ternary branch, field RHS, nested call) | `'assert(...)' is a pipeline statement, not a value …` (the row's refusal for the value position) |
 | `jsmql.filter(...)` / `jsmql.expr(...)` | same statement-form hint |
 | `assert()` / `assert(a, b, c)` | `assert(condition[, message]) requires 1 or 2 arguments, got N` |
 | `assert(...x)` (spread) | `Spread (...) is not supported as an argument to 'assert(...)'.` |

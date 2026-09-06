@@ -26,15 +26,7 @@ statement (including inside a comma-separated update-filter chain like
 `$.a = 1, $ = $.profile, $.b = 2`). Using it inside a Filter / `jsmql.expr`
 goes through the normal pipeline-mode-required gate.
 
-**No `;` required.** A bare `$ = <expr>` that is the *only* statement (no `;`,
-so the parser yields a one-op `UpdateFilter` rather than a `Pipeline`) is still
-root-replace — `index.ts` reroutes such an UpdateFilter through
-`generateImplicitPipeline` (via `updateFilterHasReplaceRoot`, parallel to the
-`$out` sugar's `containsOutAssign`) so it emits `$replaceWith`, identical to the
-`;`-terminated form. This holds across `jsmql()`, `jsmql.pipeline()`, and
-`jsmql.update()` (where `$replaceWith` is whitelisted). Without this reroute,
-`generateUpdateFilter` would treat the bare `$` target as a field path and emit
-`{ $set: { "": … } }` — invalid/meaningless MQL.
+**No `;` required.** A write is a pipeline wherever it stands ([filter-mode.md § The decision](filter-mode.md)), so a bare `$ = <expr>` with no `;` emits the same `$replaceWith` the `;`-terminated form does, through `jsmql()` and `jsmql.pipeline()` alike. `jsmql.update()` refuses it: an update document holds writes to fields, and the server's document-form update has no root replacement.
 
 The two entry points that cannot hold stages reject it instead, each with a
 root-replace-specific message: `jsmql.filter()` returns a Filter, and
@@ -74,16 +66,11 @@ about what the statement does to the document.
 | `$ = $` | `{ $replaceWith: "$$ROOT" }` (identity — bare `$` lowers to `"$$ROOT"`) |
 | `$ = $mergeObjects($.a, $.b)` | `{ $replaceWith: { $mergeObjects: ["$a", "$b"] } }` |
 | `$ = { ...$, x: 1 }` | `{ $replaceWith: { $mergeObjects: ["$$ROOT", { x: 1 }] } }` |
-| `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, as: "__jsmql.tmp.N" } }`, `{ $replaceWith: { $first: "$__jsmql.tmp.N" } }`, trailing `{ $unset: "__jsmql" }` |
-| `$ = $.foo + $$$.coll.find(pred).count` (buried lookup) | Prologue `$lookup` + `$set $first` stages for the buried lookup, then `{ $replaceWith: <rewritten-expr> }` |
+| `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
+| `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
 | `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out variant](#fan-out-variant) |
 
-For the direct-lookup variant we deliberately skip the `$set { slot: $first slot }`
-step that `lowerLookup` emits for the assignment-target form (`$.users = …`).
-The slot is discarded immediately by the `$replaceWith` anyway, so we save
-one stage by folding `$first` into the `$replaceWith` body. The trailing
-`$unset: "__jsmql"` still fires (it's pipeline-wide, not per-stage) — it's
-harmless after `$replaceWith` because the namespace field is already gone.
+The direct-lookup form unwinds the slot instead of reading `$first`: `$replaceWith: { $first: … }` fails on the server for every document whose match is empty (measured), while `$unwind` drops it — the one document it found is what the document becomes, and a document that found nothing has nothing to become ([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows a `$replaceWith`: the scratch namespace is gone with the old root.
 
 ## Bare `$` is `$$ROOT`
 
@@ -99,10 +86,8 @@ jsmql.expr("$mergeObjects($, { x: 1 })")
 // → { $mergeObjects: ["$$ROOT", { x: 1 }] }
 ```
 
-This is why `$ = { ...$, … }` works with no spread-specific code in
-`lowerReplaceRoot` — the spread codegen already emits `$mergeObjects`
-operands by calling `_generate(arg, ctx)`, and the first operand for a bare
-`$` is just `"$$ROOT"`.
+This is why `$ = { ...$, … }` needs no spread-specific code: the spread lowers
+to `$mergeObjects` operands, and the operand for a bare `$` is `"$$ROOT"`.
 
 ## Facet variant
 
@@ -110,7 +95,7 @@ When the RHS of `$ = …` is an object literal where every value is a
 `$$.filter(<lambda>)` call, the same `$ = { … }` surface lowers to a
 `$facet` stage instead of `$replaceWith`. The detection lives in
 `src/compiler/emit/statement.ts` and runs *before* the `$replaceWith` emission
-inside `lowerReplaceRoot`'s callers:
+ahead of the `$replaceWith` emission in the write road:
 
 ```
 $ = {
@@ -125,27 +110,11 @@ $ = {
 //   } }]
 ```
 
-**Detection — all-or-nothing.** `detectFacetShape(value)`:
+**Detection — all-or-nothing.** `isFacet` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the object literal: no entry is a chain on `$$` → an ordinary `$replaceWith` body; at least one is → every entry must be one, and a mixed object is refused naming the entry — "'$ = { … }' with a '$$' chain is a '$facet', and every entry must be one: 'b' is not a chain on '$$'. Make it one ('b: $$.filter(…)'), or move it out of the object." Spread entries and computed keys are refused in that mode too.
 
-1. If `value` isn't an `ObjectLiteral`, returns `null` (caller falls through to `$replaceWith`).
-2. Scans for any entry whose value is a `$$.filter(<lambda>)` call.
-   - Zero filter entries → returns `null`. The RHS is treated as a normal `$replaceWith` body.
-   - At least one filter entry → enters strict-shape mode: *every* entry must be a `$$.filter(<lambda>)`. Mixed shapes throw a precise error naming the offending key (`Entry 'b' is something else. Either convert it to '$$.filter(<predicate>)' or move it out of the object.`).
+**Each entry is one sub-pipeline.** `facetStages` lowers each chain through the stream road ([stream-methods.md § Where a chain runs](stream-methods.md)) in an Env that has crossed the `$facet` boundary over the SAME documents: a predicate lowers through the filter road with the parameter as the document, a stage link is the stage, and the outer bindings and `$$.length` are readable inside the branch ([let-bindings.md § Blocks and sub-pipelines](let-bindings.md)). `$facet` replaces the document — its output is `{ <branch>: […], … }` — so every field-carried binding is dropped after it, and a later read is refused precisely.
 
-Spread entries (`...rest`) and computed keys are also rejected in strict mode.
-
-**Each filter lambda becomes one sub-pipeline body.** `lowerFacetEntry(lambda, ctx, lowerBlock)`:
-
-- Predicate shape and arity come from the shared local-`$$` gate (`requireStreamPredicate`), so a facet branch accepts exactly the spellings the `$$ =` stream and an `$out` chain do — see [emit-pass.md](emit-pass.md) § the local-`$$` predicate gate. Exactly one parameter: the doc is named explicitly so the rejection message for `$.<field>` references can point at the right replacement (`o.<field>`).
-- Expression body: rewritten via `extractLetsFromExpr` (foreign param → `FieldRef`), then run through `translateMatchBody` (same engine `$match` uses). Translatable portions emit index-friendly `{ field: value }`; residuals ride in `$expr` side-by-side.
-- Block body: rewritten via `extractLetsFromPipeline`, then lowered via `lowerBlock` (same `SubPipelineLowerer` used by lookup and union).
-- **`$.<field>` is rejected.** If `extractLetsFromExpr` / `extractLetsFromPipeline` returns any letVars (= the predicate referenced the local doc), the helper throws the shared `localRefInPredicateMessage` (`'$.<field>' inside '$$.filter(<predicate>)' in a \`$ = { ... }\` $facet branch is not supported — use the lambda parameter …`; a shorthand-spelled predicate is redirected to the arrow form instead, since it has no parameter the user could write). Rationale: inside a facet sub-pipeline, the lambda param IS the current document, so `$.x` and `o.x` would mean the same thing — supporting both invites drift. (Contrast with `$lookup`, where `$.x` refers to the *outer* doc and gets auto-`let`-extracted.)
-
-**Reshape-clearing.** `$facet` is in `RESHAPE_CLEARING_STAGES` — its output is `{ facetName: […], … }`, completely replacing the input doc. The interception in `pipeline.ts` calls `clearCtxLets(ctx, "$facet")` after emission so a subsequent let reference produces the precise "can't be read after `$facet`" error.
-
-**Parser gate.** The sub-pipeline block grammar in `parsePostfix` is enabled by receiver shape: `left` walks back to a `DatabaseRef` / `ClusterRef` (lookup) or a `CollectionRef` (the current stream), so a `$$`-rooted callback is parsed with it too. That is what lets the callback-block rule reject a stage in a `$$.filter(...)` branch by name rather than as an unexpected token.
-
-**Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid — it lowers to `$match` as stream-chain sugar for `$$ = $$.filter(...)` (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md#bare-statement-stream-chains)). What triggers `$facet` is the `$ = { key: $$.filter(p), … }` object form; the difference is the assignment target (`$ =` vs a bare statement).
+**Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid — it lowers to `$match` as the stream road's own spelling (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md)); only inside `$ = { … }` does the same call name a facet branch.
 
 ## Fan-out variant
 
@@ -164,25 +133,7 @@ $ = [{ a: 1 }, { b: 2 }];
 // ]
 ```
 
-`lowerFanOut(arr, ctx, allocSlot, lowerBlockFn)` runs `extractLookupCalls` over
-the array first (buried `$$$.coll.find(...)` lookups materialise as prologue
-stages), then emits the three-stage sequence above. Like the direct-lookup
-variant it reuses the `allocSlot()` machinery and the closing `$replaceWith`
-discards the `__jsmql` namespace, so the trailing-`$unset` skip already applies.
-
-**What counts as "provably an array"** is exactly
-`staticBindingType(value) === "array"` (in `src/compiler/emit/lower.ts`): array literals,
-array-returning methods (`.map`, `.filter`, `.flatMap`, `.split`, `.slice` of an
-array, …), array operators, and `Object.entries/keys/values`. A bare field ref
-`$ = $.items` is **not** provably an array (field paths carry no compile-time
-type), so it stays a single-doc `$replaceWith`. To fan out a field, spread it
-into a literal: `$ = [...$.items]`.
-
-**Dispatch order** in `lowerReplaceRoot`: the compound-assign guard runs first;
-then array *literals* are validated and fanned out; then the direct-lookup check
-(so `$$$.coll.filter(...)` keeps its dedicated error rather than being swept into
-the generic fan-out); then non-literal provably-array RHS fans out; then the
-scalar-literal rejections; then the default `$replaceWith`.
+The write road (`writeStages`) fans out when the value's kind is provably an array (`kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts)): an array literal, an array-returning method on any receiver (`.map`, `.filter`, `.uniq`, `.slice` of an array, …), an array operator, `Object.entries` / `keys` / `values`. A bare field ref `$ = $.items` is **not** provably an array (a field path carries no compile-time kind), so it stays a single-document `$replaceWith`; to fan out a field, spread it into a literal: `$ = [...$.items]`. A join in the value is hoisted ahead into its own slot first ([lookup-stage.md](lookup-stage.md)). No cleanup follows: the closing `$replaceWith` discards the `__jsmql` namespace with the old root.
 
 **Per-document drop is emergent, not a special case.** Default `$unwind` emits
 no document for an empty/missing array, so fanning out a possibly-empty array
@@ -198,91 +149,20 @@ lowering for `$ = []` or `$ = undefined` — both are rejected/unchanged (see
 spelled `$$ = []` (see [replace-stream](#)/`$$ = <expr>`), and one behaviour with
 two spellings is a footgun we avoid.
 
-## Detection
+## Lowering and refusals
 
-`isReplaceRootAssign(op)` (in `src/compiler/emit/statement.ts`) recognises the shape:
+`$ = <expr>` is an `AssignExpr` whose target is the bare `$` (a `FieldRef` with an empty path); `writeStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) reads the target and emits `{ $replaceWith: <value> }` — or, for a value that is an array, the fan-out (`$set` a scratch slot, `$unwind`, `$replaceWith`), and for a join, the join road's `joinRoot` ([lookup-stage.md](lookup-stage.md)). A write before it is its own stage (`$.a = 1; $ = $.profile;` → `[{ $set: { a: 1 } }, { $replaceWith: "$profile" }]`), and every field-carried binding is dropped after it, so a later `let` read is refused precisely ([let-bindings.md § Stages that replace the document](let-bindings.md)).
 
-```ts
-op.target.type === "FieldRef" && op.target.path === ""
-```
+Each refusal names a concrete fix:
 
-Different from `$.<x> = <expr>` (non-empty path) and from any `MemberAccess`
-chain (different node type). The interception fires before the update-op
-buffer in three places — both pipeline entry points and the
-update-filter-with-lookups inner loop:
-
-- `generatePipeline` (the `[ … ]` form) — line ~196 in `src/compiler/emit/statement.ts`
-- `generateImplicitPipeline` (the `;` form, via `lowerUpdateFilterWithLookups`)
-- `lowerUpdateFilterWithLookups` (one `,`-chained UpdateFilter statement)
-
-Because the interception runs first, `updateOpWritePath` / `validateUpdateTarget`
-never see an empty-path target through the assignment path, and the
-existing invariants for those helpers are untouched.
-
-## Validation
-
-`lowerReplaceRoot` rejects these shapes before any stage is emitted, each
-with a message that names a concrete fix:
-
-| Trigger | Message excerpt |
+| Trigger | Message |
 |---|---|
-| `BinaryExpr` whose `.left === target` by reference identity (compound desugar `$++`, `$ += 5`, `$--`, `$ *= 2`, etc.) | `Cannot use compound assignment / increment on bare '$' — '$' is the whole document, not a scalar. Use '$ = { ...$, ...overrides }' to merge fields into the root or '$ = <newRoot>' to replace it outright.` |
-| Empty array literal RHS (`$ = []`) | `Cannot fan out an empty array — '$ = []' would discard every document. To drop documents conditionally, fan out a data-dependent array (e.g. '$ = $.items.filter(...)'); to empty the stream, use '$$ = []'.` |
-| Array literal with a provably-scalar element (`$ = [1, 2]`, `$ = ["a"]`) | `Cannot fan out an array of <kind> — each array element becomes a document root, so elements must be documents. Did you mean to wrap them: '$ = [{ value: ... }]'?` |
-| Number / BigInt / String / Boolean / Null / Regex literal RHS | `Cannot replace root with a <kind> — the new root must be a document. Did you mean to wrap it: '$ = { value: ... }'?` |
-| Direct `$$$.<coll>.filter(pred)` RHS (array result) | `Cannot replace root with an array — '.filter(...)' returns an array. Use '.find(...)' for a single matching doc, or wrap: '$ = { items: $$$.<coll>.filter(...) }'.` |
+| a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
+| `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
+| `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …'" |
+| `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
-`$ = undefined` is not handled here — it falls through to codegen's existing
-`UndefinedLiteral` rejection (`'undefined' is only meaningful in '$match'
-position …`). `$ = null` stays a scalar-literal rejection (the row above). A
-non-empty array literal of documents, or a non-literal provably-array
-expression, is **not** rejected — it [fans out](#fan-out-variant).
-
-Compound-desugar detection works by referential identity rather than a
-parser flag: `parsePrefixIncDec` (`src/compiler/parse/parser.ts:860`), the postfix branch
-in `parseUpdateOp` (around line 749), and the compound branch in
-`parseAssignmentChainFrom` (line 799) all build a `BinaryExpr` that *reuses*
-the original `target` node as `left`. Two different syntactic occurrences
-of `$` are distinct AST nodes (the lexer and parser don't memoise), so
-`el.value.type === "BinaryExpr" && el.value.left === el.target` only fires
-for the synthesised compound shape.
-
-Anything not in the table passes through. MongoDB validates the document-shape
-at runtime — e.g. `$ = $.points * 1.1` produces a numeric `$multiply` that
-the server rejects, but compile-time we can't distinguish that from a
-legitimate sub-document expression.
-
-Two related parse-time rejections (in `pipeline.ts`, not `parser.ts`):
-
-| Trigger | Message excerpt |
-|---|---|
-| `delete $` (bare `$` as a DeleteStmt target) | `Cannot 'delete $' — bare '$' is the whole document. Use '$ = <newDoc>' to replace it, or 'delete $.<field>' to drop a single field.` |
-| (covered above) `$++`, `$--`, `$ += …`, `$ -= …`, `$ *= …`, `$ /= …` | Same compound-desugar message |
-
-The parser doesn't pre-reject any of these — `isFieldPathTarget` already
-accepts `FieldRef { path: "" }` (it returns `true` for any FieldRef). All
-the rejections live in `lowerReplaceRoot` / pipeline lowering so the same
-parser path serves both the "good" form (`$ = X`) and the bad ones (`$++`,
-`delete $`), and the error message can carry the right `.pos` (RHS for
-assignment-shape errors; the statement itself for delete/inc-dec).
-
-## Interaction with `$set` / `$unset`
-
-`$replaceWith` is in `RESHAPE_CLEARING_STAGES` (already, before this work).
-Concretely:
-
-1. **Update buffer flushes before `$ = …`.** The pipeline lowerer calls
-   `flushUpdateOps()` immediately before invoking `lowerReplaceRoot`. So
-   `$.a = 1; $ = $.profile;` emits `[{ $set: { a: 1 } }, { $replaceWith: "$profile" }]`
-   — never one merged `$set`.
-2. **Subsequent `$.x = …` ops start a fresh buffer.** They operate on the
-   new root, not the pre-replace one.
-3. **Let scope clears.** `ctx = clearCtxLets(ctx, "$replaceWith")` runs in
-   all three interception sites. A later `let`-binding reference produces
-   the existing precise error: `` `x` is a `let` binding and can't be read after `$replaceWith` — the stage replaces the document. ``. The
-   `lowerUpdateFilterWithLookups` helper changed signature to return both
-   `stages` and `ctx` (instead of just `stages`) to thread this update back
-   to the outer pipeline loop in `generateImplicitPipeline`.
+A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document (`$ = $.points * 1.1` is refused by the server, not at compile time). An array literal fans out whatever its elements are (`$ = [1, 2]` unwinds two scalars, which the server refuses as roots) — see [Fan-out variant](#fan-out-variant).
 
 ## Deferred
 

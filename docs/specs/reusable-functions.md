@@ -94,88 +94,26 @@ expression/declaration can start. See § The `function` keyword.
   bracketed) throws `throwFuncDeclOutsidePipeline` — same shape as the existing
   `let`-outside-pipeline rule.
 
-## Codegen
+## Lowering
 
-[src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts).
+### The binding
 
-### Context
-
-Two fields on `GenerateCtx`:
-
-```ts
-functions?:   ReadonlyMap<string, FuncDecl>;  // declared functions in scope
-expandingFns?: ReadonlySet<string>;            // the inline-expansion stack (recursion guard)
-```
-
-Both are preserved by every ctx-extending helper (`extendCtx`, `extendCtxLets`,
-the inline `.reduce()` / `Object.groupBy()` lambda ctxs, `freshFacetCtx`) so a
-function is callable inside nested lambda bodies and `$facet` branches.
-`freshSubPipelineCtx` deliberately **omits** them — functions are pipeline-scoped
-like `let`s and do not cross into `$lookup`/`$unionWith` sub-pipelines.
+A declaration — `const f = (x) => …`, `function f(x) { … }` — emits no stage: `statementStages` / `letStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) bind the name in the Env's scope as a `function` binding holding the lambda ([let-bindings.md § Scope and resolution](let-bindings.md)). A second declaration of the name, or a clash with a `let` / `const` / parameter, is refused with a position-bearing error. The binding is pipeline-scoped like a `let`; a body over the same documents (a `$facet` branch, a callback) reads it, and so does a `$lookup` body, because the body is inlined at the call and reads nothing the call site cannot.
 
 ### Call expansion
 
-`generateCallExpression` dispatches on the callee:
-
-- **`ParamRef` naming a function** → expand. First the recursion guard: if the
-  name is already in `expandingFns`, throw (a MongoDB expression can't recurse).
-  Otherwise push the name onto `expandingFns`, extend the ctx with the params,
-  and lower via the shared `applyLambda` helper.
-- **`ParamRef` not naming a function** → "Unknown function" error with a
-  `didYouMean` suggestion over the declared names.
-- **`Lambda`** → the original IIFE path (anonymous), also via `applyLambda`.
-- **anything else** → the "Direct call" rejection.
-
-`applyLambda(lambda, args, argCtx, bodyCtx, pos, label)` is shared by both the
-IIFE and named-function paths: arguments are generated in the **caller** ctx
-(`argCtx`); the body is generated in `bodyCtx` (caller ctx + the params, plus —
-for the named path — the recursion marker). Each param is bound once via `$let`,
-so a multiply-read argument isn't recomputed. A zero-param lambda still emits
-`{ $let: { vars: {}, in: … } }` (empty `vars` is server-valid, matching the IIFE
-precedent).
+`callExpression` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) dispatches on the callee: a name bound to a function → expand; a name bound to anything else → "Unknown function" with a `didYouMean` over the declared names; a lambda → the IIFE path. Both expansions run `applyLambda`: the arguments are lowered in the CALLER's Env, each parameter is bound once by `$let` so a multiply-read argument is not recomputed, and the body is lowered under them. A call with no parameters binds nothing, so no `$let` wraps the body (`const two = () => $.a * 2; two()` → `{ $multiply: ["$a", 2] }`). Inside the body the function's own name is bound to a refusal, so direct or mutual recursion is refused ("Recursive function calls aren't supported — a MongoDB expression can't call itself …").
 
 ### Free-variable capture
 
-A function body may reference more than its params — `$.field` (the document) or
-an in-scope `let`. These resolve against the **call-site** ctx (that's just where
-the body is lowered). Pure-param functions are the common case; capture of `$`
-and lets is a natural bonus, not a separate mechanism.
+A function body may reference more than its params — `$.field` (the document) or an in-scope `let`. These resolve against the CALL SITE's Env (that is just where the body is lowered). Pure-param functions are the common case; capture of `$` and lets is a natural bonus, not a separate mechanism.
 
 ### Function-as-value
 
-A reusable function used where a **value** is expected is rejected with guidance
-toward calling it — MQL has no first-class functions ([DEF-032]). Two sites:
+A reusable function used where a **value** is expected is refused with guidance toward calling it — MQL has no first-class functions ([DEF-032]). Two sites:
 
-- **bare value position** (`$ = { fn: double }`, `double + 1`) hits the
-  `ParamRef` codegen case. Resolution order there: reduce-remap → lambda param →
-  pipeline `let` → function-form binding → **function-as-value error** →
-  dropped-let → unknown identifier. The function check sits after lambda params,
-  so a lambda param may legitimately shadow a function name inside its own body.
-- **bare array-method callback** (`arr.map(double)`) is caught earlier, in
-  `requireLambda` (the method runs before the `ParamRef` is reached as a value):
-  it names the function and points at the lambda-wrap form `arr.map(x => double(x))`.
-
-## Pipeline
-
-[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) `lowerFuncDecl(decl, ctx)`:
-
-- Emits **no stage**; returns `extendCtxFunctions(ctx, decl)`.
-- Collision guards (mirroring `lowerLetDecl`): re-declaration, clash with a
-  `let`/`const` binding, clash with a function-form parameter — each a
-  position-bearing `CodegenError`.
-
-All three pipeline-element loops (`generatePipeline` `[…]`,
-`generateImplicitPipeline` `;`, `generatePipelineWithCtx` sub-pipeline `[…]`)
-dispatch a `FuncDecl` to `lowerFuncDecl` before the `LetDecl` branch. In the
-buffered `[…]` forms, the pending update-op buffer is flushed **before**
-registering, so update ops written before the declaration can't see the function
-(declaration-before-use) and ops after it can.
-
-`isStageCandidate` admits `FuncDecl`, so `[const f = …, $set(…)]` is detected as
-a pipeline. The join, union, out, filter and stage-body lowerings all treat
-a `FuncDecl` the same way they treat a `LetDecl` that contains no relevant
-construct — skip / `null` / `false` / pass-through-unchanged — because a function
-declaration produces no stage and its body is expanded only at call sites.
+- **bare value position** (`$ = { fn: double }`, `double + 1`): the identifier resolves to a `function` binding, and a function is not a value — "'f' is a reusable function — call it with 'f(...)'. A function can't be used as a value …".
+- **bare array-method callback** (`arr.map(double)`): the method's callback rule sees a name where it takes an arrow — "'.map((x[, i[, arr]]) => …)' takes an arrow with an expression body." — write `arr.map(x => double(x))`.
 
 ## Output stability
 
@@ -217,7 +155,7 @@ stays an ordinary identifier (not a lexer keyword), intercepted **by value**:
 - **Statement / array-element position** (`collectStatement` / `parseArrayLiteral`):
   `function name(params) { … }` → a `FuncDecl` with `form: "function"`, identical
   to `const name = (params) => …`.
-- **Entry form** (`parseFunctionInput`): `jsmql(function ({ $ }) { … })` /
+- **Entry form** (`parseEntry`): `jsmql(function ({ $ }) { … })` /
   `jsmql.compile(function (params, { $ }) { … })`.
 
 **Body grammar.** A `function` body reuses `parseExprBlockBody` — `{ (const|let
@@ -253,7 +191,8 @@ default / rest / destructured params.
 
 ## Tests
 
-[test/functions.test.ts](../../test/functions.test.ts) covers declaration +
+[test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) and
+[test/compiler-lower.test.ts](../../test/compiler-lower.test.ts) cover declaration +
 call, every call-site context (object value, `$set`, `.map` lambda, `$match`,
 template tag), multi/zero param, block-body + nested local `const`, free-var
 capture, inter-function composition, output stability, both pipeline forms, and

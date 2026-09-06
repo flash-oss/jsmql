@@ -2,15 +2,16 @@
 
 ## Overview
 
-`STREAM_METHODS` ([src/registry/names.ts](../../src/registry/names.ts)) is the
-single source of truth for the chainable JS-array-shaped methods that may
-appear after a stream / collection receiver inside a `$$ = …` statement. One
-entry per method, each declaring its arg-shape validator and its lowering
-to MQL stages.
+The `stream` cells of the rows in [src/registry/names.ts](../../src/registry/names.ts) are the
+single source of truth for the chainable JS-array-shaped methods that may follow a
+stream receiver — `$$`, `$$$.<coll>`, a callback's third parameter. One cell per
+method, stating the stages a link means; the argument rule (`args`) on the same row
+is the arity check.
 
-The chain walker in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts) (`lowerChainOnStream` /
-`lowerChainOnCollection`) reads from the registry — adding a method here
-makes it usable in both contexts the walker covers.
+The stream road in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)
+(`streamStages` / `streamLink`) and the join road in
+[src/compiler/emit/join.ts](../../src/compiler/emit/join.ts) (`lookupOf`) read the
+cells — adding a cell makes the method usable on every head.
 
 This spec is the implementation-facing companion to the user-facing chain
 documentation in [docs/LANGUAGE.md](../LANGUAGE.md#stream-methods). The
@@ -21,83 +22,42 @@ predate this registry and continue to live where they are; the registry
 only governs **chained** methods after one of those sugars has identified
 the receiver.
 
-## Where the chain walker runs
+## Where a chain runs
 
-Three contexts share the same registry. The per-method loop is the single
-helper `applyStreamMethods` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts); the
-first two contexts reach it through `lowerChainOnStream` / `lowerReplaceStream`,
-the third through `lowerStatementTail`:
+A stream chain is lowered link by link by `streamStages` / `streamLink` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts): each link asks its row's `stream` cell for the stages it means, base first, and a stage link (`.$match(…)`) goes through the same cell its statement form uses. Three heads reach the same cells:
 
-| Context | Chain head | Lowering site |
+| Head | Meaning | Where the stages go |
 |---|---|---|
-| **`$$.<chain>;`** | Bare `$$`; any method — `.filter`/`.reject` may appear at any position | Each registry method appends one or more stages to the outer pipeline. |
-| **`$$ = $$$.<coll>.<chain>;`** | `$$$.<coll>`; any stream method (or `.filter`/`.reject`) may be the head | **Uncorrelated** → `$match:{$expr:false}` + `$unionWith.pipeline` (this loop). **Correlated** (a `.filter`/`.reject` anywhere references `$.`) → `$lookup`-pivot via `peelForeignChain` ([lookup-stage.md](./lookup-stage.md)). |
-| **`$$.<chain>;`** (the statement form) | Bare `$$` | The usual spelling of a chain on the stream; `$$ = $$.<chain>;` is the same program with an explicit head — see [§ Bare-statement stream chains](#bare-statement-stream-chains) below. |
+| `$$.<chain>;` (`$$ = $$.<chain>;` is the same program with an explicit head) | the ROOT stream, at every depth | the enclosing pipeline |
+| `$$$.<coll>.<chain>` | another collection's stream | the `$lookup` body the join road assembles ([lookup-stage.md](lookup-stage.md)); `$$ = $$$.<coll>.<chain>` then unwinds it into the stream, or unions it in when nothing correlates |
+| `coll.<chain>` — a callback's third parameter | the inner stream of a body over another collection | that body |
 
-The **value-position** `$$$.<coll>` chain (`const x = …` / `$.f = …`) and the **correlated pivot** don't run through `applyStreamMethods` — they share `peelForeignChain` (owned by [lookup-stage.md](./lookup-stage.md) § "Any lodash stream method may head the chain"), which lowers `.filter`/`.reject` to a correlating `$match` and dispatches the rest through this registry. Same registry, so a chain lowers to the same sub-pipeline in every destination.
+A link whose row has no `stream` cell is refused with the nearest name that has one, and a value terminal (`.length`, `.sum()`, `.map(o => o.total)`) ends the chain: on the root stream a value has no destination and is refused ("… gives it no destination"), on a join it makes the rest of the chain a value over the joined slot. `.filter(p)` / `.reject(p)` may sit at any position, and lower through the filter road ([filter-mode.md](filter-mode.md)) as a `$match` over the stream's own documents, with the parameter as the document.
 
-The first method of a chain may be `.filter(<lambda>)` — handled by the
-pre-existing `lowerStreamFilterPredicate` (translates the predicate through
-the match-translator). This stays outside the registry because the
-predicate handling is shared with [union-stage.md](./union-stage.md) /
-[facet](./replace-root-stage.md) and is too tightly coupled to the
-two-context wiring to belong in a per-method entry.
+## The cell
 
-Every method *after* the first (and any method when the first isn't
-`.filter`) is dispatched through the registry. Unknown method names produce
-an actionable `CodegenError` (`closestNameTo` suggestion + the list of
-registered methods), with explicit special-cased messages for the
-"single-element" JS methods (`.find` / `.findLast` / `.at`) that name the
-`.slice(0, 1)` / `$ = $$$.<coll>.find(...)` alternatives.
-
-## Registry shape
-
-```ts
-export type StreamMethodDef = {
-  name: string;
-  validate: (args: readonly CallArg[], callPos: number) => void;
-  lower: (args: readonly CallArg[], ctx: GenerateCtx, callPos: number) => StreamMethodResult;
-};
-
-export type StreamMethodResult = {
-  stages: object[];
-  clearLets?: boolean;
-};
-```
-
-- `validate` throws `CodegenError` for any arg-shape rejection. Error messages
-  name the method, the offending arg, and the rule that was violated.
-- `lower` runs only after `validate` accepted the args; it may cast args to
-  the validator-accepted shape without re-checking.
-- `clearLets: true` signals that the emitted stages reshape the document and
-  drop in-scope `let` bindings (e.g. a future `.reduce` → `$group` entry).
-  Threaded back to the caller so the outer pipeline ctx clears the let
-  scope. Defaults to false.
+A `stream` cell is a rule on the row, `(in: StageIn) => Stage[]`: it receives the link's arguments and the services a stage lowering may need — `value` (an argument as an expression), `condition` (a callback as a `$match` body), `sortedBy` (the `$sort` the chain emitted last, for `.takeWhile` / `.dropWhile`), `sortSpec`, the group services — and answers with the stages. It states what it emits and refuses nothing the argument rule (`args`) already refuses. A method with no meaning on a stream (`.at(n)`, `.find(p)` on `$$`) states an `unsupported(reason)` cell whose reason names the spelling that works (`.filter(p).take(1)`, `$ = $$$.<coll>.find(…)`).
 
 ## Callback spellings — one meaning, one output
 
 **Spelling never changes the emitted MQL.** jsmql accepts the lodash shorthands in value position, so the stream forms accept exactly the same set; a spelling that compiles against `$.arr` but errors against `$$$.<coll>` is a bug. Two equivalence classes, each with a single resolver so no method can drift from the others:
 
-| Slot | Spellings that mean the same thing | Resolver |
-|---|---|---|
-| **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLowerCase()` (materialised — see below) | `fieldKeyArg` + `SortKeySink` |
-| **Unwind path** — `.flatMap` | the property string `"items"`, or the equivalent bare-path arrow `d => d.items`. No computed form | `fieldKeyArg` |
-| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) | `keyExpr` (`src/registry/names.ts`) |
-| **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair | `shorthandToLambda` (`src/compiler/emit/lower.ts`), reached at the lookup head via `detectLookupCall` — see [lookup-stage.md](lookup-stage.md) § Module layout |
+| Slot | Spellings that mean the same thing |
+|---|---|
+| **Sort key** — `.sortBy` / `.orderBy` | the property string `"cat"`, the equivalent bare-path arrow `d => d.cat`, or a **computed** arrow `d => d.cat.toLowerCase()` (materialised — see below) |
+| **Unwind path** — `.flatMap` | the property string `"items"`, or the equivalent bare-path arrow `d => d.items`. No computed form |
+| **Group key** — `.groupBy` / `.countBy` / `.keyBy` / `.uniqBy` | the above, **plus** any computed iteratee: `d => d.cat.toLowerCase()`, or a matches shorthand (`{ cat: "a" }` / `["cat", "a"]`, keying on the match boolean, as lodash `_.matches` does) |
+| **Predicate** — `.find` / `.filter` / `.reject` (and the `.map` iteratee) | an arrow `o => o.cat === "a"`, a matches-object `{ cat: "a" }`, a property string `"active"`, a `["cat", "a"]` pair |
 
-Everything downstream must ask the resolver what an argument **means**, never what type it is. Keying on `StringLiteral` is the recurring trap: it makes `.groupBy(d => d.cat)` skip the collapsing `$first` unwrap that `.groupBy("cat")` gets (`isCollapsingTerminal`), and rejects `.find({ … })` outright while `.filter({ … })` sails through — two spellings of one meaning, diverging on the AST node that happened to carry it.
+The shorthands are one desugar rule — `iterateeShorthand` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) rewrites every shorthand to the arrow it means before any cell runs ([desugar-pass.md](desugar-pass.md)) — and the sort spellings are one service, `sortSpec` / `orderBy` ([src/compiler/emit/sort-spec.ts](../../src/compiler/emit/sort-spec.ts)). Everything downstream asks what an argument **means**, never what type it is: keying on `StringLiteral` is the recurring trap, because it makes `.groupBy(d => d.cat)` and `.groupBy("cat")` two different programs.
 
-**The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so a computed group key lowers straight into `_id` with **no extra stages** — `keyExpr` keeps a `fieldKeyArg` fast path first, so a plain key still emits the byte-identical `"$cat"` it always did. A `$sort` key is a *literal field path*, so a computed sort key is **materialised**: `SortKeySink` allocates a `__jsmql.tmp` slot, one `$addFields` computes it ahead of the `$sort`, and the slot is cleared at the end of the chain (`sortStages`). `.flatMap` is the one key slot with no computed form at all.
+**The split is the SLOT, not the method.** `$group._id` is an expression the server evaluates per document, so a computed group key lowers straight into `_id` with **no extra stages**. A `$sort` key has to be a literal field path, so a computed sort key is materialised: the value goes into a scratch slot (`slot()`), the `$sort` names the slot, and the chain's cleanup clears it when the chain closes — never next to the `$sort`, where a following `.takeWhile` reads the sort it follows.
 
-**Cleanup is held to the end of the chain (`StreamMethodResult.cleanupStages`), never emitted next to the `$sort`.** A scratch `$unset` wedged between a `$sort` and the stage after it is a hazard for anything that inspects the stage it follows: a method looking back for the ordering `$sort` sees the `$unset` instead and silently falls back. A method's stages should end with the stage that describes the stream, not with its own housekeeping.
+`.flatMap` cannot be materialised the same way, and that is a *semantic* limit rather than a mechanical one: `$unwind` returns each element to a **named** field, so the field name is part of what the user means. Auto-naming it into a scratch slot and clearing it afterwards would silently decide the shape of every downstream document.
 
-Cleanup is emitted **only inside a `$lookup.pipeline`** (the `inSubPipeline` argument to `lower`): there the sub-pipeline's documents land in an array field the outer `{ $unset: "__jsmql" }` cannot reach. At the top level and inside a `$unionWith.pipeline` that trailing sweep runs over these documents, so a second `$unset` would be noise. When it is emitted it drops the **namespace root** (`__jsmql`), not the individual slot: `$unset` of a dotted path removes only the leaf, so unsetting `__jsmql.tmp.1` left every foreign document carrying `__jsmql: { tmp: {} }`.
+Where the object spelling is already claimed it keeps its richer meaning: `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction specs, `.groupBy({ _id, … })` is the `$group` body (so `.groupBy` is the one group-keyed method without a matches-object shorthand).
 
-`.flatMap` cannot be materialised the same way, and that is a *semantic* limit rather than a mechanical one: `$unwind` returns each element to a **named** field, so the field name is part of what the user means. Auto-naming it into a scratch slot and clearing it would throw the elements away.
-
-Where the object spelling is already claimed it keeps its richer meaning: `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction specs, `.groupBy({ _id, … })` is the `$group` body (so `.groupBy` is the one group-keyed method without the matcher spelling). `.sortBy({ … })` keeps a dedicated message pointing at those.
-
-**`isCollapsingTerminal` must test the key FORM, never a spelling.** `.groupBy(<key>)` collapses to one object and `.groupBy({ _id, … })` does not, so the predicate is "not an object literal". Narrowing it to a *recognised* key broke twice — once on `StringLiteral`, then again on `fieldKeyArg` when computed keys landed — each time silently skipping the `$first` unwrap and handing back the raw `[obj]` slot.
+**A collapsing terminal is a key FORM, never a spelling.** `.groupBy(<key>)` collapses to one object and `.groupBy({ _id, … })` does not, so the test is "not an object literal": a recognised-key narrowing broke twice, once on a string key and once on an arrow.
 
 ## Registered methods
 
@@ -106,23 +66,23 @@ Per-method rows below describe *lowering*; for which callback spellings a slot a
 | Method | Args | Lowering | Stages emitted |
 |---|---|---|---|
 | `.slice(start, end?)` | 1-2 non-negative integer literals; `end >= start` if both present | `$skip` + `$limit` | `$skip: start` (omitted when `start === 0`) + `$limit: end - start` (omitted when `end` is absent) |
-| `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `lowerUnionPush` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
-| `.map(d => <expr>)` / `.map(d => { … ; return <ret> })` | An **expression body** (`d => <expr>`, or a single-`return` `exprBlock` from the `function` form — `mapBodyExpr`) **or** a stage-free **block body** (`d => { …; return <ret> }`, a pipeline `block` + `ret`; a *stage* inside it is rejected by `requireStageFreeCallback` and pointed at `.aggregate`), with **1–3 params** `(element[, index[, collection]])`; `$.<field>` rejected ("use the lambda param"). The **index** (2nd) param may not be *referenced* (no per-doc stream index — `someExpr` over the whole lambda); the **collection** (3rd) param is the sub-stream and only `<coll>.length` is available on it (any other use rejected with a materialised-form redirect). Embedded `$$$.<coll>.find/filter(...)` lookups are supported in both stream contexts. A block with no `return` is rejected; for the full sub-pipeline statement vocabulary (`assert(...)`, `$match(...)`, …) use `.aggregate` and write the reshape as its root-replace `$ = <expr>` | **Expression body:** `extractLetsFromExpr` (rewrites `d.<path>` → bare field paths) + `extractLookupCalls` (materialises embedded lookups into `__jsmql.tmp.<N>` slots) + `generateWithCtx`; when `coll.length` is read, prepends `streamLengthStage()`. **Inside a correlated `$lookup`** (the `$$ =` pivot / a nested chain / a `$.field = $$$.<coll>…` assign — gated on `ctx.enclosingLookup`, NOT a flat `$unionWith`): BOTH an expression body and a stage-free block route through the SAME `lowerCallbackBlock` engine `.aggregate` uses (an expression body `d => X` is just `d => { return X }`). Its `return <ret>` is the `terminalRet` (appended as `$ = <ret>`, the *only* difference from the `.aggregate` form), and cross-level reads — `$.field` / `$$.length` (root), an enclosing foreign param, an ancestor `<coll>.length` handle, **and an outer-pipeline `let`** declared before the pivot — are captured into the enclosing `$lookup.let` (`jsmql_f0_…` / `jsmql_s0_…` / `jsmql_v0_…`) and returned as `StreamMethodResult.extraLetVars` for the chain assembler to merge (see [lookup-stage.md](lookup-stage.md) § Nested lookups). The chain's slot allocator threads in via `GenerateCtx.slotAllocator` so block-internal lookups get slots distinct from the enclosing lookup's `as`. **On the top-level `$$` stream / a flat `$unionWith`** (no enclosing `$lookup.let` to correlate into) the block + synthetic `$ = ret` lower directly and `$.field` is rejected (use the param) | Expression body: prologue `$lookup`+`$set` pairs from `extractLookupCalls` + one `{ $replaceWith: <expr> }`; a leading `$setWindowFields` `$count` when `coll.length` is read. Block body: the block's `let` bindings and nested `$lookup`s, followed by one `{ $replaceWith: <ret> }`. In the `$$$.<coll>.<chain>` context the stages land inside the outer sub-pipeline — inner `$lookup`s correlate against the sub-pipeline's local doc, not any outer-pipeline `let` binding. Clears the let scope (reshape stage) |
+| `.concat(...others)` | 1+ args matching the `$$.push(...)` shapes (spread of `$$$.<coll>[.filter(p)]`, inline `{...}` doc, `$$$.<coll>.find(p)`) | `src/compiler/emit/union.ts` (shared with `$$.push`) | One `$unionWith` per arg; consecutive inline docs batch into one `$documents`-form stage |
+| `.map(d => <expr>)` / `.map(d => { … ; return <ret> })` | An **expression body** (`d => <expr>`, or a single-`return` block from the `function` form) **or** a stage-free **block body** (`d => { …; return <ret> }`, a pipeline `block` + `ret`; a *stage* inside it is refused by the callback-block rule, which points at `.aggregate`), with **1–3 params** `(element[, index[, collection]])`; `$.<field>` rejected ("use the lambda param"). The **index** (2nd) param may not be *referenced* (no per-doc stream index — `someExpr` over the whole lambda); the **collection** (3rd) param is the sub-stream and only `<coll>.length` is available on it (any other use rejected with a materialised-form redirect). Embedded `$$$.<coll>.find/filter(...)` lookups are supported in both stream contexts. A block with no `return` is rejected; for the full sub-pipeline statement vocabulary (`assert(...)`, `$match(...)`, …) use `.aggregate` and write the reshape as its root-replace `$ = <expr>` | **Expression body:** `extractLetsFromExpr` (rewrites `d.<path>` → bare field paths) + `extractLookupCalls` (materialises embedded lookups into `__jsmql.tmp.<N>` slots) + `generateWithCtx`; when `coll.length` is read, prepends `streamLengthStage()`. **Inside a correlated `$lookup`** (the `$$ =` pivot / a nested chain / a `$.field = $$$.<coll>…` assign — gated on `ctx.enclosingLookup`, NOT a flat `$unionWith`): BOTH an expression body and a stage-free block route through the SAME `lowerCallbackBlock` engine `.aggregate` uses (an expression body `d => X` is just `d => { return X }`). Its `return <ret>` is the `terminalRet` (appended as `$ = <ret>`, the *only* difference from the `.aggregate` form), and cross-level reads — `$.field` / `$$.length` (root), an enclosing foreign param, an ancestor `<coll>.length` handle, **and an outer-pipeline `let`** declared before the pivot — are captured into the enclosing `$lookup.let` (`jsmql_f0_…` / `jsmql_s0_…` / `jsmql_v0_…`) and returned as `StreamMethodResult.extraLetVars` for the chain assembler to merge (see [lookup-stage.md](lookup-stage.md) § Nested lookups). The chain's slot allocator threads in via `GenerateCtx.slotAllocator` so block-internal lookups get slots distinct from the enclosing lookup's `as`. **On the top-level `$$` stream / a flat `$unionWith`** (no enclosing `$lookup.let` to correlate into) the block + synthetic `$ = ret` lower directly and `$.field` is rejected (use the param) | Expression body: prologue `$lookup`+`$set` pairs from `extractLookupCalls` + one `{ $replaceWith: <expr> }`; a leading `$setWindowFields` `$count` when `coll.length` is read. Block body: the block's `let` bindings and nested `$lookup`s, followed by one `{ $replaceWith: <ret> }`. In the `$$$.<coll>.<chain>` context the stages land inside the outer sub-pipeline — inner `$lookup`s correlate against the sub-pipeline's local doc, not any outer-pipeline `let` binding. Clears the let scope (reshape stage) |
 | `.sort(<sort>)` / `.toSorted(<sort>)` | A field name (ascending), an array of field names (all ascending), a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec, or a two-param comparator arrow `a.<path> - b.<path>` / `b.<path> - a.<path>` (`\|\|` for compound). `.sort` and `.toSorted` are **equivalent on a stream** — nothing to mutate, both reorder the flow | `buildStreamSortSpec` dispatches: a comparator → `parseComparatorBody`; a string/array/object → `buildKeySortSpec` (directions via `sortDirection`, which accepts 1/-1/"asc"/"desc") | One `{ $sort: { … } }` stage; key order preserved from source |
-| `.sortBy(<field> \| [fields])` | The lodash ascending-sort alias — one field key, or an array of them. An object arg is rejected (in lodash it's a matches-shorthand, not a direction; the error points at `.orderBy({…})` / `.sort({…})`) | `buildSortByStreamSpec` → `buildKeySortSpec` (ascending) | One `{ $sort: { … } }` stage |
+| `.sortBy(<field> \| [fields])` | The lodash ascending-sort alias — one field key, or an array of them. An object arg is rejected (in lodash it's a matches-shorthand, not a direction; the error points at `.orderBy({…})` / `.sort({…})`) | the `sortSpec` service (ascending) | One `{ $sort: { … } }` stage |
 | `.orderBy(keys[, orders])` / `.orderBy({ field: dir })` | The lodash multi-key sort. Parallel form: `keys` is a field name or `[fields]`, `orders` a `1 \| -1 \| "asc" \| "desc"` (or an array of them, parallel to the keys; fewer orders than keys ⇒ the rest ascending). Object form: a `{ field: 1 \| -1 \| "asc" \| "desc" }` spec with the directions inline (mirrors `.sort({…})`) — a second `orders` arg is then rejected | `buildOrderByStreamSpec`: an object `keys` → `buildKeySortSpec` (shared with `.sort`/`.toSorted`); otherwise it zips the two parallel args (`fieldNameLiteral` + `sortDirection`) | One `{ $sort: { … } }` stage |
-| `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair. Special-cased in `applyStreamMethods` (like `.filter`), not the registry | `lowerStreamReject` builds the predicate lambda (arrow as-is, or `shorthandToLambda` for the shorthands), synthesizes `o => !(<body>)`, and reuses `lowerStreamFilterPredicate` | One `$match` stage — `{ $expr: { $not: … } }` (the negated `$expr` form; jsmql never emits a query-form De Morgan) |
-| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | One predicate — the same spellings `.filter` takes (arrow, matches-object, field name, `["field", value]`), a `{ return <expr>; }` block among them (folded by `prepareStreamArgs`; a stage inside it is rejected). **Requires a preceding `$sort`** in the chain, from any sort spelling; with none, rejects (never defaults to `_id`) | `lowerWhile`: `lastSortSpec(prevStages)` supplies `$setWindowFields.sortBy`; the predicate resolves through `keyExpr` and becomes a running `$max` of `{ $cond: [<pred>, 0, 1] }` over an unbounded-preceding window. The two differ only in `$match` polarity, so they are exact complements | `$setWindowFields` (flag into a `__jsmql.tmp` slot) + `$match: { <slot>: 0 }` for `takeWhile` / `1` for `dropWhile`; slot cleared at chain end |
+| `.reject(<predicate>)` | `.filter` negated — an arrow (`o => …`), a matches-object, a field name, or a `["field", value]` pair. The `reject` cell: the predicate lambda (an arrow as-is, or the shorthand's desugared arrow), negated — `o => !(<body>)`, lowered through the filter road | One `$match` stage — `{ $expr: { $not: … } }` (the negated `$expr` form; jsmql never emits a query-form De Morgan) |
+| `.takeWhile(<pred>)` / `.dropWhile(<pred>)` | One predicate — the same spellings `.filter` takes (arrow, matches-object, field name, `["field", value]`), a `{ return <expr>; }` block among them (folded by the callback-block rule; a stage inside it is rejected). **Requires a preceding `$sort`** in the chain, from any sort spelling; with none, rejects (never defaults to `_id`) | the cell reads `sortedBy()` — the chain's last `$sort` — for `$setWindowFields.sortBy`; the predicate lowers through `condition` and becomes a running `$max` of `{ $cond: [<pred>, 0, 1] }` over an unbounded-preceding window. The two differ only in `$match` polarity, so they are exact complements | `$setWindowFields` (flag into a `__jsmql.tmp` slot) + `$match: { <slot>: 0 }` for `takeWhile` / `1` for `dropWhile`; slot cleared at chain end |
 | `.tail()` | Zero args | — | `$skip: 1` (the stream `.drop(1)`) |
-| `.shuffle()` | Zero args | `allocSlot()` for a `__jsmql.tmp.<N>` key; the trailing `$unset: "__jsmql"` clears the residue | `[{ $addFields: { <slot>: { $rand: {} } } }, { $sort: { <slot>: 1 } }, { $unset: <slot> }]` — non-deterministic |
-| `.aggregate((o[, i[, coll]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, normalised to a zero-param block lambda by `aggregateArgToLambda`). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.length` (shape + param checks shared with the head form via `validateAggregateArg` / `validateAggregateParams`). Foreign fields via `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. **This is the only method whose `{ … }` body keeps its stages** — see [lookup-stage.md](lookup-stage.md) § Grammar. On the CURRENT stream (`$$.aggregate(...)`) the block's statements are simply the chain's stages, in every container a `$$` chain reaches — a `$facet` branch (where a branch IS a sub-pipeline, so there is no "write them directly" alternative), the `$$ =` stream, an `$out` RHS, and the bare-statement form. An **uncorrelated** aggregate may be a `$$.push`/`.concat` union source; a correlated one is rejected (`$unionWith` has no `let` slot) | Same `lowerCallbackBlock` engine `.map` uses, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup` (`ctx.enclosingLookup`), cross-level `$.field` reads capture into the enclosing `$lookup.let` and return as `StreamMethodResult.extraLetVars`; on a flat `$$` chain (no `let` slot to correlate into) a `$.field` ref is rejected in favour of the lambda param, naming `.aggregate` | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain), `$unionWith.pipeline` (source-switch), `$facet` branch, or the outer pipeline. Clears the let scope |
-| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, including the `{ return d.<path>; }` block, folded by `prepareStreamArgs`; a stage inside it is rejected) | `fieldKeyArg` resolves either spelling to the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
+| `.shuffle()` | Zero args | `slot()` for a `__jsmql.tmp.<N>` key; the trailing `$unset: "__jsmql"` clears the residue | `[{ $addFields: { <slot>: { $rand: {} } } }, { $sort: { <slot>: 1 } }, { $unset: <slot> }]` — non-deterministic |
+| `.aggregate((o[, i[, coll]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, read as a zero-param block). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.length` (the row's `args` rule and its callback-parameter check, one for every head). Foreign fields via `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. **This is the only method whose `{ … }` body keeps its stages** — see [lookup-stage.md](lookup-stage.md) § Grammar. On the CURRENT stream (`$$.aggregate(...)`) the block's statements are simply the chain's stages, in every container a `$$` chain reaches — a `$facet` branch (where a branch IS a sub-pipeline, so there is no "write them directly" alternative), the `$$ =` stream, an `$out` RHS, and the bare-statement form. An **uncorrelated** aggregate may be a `$$.push`/`.concat` union source; a correlated one is rejected (`$unionWith` has no `let` slot) | The same block lowering `.map` uses, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup` (`ctx.enclosingLookup`), cross-level `$.field` reads capture into the enclosing `$lookup.let` and return as `StreamMethodResult.extraLetVars`; on a flat `$$` chain (no `let` slot to correlate into) a `$.field` ref is rejected in favour of the lambda param, naming `.aggregate` | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain), `$unionWith.pipeline` (source-switch), `$facet` branch, or the outer pipeline. Clears the let scope |
+| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, including the `{ return d.<path>; }` block, folded by the callback-block rule; a stage inside it is rejected) | the sort-key service resolves either spelling to the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `take` → `$limit` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid MQL); `drop` → `$skip` (`drop(0)` emits nothing — identity) | One `{ $limit: n }` / `{ $skip: n }` |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample` | One `{ $sample: { size: n } }` |
 | `.sample()` | Zero args | `$sample` with size 1 (lodash `_.sample`; a pipeline stays a stream, so this is `.sampleSize(1)`) | One `{ $sample: { size: 1 } }` |
-| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot generates in `accumulatorContext: "group"` so `$addToSet`/`$push`/… pass the codegen gate — same as the direct `$group(...)` stage) **or** a bare field name | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }`); **body form** lowers the object verbatim to one `$group` stage (`generateGroupBody`, per-key scoping mirrors `pipeline.ts`'s `$group` body generation) | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
-| `.countBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
-| `.keyBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into `GROUP_TMP` → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
+| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot lowers in the group position, so `$addToSet`/`$push`/… take their accumulator form — same as the direct `$group(...)` stage) **or** a bare field name | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }`); **body form** lowers the object to one `$group` stage, every slot in the group position | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
+| `.countBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
+| `.keyBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
 | `.uniqBy(<key>)` | One field key | `$group` keeping `$first` per key into the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Clears the let scope |
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — `_id` is dropped unless named (matching lodash `_.pick` + the value-mode `.pick`) | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (the `__jsmql` scratch is dropped too) |
 | `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else including `_id` (matching lodash `_.omit`) | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope |
@@ -171,7 +131,7 @@ Future methods (per the planning notes) extend this table — see
 
 In JS, `arr.reduce(...)` returns a single value — scalar, object, or array
 depending on the reducer. So `.reduce` is rejected as a chain method (with an
-actionable wrap-pattern hint in `unknownStreamMethod`), and what the reducer
+actionable wrap-pattern hint), and what the reducer
 returns decides how it's assigned:
 
 - **scalar / object reducer** (one value) — must be **wrapped** into a
@@ -298,40 +258,10 @@ $$.reduce((acc, d) => (<cond> ? acc.concat(d) : acc), []);
 //   → [{ $match: <cond translated> }]                    // filter-only (bare `d`)
 ```
 
-This form is detected by `detectArrayReducerWrap` and lowered by
-`lowerArrayReducerWrap` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts). The
-lowering lives in pipeline.ts (not in src/registry/names.ts) because it reuses
-`lowerStreamFilterPredicate` — the same predicate translator `.filter`
-uses — to handle the condition. `$.<field>` references inside the condition
-are rejected with the standard "use the lambda parameter" hint.
-
-**Supported body shapes:**
-
-| Shape | Lowering |
-|---|---|
-| `acc.concat(d.<path>)` | `[{$replaceWith: "$<path>"}]` |
-| `<cond> ? acc.concat(d.<path>) : acc` | `[{$match: <cond>}, {$replaceWith: "$<path>"}]` |
-| `acc.concat(d)` (bare param) | `[]` (identity — surrounding docs flow through unchanged) |
-| `<cond> ? acc.concat(d) : acc` | `[{$match: <cond>}]` (filter only, no projection) |
-
-**Constraints.** Init must be `[]` (empty array) — non-empty seeds aren't
-representable in MQL accumulator semantics. The ternary's alternate
-branch must be bare `acc` (`<cond> ? <concat> : acc`); other alternates
-break the "this either adds an element or doesn't" pattern. Spread-form
-concat-equivalents (`[...acc, d.<x>]`, `acc.concat([d.<x>, d.<y>]`),
-multi-element wrappers) aren't recognised — write the explicit
-single-arg `.concat(d.<x>)` shape.
-
-**Bracketed form is rejected.** `$$ = [$$.reduce(…, [])]` throws — a reducer
-seeded with `[]` already produces a stream, so wrapping it in `[ ]` would
-yield `[[…]]` (a stream whose single document is an array). `detectArrayReducerWrap`
-detects that exact `ArrayLiteral`-of-one-`[]`-seeded-reduce shape and throws a
-"drop the `[ ]`" hint. (The scalar/object wraps keep their `[ ]` because those
-reducers return a single document — `[ <doc> ]` is a valid one-doc stream
-literal, not a wrapped stream.)
-
-Distinct from the two `$group`-shaped wraps above because the output is a
-doc-shaped stream of projected fields, not a single summary doc.
+This form is recognised by `arrayReduceStages` in [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)
+(the reducer's shape by `arrayReduceParts` in [src/compiler/emit/reduce-wrap.ts](../../src/compiler/emit/reduce-wrap.ts));
+the condition lowers through the filter road — the same road `.filter` uses — with the
+parameter as the document, so a `$.<field>` read inside it is the outer document (HR4).
 
 ## Error wording
 
@@ -344,42 +274,20 @@ the wording stays consistent across methods. Two general principles:
   the "non-negative integer literals" message; computed args get the
   "write the literal in source" hint.
 
-The chain-walker `unknownStreamMethod` helper produces the catch-all error for
-method names not in the registry. Two branches:
+A link whose row has no `stream` cell is refused by the stream road with the nearest
+name that has one (`didYouMean`); a row that states an `unsupported(reason)` cell
+answers with its reason — for the single-element methods (`.find`, `.findLast`, `.at`)
+the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
+`$$$.<coll>` the join form `$ = $$$.<coll>.find(<pred>)`.
 
-- **Single-element methods (`.find`, `.findLast`, `.at`).** Explicitly
-  rejected — pipelines are arrays, methods that return a single element in
-  JS would mislead. The error names the `.slice(0, 1)` / `.slice(n, n+1)`
-  equivalent. For `.find` on `$$$.<coll>`, an extra parenthetical points
-  at `$ = $$$.<coll>.find(<pred>)` as the lookup-context alternative.
-- **Everything else.** `closestNameTo`-style suggestion (matched against
-  `.filter` plus the registered method names) followed by the full
-  registered-methods list.
+## Adding a method
 
-## Extending the registry
+1. Add the `stream` cell to the method's row in [src/registry/names.ts](../../src/registry/names.ts), stating the stages it emits (`// MEASURED:` where a shape's validity was proved on `mongod`) — or `unsupported(reason)` with the spelling that works.
+2. Add a row to the table above with the args / lowering.
+3. Add a case to [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) (the root stream) and [test/compiler-join.test.ts](../../test/compiler-join.test.ts) (a `$$$.<coll>` head), run on `mongod` and compared with JavaScript's answer.
+4. Document the method in [docs/LANGUAGE.md](../LANGUAGE.md) and add a [DEVLOG.md](../DEVLOG.md) entry.
 
-To add a new method:
-
-1. Define the `StreamMethodDef` in [src/registry/names.ts](../../src/registry/names.ts).
-2. Add it to the `STREAM_METHODS` map.
-3. Add a row to the table above with the args / lowering.
-4. Add tests in [test/stream-methods.test.ts](../../test/stream-methods.test.ts) for
-   both contexts (`$$` and `$$$.<coll>` chain heads) plus every rejection
-   branch.
-5. Document the method in [docs/LANGUAGE.md#stream-methods](../LANGUAGE.md#stream-methods).
-6. Add a [DEVLOG.md](../DEVLOG.md) entry.
-
-Methods that need state from earlier in the chain receive `prevStages: readonly
-object[]` — the read-only view of stages emitted so far in the same context. It is
-read-only in practice too: no method may rewrite or drop an earlier stage.
-
-`.takeWhile`/`.dropWhile` are the only readers, and they show the safe shape: they
-**read** the last `$sort`'s spec (never rewrite it) and **reject** when there is none
-(never guess one). The contrast is the
-removed "from the end" family (§ below), which rewrote the preceding stage AND fell
-back to `_id` when it was absent — a wrong answer with no diagnostic. Reach for
-`prevStages` only when a method genuinely cannot be expressed without it; then read,
-don't rewrite, and error, don't guess.
+A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it) and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which rewrote the preceding stage AND fell back to `_id` when it was absent — a wrong answer with no diagnostic. Read, don't rewrite; refuse, don't guess.
 
 ## Bare-statement stream chains
 
@@ -392,14 +300,12 @@ $$.toSorted((a, b) => b.age - a.age).take(10);
 ```
 
 The assignment form `$$ = $$.<chain>;` is the same program with an explicit head, and lowers identically; it is never the default spelling.
-The detection lives in `lowerStatementTail` ([src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)):
-after the `$$.push(...)` / diagnostic-source-stage checks, a `collectStreamChain`
-rooted at a bare `$$` (`CollectionRef`) with at least one method is handed to
-the shared `applyStreamMethods` engine. Because `push` / `indexStats` are not
-registered stream methods, they keep their existing meaning and never reach this
-branch. Scope is the bare `$$` receiver only; a bare `$$$.<coll>.<chain>;`
-statement is not a recognised form — chain on `$$`, or use the
-`$$.concat($$$.<coll>.filter(…))` assignment, instead.
+A bare `$$.<chain>;` statement is the stream road (`streamStages` in
+[src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts)): each link's
+`stream` cell appends its stages to the enclosing pipeline, in order. `$$.push(…)` and
+the diagnostic sources (`$$.indexStats()`) are statement cells of their own rows, so
+they keep their meaning. A bare `$$$.<coll>.<chain>;` is refused — a read of another
+collection is a value, and the statement gives it no destination.
 
 **The composition guarantee.** Splitting a chain across statements produces the
 same MQL as chaining it, which in turn matches the assignment form:
@@ -407,17 +313,12 @@ same MQL as chaining it, which in turn matches the assignment form:
 ```js
 $$.filter(p).map(f);        // ≡
 $$.filter(p); $$.map(f);    // ≡
-$$.filter(p).map(f);
+$$ = $$.filter(p).map(f);
 ```
 
-This holds for *every* method. The bare form passes the **live pipeline `out`** as
-`applyStreamMethods`' working buffer rather than a throwaway local array, so a method
-that reads `prevStages` sees the stages a previous *statement* emitted — while a
-`$$ = …` chain lowers against its own local buffer, which starts empty. That
-difference is unobservable: no registered method reads `prevStages`, so the two forms
-behave identically. A method that *did* read it would make the bare form reach across
-statements while the assignment form did not — an asymmetry with no defensible
-semantics, and one more reason not to add one.
+This holds for *every* method, because a cell reads only its own link and — for
+`.takeWhile` / `.dropWhile` — the `$sort` the chain emitted before it, which is the
+same stage whether it came from this statement or the one before.
 
 ## Deliberately absent: the "from the end" methods
 
@@ -430,14 +331,11 @@ the JS methods are not and, with no `$sort` in front, silently orders by `_id` r
 than erroring. `.toSorted(c).toReversed()` is in any case a longer spelling of writing
 the comparator descending.
 
-`fromTheEndRejection` (`src/registry/names.ts`) owns the rejection and is called from
-all three places a stream chain is assembled — `unknownStreamMethod` (bare `$$` and
-`$$ =` contexts), `validateLookupShape` (a `$$$.<coll>` chain head), and the peel loop
-in `tryExtractChainedLookup`. The last one matters: without it a foreign chain would
-quietly fall back to value-mode and slice the tail of the materialised array, whose
-order is whatever the foreign scan produced — the same unanswerable question, answered
-silently. The message names the take-from-the-front rewrite
-(`.toSorted({ <field>: -1 }).take(n)`).
+Each of the four rows states an `unsupported` stream cell, which every head reads —
+the root stream, a `$$$.<coll>` chain, a callback's third parameter — so a foreign
+chain cannot quietly fall back to slicing the tail of the materialised array, whose
+order is whatever the foreign scan produced. The reason names the take-from-the-front
+rewrite (`.toSorted({ <field>: -1 }).take(n)`).
 
 All four remain in **value position** on a real array (`$.items.takeRight(3)` →
 `$slice`, `$.items.toReversed()` → `$reverseArray`): an array carries its own order,
@@ -448,16 +346,6 @@ its result. The bare form gives it "transform the running stream" meaning —
 syntactically valid JS (different runtime meaning is allowed; only syntax
 errors are not) and consistent with the existing `$$.push(...)` statement sugar.
 
-## Out of scope
-
-- **`$$.length` terminal.** Intentionally deferred — see
-  [DEVLOG.md](../DEVLOG.md) for the rationale.
-
-(The former "lookup-body chain extension in expression position" item shipped: the
-stream-methods registry is integrated into the `$$$.<coll>` expression-position walker
-via `peelForeignChain`, and any stream method may now head the chain — see
-[lookup-stage.md](./lookup-stage.md).)
-
 ## The Stage cell is answered for every array-receiver method
 
 A method whose receiver is an array **can** have a stream form, so the grid says it must
@@ -465,10 +353,9 @@ carry an answer. There are four, and no fifth:
 
 | Answer | Where |
 |---|---|
-| a lowering | `STREAM_METHODS` in `src/registry/names.ts` |
-| a tailored value-position message | `VALUE_TERMINAL_METHODS` — the method collapses the stream to one value, and the message says where it *does* work |
-| a written reason | `STREAM_UNSUPPORTED` — why this one cannot work on a stream, and what to write instead |
-| handled outside this registry | `STREAM_HANDLED_ELSEWHERE` — `.filter` / `.reject` / `.find` / `.reduce`, each named with its real home |
+| a lowering | the row's `stream` cell — the stages the link means |
+| a value terminal | a row with a value cell and no stream cell (`.sum()`, `.head()`, `.length`) — the chain ends in a value, which a join reads over its slot and the root stream refuses for want of a destination |
+| a written reason | an `unsupported(reason)` stream cell — why this one cannot work on a stream, and what to write instead |
 
 `test/stream-methods.test.ts` fails when an array-receiver method has none of the four, when
 a name appears in two of them, or when a reason is too short to be useful.
