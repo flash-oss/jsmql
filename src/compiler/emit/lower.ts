@@ -155,7 +155,7 @@ export function lowerValue(node: Expr, env: Env): unknown {
       // HR1: a value the call supplied is a VALUE — never an operator or a field reference
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
     case "FieldRef":
-      return env.render(locate(node, env) as Located, node.pos);
+      return reachable(env.render(locate(node, env) as Located, node.pos));
     case "CollectionRef":
     case "DatabaseRef":
     case "ClusterRef":
@@ -430,9 +430,28 @@ export function locate(node: Expr, env: Env): Located | null {
 const lastSegment = (path: string): string => path.slice(path.lastIndexOf(".") + 1);
 
 /** The `$$x.a.b` / `$a.b` path an access chain on a bound name spells, or null when it is not one. */
-function pathOf(node: Expr, env: Env): string | null {
+function pathOf(node: Expr, env: Env): unknown {
   const loc = locate(node, env);
-  return loc === null ? null : env.render(loc, node.pos);
+  return loc === null ? null : reachable(env.render(loc, node.pos));
+}
+
+/**
+ * A rendered path the server can follow. A segment that starts with `$` — the
+ * field `$gt` in `{ qty: { $gt: 5 } }` read as `o.qty.$gt` — is refused in a
+ * field path ("FieldPath field names may not start with '$'", measured), and is
+ * read by `$getField` with the name as a literal instead; every segment after
+ * it is a `$getField` too, because a path cannot continue from an expression.
+ */
+function reachable(path: string): unknown {
+  const root = path.startsWith("$$") ? 2 : 1;
+  const segments = path.slice(root).split(".");
+  const at = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
+  if (at < 0) return path;
+  let value: unknown = path.slice(0, root) + segments.slice(0, at).join(".");
+  for (const seg of segments.slice(at)) {
+    value = { $getField: { field: seg.startsWith("$") ? { $literal: seg } : seg, input: value } };
+  }
+  return value;
 }
 
 /** Is `.name` on this receiver a PROPERTY row — `.length`, `Math.PI` — rather than a field read? */

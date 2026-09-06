@@ -488,12 +488,11 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
 
   if (a.type === "ObjectLiteral" && accepts("matchesObject") && a.entries !== undefined) {
     if (a.entries.length === 0) return undefined;
-    const tests: object[] = [];
-    for (const entry of a.entries) {
-      const key = writtenKey(entry);
-      if (key === null) return undefined; // a spread or a computed key is not a matcher
-      tests.push(strictEq(pathOn(param, key, pos), (entry as { value: object }).value, pos));
-    }
+    const tests = matchTests(param, "", a.entries, pos);
+    if (tests === undefined) return undefined;
+    // `{ a: {} }` matches every value, as lodash's does: nothing to test.
+    if (tests.length === 0)
+      return { type: "Lambda", params: [param], body: { type: "BooleanLiteral", value: true, pos }, pos };
     // Left-associated, which is how `a === 1 && b === 2 && c === 3` parses.
     const body = tests.reduce((left, right) => ({ type: "BinaryExpr", op: "&&", left, right, pos }));
     return { type: "Lambda", params: [param], body, pos };
@@ -513,6 +512,49 @@ function asArrow(arg: object | undefined, forms: readonly string[], pos: number)
 
   return undefined;
 }
+
+/**
+ * The tests a matcher object states, as lodash's `_.matches` reads it — a PARTIAL
+ * deep match, not an equality: `{ a: { b: { c: 3 } } }` is `x.a.b.c === 3` and says
+ * nothing about `x.a.b.d`; `{ qty: { $gt: 5 } }` is the field `qty.$gt` equal to 5,
+ * because a matcher's keys are field names; an array is a subset — `{ tags: ["a", "b"] }`
+ * is `x.tags.includes("a") && x.tags.includes("b")` — when its elements are constants,
+ * and an equality otherwise; an empty object or array matches anything. Undefined
+ * when a key is not written out (a spread, a computed key).
+ */
+function matchTests(param: string, prefix: string, entries: readonly object[], pos: number): object[] | undefined {
+  const tests: object[] = [];
+  for (const entry of entries) {
+    const key = writtenKey(entry);
+    if (key === null) return undefined;
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    const value = (entry as { value: Node }).value;
+    if (value.type === "ObjectLiteral" && Array.isArray(value.entries)) {
+      const nested = matchTests(param, path, value.entries as readonly object[], pos);
+      if (nested === undefined) return undefined;
+      tests.push(...nested);
+      continue;
+    }
+    const elements = value.type === "ArrayLiteral" ? (value.elements as readonly Node[] | undefined) : undefined;
+    if (elements !== undefined && elements.every((e) => CONSTANT_LITERALS.has(e.type as string))) {
+      for (const e of elements) {
+        tests.push({
+          type: "MethodCall",
+          object: pathOn(param, path, pos),
+          name: "includes",
+          args: [e],
+          optional: false,
+          pos,
+        });
+      }
+      continue;
+    }
+    tests.push(strictEq(pathOn(param, path, pos), value as object, pos));
+  }
+  return tests;
+}
+
+const CONSTANT_LITERALS = new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 
 /** `String` → `String(x)`; `Math.abs` → `Math.abs(x)`; anything that is not a callable global → undefined. */
 function bareCall(callee: Node, param: string, pos: number): object | undefined {

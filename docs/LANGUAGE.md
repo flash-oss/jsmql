@@ -1768,11 +1768,13 @@ Every higher-order value method — the native JS ones (`.map` / `.filter` / `.f
 |---|---|---|
 | property string (dotted paths ok) | `.map("addr.city")` | `x => x.addr.city` |
 | `_.matches` object | `.filter({ role: "admin", active: true })` | `x => x.role === "admin" && x.active === true` |
+| `_.matches` object, nested | `.filter({ a: { b: { c: 3 } } })` | `x => x.a.b.c === 3` — a partial match, like lodash's: `x.a.b.d` may be anything |
+| `_.matches` object, array value | `.filter({ tags: ["a", "b"] })` | `x => x.tags.includes("a") && x.tags.includes("b")` — a subset, like lodash's |
 | `_.matchesProperty` pair | `.find(["status.code", 200])` | `x => x.status.code === 200` |
 | single-parameter arrow | `.map(x => x.total * 1.1)` | — |
 | omitted (identity) | `.uniq()` | `x => x` |
 
-An iteratee context reads the result as a value (`.map("name")` plucks the field); a predicate context reads it as a boolean (`.filter("active")` keeps the truthy ones). The `_.matches` object compares each key with `$eq` (flat equality, not lodash's deep partial match); a single key emits a bare `$eq`, multiple keys an `$and`.
+An iteratee context reads the result as a value (`.map("name")` plucks the field); a predicate context reads it as a boolean (`.filter("active")` keeps the truthy ones). The `_.matches` object is lodash's **partial deep match**: every key is a path, a nested object narrows the path further (`{ a: { b: { c: 3 } } }` says nothing about `a.b.d`), an array of constants is a subset test, an empty object or array matches anything, and a key is a field name whatever it looks like — `{ qty: { $gt: 5 } }` matches a document whose `qty.$gt` field equals `5`, exactly as `_.filter(docs, { qty: { $gt: 5 } })` does; to compare with an operator, write the predicate (`x => x.qty > 5`). A value that is not a plain object or an array of constants compares with `===`.
 
 #### lodash array methods
 

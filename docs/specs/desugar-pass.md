@@ -154,6 +154,15 @@ answers for one link.
 | `{f: 1}` | `$.items.filter({f: 1})` → a matcher | `$.items.toSorted({f: 1})` → a DIRECTION |
 | `["a", "b"]` | `$.items.find(["a", "b"])` → a path/value pair | `$.items.toSorted(["a", "b"])` → two sort keys |
 
+A matcher is lodash's `_.matches`, a PARTIAL deep match, and `matchTests` reads it as
+such: a nested object narrows the path (`{ a: { b: { c: 3 } } }` → `x.a.b.c === 3`, nothing
+said about `a.b.d`), an array of constants is a subset (`{ tags: ["a", "b"] }` →
+`x.tags.includes("a") && x.tags.includes("b")`), an empty object or array matches anything
+(`x => true` when nothing is left to test), and any other value compares with `===`. A
+key is a field name however it is spelled — `{ qty: { $gt: 5 } }` is the field `qty.$gt`
+equal to 5 — and the value road reads a `$`-named segment through `$getField` with the
+name as a literal, because the server refuses it in a field path (measured).
+
 `bareCallable` is a callable GLOBAL handed over unapplied — `$.items.map(String)`,
 `$.items.filter(Boolean)`, `$.items.map(Math.abs)`, `$.items.map(ObjectId)` — and
 means the arrow that applies it to the element, `x => String(x)`. Which slots take

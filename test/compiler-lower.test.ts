@@ -214,3 +214,20 @@ describe("compiler/emit/lower — calls", () => {
     );
   });
 });
+
+describe("compiler/emit/lower — a path segment that starts with `$`", () => {
+  it("reads it through $getField with the name as a literal, and every segment after it too", () => {
+    // "FieldPath field names may not start with '$'" — measured on mongod
+    expect(expr("$.qty.$gt")).toEqual({ $getField: { field: { $literal: "$gt" }, input: "$qty" } });
+    expect(expr("$.a.$b.c")).toEqual({
+      $getField: { field: "c", input: { $getField: { field: { $literal: "$b" }, input: "$a" } } },
+    });
+    expect(expr("$.items.filter({ qty: { $gt: 5 } })")).toEqual({
+      $filter: {
+        input: "$items",
+        as: "x",
+        cond: { $eq: [{ $getField: { field: { $literal: "$gt" }, input: "$$x.qty" } }, 5] },
+      },
+    });
+  });
+});

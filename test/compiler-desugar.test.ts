@@ -64,6 +64,11 @@ const EQUIVALENT: [string, string][] = [
   ["$.items.filter({ active: true })", "$.items.filter(x => x.active === true)"],
   ["$.items.filter({ a: 1, b: 2, c: 3 })", "$.items.filter(x => x.a === 1 && x.b === 2 && x.c === 3)"],
   ['$.items.filter({ "a.b": 1 })', "$.items.filter(x => x.a.b === 1)"],
+  // lodash's `_.matches` is a PARTIAL deep match: nested objects are paths, arrays are subsets
+  ["$.items.filter({ a: { b: { c: 3 } }, e: 1 })", "$.items.filter(x => x.a.b.c === 3 && x.e === 1)"],
+  ["$.items.filter({ qty: { $gt: 5 } })", "$.items.filter(x => x.qty.$gt === 5)"],
+  ['$.items.filter({ tags: ["a", "b"] })', '$.items.filter(x => x.tags.includes("a") && x.tags.includes("b"))'],
+  ["$.items.filter({ a: {} })", "$.items.filter(x => true)"],
   ['$.items.filter(["active", true])', "$.items.filter(x => x.active === true)"],
   ['$.items.filter(["a.b", 1])', "$.items.filter(x => x.a.b === 1)"],
   ["$.items.countBy()", "$.items.countBy(x => x)"],
