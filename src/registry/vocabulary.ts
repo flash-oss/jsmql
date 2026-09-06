@@ -516,6 +516,12 @@ export type Arity = {
   reject?: Readonly<Record<number, string>>;
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
+  /**
+   * Slots whose literal string or array must not be empty. Measured on `$unset`:
+   * `""` → "FieldPath cannot be constructed with empty string", `[]` → "must be a
+   * string or an array with at least one field".
+   */
+  nonEmpty?: readonly number[];
   /** Per-slot literal type, checked only when the slot is a literal. */
   /**
    * A slot's accepted literal type, or the SET of them where a slot takes more
@@ -655,6 +661,40 @@ export type BodyRule = {
    * "Cannot do exclusion on field b in inclusion projection".
    */
   onePolarity?: true;
+  /**
+   * A rule for the OBJECT a key holds — `$setWindowFields.output` — applied when the
+   * value is written out as an object literal.
+   */
+  nested?: Readonly<Record<string, BodyRule>>;
+  /**
+   * A rule for EVERY value of the body that is an object literal — each entry of
+   * `$fill.output`, each output of `$setWindowFields.output`.
+   */
+  eachValue?: BodyRule;
+  /**
+   * A key that becomes required when a value elsewhere in the body reads one of
+   * the listed literals: `$fill`'s `sortBy` when any `output.<k>.method` is
+   * "linear". `path` walks the body; `"*"` stands for any key. Measured:
+   * "$linearFill must be specified with a top level sortBy expression".
+   */
+  requiresWhen?: readonly { path: readonly string[]; equals: readonly string[]; requires: string }[];
+  /**
+   * The body must name at least one key. Measured: `{ $project: {} }` →
+   * "projection specification must have at least one field".
+   */
+  nonEmpty?: true;
+  /**
+   * A key whose literal number must be at least the stated minimum. Measured:
+   * `$sample.size` 0 → "must be a positive integer", `$bucketAuto.buckets` 0 →
+   * "must be greater than 0", `$graphLookup.maxDepth` -1 → "requires a nonnegative argument".
+   */
+  minimums?: Readonly<Record<string, number>>;
+  /**
+   * A key whose literal array must hold at least the stated number of constants,
+   * in ascending order. Measured on `$bucket.boundaries`: `[1]` → "must have at
+   * least 2 values", `[3, 1, 2]` → "must be sorted".
+   */
+  sortedList?: Readonly<Record<string, number>>;
   /**
    * Each inner list is a set of keys of which EXACTLY ONE must be present.
    * `required` / `optional` cannot say it, and both cases are real:

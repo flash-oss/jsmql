@@ -42,6 +42,8 @@ Exactly one of `body` / `block` is set. Every consumer that needs a value (an ar
 
 **The body's Env.** The sub-pipeline is lowered one level deeper: `env.enter` crosses a `$lookup` boundary with a fresh `Capture`, so every read of the OUTER document inside the body is interned into the stage's `let` and read back as a `$$` variable — `$.userId` → `let: { jsmql_f0_userId: "$userId" }`, a pipeline `let` binding → `jsmql_v0_<name>`, the root count `$$.length` → `jsmql_s0_length` ([stream-length.md](stream-length.md)). The number is the level the read comes FROM, so a nested body captures an ancestor under a distinct name and MQL's lexical `$$` scoping never shadows it. The callback's first parameter is the foreign document (`o.total` → `"$total"`); the second is refused as a read (a stream has no index); the third is the joined stream itself (`coll.length`, `coll.filter(…)`). `$.` is the outer document at every depth (HR4); a write inside the body goes through the parameter (`o.x = …`).
 
+**The callback's third parameter** (`(o, _i, c) => …`) is the body's own stream: `c.length` is its count and a chain on it (`c.filter(…)`) its stages. Read as a value on its own (`c.total`, `c`) it is refused by name — it is neither a document nor a value.
+
 **Four destinations**, by the statement the chain stands in:
 
 | Statement | Lowering | Function |

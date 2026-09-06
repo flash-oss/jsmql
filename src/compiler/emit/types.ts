@@ -15,6 +15,7 @@ import type { FieldFamily } from "../../registry/vocabulary.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
+  agreedReturnOf,
   constructedFamilyOf,
   isCallable,
   namespaceNames,
@@ -114,10 +115,16 @@ export function kindOf(node: Expr, env: Env): Known {
     case "MethodCall": {
       const family = receiverFamilyOf(node.object, env);
       if (family !== null) return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family);
-      // An unproven receiver: a method spelled on ONE field family is a call on that
-      // family or a server error, so its result is what the row states for it.
+      // An unproven receiver: the call is on one of the families the row is spelled
+      // on, or a server error — so its result is what the row states when every
+      // such family states the same (`.size()` is a number on an array and on an
+      // object), and what the one family states when there is one (`.map`).
+      const r = returnsOf(node.name);
+      if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
       const sole = soleFieldFamilyOf(node.name);
-      return sole === null ? "unknown" : resolveReturns(returnsOf(node.name), sole as Known, sole);
+      if (sole !== null) return resolveReturns(r, sole as Known, sole);
+      const agreed = agreedReturnOf(node.name);
+      return agreed ?? "unknown";
     }
     case "OperatorCall":
       return resolveReturns(returnsOf(node.name), "unknown", null);

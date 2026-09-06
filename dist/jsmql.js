@@ -812,7 +812,17 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
-var TIME_UNIT = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+var TIME_UNIT = [
+  "year",
+  "quarter",
+  "month",
+  "week",
+  "day",
+  "hour",
+  "minute",
+  "second",
+  "millisecond"
+];
 var WINDOW_TIME_UNIT = ["week", "day", "hour", "minute", "second", "millisecond"];
 var WEEKDAY = [
   "monday",
@@ -4470,7 +4480,8 @@ var NAMES = {
     ),
     group: unsupported("'$covariancePop' is not valid in a $group output position \u2014 see its 'where'."),
     window: {
-      args: { sig: "expression1, expression2", exact: 2 },
+      // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
+      args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     stream: unsupported(
@@ -4495,7 +4506,8 @@ var NAMES = {
     ),
     group: unsupported("'$covarianceSamp' is not valid in a $group output position \u2014 see its 'where'."),
     window: {
-      args: { sig: "expression1, expression2", exact: 2 },
+      // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
+      args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     stream: unsupported(
@@ -4770,7 +4782,8 @@ var NAMES = {
       optional: ["default", "output"],
       closed: true,
       keyTypes: { boundaries: "array", output: "object" },
-      constantKeys: ["boundaries", "default"]
+      constantKeys: ["boundaries", "default"],
+      sortedList: { boundaries: 2 }
     },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
@@ -4802,6 +4815,7 @@ var NAMES = {
       closed: true,
       keyTypes: { buckets: "int", granularity: "string", output: "object" },
       constantKeys: ["buckets", "granularity"],
+      minimums: { buckets: 1 },
       enums: {
         granularity: ["R5", "R10", "R20", "R40", "R80", "1-2-5", "E6", "E12", "E24", "E48", "E96", "E192", "POWERSOF2"]
       }
@@ -5060,6 +5074,23 @@ var NAMES = {
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     body: {
+      // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
+      // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
+      nested: {
+        output: {
+          required: [],
+          optional: [],
+          closed: false,
+          eachValue: {
+            required: [],
+            optional: ["value", "method"],
+            closed: true,
+            exactlyOneOf: [["value", "method"]],
+            enums: { method: ["locf", "linear"] }
+          }
+        }
+      },
+      requiresWhen: [{ path: ["output", "*", "method"], equals: ["linear"], requires: "sortBy" }],
       required: ["output"],
       optional: ["partitionBy", "partitionByFields", "sortBy"],
       closed: true,
@@ -5131,7 +5162,8 @@ var NAMES = {
       optional: ["maxDepth", "depthField", "restrictSearchWithMatch"],
       closed: true,
       constantKeys: ["from", "connectFromField", "connectToField", "as", "depthField", "maxDepth"],
-      keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" }
+      keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" },
+      minimums: { maxDepth: 0 }
     },
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
@@ -5501,7 +5533,7 @@ var NAMES = {
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
-    body: { required: [], optional: [], closed: false, onePolarity: true },
+    body: { required: [], optional: [], closed: false, onePolarity: true, nonEmpty: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5630,7 +5662,14 @@ var NAMES = {
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
     where: ["stream", "statement"],
-    body: { required: ["size"], optional: [], closed: true, keyTypes: { size: "number" }, constantKeys: ["size"] },
+    body: {
+      required: ["size"],
+      optional: [],
+      closed: true,
+      keyTypes: { size: "number" },
+      constantKeys: ["size"],
+      minimums: { size: 1 }
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5751,6 +5790,27 @@ var NAMES = {
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     body: {
+      // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
+      nested: {
+        output: {
+          required: [],
+          optional: [],
+          closed: false,
+          eachValue: {
+            required: [],
+            optional: [],
+            closed: false,
+            nested: {
+              window: {
+                required: [],
+                optional: ["documents", "range", "unit"],
+                closed: false,
+                exactlyOneOf: [["documents", "range"]]
+              }
+            }
+          }
+        }
+      },
       required: ["output"],
       optional: ["partitionBy", "sortBy"],
       closed: true,
@@ -5897,6 +5957,8 @@ var NAMES = {
       required: [],
       optional: ["coll", "pipeline"],
       closed: true,
+      // MEASURED: { $unionWith: {} } → stage without explicit collection must have a pipeline with $documents as first stage
+      atLeastOneOf: [["coll", "pipeline"]],
       constantKeys: ["coll"],
       keyTypes: { pipeline: "array" }
     },
@@ -5937,11 +5999,11 @@ var NAMES = {
     group: unsupported("'$unset' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
     },
     statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
     },
     updateDoc: {
@@ -7005,7 +7067,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", atLeast: 0 },
+      args: { sig: "callback", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return {
@@ -7045,7 +7107,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", atLeast: 0 },
+      args: { sig: "callback", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "value");
         return { $map: { input: cb.input, as: cb.as, in: cb.in } };
@@ -7077,7 +7139,7 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback: callback2, bind }) => {
         const cb = callback2(args[0], "truth");
         const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
@@ -7106,7 +7168,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, 0] };
@@ -7164,7 +7226,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, -1] };
@@ -7299,7 +7361,7 @@ var NAMES = {
       }
     },
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
@@ -7323,7 +7385,7 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback: callback2 }) => {
         const cb = callback2(args[0], "truth");
         const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
@@ -7397,6 +7459,7 @@ var NAMES = {
     doc: "'.join()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "scalar",
     returns: "string",
     where: ["value"],
     filter: viaFallback,
@@ -7417,6 +7480,7 @@ var NAMES = {
     doc: "'.toString()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "any",
+    elements: "scalar",
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -8037,7 +8101,7 @@ var NAMES = {
   getTime: name({
     doc: "'.getTime()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "any",
+    on: "date",
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -8886,11 +8950,12 @@ var NAMES = {
               [sorted.as]: {
                 $sortArray: {
                   input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
-                  sortBy: { k: 1 }
+                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort — lodash's answer
+                  sortBy: { k: -1 }
                 }
               }
             },
-            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, -1] } } }
+            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, 0] } } }
           }
         };
       }
@@ -11568,11 +11633,11 @@ var NAMES = {
   }),
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
-    where: ["filter"],
-    filter: {
-      args: { sig: "code", exact: 1, constant: [0] },
-      emit: ({ name: name2, args, literal: literal2 }) => ({ [name2]: literal2(args[0]) })
-    },
+    where: [],
+    // MEASURED: { $match: { $where: … } } → $where is not allowed in this context; find() runs it only where server-side JavaScript is enabled
+    filter: unsupported(
+      `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query.`
+    ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: \u2026 }'."
     ),
@@ -12839,8 +12904,7 @@ var NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    // 1-based months are deliberate: $dateFromParts is 1-based, and silently shifting the
-    // user's number would be worse than refusing 0.
+    // The month counts from 0, as JavaScript's does; the cell adds one for `$dateFromParts`.
     expr: {
       args: {
         sig: "year[, month, day, hour, minute, second, ms]",
@@ -12912,6 +12976,14 @@ function pathAndConstant(input) {
   }
   return null;
 }
+function membershipQuery(input) {
+  const [l, r] = input.args;
+  const path = input.pathOf(l);
+  if (path === null) return null;
+  const c = input.constant(r);
+  if (c === null || !Array.isArray(c.value)) return null;
+  return queryOwnValue(path, { $in: c.value }, OWN_VALUE);
+}
 function typeTest(input) {
   const [l, r] = input.args;
   const pick = (a, b) => a.type === "UnaryExpr" && a.op === "typeof" && b.type === "StringLiteral" ? { operand: a.argument, spelling: b.value } : null;
@@ -12971,6 +13043,7 @@ function strictEqualityQuery(input, negated) {
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
+  if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated ? queryOwnValue(pc.path, { $ne: pc.value }, NOT_OWN_VALUE) : queryOwnValue(pc.path, { $eq: pc.value }, OWN_VALUE);
 }
 function looseEqualityQuery(input, negated) {
@@ -13264,8 +13337,9 @@ var PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the index-friendly query form; a list that is not a constant falls back to `$expr`
+    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x in [ \u2026 ]' produces a value, not a stage."),
     statement: unsupported("'x in [ \u2026 ]' is not a statement \u2014 see its 'where'.")
@@ -14204,6 +14278,9 @@ function receiverFamily(receiverName, onStream, name2) {
   const values = fams.filter((f) => FIELD_FAMILIES.includes(f));
   return values.length === 1 ? values[0] : void 0;
 }
+function elementsOf(name2) {
+  return row(name2)?.elements;
+}
 function argCountOf(name2, family) {
   const cell = row(name2)?.expr;
   if (cell === null || typeof cell !== "object") return void 0;
@@ -14243,8 +14320,36 @@ function lists(name2, where) {
   return row(name2)?.where.includes(where) === true;
 }
 var emitRow = (name2) => ROWS[name2] ?? PRODUCTIONS[name2];
+function soleFieldFamilyOf(name2) {
+  const fams = families(row(name2)?.on);
+  if (fams === void 0 || fams === "any") return null;
+  const fields = fams.filter((f) => f !== "stream");
+  return fields.length === 1 ? fields[0] : null;
+}
+function agreedReturnOf(name2) {
+  const fams = families(row(name2)?.on);
+  const r = returnsOf(name2);
+  if (fams === void 0 || fams === "any" || typeof r !== "object" || r === null) return null;
+  const kinds = /* @__PURE__ */ new Set();
+  for (const f of fams) {
+    if (f === "stream") continue;
+    const k = r[f];
+    if (k === void 0 || k === "same" || k === "element" || k === "unknown") return null;
+    kinds.add(k);
+  }
+  return kinds.size === 1 ? [...kinds][0] : null;
+}
+function isKnownName(name2) {
+  return row(name2) !== void 0;
+}
 function returnsOf(name2) {
   return emitRow(name2)?.returns ?? "unknown";
+}
+function callbackParamsOf(name2, position) {
+  const p = emitRow(name2)?.params;
+  if (p === void 0) return void 0;
+  if (Array.isArray(p)) return p;
+  return p[position];
 }
 function bindsOf(name2) {
   return emitRow(name2)?.binds;
@@ -14550,6 +14655,34 @@ function parseExpression(source) {
   return e;
 }
 var needsReturn = (pos, got) => `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = \u2026; return <expr>; }\` / \`function f(x) { return <expr>; }\`, or \`x => (<expr>)\` to return an object/expression directly`;
+function isStageStmt(stmt) {
+  const s = stmt;
+  return s.type === "OperatorCall" || s.type === "UpdateFilter" || s.type === "CallExpression" || s.type === "FuncDecl";
+}
+function statementSpelling(stmt) {
+  const s = stmt;
+  switch (s.type) {
+    case "OperatorCall":
+      return `${s.name}(...)`;
+    case "FuncDecl":
+      return `function ${s.name}(\u2026) { \u2026 }`;
+    case "UpdateFilter": {
+      const op = s.ops?.[0];
+      const target = op?.target === void 0 ? "$.x" : targetSpelling(op.target);
+      return op?.type === "DeleteStmt" ? `delete ${target}` : `${target} = \u2026`;
+    }
+    case "CallExpression":
+      return s.callee?.type === "Ident" ? `${s.callee.name}(...)` : "\u2026(...)";
+    default:
+      return "\u2026";
+  }
+}
+function targetSpelling(target) {
+  if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
+  if (target.type === "Ident") return target.name;
+  if (target.type === "MemberAccess") return `${targetSpelling(target.object)}.${target.name}`;
+  return "\u2026";
+}
 var Parser = class _Parser {
   constructor(toks) {
     /**
@@ -14571,11 +14704,25 @@ var Parser = class _Parser {
   }
   /** The checks that need the WHOLE tree: run once, after the entry method returns. */
   finish() {
-    const first = this.unclaimedStages.values().next();
-    if (!first.done) throw new ParseError(needsReturn(first.value, "'}'"), first.value);
+    const first = this.unclaimedStages.entries().next();
+    if (first.done) return;
+    const [lambda, endPos] = first.value;
+    const stmt = lambda.stages?.stmts.find((st) => st.type !== "LetDecl");
+    if (stmt !== void 0 && isStageStmt(stmt)) {
+      throw new ParseError(
+        `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`,
+        stmt.pos
+      );
+    }
+    throw new ParseError(needsReturn(endPos, "'}'"), endPos);
   }
   // ── the entry form ────────────────────────────────────────────────────────
   entry() {
+    const isFunction = this.c.is("Ident") && this.c.peek().text === "function";
+    if (isFunction) {
+      this.c.next();
+      if (this.c.is("Ident")) this.c.next();
+    }
     const open = this.c.expect("LParen");
     const slots = [];
     if (!this.c.is("RParen")) {
@@ -14606,7 +14753,7 @@ var Parser = class _Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
-    this.c.expect("Arrow");
+    if (!isFunction) this.c.expect("Arrow");
     const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
     return { params, toolbox, program };
   }
@@ -14626,6 +14773,12 @@ var Parser = class _Parser {
         if (this.c.is("RBrace")) break;
         const key = this.destructureKey();
         const name2 = this.c.eat("Colon") ? this.identLike().text : key.text;
+        if (this.c.is("Eq")) {
+          throw new ParseError(
+            `A default value in the params destructure is not supported ('${key.text} = \u2026'). Apply the default where the query is called, with JS's \`??\` at the call site \u2014 q({ ${key.text}: input ?? <default> }) \u2014 or write the value into the template-tag form.`,
+            this.c.peek().pos
+          );
+        }
         out.push({ key: key.text, name: name2, pos: key.pos });
       } while (this.c.eat("Comma"));
       this.c.expect("RBrace");
@@ -14805,7 +14958,7 @@ var Parser = class _Parser {
   parenWriteAhead() {
     const save = this.c.mark();
     try {
-      this.c.next();
+      while (this.c.is("LParen")) this.c.next();
       return STATEMENT_PREFIX.has(this.c.type) || this.startsAWrite();
     } finally {
       this.c.reset(save);
@@ -15121,7 +15274,9 @@ var Parser = class _Parser {
         continue;
       }
       const arg = this.expression();
-      if (takesStages && arg.type === "Lambda" && arg.stages !== void 0) this.unclaimedStages.delete(arg);
+      if (arg.type === "Lambda" && arg.stages !== void 0 && (takesStages || owner !== null && !isKnownName(owner))) {
+        this.unclaimedStages.delete(arg);
+      }
       out.push(arg);
     } while (this.c.eat("Comma"));
     this.c.expect(close);
@@ -15287,7 +15442,17 @@ var Parser = class _Parser {
     if (ret !== null) {
       const decls = stmts.filter((st) => st.type === "LetDecl");
       if (decls.length !== stmts.length) {
-        throw new ParseError("A callback block with a 'return' may only declare values before it", retPos);
+        const stmt = stmts.find((st) => st.type !== "LetDecl");
+        if (!isStageStmt(stmt)) {
+          throw new ParseError(
+            `A callback's block holds 'const' declarations and one 'return', and this statement is neither at position ${stmt.pos}. Bind it ('const x = \u2026;') or fold it into the 'return'.`,
+            stmt.pos
+          );
+        }
+        throw new ParseError(
+          `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`,
+          stmt.pos
+        );
       }
       return { type: "Lambda", params, body: { type: "ExprBlock", decls, ret, pos: retPos }, pos };
     }
@@ -15505,13 +15670,14 @@ function asLiteral(value, pos) {
     return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
   }
   if (isBson(value, "ObjectId")) {
-    const hex = value.toHexString();
+    const hex = objectIdHex(value);
+    if (hex === null) return null;
     return { type: "ObjectIdLiteral", hex, pos };
   }
   if (Array.isArray(value)) {
     const elements = [];
     for (const element2 of value) {
-      const spelled3 = asLiteral(element2, pos);
+      const spelled3 = leafOf(element2, pos);
       if (spelled3 === null) return null;
       elements.push(spelled3);
     }
@@ -15520,11 +15686,29 @@ function asLiteral(value, pos) {
   if (isPlainObject(value)) {
     const entries = [];
     for (const [name2, held] of Object.entries(value)) {
-      const spelled3 = asLiteral(held, pos);
+      const spelled3 = leafOf(held, pos);
       if (spelled3 === null) return null;
       entries.push({ type: "KeyValueEntry", key: { kind: "static", name: name2 }, value: spelled3, pos });
     }
     return { type: "ObjectLiteral", entries, pos };
+  }
+  return null;
+}
+function leafOf(value, pos) {
+  if (value === void 0) return null;
+  if (value instanceof RegExp) return { type: "Injected", value, pos };
+  const spelled3 = asLiteral(value, pos);
+  if (spelled3 !== null) return spelled3;
+  return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
+}
+function objectIdHex(value) {
+  const v = value;
+  if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
+  if (v.id instanceof Uint8Array && v.id.length === 12)
+    return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (typeof v.toString === "function") {
+    const s = v.toString();
+    if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
   }
   return null;
 }
@@ -15548,13 +15732,13 @@ function foldDateMethod(d, name2, args) {
       return ok(d.getUTCFullYear());
     case "getMonth":
     case "getUTCMonth":
-      return ok(d.getUTCMonth() + 1);
+      return ok(d.getUTCMonth());
     case "getDate":
     case "getUTCDate":
       return ok(d.getUTCDate());
     case "getDay":
     case "getUTCDay":
-      return ok(d.getUTCDay() + 1);
+      return ok(d.getUTCDay());
     case "getHours":
     case "getUTCHours":
       return ok(d.getUTCHours());
@@ -15608,11 +15792,10 @@ function foldNewDate(args) {
   }
   if (!args.every((v) => typeof v === "number" && Number.isInteger(v))) return NO;
   const [year, month, day = 1, hour = 0, minute = 0, second = 0, ms = 0] = args;
-  if (month < 1 || month > 12) return NO;
-  return ok(new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms)));
+  return ok(new Date(Date.UTC(year, month, day, hour, minute, second, ms)));
 }
 function foldDateUTC(args) {
-  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 1] : args;
+  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 0] : args;
   const date = foldNewDate(parts);
   return date.ok ? ok(date.value.getTime()) : NO;
 }
@@ -16147,7 +16330,16 @@ function arrayMethod(xs, name2, args) {
       if (name2 === "intersectionBy") return ok2(mine);
       const myKeys = xs.map(keyOf);
       const extra = other.filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other)));
-      return ok2(name2 === "unionBy" ? [...xs, ...extra] : [...notMine, ...extra]);
+      if (name2 === "xorBy") return ok2([...notMine, ...extra]);
+      const seen = [];
+      const union = [];
+      [...xs, ...other].forEach((v, i, all2) => {
+        const k = keyOf(v, i, all2);
+        if (deepIncludes(seen, k)) return;
+        seen.push(k);
+        union.push(v);
+      });
+      return ok2(union);
     }
     // ── slicing by count ────────────────────────────────────────────────────
     case "take":
@@ -16219,7 +16411,9 @@ function arrayMethod(xs, name2, args) {
       const lists2 = [xs, ...args.slice(0, -1).map(valueOf)];
       const with_ = fnOf(args[args.length - 1]);
       if (with_ === void 0 || !lists2.every((l) => Array.isArray(l))) return NO2;
-      const width = Math.min(...lists2.map((l) => l.length));
+      const widths = new Set(lists2.map((l) => l.length));
+      if (widths.size !== 1) return NO2;
+      const width = [...widths][0];
       return ok2(Array.from({ length: width }, (_, i) => with_(...lists2.map((l) => l[i]))));
     }
     case "zipObject": {
@@ -16302,6 +16496,8 @@ function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
 }
 function spellValue(value, pos) {
   const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
+  if (literal2 !== null && literal2.type === "RegexLiteral" && value instanceof RegExp)
+    return { ...literal2, injected: value };
   return literal2 ?? { type: "Injected", value, pos };
 }
 function inject(root2, values) {
@@ -16594,7 +16790,7 @@ function asArg(node, env, depth) {
     return {
       fn: (...args) => {
         const r = applyLambda(node, args, env, depth + 1);
-        if (!r.ok) throw NOT_CONSTANT_CALLBACK;
+        if (!r.ok) throw r.unspellable !== void 0 ? new UnspellableInCallback(r.unspellable) : NOT_CONSTANT_CALLBACK;
         return r.value;
       }
     };
@@ -16603,6 +16799,11 @@ function asArg(node, env, depth) {
   return value.ok ? { value: value.value } : null;
 }
 var NOT_CONSTANT_CALLBACK = /* @__PURE__ */ Symbol("callback is not constant");
+var UnspellableInCallback = class {
+  constructor(what) {
+    this.what = what;
+  }
+};
 function familyOfValue(value) {
   if (typeof value === "string") return "string";
   if (Array.isArray(value)) return "array";
@@ -16636,7 +16837,8 @@ function methodCall(node, env, depth) {
   let result;
   try {
     result = onNamespace ? foldNamespaceCall(receiverNode.name, name2, args) : foldInstanceCall(receiverValue, name2, args);
-  } catch {
+  } catch (e) {
+    if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT2;
   }
   if (!result.ok) return propagate(result);
@@ -16667,7 +16869,8 @@ function applyCall(argNodes, env, depth, run) {
   let result;
   try {
     result = run(args);
-  } catch {
+  } catch (e) {
+    if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT2;
   }
   if (!result.ok) return propagate(result);
@@ -17122,9 +17325,14 @@ function foldConstantParts(node, known = EMPTY) {
   };
   return mapTreeIn(node, known, step, (inner, env) => {
     const n2 = inner;
-    if (!EVALUABLE.has(n2.type)) return inner;
+    if (!EVALUABLE.has(n2.type) || n2.type === "RegexLiteral") return inner;
     const result = evaluate(n2, env);
-    if (!result.ok) return inner;
+    if (!result.ok) {
+      if (result.unspellable !== void 0) throw noLiteralFor(result.unspellable, n2.pos);
+      return inner;
+    }
+    const nonFinite = nonFiniteIn(result.value);
+    if (nonFinite !== null) throw noLiteralFor(nonFinite, n2.pos);
     return asLiteral(result.value, n2.pos) ?? inner;
   });
 }
@@ -17208,6 +17416,8 @@ function foldStatements(stmts) {
     }
     if (resolved.type === "LetDecl" && !excluded.has(resolved.name)) {
       const result = evaluate(resolved.value, env);
+      if (result.ok && nonFiniteIn(result.value) !== null)
+        throw noLiteralFor(nonFiniteIn(result.value), resolved.pos);
       if (!result.ok && result.unspellable !== void 0) {
         throw new ParseError(
           `This constant expression evaluates to ${result.unspellable}, which has no MongoDB literal. Check the arithmetic \u2014 a division by zero, or an exponent out of range.`,
@@ -17230,6 +17440,29 @@ function foldStatements(stmts) {
     survivors.push(resolved);
   }
   return { stmts: survivors, changed, env };
+}
+function noLiteralFor(what, pos) {
+  return new ParseError(
+    `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic \u2014 a division by zero, or an exponent out of range \u2014 or guard it with a condition.`,
+    pos
+  );
+}
+function nonFiniteIn(value) {
+  if (typeof value === "number") return Number.isFinite(value) ? null : String(value);
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const found2 = nonFiniteIn(v);
+      if (found2 !== null) return found2;
+    }
+    return null;
+  }
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    for (const v of Object.values(value)) {
+      const found2 = nonFiniteIn(v);
+      if (found2 !== null) return found2;
+    }
+  }
+  return null;
 }
 
 // src/registry/ast.ts
@@ -17500,12 +17733,10 @@ function asArrow(arg, forms, pos) {
   }
   if (a.type === "ObjectLiteral" && accepts("matchesObject") && a.entries !== void 0) {
     if (a.entries.length === 0) return void 0;
-    const tests = [];
-    for (const entry of a.entries) {
-      const key = writtenKey(entry);
-      if (key === null) return void 0;
-      tests.push(strictEq(pathOn(param, key, pos), entry.value, pos));
-    }
+    const tests = matchTests(param, "", a.entries, pos);
+    if (tests === void 0) return void 0;
+    if (tests.length === 0)
+      return { type: "Lambda", params: [param], body: { type: "BooleanLiteral", value: true, pos }, pos };
     const body = tests.reduce((left, right) => ({ type: "BinaryExpr", op: "&&", left, right, pos }));
     return { type: "Lambda", params: [param], body, pos };
   }
@@ -17521,6 +17752,38 @@ function asArrow(arg, forms, pos) {
   }
   return void 0;
 }
+function matchTests(param, prefix, entries, pos) {
+  const tests = [];
+  for (const entry of entries) {
+    const key = writtenKey(entry);
+    if (key === null) return void 0;
+    const path = prefix === "" ? key : `${prefix}.${key}`;
+    const value = entry.value;
+    if (value.type === "ObjectLiteral" && Array.isArray(value.entries)) {
+      const nested = matchTests(param, path, value.entries, pos);
+      if (nested === void 0) return void 0;
+      tests.push(...nested);
+      continue;
+    }
+    const elements = value.type === "ArrayLiteral" ? value.elements : void 0;
+    if (elements !== void 0 && elements.every((e) => CONSTANT_LITERALS.has(e.type))) {
+      for (const e of elements) {
+        tests.push({
+          type: "MethodCall",
+          object: pathOn(param, path, pos),
+          name: "includes",
+          args: [e],
+          optional: false,
+          pos
+        });
+      }
+      continue;
+    }
+    tests.push(strictEq(pathOn(param, path, pos), value, pos));
+  }
+  return tests;
+}
+var CONSTANT_LITERALS = /* @__PURE__ */ new Set(["NumberLiteral", "StringLiteral", "BooleanLiteral", "NullLiteral", "BigIntLiteral"]);
 function bareCall(callee, param, pos) {
   const arg = { type: "Ident", name: param, pos };
   if (callee.type === "Ident" && typeof callee.name === "string") {
@@ -17535,6 +17798,20 @@ function bareCall(callee, param, pos) {
   }
   return void 0;
 }
+var groupBodyLink = {
+  name: "groupBodyLink",
+  apply: (node) => {
+    const n2 = node;
+    if (n2.type !== "MethodCall" || n2.name !== "groupBy") return node;
+    const recv = n2.object;
+    const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
+    if (receiverFamily(named, recv !== void 0 && readsAContextRef(recv), "groupBy") !== "stream") return node;
+    const args = n2.args;
+    if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
+    const hasId = args[0].entries.some((e) => writtenKey(e) === "_id");
+    return hasId ? { ...n2, name: "$group" } : node;
+  }
+};
 var iterateeShorthand = {
   name: "iterateeShorthand",
   apply: (node, where) => {
@@ -17545,7 +17822,7 @@ var iterateeShorthand = {
     const family = receiverFamily(named, recv !== void 0 && readsAContextRef(recv), n2.name);
     if (family === void 0) return node;
     const runsAs = picksOneOf(n2.name);
-    const layout = iterateeSlotsOf(n2.name, family) ?? (runsAs === null ? void 0 : iterateeSlotsOf(runsAs, family));
+    const layout = iterateeSlotsOf(n2.name, family) ?? (runsAs === null ? void 0 : iterateeSlotsOf(runsAs, family)) ?? (family === "stream" ? iterateeSlotsOf(n2.name, "array") : void 0);
     if (layout === void 0 || !isSlotLayout(layout)) return node;
     const args = n2.args;
     const next = [...args];
@@ -17582,6 +17859,8 @@ var RULES = [
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
+  // BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
+  groupBodyLink,
   iterateeShorthand
 ];
 function desugarVerbose(program, root2 = STATEMENT) {
@@ -17614,8 +17893,17 @@ function statementShaped(node) {
   if (readsAContextRef(node)) return true;
   const name2 = namedRow(node);
   if (name2 === null) return false;
+  if (name2 === "assign" && writesItsTarget(node)) return true;
   if (lists(name2, "value")) return false;
   return lists(name2, "statement") || lists(name2, "stream");
+}
+function isBareAssignWrite(program) {
+  const node = program;
+  return namedRow(node) === "assign" && writesItsTarget(node);
+}
+function writesItsTarget(node) {
+  const target = node.args?.[0];
+  return target !== void 0 && (target.type === "FieldRef" || target.type === "Ident");
 }
 function shapeOf(program) {
   const root2 = program;
@@ -17946,6 +18234,7 @@ var countWord = (args) => {
   return "takes a different number of arguments";
 };
 function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
+  const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
     case "refused":
       return new CodegenError(
@@ -17967,11 +18256,15 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
-      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${spelled3}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
-      return new CodegenError(`'${spelled3}()' is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
+      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
+      const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
+      return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
-    case "wrongCount":
-      return new CodegenError(`${signature(spelled3, sel.args)} ${countWord(sel.args)}, got ${sel.got}`, pos);
+    case "wrongCount": {
+      const most = sel.args.exact ?? (sel.args.allowed === void 0 ? void 0 : Math.max(...sel.args.allowed));
+      const thisArg = callbackParamsOf(sel.name, position) !== void 0 && most !== void 0 && sel.got === most + 1 ? " \u2014 JavaScript's trailing 'thisArg' has no meaning in MQL; drop it" : "";
+      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}${thisArg}`, pos);
+    }
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
     case "spreadRefused": {
@@ -18063,6 +18356,18 @@ var listOperand = (name2, pos) => new CodegenError(
   `${name2} operates on a list of operands \u2014 pass two or more (${name2}(a, b)) or a single array (${name2}([a, b])).`,
   pos
 );
+var fanOutEmpty = (pos) => new CodegenError(
+  "'$ = []' would fan out nothing and drop every document. To drop them all, write '$$ = []'; to drop some, fan out a data-dependent array ('$ = $.items.filter(\u2026)').",
+  pos
+);
+var fanOutScalars = (noun, pos) => new CodegenError(
+  `'$ = [ \u2026 ]' fans out: each element becomes a document root, and ${noun} is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').`,
+  pos
+);
+var joinNeedsPipeline = (pos) => new CodegenError(
+  "'$$$.<coll>' (a read of another collection) needs Pipeline mode \u2014 it materialises a '$lookup' stage. Use it inside a pipeline (e.g. `({ $ }) => { $.n = $$$.<coll>.filter(\u2026).length; }`); it has no meaning in a Filter or in 'jsmql.expr'.",
+  pos
+);
 var needsPipeline = (name2, pos) => new CodegenError(
   `'$$.${name2}' (the current stream's document count) needs Pipeline mode \u2014 it materialises a '$setWindowFields' stage. Use it inside a pipeline (e.g. \`({ $ }) => { $.n = $$.${name2}; \u2026 }\`); it has no meaning in a Filter or in 'jsmql.expr'.`,
   pos
@@ -18097,6 +18402,18 @@ var queryOnlyInsideElement = (name2, pos) => new CodegenError(
   `'${name2}' applies to the top-level document only \u2014 the server refuses it inside an array element test. Move it out of the '.some(\u2026)' body: '$.items.some(\u2026) && ${name2}(\u2026)'.`,
   pos
 );
+var arrayOfArrays = (method, holder, pos) => new CodegenError(
+  `.${method}() can't stringify an array of arrays \u2014 ${holder} holds arrays, and the server refuses to stringify an array element. Flatten first ('.flat().join()'), or map each inner array to a string ('.map(a => a.join(",")).join()').`,
+  pos
+);
+var streamHandleAsValue = (name2, pos) => new CodegenError(
+  `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.length') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
+  pos
+);
+var bareContextRef = (ref, pos) => {
+  const what = ref === "$$" ? "'$$' is the stream \u2014 chain what to do with it: '$$.filter(\u2026);', '$$.push({ \u2026 });', '$$ = $$.take(10);'" : ref === "$$$" ? "'$$$' is the current database \u2014 name a collection after it: '$.o = $$$.<coll>.find(\u2026);' reads one, '$$$.<coll> = $$;' writes one" : "'$$$$' is the cluster \u2014 name a database and a collection after it: '$$$$.<db>.<coll> = $$;' writes one; '$$$$.currentOp();' is a source stage";
+  return new CodegenError(`${what}. Alone it is not a statement.`, pos);
+};
 var notAStatement = (pos) => new CodegenError(
   "A pipeline statement writes something: a field ('$.total = \u2026;'), the document ('$ = { \u2026 };'), a deletion ('delete $.x;'), or a stage ('$match(\u2026);'). This expression only computes a value \u2014 assign it to a field, or wrap a predicate as '$match(\u2026)'.",
   pos
@@ -18421,7 +18738,7 @@ var arrayReduceShape = (pos) => new CodegenError(
 
 // src/compiler/emit/env.ts
 var isForeign = (b) => pipelineOverOf(b.stage) === "foreign";
-var injectedNeedsLiteral = (site) => site.where.at === "value" && site.root !== "statement" && site.root !== "updateDoc" && site.envelope === "none";
+var injectedNeedsLiteral = (site) => site.where.at === "value" && site.root !== "updateDoc" && site.envelope === "none";
 var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
@@ -18695,6 +19012,7 @@ function checkCharSet(name2, key, e, set) {
   }
 }
 function checkBody(name2, rule, args, keys, pos) {
+  if (args.length === 1 && args[0].type === "Injected") return;
   let present;
   let hasSpread = false;
   let valueOf2;
@@ -18816,6 +19134,79 @@ function checkBody(name2, rule, args, keys, pos) {
     const v = valueOf2(k);
     if (v !== void 0) checkType(name2, k, v, t);
   }
+  if (body !== null) {
+    for (const [k, inner] of Object.entries(rule.nested ?? {})) {
+      const v = valueOf2(k);
+      if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, inner, [v], [], v.pos);
+    }
+    if (rule.eachValue !== void 0) {
+      for (const k of present) {
+        const v = valueOf2(k);
+        if (v !== void 0 && v.type === "ObjectLiteral") checkBody(`${name2}.${k}`, rule.eachValue, [v], [], v.pos);
+      }
+    }
+    for (const req of rule.requiresWhen ?? []) {
+      if (valueOf2(req.requires) !== void 0) continue;
+      const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
+      if (hit !== void 0) {
+        throw new CodegenError(
+          `'${name2}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => JSON.stringify(e)).join(" or ")} \u2014 the server refuses it without one.`,
+          hit.pos
+        );
+      }
+    }
+  }
+  if (rule.nonEmpty === true && body !== null && present.length === 0) {
+    throw new CodegenError(
+      `'${name2}' takes at least one field \u2014 an empty body names none, and the server refuses it.`,
+      pos
+    );
+  }
+  for (const [k, min] of Object.entries(rule.minimums ?? {})) {
+    const v = valueOf2(k);
+    if (v === void 0) continue;
+    const held = numberOf(v);
+    if (held !== null && held < min) {
+      throw new CodegenError(
+        `'${name2}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}, got ${held} \u2014 the server refuses it.`,
+        v.pos
+      );
+    }
+  }
+  for (const [k, min] of Object.entries(rule.sortedList ?? {})) {
+    const v = valueOf2(k);
+    if (v === void 0 || v.type !== "ArrayLiteral") continue;
+    const held = [];
+    for (const el of v.elements) {
+      if (el.type === "SpreadElement") {
+        held.length = 0;
+        break;
+      }
+      const r = evaluate(el, /* @__PURE__ */ new Map());
+      if (!r.ok) {
+        held.length = 0;
+        break;
+      }
+      held.push(r.value);
+    }
+    if (held.length === 0 && v.elements.length > 0) continue;
+    if (held.length < min) {
+      throw new CodegenError(
+        `'${name2}' ${k} needs at least ${min} values, got ${held.length} \u2014 the server refuses it.`,
+        v.pos
+      );
+    }
+    for (let i = 1; i < held.length; i++) {
+      const a = held[i - 1], b = held[i];
+      const ordered = typeof a === typeof b && (typeof a === "number" || typeof a === "string" || a instanceof Date) ? a < b : true;
+      if (!ordered) {
+        throw new CodegenError(
+          `'${name2}' ${k} must be sorted ascending: ${JSON.stringify(a)} is not less than ${JSON.stringify(b)} \u2014 the server refuses it.`,
+          v.elements[i].pos
+        );
+      }
+    }
+  }
   for (const k of rule.constantKeys ?? []) {
     const v = valueOf2(k);
     if (v !== void 0 && !evaluate(v, /* @__PURE__ */ new Map()).ok) {
@@ -18825,6 +19216,19 @@ function checkBody(name2, rule, args, keys, pos) {
       );
     }
   }
+}
+function walkBody(node, path) {
+  if (path.length === 0) return [node];
+  if (node.type !== "ObjectLiteral") return [];
+  const [head, ...rest] = path;
+  const out = [];
+  for (const e of node.entries) {
+    if (e.type !== "KeyValueEntry") continue;
+    const key = staticKey(e);
+    if (key === null || head !== "*" && key !== head) continue;
+    out.push(...walkBody(e.value, rest));
+  }
+  return out;
 }
 function checkSlots(name2, args, operands, hasObjectForm = true) {
   for (const i of args.nullRefused ?? []) {
@@ -18856,6 +19260,16 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
     if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], rule.positional ?? [], e.pos);
+  }
+  for (const i of args.nonEmpty ?? []) {
+    const e = operands[i];
+    if (e === void 0) continue;
+    if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
+      throw new CodegenError(
+        `'${name2}' takes at least one field name \u2014 an empty ${e.type === "StringLiteral" ? "string" : "list"} names none, and the server refuses it.`,
+        e.pos
+      );
+    }
   }
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];
@@ -19048,8 +19462,16 @@ function kindOf(node, env) {
       }
       return "unknown";
     }
-    case "MethodCall":
-      return resolveReturns(returnsOf(node.name), kindOf(node.object, env), receiverFamilyOf(node.object, env));
+    case "MethodCall": {
+      const family = receiverFamilyOf(node.object, env);
+      if (family !== null) return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family);
+      const r = returnsOf(node.name);
+      if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
+      const sole = soleFieldFamilyOf(node.name);
+      if (sole !== null) return resolveReturns(r, sole, sole);
+      const agreed = agreedReturnOf(node.name);
+      return agreed ?? "unknown";
+    }
     case "OperatorCall":
       return resolveReturns(returnsOf(node.name), "unknown", null);
     case "CallExpression":
@@ -19200,7 +19622,7 @@ function rebase(node, peeledTo, replacement) {
 }
 function joinValue(node, env, S) {
   const l = lookupOf(node, env, S);
-  if (!env.chain.isPipeline) throw needsPipeline("$$$.<coll>", l.pos);
+  if (!env.chain.isPipeline) throw joinNeedsPipeline(l.pos);
   const slot = env.chain.slot();
   const stages = [lookupStage(l, slot.path)];
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
@@ -19211,8 +19633,12 @@ function joinValue(node, env, S) {
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
 function joinWrite(node, path, env, S) {
+  const marks = [env.chain, env.rootChain].map((c) => [c, c.hoisted.length]);
   const l = lookupOf(node, env, S);
-  if (!l.complete) return null;
+  if (!l.complete) {
+    for (const [c, n2] of marks) c.hoisted.length = n2;
+    return null;
+  }
   const stages = [lookupStage(l, path)];
   if (l.one !== false) stages.push(unwrap(path, l.one));
   return { stages, yields: l.yields };
@@ -19854,13 +20280,18 @@ function literalIn(e) {
 }
 function constantIn(e) {
   if (e.type === "Injected") return { value: e.value };
+  if (e.type === "RegexLiteral") return e.injected !== void 0 ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, /* @__PURE__ */ new Map());
   if (!v.ok) return null;
   const x = v.value;
-  if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return { value: x };
-  if (x instanceof Date || x instanceof ObjectId) return { value: x };
-  return null;
+  return isQueryConstant(x) ? { value: x } : null;
+}
+function isQueryConstant(x) {
+  if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
+  if (x instanceof Date || x instanceof ObjectId) return true;
+  if (Array.isArray(x)) return x.every(isQueryConstant);
+  return false;
 }
 function mergeAnd(a, b) {
   if (isAlwaysFalse(a) || isAlwaysFalse(b)) return matchExpr(truthOf(false, true));
@@ -20331,6 +20762,7 @@ function lowerValue(node, env) {
     case "UndefinedLiteral":
       throw undefinedAsValue(node.pos);
     case "RegexLiteral":
+      if (node.injected !== void 0) return node.injected;
       throw regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -20343,7 +20775,7 @@ function lowerValue(node, env) {
     case "Injected":
       return injectedNeedsLiteral(env.site) && isMqlShaped(node.value) ? { $literal: node.value } : node.value;
     case "FieldRef":
-      return env.render(locate(node, env), node.pos);
+      return reachable(env.render(locate(node, env), node.pos));
     case "CollectionRef":
     case "DatabaseRef":
     case "ClusterRef":
@@ -20535,7 +20967,7 @@ function identifier(node, env) {
       case "function":
         throw functionAsValue(node.name, node.pos);
       case "streamHandle":
-        throw functionAsValue(node.name, node.pos);
+        throw streamHandleAsValue(node.name, node.pos);
       case "dropped":
         throw droppedBinding(b.ref, node.pos);
     }
@@ -20571,7 +21003,18 @@ function locate(node, env) {
 var lastSegment = (path) => path.slice(path.lastIndexOf(".") + 1);
 function pathOf(node, env) {
   const loc = locate(node, env);
-  return loc === null ? null : env.render(loc, node.pos);
+  return loc === null ? null : reachable(env.render(loc, node.pos));
+}
+function reachable(path) {
+  const root2 = path.startsWith("$$") ? 2 : 1;
+  const segments = path.slice(root2).split(".");
+  const at2 = segments.findIndex((s, i) => i > 0 && s.startsWith("$"));
+  if (at2 < 0) return path;
+  let value = path.slice(0, root2) + segments.slice(0, at2).join(".");
+  for (const seg of segments.slice(at2)) {
+    value = { $getField: { field: seg.startsWith("$") ? { $literal: seg } : seg, input: value } };
+  }
+  return value;
 }
 function isPropertyRow(node) {
   return sourceFamily(node.object) !== null || !isCallable(node.name);
@@ -20651,6 +21094,10 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
   const spelled3 = spelledMethod(name2, recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   if (sel.kind === "rule") {
+    if (elementsOf(name2) === "scalar") {
+      const holder = arraysHolder(recvNode);
+      if (holder !== null) throw arrayOfArrays(name2, holder, node.pos);
+    }
     checkSlots(name2, sel.rule.args, exprArgs);
     const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
     return sel.rule.emit(exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ));
@@ -20665,6 +21112,11 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
     return on !== void 0 && on !== "any" && on.includes(receiver.name);
   }) : JS_NAMES;
   throw refusalFor(sel, spelled3, container, position, node.pos, near, format);
+}
+function arraysHolder(recv) {
+  if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
+  if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
+  return null;
 }
 function withOptional(lowered, receiver, optional, name2) {
   if (!optional || receiver.kind !== "value" && receiver.kind !== "opaque") return lowered;
@@ -20760,7 +21212,8 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
       pos
     });
   }
-  return { $let: { vars, in: lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body")) } };
+  const body = lowerValue(lambda.body, childEnv(bodyEnv, lambda, "body"));
+  return Object.keys(vars).length === 0 ? body : { $let: { vars, in: body } };
 }
 function operatorCall(node, env) {
   const position = positionIn(env);
@@ -21628,6 +22081,15 @@ function writeStages(uf, env, first) {
       }
       const kind = kindOf(op.value, inner);
       if (kind === "array") {
+        if (op.value.type === "ArrayLiteral") {
+          const elements = op.value.elements;
+          if (elements.length === 0) throw fanOutEmpty(op.value.pos);
+          for (const el of elements) {
+            const k = el.type === "SpreadElement" ? "unknown" : kindOf(el, inner);
+            if (k !== "unknown" && k !== "object" && k !== "array")
+              throw fanOutScalars(KIND_NOUN[k] ?? `a ${k}`, el.pos);
+          }
+        }
         const slot = inner.chain.slot();
         flush();
         out.push({ $set: { [slot.path]: value } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
@@ -21751,6 +22213,9 @@ function stageStatement(node, env, first) {
     }
   }
   const name2 = namedRow(node);
+  if (node.type === "CollectionRef") throw bareContextRef("$$", node.pos);
+  if (node.type === "DatabaseRef") throw bareContextRef("$$$", node.pos);
+  if (node.type === "ClusterRef") throw bareContextRef("$$$$", node.pos);
   if (name2 === null) throw notAStatement(node.pos);
   let bodyEnv = null;
   let args;
@@ -21775,7 +22240,15 @@ function stageStatement(node, env, first) {
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stage '${name2}' selected a receiver dispatch`);
-    throw refusalFor(sel, name2, "", "statement", node.pos, []);
+    throw refusalFor(
+      sel,
+      name2,
+      "",
+      "statement",
+      node.pos,
+      name2.startsWith("$") ? everyName().filter((n2) => n2.startsWith("$") && listedIn(n2, "statement")) : [],
+      (s) => s
+    );
   }
   const bodyRule = stageBodyRuleOf(name2);
   checkSlots(name2, sel.rule.args, args, bodyRule !== void 0);
@@ -22144,7 +22617,7 @@ function lowerMode(mode, api, parsed, values) {
   switch (resolved) {
     case "expr":
     case "filter": {
-      if (shapeOf(injected) === "pipeline") {
+      if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
         throw wrongShape(api, resolved, injected);
       }
       const program = expressionOf(desugar(fold(injected), resolved === "expr" ? VALUE : FILTER));

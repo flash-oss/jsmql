@@ -7,7 +7,7 @@
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
-import type { Family, FieldFamily, IterateeSlots, On, Position, MutatorForm } from "../registry/vocabulary.ts";
+import type { Family, FieldFamily, IterateeSlots, On, Position, MutatorForm, Kind } from "../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
@@ -205,6 +205,11 @@ type ArgCount = { exact?: number; allowed?: readonly number[]; atLeast?: number;
  * `Math.max(a, b)` on the namespace, one row with two counts. Reading the first
  * branch and hoping would refuse `Math.max(3, 7)` for taking two arguments.
  */
+/** What a method needs of its receiver's ELEMENTS: `"scalar"` when an element that is an array makes the server refuse. */
+export function elementsOf(name: string): "scalar" | undefined {
+  return (row(name) as { elements?: "scalar" } | undefined)?.elements;
+}
+
 export function argCountOf(name: string, family?: Family): ArgCount | undefined {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
   if (cell === null || typeof cell !== "object") return undefined;
@@ -298,6 +303,30 @@ export function soleFieldFamilyOf(name: string): Family | null {
   if (fams === undefined || fams === "any") return null;
   const fields = fams.filter((f) => f !== "stream");
   return fields.length === 1 ? fields[0] : null;
+}
+
+/**
+ * The one kind a method's row states for EVERY document-field family it is
+ * spelled on, or null when the families disagree, one is "same" / "element", or
+ * the row states none. `.size()` is a number on an array and on an object alike.
+ */
+export function agreedReturnOf(name: string): Kind | null {
+  const fams = families(row(name)?.on);
+  const r = returnsOf(name);
+  if (fams === undefined || fams === "any" || typeof r !== "object" || r === null) return null;
+  const kinds = new Set<string>();
+  for (const f of fams) {
+    if (f === "stream") continue;
+    const k = (r as Record<string, string | undefined>)[f];
+    if (k === undefined || k === "same" || k === "element" || k === "unknown") return null;
+    kinds.add(k);
+  }
+  return kinds.size === 1 ? ([...kinds][0] as Kind) : null;
+}
+
+/** Does the registry have a row for this name at all? A typo has none. */
+export function isKnownName(name: string): boolean {
+  return row(name) !== undefined;
 }
 
 /** The result type a name states, or "unknown" when it states none. */

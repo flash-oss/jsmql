@@ -1304,6 +1304,9 @@ $.age >= 21                         // { $gte: ["$age", 21] }
 $.score < 50                        // { $lt: ["$score", 50] }
 $.score <= 100                      // { $lte: ["$score", 100] }
 $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]] }
+// in a filter (no ';'), a constant list is the native query operator — the '$not' keeps JavaScript's
+// meaning, a test of the scalar, where MongoDB's '$in' alone would also match an array field holding the value:
+//   { status: { $in: ["active", "pending"], $not: { $type: "array" } } }
 $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
@@ -1555,6 +1558,8 @@ Array.from({length: 3}, (_, i) => i * 2)
 $.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)
 $.tags.join(", ")          // builds a comma-separated string via $reduce/$concat
 $.items.toString()         // same as .join(",") for arrays; no-op for strings; $toString otherwise
+// an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by both:
+// the server cannot stringify an array element; flatten first, or map each inner array to a string
 $.nested.flat()            // flatten one level via $reduce + $concatArrays
 $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```
@@ -4262,6 +4267,8 @@ jsmql`$.method === ${"postalDelivery"} && $.createdAt >= ${cutoff}`
 jsmql`$.username === ${/^alice/i}`
 // → { username: /^alice/i }
 ```
+
+A RegExp you pass is a value in every position, not only in a query slot: `` jsmql.expr`${re}` `` is the RegExp itself, `` jsmql`$.name = ${re};` `` writes it, and a filter keeps the instance you passed rather than a copy. Only a regex written in the source (`/^a/`) is confined to the regex methods.
 
 Pass-through types: `Date`, `RegExp`, `Uint8Array` (and `Buffer`, which subclasses `Uint8Array`), and ObjectId (duck-typed via `_bsontype`). Everything else goes through `JSON.stringify`. Pass-through also works for **nested** instances — a Date / RegExp / etc. buried inside an interpolated object or array still arrives as a live instance, so realistic operator-call shapes like `` jsmql.expr`$dateDiff(${{ startDate: new Date(...), endDate: new Date(...), unit: "day" })` `` work the way you'd write them by hand.
 

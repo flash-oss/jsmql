@@ -148,6 +148,13 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** Probed in declaration order, so precedence is visible. */
   on: O;
   /**
+   * What the method needs of its receiver's ELEMENTS. `"scalar"`: an element that
+   * is an array makes the server refuse (`$toString` of an array), so a receiver
+   * that provably holds arrays — a literal of literals, `.partition(…)` — is refused
+   * at compile time with the flatten / map-each rewrite.
+   */
+  elements?: "scalar";
+  /**
    * Can it be handed to a higher-order name WITHOUT being applied?
    *   $.items.map(Math.floor)  → accepted
    *   $.items.map(Math.asinh)  → "Only the unary Math methods … can be passed as
@@ -4412,7 +4419,8 @@ export const NAMES = {
     ),
     group: unsupported("'$covariancePop' is not valid in a $group output position — see its 'where'."),
     window: {
-      args: { sig: "expression1, expression2", exact: 2 },
+      // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
+      args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     stream: unsupported(
@@ -4438,7 +4446,8 @@ export const NAMES = {
     ),
     group: unsupported("'$covarianceSamp' is not valid in a $group output position — see its 'where'."),
     window: {
-      args: { sig: "expression1, expression2", exact: 2 },
+      // MEASURED: one and three operands run and answer null; the server refuses none of 1, 2, 3
+      args: { sig: "expression1, expression2", allowed: [1, 2, 3] },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     stream: unsupported(
@@ -4725,6 +4734,7 @@ export const NAMES = {
       closed: true,
       keyTypes: { boundaries: "array", output: "object" },
       constantKeys: ["boundaries", "default"],
+      sortedList: { boundaries: 2 },
     },
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
@@ -4757,6 +4767,7 @@ export const NAMES = {
       closed: true,
       keyTypes: { buckets: "int", granularity: "string", output: "object" },
       constantKeys: ["buckets", "granularity"],
+      minimums: { buckets: 1 },
       enums: {
         granularity: ["R5", "R10", "R20", "R40", "R80", "1-2-5", "E6", "E12", "E24", "E48", "E96", "E192", "POWERSOF2"],
       },
@@ -5023,6 +5034,23 @@ export const NAMES = {
     // MEASURED: partitionBy AND partitionByFields → Maximum one of 'partitionBy' and 'partitionByFields can be specified in '$fill'
     // MEASURED: output.a.method: "zzz" → Method must be either locf or linear (a nested key; not stated here)
     body: {
+      // MEASURED: output.a: { value: 0, method: "locf" } → exactly one of 'method' or 'value'; method "zzz" → must be either locf or linear;
+      // method "linear" with no sortBy → $linearFill must be specified with a top level sortBy expression
+      nested: {
+        output: {
+          required: [],
+          optional: [],
+          closed: false,
+          eachValue: {
+            required: [],
+            optional: ["value", "method"],
+            closed: true,
+            exactlyOneOf: [["value", "method"]],
+            enums: { method: ["locf", "linear"] },
+          },
+        },
+      },
+      requiresWhen: [{ path: ["output", "*", "method"], equals: ["linear"], requires: "sortBy" }],
       required: ["output"],
       optional: ["partitionBy", "partitionByFields", "sortBy"],
       closed: true,
@@ -5097,6 +5125,7 @@ export const NAMES = {
       closed: true,
       constantKeys: ["from", "connectFromField", "connectToField", "as", "depthField", "maxDepth"],
       keyTypes: { maxDepth: "int-or-long", restrictSearchWithMatch: "object" },
+      minimums: { maxDepth: 0 },
     },
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
@@ -5479,7 +5508,7 @@ export const NAMES = {
     where: ["stream", "statement"],
     only: ["update"],
     // MEASURED: { $project: {} } → projection specification must have at least one field
-    body: { required: [], optional: [], closed: false, onePolarity: true },
+    body: { required: [], optional: [], closed: false, onePolarity: true, nonEmpty: true },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5613,7 +5642,14 @@ export const NAMES = {
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
     where: ["stream", "statement"],
-    body: { required: ["size"], optional: [], closed: true, keyTypes: { size: "number" }, constantKeys: ["size"] },
+    body: {
+      required: ["size"],
+      optional: [],
+      closed: true,
+      keyTypes: { size: "number" },
+      constantKeys: ["size"],
+      minimums: { size: 1 },
+    },
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
@@ -5739,6 +5775,27 @@ export const NAMES = {
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     body: {
+      // MEASURED: window: { documents: [0, 1], range: [-1, 1] } → Window bounds can specify either 'documents' or 'unit', not both.
+      nested: {
+        output: {
+          required: [],
+          optional: [],
+          closed: false,
+          eachValue: {
+            required: [],
+            optional: [],
+            closed: false,
+            nested: {
+              window: {
+                required: [],
+                optional: ["documents", "range", "unit"],
+                closed: false,
+                exactlyOneOf: [["documents", "range"]],
+              },
+            },
+          },
+        },
+      },
       required: ["output"],
       optional: ["partitionBy", "sortBy"],
       closed: true,
@@ -5890,6 +5947,8 @@ export const NAMES = {
       required: [],
       optional: ["coll", "pipeline"],
       closed: true,
+      // MEASURED: { $unionWith: {} } → stage without explicit collection must have a pipeline with $documents as first stage
+      atLeastOneOf: [["coll", "pipeline"]],
       constantKeys: ["coll"],
       keyTypes: { pipeline: "array" },
     },
@@ -5931,11 +5990,11 @@ export const NAMES = {
     group: unsupported("'$unset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, constant: [0] },
+      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: {
@@ -7063,7 +7122,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", atLeast: 0 },
+      args: { sig: "callback", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "value");
         return {
@@ -7104,7 +7163,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "callback", atLeast: 0 },
+      args: { sig: "callback", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "value");
         return { $map: { input: cb.input, as: cb.as, in: cb.in } };
@@ -7137,7 +7196,7 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback, bind }) => {
         const cb = callback(args[0], "truth");
         const kept = { $filter: { input: cb.input, as: cb.as, cond: cb.in } };
@@ -7168,7 +7227,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, 0] };
@@ -7228,7 +7287,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "truth");
         const picked = { $arrayElemAt: [{ $filter: { input: cb.input, as: cb.as, cond: cb.in } }, -1] };
@@ -7369,7 +7428,7 @@ export const NAMES = {
       },
     },
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "truth");
         // a missing array is no elements; the pairs already are an array
@@ -7395,7 +7454,7 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "predicate", atLeast: 0 },
+      args: { sig: "predicate", exact: 1 },
       emit: ({ args, callback }) => {
         const cb = callback(args[0], "truth");
         // a missing array is no elements; the pairs already are an array
@@ -7473,6 +7532,7 @@ export const NAMES = {
     doc: "'.join()' — see docs/LANGUAGE.md.",
     call: true,
     on: "array",
+    elements: "scalar",
     returns: "string",
     where: ["value"],
     filter: viaFallback,
@@ -7494,6 +7554,7 @@ export const NAMES = {
     doc: "'.toString()' — see docs/LANGUAGE.md.",
     call: true,
     on: "any",
+    elements: "scalar",
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
@@ -9022,11 +9083,12 @@ export const NAMES = {
               [sorted.as]: {
                 $sortArray: {
                   input: { $map: { input: recv, as: it.as, in: { k: it.in, v: it.ref } } },
-                  sortBy: { k: 1 },
+                  // MEASURED: $sortArray is stable, so the FIRST of equal keys leads a descending sort — lodash's answer
+                  sortBy: { k: -1 },
                 },
               },
             },
-            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, -1] } } },
+            in: { $getField: { field: "v", input: { $arrayElemAt: [sorted.ref, 0] } } },
           },
         };
       },
@@ -11819,11 +11881,11 @@ export const NAMES = {
 
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
-    where: ["filter"],
-    filter: {
-      args: { sig: "code", exact: 1, constant: [0] },
-      emit: ({ name, args, literal }) => ({ [name]: literal(args[0]) }),
-    },
+    where: [],
+    // MEASURED: { $match: { $where: … } } → $where is not allowed in this context; find() runs it only where server-side JavaScript is enabled
+    filter: unsupported(
+      "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query.",
+    ),
     expr: unsupported(
       "'$where' is a query operator with no aggregation-expression form. '$where' is a top-level query operator: write it as the whole filter, e.g. '{ $where: … }'.",
     ),

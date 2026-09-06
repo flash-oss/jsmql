@@ -514,7 +514,7 @@ function asArg(node: Expr, env: Constants, depth: number): Arg | null {
     return {
       fn: (...args: unknown[]) => {
         const r = applyLambda(node as unknown as Any, args, env, depth + 1);
-        if (!r.ok) throw NOT_CONSTANT_CALLBACK;
+        if (!r.ok) throw r.unspellable !== undefined ? new UnspellableInCallback(r.unspellable) : NOT_CONSTANT_CALLBACK;
         return r.value;
       },
     };
@@ -524,6 +524,14 @@ function asArg(node: Expr, env: Constants, depth: number): Arg | null {
 }
 
 const NOT_CONSTANT_CALLBACK = Symbol("callback is not constant");
+
+/** A callback whose body evaluated to a constant MongoDB cannot write down — `n => 10 / n` over a 0. */
+class UnspellableInCallback {
+  readonly what: string;
+  constructor(what: string) {
+    this.what = what;
+  }
+}
 
 /** The registry family a runtime value belongs to, for reading a row's rules. */
 function familyOfValue(value: unknown): Family | undefined {
@@ -579,9 +587,11 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
     result = onNamespace
       ? foldNamespaceCall(receiverNode.name as string, name, args)
       : foldInstanceCall(receiverValue, name, args);
-  } catch {
+  } catch (e) {
     // A non-constant callback, a predicate that did not answer with a boolean,
-    // or a built-in that threw. None of them fold; none of them are errors here.
+    // or a built-in that threw. None of them fold; none of them are errors here —
+    // except a callback whose answer has no literal, which is worth saying.
+    if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT;
   }
   if (!result.ok) return propagate(result);
@@ -625,7 +635,8 @@ function applyCall(
   let result: Evaluation;
   try {
     result = run(args);
-  } catch {
+  } catch (e) {
+    if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT;
   }
   if (!result.ok) return propagate(result);

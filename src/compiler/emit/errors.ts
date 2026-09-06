@@ -11,7 +11,7 @@ import type { Arity, Position } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
-import { isFieldProperty, spreadAlternativeOf } from "../rows.ts";
+import { callbackParamsOf, isFieldProperty, spreadAlternativeOf } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
 
@@ -101,8 +101,15 @@ export function refusalFor(
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
     }
-    case "wrongCount":
-      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}`, pos);
+    case "wrongCount": {
+      // `.map(f, thisArg)`: JavaScript's trailing `thisArg` has no meaning here, and the count alone would not say why
+      const most = sel.args.exact ?? (sel.args.allowed === undefined ? undefined : Math.max(...sel.args.allowed));
+      const thisArg =
+        callbackParamsOf(sel.name, position) !== undefined && most !== undefined && sel.got === most + 1
+          ? " — JavaScript's trailing 'thisArg' has no meaning in MQL; drop it"
+          : "";
+      return new CodegenError(`'${signature(bare, sel.args)}' ${countWord(sel.args)}, got ${sel.got}${thisArg}`, pos);
+    }
     case "rejectedCount":
       return new CodegenError(sel.message, pos);
     case "spreadRefused": {
@@ -247,6 +254,20 @@ export const listOperand = (name: string, pos: number): CodegenError =>
     pos,
   );
 
+/** `$ = []` — a fan-out of nothing drops every document, which `$$ = []` says outright. */
+export const fanOutEmpty = (pos: number): CodegenError =>
+  new CodegenError(
+    "'$ = []' would fan out nothing and drop every document. To drop them all, write '$$ = []'; to drop some, fan out a data-dependent array ('$ = $.items.filter(…)').",
+    pos,
+  );
+
+/** `$ = [1, 2]` — each element becomes a document root, and a scalar cannot be one. */
+export const fanOutScalars = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$ = [ … ]' fans out: each element becomes a document root, and ${noun} is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').`,
+    pos,
+  );
+
 /** A read of another collection where there is no pipeline to place its `$lookup` in. */
 export const joinNeedsPipeline = (pos: number): CodegenError =>
   new CodegenError(
@@ -315,6 +336,31 @@ export const queryOnlyInsideElement = (name: string, pos: number): CodegenError 
   );
 
 // ── the statement target ─────────────────────────────────────────────────────
+
+/** `.join()` / `.toString()` on a receiver that provably holds arrays: the server refuses to stringify an element that is an array. */
+export const arrayOfArrays = (method: string, holder: string, pos: number): CodegenError =>
+  new CodegenError(
+    `.${method}() can't stringify an array of arrays — ${holder} holds arrays, and the server refuses to stringify an array element. Flatten first ('.flat().join()'), or map each inner array to a string ('.map(a => a.join(",")).join()').`,
+    pos,
+  );
+
+/** The callback's third parameter — the body's own stream — read as a value. */
+export const streamHandleAsValue = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is the body's own stream, the callback's third parameter: read its count ('${name}.length') or chain on it ('${name}.filter(…)'). It is not a document or a value on its own.`,
+    pos,
+  );
+
+/** A context reference alone — `$$`, `$$$`, `$$$$` — where a statement must stand. */
+export const bareContextRef = (ref: string, pos: number): CodegenError => {
+  const what =
+    ref === "$$"
+      ? "'$$' is the stream — chain what to do with it: '$$.filter(…);', '$$.push({ … });', '$$ = $$.take(10);'"
+      : ref === "$$$"
+        ? "'$$$' is the current database — name a collection after it: '$.o = $$$.<coll>.find(…);' reads one, '$$$.<coll> = $$;' writes one"
+        : "'$$$$' is the cluster — name a database and a collection after it: '$$$$.<db>.<coll> = $$;' writes one; '$$$$.currentOp();' is a source stage";
+  return new CodegenError(`${what}. Alone it is not a statement.`, pos);
+};
 
 /** An expression standing where a statement must: it computes a value and writes nothing. */
 export const notAStatement = (pos: number): CodegenError =>

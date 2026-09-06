@@ -114,13 +114,14 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
     return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
   }
   if (isBson(value, "ObjectId")) {
-    const hex = (value as { toHexString(): string }).toHexString();
+    const hex = objectIdHex(value);
+    if (hex === null) return null;
     return { type: "ObjectIdLiteral", hex, pos };
   }
   if (Array.isArray(value)) {
     const elements: Expr[] = [];
     for (const element of value) {
-      const spelled = asLiteral(element, pos);
+      const spelled = leafOf(element, pos);
       if (spelled === null) return null;
       elements.push(spelled);
     }
@@ -129,7 +130,7 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
   if (isPlainObject(value)) {
     const entries: { type: "KeyValueEntry"; key: { kind: "static"; name: string }; value: Expr; pos: number }[] = [];
     for (const [name, held] of Object.entries(value)) {
-      const spelled = asLiteral(held, pos);
+      const spelled = leafOf(held, pos);
       if (spelled === null) return null;
       entries.push({ type: "KeyValueEntry", key: { kind: "static", name }, value: spelled, pos });
     }
@@ -137,5 +138,34 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
   }
 
   // A Date, a Binary, a Decimal128 — a constant with no literal spelling.
+  return null;
+}
+
+/**
+ * An element of an injected structure: its literal where it has one, else the
+ * value itself as an `Injected` node — a Date inside `{ startDate, endDate }` keeps
+ * the object's keys readable (`$dateDiff(${parts})` is the body it spells) while
+ * the Date stays the value it is. `undefined` has no spelling and stops the structure;
+ * so does a nested structure `asLiteral` itself refused.
+ */
+function leafOf(value: unknown, pos: number): Expr | null {
+  if (value === undefined) return null;
+  // a RegExp inside a structure is data the structure carries, never a regex literal to evaluate
+  if (value instanceof RegExp) return { type: "Injected", value, pos };
+  const spelled = asLiteral(value, pos);
+  if (spelled !== null) return spelled;
+  return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
+}
+
+/** The 24-hex spelling of an ObjectId-shaped value: its `toHexString()`, else its 12 `id` bytes, else its `toString()`. */
+function objectIdHex(value: unknown): string | null {
+  const v = value as { toHexString?: () => string; id?: unknown; toString?: () => string };
+  if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
+  if (v.id instanceof Uint8Array && v.id.length === 12)
+    return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (typeof v.toString === "function") {
+    const s = v.toString();
+    if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
+  }
   return null;
 }

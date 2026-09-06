@@ -613,7 +613,18 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       }
       const kind = kindOf(op.value, inner);
       if (kind === "array") {
-        // `$ = <array>` FANS OUT: each element becomes a document of the stream.
+        // `$ = <array>` FANS OUT: each element becomes a document of the stream —
+        // so a literal with nothing in it, or with an element that is provably not a
+        // document, is refused here rather than by the server on every root.
+        if (op.value.type === "ArrayLiteral") {
+          const elements = op.value.elements;
+          if (elements.length === 0) throw E.fanOutEmpty(op.value.pos);
+          for (const el of elements) {
+            const k = el.type === "SpreadElement" ? "unknown" : kindOf(el as Expr, inner);
+            if (k !== "unknown" && k !== "object" && k !== "array")
+              throw E.fanOutScalars(KIND_NOUN[k] ?? `a ${k}`, el.pos);
+          }
+        }
         const slot = inner.chain.slot();
         flush();
         out.push({ $set: { [slot.path]: value } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
@@ -815,6 +826,9 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     }
   }
   const name = namedRow(node);
+  if (node.type === "CollectionRef") throw E.bareContextRef("$$", node.pos);
+  if (node.type === "DatabaseRef") throw E.bareContextRef("$$$", node.pos);
+  if (node.type === "ClusterRef") throw E.bareContextRef("$$$$", node.pos);
   if (name === null) throw E.notAStatement(node.pos);
 
   // The raw document form. Its one entry's value is the body, in the position the
@@ -852,7 +866,16 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stage '${name}' selected a receiver dispatch`);
-    throw E.refusalFor(sel, name, "", "statement", node.pos, []);
+    // a misspelled stage gets the nearest one: the stages are the names with a statement form
+    throw E.refusalFor(
+      sel,
+      name,
+      "",
+      "statement",
+      node.pos,
+      name.startsWith("$") ? everyName().filter((n) => n.startsWith("$") && listedIn(n, "statement")) : [],
+      (s) => s,
+    );
   }
   const bodyRule = stageBodyRuleOf(name);
   checkSlots(name, sel.rule.args, args, bodyRule !== undefined);

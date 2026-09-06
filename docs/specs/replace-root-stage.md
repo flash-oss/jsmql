@@ -159,6 +159,8 @@ Each refusal names a concrete fix:
 |---|---|
 | a value that is not a document (`$ = 1`, `$ = "x"`, `$ = null`, `$ = true`) | "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;')." |
 | `$ = $$$.<coll>.filter(p)` (an array of documents) | "The document can only become ONE document, and this chain gives an array. Write '$ = $$$.<coll>.find(pred)' for the first match, or keep the array in a field: '$.<field> = $$$.<coll>.…'." |
+| `$ = []` (an empty literal) | "'$ = []' would fan out nothing and drop every document. To empty the stream, write '$$ = [];'; to drop documents by a condition, filter first." |
+| `$ = [1, 2]` (a literal with a provably scalar element) | "'$ = [...]' fans out: each element becomes a document root, and a number is not a document. Put each element under a field ('$ = items.map(v => ({ v }))')." |
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …'" |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 

@@ -572,6 +572,28 @@ function bareCall(callee: Node, param: string, pos: number): object | undefined 
   return undefined;
 }
 
+/**
+ * `$$.groupBy({ _id: "$k", n: $sum(1) })` → `$$.$group({ _id: "$k", n: $sum(1) })`
+ *
+ * On a STREAM, an object with an `_id` key is the `$group` body — lodash's
+ * `groupBy` has no object form, so the spelling is free, and the stage is what
+ * a developer who writes `_id` means. An array keeps its `groupBy(key)` reading.
+ */
+const groupBodyLink: Rule = {
+  name: "groupBodyLink",
+  apply: (node) => {
+    const n = node as Node;
+    if (n.type !== "MethodCall" || n.name !== "groupBy") return node;
+    const recv = n.object as { type?: string; name?: string } | undefined;
+    const named = recv?.type === "Ident" && typeof recv.name === "string" ? recv.name : null;
+    if (receiverFamily(named, recv !== undefined && readsAContextRef(recv), "groupBy") !== "stream") return node;
+    const args = n.args as readonly Node[];
+    if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
+    const hasId = (args[0].entries as readonly object[]).some((e) => writtenKey(e) === "_id");
+    return hasId ? ({ ...n, name: "$group" } as object) : node;
+  },
+};
+
 const iterateeShorthand: Rule = {
   name: "iterateeShorthand",
   apply: (node, where) => {
@@ -589,7 +611,12 @@ const iterateeShorthand: Rule = {
 
     // A method that runs as another row on a stream (`.find` as `filter`) takes that row's shorthands.
     const runsAs = picksOneOf(n.name);
-    const layout = iterateeSlotsOf(n.name, family) ?? (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family));
+    // A value terminal on a stream chain (`$$$.c.filter(p).maxBy("total")`) has no stream
+    // layout: it reads the joined documents as an ARRAY, so the array family's shorthands apply.
+    const layout =
+      iterateeSlotsOf(n.name, family) ??
+      (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
+      (family === "stream" ? iterateeSlotsOf(n.name, "array") : undefined);
     // Only a LAYOUT names slots to rewrite. `arrowOnly` has none, and a sort
     // specification is read as an order rather than rewritten to a callback.
     if (layout === undefined || !isSlotLayout(layout)) return node;
@@ -636,6 +663,8 @@ export const RULES: readonly Rule[] = [
   packSpread,
   // Independent of every rule above: it rewrites an ARGUMENT of a call none of
   // them matches, and the arrow it builds is not a shape any of them looks for.
+  // BEFORE iterateeShorthand: the `$group` body must not be read as a matcher.
+  groupBodyLink,
   iterateeShorthand,
 ];
 

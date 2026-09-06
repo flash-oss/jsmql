@@ -26,6 +26,10 @@ export function isMqlShaped(value: unknown, seen: WeakSet<object> = new WeakSet(
 /** A value as the node that spells it: a literal when the source could have, an `Injected` node otherwise. */
 export function spellValue(value: unknown, pos: number): Expr {
   const literal = isMqlShaped(value) ? null : asLiteral(value, pos);
+  // A RegExp the CALL supplied is the developer's own MongoDB regex — a query slot takes it as written,
+  // a value slot passes it through — where one typed in source is a pattern for the regex methods.
+  if (literal !== null && literal.type === "RegexLiteral" && value instanceof RegExp)
+    return { ...literal, injected: value };
   return literal ?? { type: "Injected", value, pos };
 }
 

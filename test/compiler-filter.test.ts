@@ -67,7 +67,9 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$.a + 1 === 2")).toEqual({ $expr: { $eq: [{ $add: ["$a", 1] }, 2] } });
     expect(filter("$abs($.a) === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
-    expect(filter("$.a in [1, 2]")).toEqual({ $expr: { $in: ["$a", [1, 2]] } });
+    // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
+    expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2], $not: { $type: "array" } } });
+    expect(filter("$.a in $.list")).toEqual({ $expr: { $in: ["$a", "$list"] } });
     // `.length` is a LENGTH, which `$size` (arrays only) cannot say for a string
     expect(filter("$.arr.length > 2")).toMatchObject({ $expr: { $gt: [expect.anything(), 2] } });
   });
@@ -227,7 +229,9 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
     });
     expect(filter('$comment("c")')).toEqual({ $comment: "c" });
     expect(filter('$jsonSchema({ required: ["a"] })')).toEqual({ $jsonSchema: { required: ["a"] } });
-    expect(filter('$where("this.n > 3")')).toEqual({ $where: "this.n > 3" });
+    // `$where` runs JavaScript on the server: the call form is refused with the JSMQL predicate; a raw document passes (HR1)
+    expect(() => filter('$where("this.n > 3")')).toThrow(/runs JavaScript on the server/);
+    expect(filter('{ $where: "this.n > 3" }')).toEqual({ $where: "this.n > 3" });
   });
 
   it("refuses a non-field first argument, a run-time operand, and an element predicate with no query form", () => {

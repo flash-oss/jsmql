@@ -38,7 +38,7 @@ import type {
 import { lex } from "../lex/lexer.ts";
 import type { Token } from "../lex/token.ts";
 import type { ProductionKey } from "../../registry/productions.ts";
-import { blockBodyOf } from "../rows.ts";
+import { blockBodyOf, isKnownName } from "../rows.ts";
 import { Cursor, found, ParseError, spell } from "./cursor.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import {
@@ -114,6 +114,40 @@ const needsReturn = (pos: number, got: string): string =>
   `A block body must end with a \`return <expr>\` statement at position ${pos}, got ${got}. Write \`x => { const a = …; return <expr>; }\` / ` +
   "`function f(x) { return <expr>; }`, or `x => (<expr>)` to return an object/expression directly";
 
+/** How a message spells a statement that stands where a callback's declarations go. */
+/** A statement that IS a pipeline statement — a stage call, a bare call such as `assert(…)`, a write, a function declaration — as opposed to a stray expression (`d.v;`). */
+function isStageStmt(stmt: PipelineStmt): boolean {
+  const s = stmt as { type: string };
+  return s.type === "OperatorCall" || s.type === "UpdateFilter" || s.type === "CallExpression" || s.type === "FuncDecl";
+}
+
+function statementSpelling(stmt: PipelineStmt): string {
+  const s = stmt as { type: string; name?: string; ops?: readonly { type: string; target?: Expr }[]; callee?: Expr };
+  switch (s.type) {
+    case "OperatorCall":
+      return `${s.name}(...)`;
+    case "FuncDecl":
+      return `function ${s.name}(…) { … }`;
+    case "UpdateFilter": {
+      const op = s.ops?.[0];
+      const target = op?.target === undefined ? "$.x" : targetSpelling(op.target);
+      return op?.type === "DeleteStmt" ? `delete ${target}` : `${target} = …`;
+    }
+    case "CallExpression":
+      return s.callee?.type === "Ident" ? `${(s.callee as { name: string }).name}(...)` : "…(...)";
+    default:
+      return "…";
+  }
+}
+
+/** `$.a.b` for a field target; the bare name otherwise. */
+function targetSpelling(target: Expr): string {
+  if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
+  if (target.type === "Ident") return target.name;
+  if (target.type === "MemberAccess") return `${targetSpelling(target.object)}.${target.name}`;
+  return "…";
+}
+
 /** What one `{ … }` block held: statements, an optional `return`, and whether a `;` ended a statement. */
 type Block = { stmts: PipelineStmt[]; ret: Expr | null; retPos: number; sawSemi: boolean; endPos: number };
 
@@ -141,13 +175,31 @@ class Parser {
 
   /** The checks that need the WHOLE tree: run once, after the entry method returns. */
   finish(): void {
-    const first = this.unclaimedStages.values().next();
-    if (!first.done) throw new ParseError(needsReturn(first.value, "'}'"), first.value);
+    const first = this.unclaimedStages.entries().next();
+    if (first.done) return;
+    const [lambda, endPos] = first.value;
+    // A block whose statement is a STAGE is not a block that forgot its `return`:
+    // the developer wrote a pipeline where a callback goes, and the message says
+    // where the pipeline belongs.
+    const stmt = lambda.stages?.stmts.find((st) => st.type !== "LetDecl");
+    if (stmt !== undefined && isStageStmt(stmt)) {
+      throw new ParseError(
+        `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`,
+        (stmt as { pos: number }).pos,
+      );
+    }
+    throw new ParseError(needsReturn(endPos, "'}'"), endPos);
   }
 
   // ── the entry form ────────────────────────────────────────────────────────
 
   entry(): EntryForm {
+    // `function [name](…) { … }` is the second spelling of the entry arrow; the name is unreachable inside and dropped.
+    const isFunction = this.c.is("Ident") && this.c.peek().text === "function";
+    if (isFunction) {
+      this.c.next();
+      if (this.c.is("Ident")) this.c.next();
+    }
     const open = this.c.expect("LParen");
     const slots: ParamBinding[][] = [];
     if (!this.c.is("RParen")) {
@@ -178,8 +230,9 @@ class Parser {
     }
     const toolbox = slots.find(isToolbox) ?? [];
     const params = slots.find((sl) => sl !== toolbox && isParams(sl)) ?? [];
-    this.c.expect("Arrow");
+    if (!isFunction) this.c.expect("Arrow");
     // The body is a whole program: an expression, or `{ … }` holding statements.
+    // A `function` body is always the block.
     const program = this.c.is("LBrace") ? this.entryBlock() : this.program();
     return { params, toolbox, program };
   }
@@ -200,6 +253,13 @@ class Parser {
         if (this.c.is("RBrace")) break;
         const key = this.destructureKey();
         const name = this.c.eat("Colon") ? this.identLike().text : key.text;
+        // `{ a = 1 }`: the only way a value reaches a compiled query is the params object at call time.
+        if (this.c.is("Eq")) {
+          throw new ParseError(
+            `A default value in the params destructure is not supported ('${key.text} = …'). Apply the default where the query is called, with JS's \`??\` at the call site — q({ ${key.text}: input ?? <default> }) — or write the value into the template-tag form.`,
+            this.c.peek().pos,
+          );
+        }
         out.push({ key: key.text, name, pos: key.pos });
       } while (this.c.eat("Comma"));
       this.c.expect("RBrace");
@@ -405,7 +465,8 @@ class Parser {
   private parenWriteAhead(): boolean {
     const save = this.c.mark();
     try {
-      this.c.next();
+      // `(($.a = 1), ($.b = 2))` — every opening parenthesis is skipped before the look.
+      while (this.c.is("LParen")) this.c.next();
       return STATEMENT_PREFIX.has(this.c.type) || this.startsAWrite();
     } finally {
       this.c.reset(save);
@@ -772,7 +833,15 @@ class Parser {
         continue;
       }
       const arg = this.expression();
-      if (takesStages && arg.type === "Lambda" && arg.stages !== undefined) this.unclaimedStages.delete(arg);
+      // A callee that takes stages claims the block. An UNKNOWN callee (a typo) leaves it
+      // unclaimed but unrefused: the emit phase names the nearest method, which is the mistake.
+      if (
+        arg.type === "Lambda" &&
+        arg.stages !== undefined &&
+        (takesStages || (owner !== null && !isKnownName(owner)))
+      ) {
+        this.unclaimedStages.delete(arg);
+      }
       out.push(arg);
     } while (this.c.eat("Comma"));
     this.c.expect(close);
@@ -951,7 +1020,18 @@ class Parser {
     if (ret !== null) {
       const decls = stmts.filter((st): st is LetDecl => st.type === "LetDecl");
       if (decls.length !== stmts.length) {
-        throw new ParseError("A callback block with a 'return' may only declare values before it", retPos);
+        // A statement where a declaration goes: a stage gets the message a block without a `return` gets.
+        const stmt = stmts.find((st) => st.type !== "LetDecl") as PipelineStmt;
+        if (!isStageStmt(stmt)) {
+          throw new ParseError(
+            `A callback's block holds 'const' declarations and one 'return', and this statement is neither at position ${(stmt as { pos: number }).pos}. Bind it ('const x = …;') or fold it into the 'return'.`,
+            (stmt as { pos: number }).pos,
+          );
+        }
+        throw new ParseError(
+          `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`,
+          (stmt as { pos: number }).pos,
+        );
       }
       return { type: "Lambda", params, body: { type: "ExprBlock", decls, ret, pos: retPos }, pos };
     }

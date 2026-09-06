@@ -82,7 +82,12 @@ field the row states: required and closed keys (with a suggestion), enums,
 flag sets, key and slot types, `elementType` over every operand, `nullRefused`
 slots (a per-row fact: `$size(null)` is refused by the server, `$reverseArray(null)`
 answers null), `constant` slots and `constantKeys`, and the two refusals for a
-spread or a computed key inside an operator body. A slot that is a field path,
+spread or a computed key inside an operator body; and the body facts the server
+enforces — `nonEmpty`, `minimums`, `sortedList`, `atLeastOneOf` / `exactlyOneOf`,
+`requiresWhen` (a key required once another holds a given value), and `nested`
+bodies whose every value is checked (`eachValue`). A method row's `elements: "scalar"`
+refuses a receiver that provably holds arrays (a literal of literals, `.partition(…)`)
+before its rule runs. A slot that is a field path,
 an expression or a spread is never judged. The checks run on every rule —
 an operator's, a method's, a production's — and `test/registry-fields-read.test.ts`
 holds that every stated rule field has a reader.

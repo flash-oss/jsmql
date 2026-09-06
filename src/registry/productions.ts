@@ -165,6 +165,16 @@ function pathAndConstant(input: FilterIn): { path: string; value: unknown; flipp
   return null;
 }
 
+/** `$.x in [c, …]` — a field's own value among constants: the native `$in`, which the planner reads. */
+function membershipQuery(input: FilterIn): QueryDoc | null {
+  const [l, r] = input.args;
+  const path = input.pathOf(l);
+  if (path === null) return null;
+  const c = input.constant(r);
+  if (c === null || !Array.isArray(c.value)) return null;
+  return queryOwnValue(path, { $in: c.value }, OWN_VALUE);
+}
+
 /** `typeof x === "s"` either way round: the operand's path and the BSON alias, or null. */
 function typeTest(input: FilterIn): { path: string; alias: string } | null {
   const [l, r] = input.args;
@@ -266,6 +276,9 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
+  // A RegExp the call supplied is MongoDB's regex query, as the developer passed it: the
+  // query language reads `{ field: /re/ }` as a match, and `$eq` would compare a value.
+  if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated
     ? queryOwnValue(pc.path, { $ne: pc.value }, NOT_OWN_VALUE)
     : queryOwnValue(pc.path, { $eq: pc.value }, OWN_VALUE);
@@ -587,8 +600,9 @@ export const PRODUCTIONS = {
     fixity: "infix",
     on: "any",
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // MEASURED: `{ x: { $in: [1, 2, 3] } }` is the index-friendly query form; a list that is not a constant falls back to `$expr`
+    filter: { args: { sig: "value, list", exact: 2 }, emit: (input) => membershipQuery(input) },
     expr: inCode("src/compiler/emit/lower.ts"),
     stream: unsupported("'x in [ … ]' produces a value, not a stage."),
     statement: unsupported("'x in [ … ]' is not a statement — see its 'where'."),

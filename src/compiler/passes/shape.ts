@@ -41,6 +41,16 @@ function statementShaped(node: Any): boolean {
   return lists(name, "statement") || lists(name, "stream");
 }
 
+/**
+ * Is this program a lone `Object.assign(<field or binding>, …)`? A statement by the
+ * shape rule, because standing alone it writes its target — and a value where a
+ * value is asked for (`jsmql.expr`), because `$mergeObjects` is what it means there.
+ */
+export function isBareAssignWrite(program: Program): boolean {
+  const node = program as Any;
+  return namedRow(node) === "assign" && writesItsTarget(node);
+}
+
 /** Is the first argument a place a write can land — a field of the document, or a binding? */
 function writesItsTarget(node: Any): boolean {
   const target = (node as { args?: readonly Any[] }).args?.[0];

@@ -752,7 +752,17 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       if (name === "intersectionBy") return ok(mine);
       const myKeys = xs.map(keyOf);
       const extra = (other as unknown[]).filter((v, i) => !deepIncludes(myKeys, keyOf(v, i, other as unknown[])));
-      return ok(name === "unionBy" ? [...xs, ...extra] : [...notMine, ...extra]);
+      if (name === "xorBy") return ok([...notMine, ...extra]);
+      // `_.unionBy` is the uniqBy of the concatenation: one element per key, the first wins.
+      const seen: unknown[] = [];
+      const union: unknown[] = [];
+      [...xs, ...(other as unknown[])].forEach((v, i, all) => {
+        const k = keyOf(v, i, all);
+        if (deepIncludes(seen, k)) return;
+        seen.push(k);
+        union.push(v);
+      });
+      return ok(union);
     }
 
     // ── slicing by count ────────────────────────────────────────────────────
@@ -830,7 +840,12 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       const lists = [xs, ...args.slice(0, -1).map(valueOf)];
       const with_ = fnOf(args[args.length - 1]);
       if (with_ === undefined || !lists.every((l) => Array.isArray(l))) return NO;
-      const width = Math.min(...(lists as unknown[][]).map((l) => l.length));
+      // The lowering zips to the LONGEST list and hands the body a null where a
+      // list ran out; JavaScript would hand it undefined, and the two answers part
+      // (`a + b` is null on the server, a number here) — so only equal lengths fold.
+      const widths = new Set((lists as unknown[][]).map((l) => l.length));
+      if (widths.size !== 1) return NO;
+      const width = [...widths][0];
       return ok(Array.from({ length: width }, (_, i) => with_(...(lists as unknown[][]).map((l) => l[i]))));
     }
     case "zipObject": {

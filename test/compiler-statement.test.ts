@@ -88,12 +88,17 @@ describe("compiler/emit/statement — the writes", () => {
     // — or a name whose measured return type says so — is known at compile time.
     expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
     expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
-    // an ARRAY fans out: one input document becomes one document per element
-    expect(pipeline("$ = [1, 2];")).toEqual([
-      { $set: { "__jsmql.tmp.0": [1, 2] } },
+    // an ARRAY fans out: one input document becomes one document per element — of documents
+    expect(pipeline("$ = [{ a: 1 }, { a: 2 }];")).toEqual([
+      { $set: { "__jsmql.tmp.0": [{ a: 1 }, { a: 2 }] } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
+    // a scalar cannot be a document root, and the server would refuse every one
+    expect(() => pipeline("$ = [1, 2];")).toThrow(
+      /fans out: each element becomes a document root, and a number is not a document/,
+    );
+    expect(() => pipeline("$ = [];")).toThrow(/would fan out nothing and drop every document/);
     expect(() => pipeline("$ = null;")).toThrow(/null is not one/);
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });

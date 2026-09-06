@@ -120,7 +120,7 @@ export type Expr =
   | { type: "BooleanLiteral"; value: boolean; pos: number }
   | { type: "NullLiteral"; pos: number }
   | { type: "UndefinedLiteral"; pos: number }
-  | { type: "RegexLiteral"; pattern: string; flags: string; pos: number }
+  | { type: "RegexLiteral"; pattern: string; flags: string; injected?: RegExp; pos: number }
   /** `0x` and exactly 24 hex digits. A re-reading of a Number token. */
   | { type: "ObjectIdLiteral"; hex: string; pos: number }
   /**

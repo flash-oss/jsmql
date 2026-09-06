@@ -32,6 +32,7 @@ import {
   productionForOperator,
   rowForNodeType,
   onlyInsideOf,
+  elementsOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
@@ -142,6 +143,8 @@ export function lowerValue(node: Expr, env: Env): unknown {
     case "UndefinedLiteral":
       throw E.undefinedAsValue(node.pos);
     case "RegexLiteral":
+      // A RegExp the CALL supplied is a value in its own right; a source regex has no value form.
+      if (node.injected !== undefined) return node.injected;
       throw E.regexAsValue(node.pos);
     case "ObjectIdLiteral":
       return new ObjectId(node.hex);
@@ -381,7 +384,7 @@ function identifier(node: Extract<Expr, { type: "Ident" }>, env: Env): unknown {
       case "function":
         throw E.functionAsValue(node.name, node.pos);
       case "streamHandle":
-        throw E.functionAsValue(node.name, node.pos);
+        throw E.streamHandleAsValue(node.name, node.pos);
       case "dropped":
         throw E.droppedBinding(b.ref, node.pos);
     }
@@ -566,6 +569,10 @@ function dispatchOn(
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   if (sel.kind === "rule") {
+    if (elementsOf(name) === "scalar") {
+      const holder = arraysHolder(recvNode);
+      if (holder !== null) throw E.arrayOfArrays(name, holder, node.pos);
+    }
     checkSlots(name, sel.rule.args, exprArgs);
     const recv =
       receiver.kind === "value" || receiver.kind === "opaque"
@@ -587,6 +594,13 @@ function dispatchOn(
         })
       : JS_NAMES;
   throw E.refusalFor(sel, spelled, container, position, node.pos, near, format);
+}
+
+/** A receiver that PROVABLY holds arrays: a literal with an array element, or `.partition(…)`, whose two halves are arrays. */
+function arraysHolder(recv: Expr): string | null {
+  if (recv.type === "ArrayLiteral" && recv.elements.some((e) => e.type === "ArrayLiteral")) return "this array literal";
+  if (recv.type === "MethodCall" && recv.name === "partition") return "'.partition(...)'";
+  return null;
 }
 
 /**

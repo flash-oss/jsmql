@@ -15,7 +15,7 @@ import { desugar } from "./compiler/passes/desugar.ts";
 import { inject, replaceIdents, spellValue } from "./compiler/passes/inject.ts";
 import { evaluate } from "./compiler/passes/evaluate.ts";
 import { FILTER, STATEMENT, UPDATE_DOC, VALUE } from "./compiler/passes/position.ts";
-import { shapeOf } from "./compiler/passes/shape.ts";
+import { isBareAssignWrite, shapeOf } from "./compiler/passes/shape.ts";
 import { namedRow } from "./compiler/passes/naming.ts";
 import { Env } from "./compiler/emit/env.ts";
 import { lowerValue } from "./compiler/emit/lower.ts";
@@ -291,7 +291,8 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
   switch (resolved) {
     case "expr":
     case "filter": {
-      if (shapeOf(injected) === "pipeline") {
+      // `Object.assign($.a, $.b)` standing alone is a write — and, asked for an expression, the `$mergeObjects` it means.
+      if (shapeOf(injected) === "pipeline" && !(resolved === "expr" && isBareAssignWrite(injected))) {
         throw wrongShape(api, resolved, injected);
       }
       const program = expressionOf(desugar(fold(injected), resolved === "expr" ? VALUE : FILTER));

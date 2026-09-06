@@ -243,9 +243,15 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
 
   return mapTreeIn(node, known, step, (inner, env) => {
     const n = inner as Any;
-    if (!EVALUABLE.has(n.type)) return inner;
+    // a regex node is a constant already, and re-spelling it would lose whether the call supplied it
+    if (!EVALUABLE.has(n.type) || n.type === "RegexLiteral") return inner;
     const result = evaluate(n as unknown as Expr, env);
-    if (!result.ok) return inner;
+    if (!result.ok) {
+      if (result.unspellable !== undefined) throw noLiteralFor(result.unspellable, n.pos as number);
+      return inner;
+    }
+    const nonFinite = nonFiniteIn(result.value);
+    if (nonFinite !== null) throw noLiteralFor(nonFinite, n.pos as number);
     return (asLiteral(result.value, n.pos as number) ?? inner) as object;
   });
 }
@@ -438,6 +444,8 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
       // A constant MongoDB cannot write down is worth saying out loud. The
       // evaluator names it and propagates it, so an `Infinity` buried three
       // operators deep reports the same way one at the top does.
+      if (result.ok && nonFiniteIn(result.value) !== null)
+        throw noLiteralFor(nonFiniteIn(result.value) as string, resolved.pos);
       if (!result.ok && result.unspellable !== undefined) {
         throw new ParseError(
           `This constant expression evaluates to ${result.unspellable}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range.`,
@@ -466,4 +474,31 @@ function foldStatements(stmts: readonly PipelineStmt[]): {
   }
 
   return { stmts: survivors, changed, env };
+}
+
+/** The constant MongoDB cannot write down, named — `10 / 0` inside a folded callback reports as the top-level one does. */
+function noLiteralFor(what: string, pos: number): ParseError {
+  return new ParseError(
+    `This constant expression evaluates to ${what}, which has no MongoDB literal. Check the arithmetic — a division by zero, or an exponent out of range — or guard it with a condition.`,
+    pos,
+  );
+}
+
+/** The first non-finite number inside a folded value, spelled as JavaScript spells it, or null. */
+function nonFiniteIn(value: unknown): string | null {
+  if (typeof value === "number") return Number.isFinite(value) ? null : String(value);
+  if (Array.isArray(value)) {
+    for (const v of value) {
+      const found = nonFiniteIn(v);
+      if (found !== null) return found;
+    }
+    return null;
+  }
+  if (value !== null && typeof value === "object" && Object.getPrototypeOf(value) === Object.prototype) {
+    for (const v of Object.values(value as Record<string, unknown>)) {
+      const found = nonFiniteIn(v);
+      if (found !== null) return found;
+    }
+  }
+  return null;
 }

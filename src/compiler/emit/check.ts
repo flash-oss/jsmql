@@ -207,6 +207,8 @@ export function checkBody(
   keys: readonly string[],
   pos: number,
 ): void {
+  // A body the call supplied whole (`$dateDiff(${parts})`) is a value, and its keys are the server's to judge.
+  if (args.length === 1 && args[0].type === "Injected") return;
   let present: readonly string[];
   let hasSpread = false;
   let valueOf: (k: string) => Expr | undefined;
@@ -341,6 +343,83 @@ export function checkBody(
     const v = valueOf(k);
     if (v !== undefined) checkType(name, k, v, t);
   }
+  if (body !== null) {
+    for (const [k, inner] of Object.entries(rule.nested ?? {})) {
+      const v = valueOf(k);
+      if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, inner, [v], [], v.pos);
+    }
+    if (rule.eachValue !== undefined) {
+      for (const k of present) {
+        const v = valueOf(k);
+        if (v !== undefined && v.type === "ObjectLiteral") checkBody(`${name}.${k}`, rule.eachValue, [v], [], v.pos);
+      }
+    }
+    for (const req of rule.requiresWhen ?? []) {
+      if (valueOf(req.requires) !== undefined) continue;
+      const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
+      if (hit !== undefined) {
+        throw new CodegenError(
+          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => JSON.stringify(e)).join(" or ")} — the server refuses it without one.`,
+          hit.pos,
+        );
+      }
+    }
+  }
+  if (rule.nonEmpty === true && body !== null && present.length === 0) {
+    throw new CodegenError(
+      `'${name}' takes at least one field — an empty body names none, and the server refuses it.`,
+      pos,
+    );
+  }
+  for (const [k, min] of Object.entries(rule.minimums ?? {})) {
+    const v = valueOf(k);
+    if (v === undefined) continue;
+    const held = numberOf(v);
+    if (held !== null && held < min) {
+      throw new CodegenError(
+        `'${name}' ${k} must be ${min === 0 ? "zero or more" : `at least ${min}`}, got ${held} — the server refuses it.`,
+        v.pos,
+      );
+    }
+  }
+  for (const [k, min] of Object.entries(rule.sortedList ?? {})) {
+    const v = valueOf(k);
+    if (v === undefined || v.type !== "ArrayLiteral") continue;
+    const held: unknown[] = [];
+    for (const el of v.elements) {
+      if (el.type === "SpreadElement") {
+        held.length = 0;
+        break;
+      }
+      const r = evaluate(el as Expr, new Map());
+      if (!r.ok) {
+        held.length = 0;
+        break;
+      }
+      held.push(r.value);
+    }
+    if (held.length === 0 && v.elements.length > 0) continue; // not all constants: the server judges
+    if (held.length < min) {
+      throw new CodegenError(
+        `'${name}' ${k} needs at least ${min} values, got ${held.length} — the server refuses it.`,
+        v.pos,
+      );
+    }
+    for (let i = 1; i < held.length; i++) {
+      const a = held[i - 1],
+        b = held[i];
+      const ordered =
+        typeof a === typeof b && (typeof a === "number" || typeof a === "string" || a instanceof Date)
+          ? (a as number) < (b as number)
+          : true;
+      if (!ordered) {
+        throw new CodegenError(
+          `'${name}' ${k} must be sorted ascending: ${JSON.stringify(a)} is not less than ${JSON.stringify(b)} — the server refuses it.`,
+          v.elements[i].pos,
+        );
+      }
+    }
+  }
   // A key the server reads at compile time — `$bucket.boundaries`, `$lookup.pipeline` —
   // must hold a constant; a field path or an expression there is refused as the server refuses it.
   for (const k of rule.constantKeys ?? []) {
@@ -352,6 +431,21 @@ export function checkBody(
       );
     }
   }
+}
+
+/** The values a dotted path with `*` wildcards reaches inside an object literal, written out. */
+function walkBody(node: Expr, path: readonly string[]): Expr[] {
+  if (path.length === 0) return [node];
+  if (node.type !== "ObjectLiteral") return [];
+  const [head, ...rest] = path;
+  const out: Expr[] = [];
+  for (const e of node.entries) {
+    if (e.type !== "KeyValueEntry") continue;
+    const key = staticKey(e);
+    if (key === null || (head !== "*" && key !== head)) continue;
+    out.push(...walkBody(e.value, rest));
+  }
+  return out;
 }
 
 /** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
@@ -398,6 +492,16 @@ export function checkSlots(
   for (const [i, rule] of Object.entries(args.body ?? {})) {
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], rule.positional ?? [], e.pos);
+  }
+  for (const i of args.nonEmpty ?? []) {
+    const e = operands[i];
+    if (e === undefined) continue;
+    if ((e.type === "StringLiteral" && e.value === "") || (e.type === "ArrayLiteral" && e.elements.length === 0)) {
+      throw new CodegenError(
+        `'${name}' takes at least one field name — an empty ${e.type === "StringLiteral" ? "string" : "list"} names none, and the server refuses it.`,
+        e.pos,
+      );
+    }
   }
   for (const [i, t] of Object.entries(args.slotType ?? {})) {
     const e = operands[Number(i)];

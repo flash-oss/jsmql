@@ -51,7 +51,12 @@ describe("compiler/parse — parses everything the old compiler accepts", () => 
       try {
         parse(src);
       } catch (e) {
-        failures.push(`${JSON.stringify(src)} — ${(e as Error).message}`);
+        // an entry form (`({ $ }) => …`) is a program the ENTRY parser reads
+        try {
+          parseEntry(src);
+        } catch {
+          failures.push(`${JSON.stringify(src)} — ${(e as Error).message}`);
+        }
       }
     }
     expect(failures).toEqual([]);
@@ -389,11 +394,19 @@ describe("compiler/parse — a `{ … }` callback body is stages only where its 
   });
 
   it("refuses a block with no `return` under every other callee, with the rewrite hint", () => {
-    expect(() => parse("$.items.map(x => { $.a = 1 })")).toThrow(/must end with a `return <expr>`/);
-    expect(() => parse("$.v = $.items.filter(x => { x.a; });")).toThrow(/must end with a `return <expr>`/);
+    expect(() => parse("$.items.map(x => { $.a = 1 })")).toThrow(
+      /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
+    );
+    expect(() => parse("$.v = $.items.filter(x => { x.a; });")).toThrow(
+      /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
+    );
     // A declared function is not a stages callee either.
-    expect(() => parse("const f = x => { $.a = 1 }; $.b = 1;")).toThrow(/must end with a `return <expr>`/);
-    expect(() => parse("f(x => { $.a = 1 })")).toThrow(/must end with a `return <expr>`/);
+    expect(() => parse("const f = x => { $.a = 1 }; $.b = 1;")).toThrow(
+      /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
+    );
+    expect(() => parse("f(x => { $.a = 1 })")).toThrow(
+      /is a pipeline stage, not part of a callback|must end with a `return <expr>`/,
+    );
   });
 
   it("still takes a block WITH a return anywhere", () => {

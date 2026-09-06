@@ -426,13 +426,22 @@ export function literalIn(e: Expr): { value: unknown } | null {
 
 export function constantIn(e: Expr): { value: unknown } | null {
   if (e.type === "Injected") return { value: e.value };
+  // a RegExp the CALL supplied is the developer's own MongoDB regex, taken as written; one typed
+  // in source is a pattern for the regex methods and no constant to compare a field with
+  if (e.type === "RegexLiteral") return e.injected !== undefined ? { value: e.injected } : null;
   if (e.type === "ObjectIdLiteral") return { value: new ObjectId(e.hex) };
   const v = evaluate(e, new Map());
   if (!v.ok) return null;
   const x = v.value;
-  if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return { value: x };
-  if (x instanceof Date || x instanceof ObjectId) return { value: x };
-  return null;
+  return isQueryConstant(x) ? { value: x } : null;
+}
+
+/** A value the query language compares as written: a scalar, a Date, an ObjectId, a regex, or a list of such. */
+function isQueryConstant(x: unknown): boolean {
+  if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
+  if (x instanceof Date || x instanceof ObjectId) return true;
+  if (Array.isArray(x)) return x.every(isQueryConstant);
+  return false;
 }
 
 // ── the `&&` merge ───────────────────────────────────────────────────────────
