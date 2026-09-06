@@ -2225,31 +2225,30 @@ jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObject
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
 new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
 new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   (UTC; month 1 = January)
-new Date(2024, 12, 31, 23, 59, 58, 999)
-                                   // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form
-new Date(Date.UTC(2024, 1, 15))    // Date(2024-01-15T00:00:00Z)
+new Date(2024, 11, 31, 23, 59, 58, 999)
+                                   // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form; December is 11
+new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
 new Date()                         // { $toDate: "$$NOW" }  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
-new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: "$m", day: "$d" } }
+new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
 Date.now()                         // { $toLong: "$$NOW" }  (ms since epoch, like JS)
-Date.UTC(2024, 1, 15)              // { $toLong: { $dateFromParts: { year: 2024, month: 1, day: 15, timezone: "UTC" } } }
+Date.UTC(2024, 1, 15)              // 1707955200000  (folded — 15 February)
+Date.UTC($.y, $.m)                 // { $toLong: { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, timezone: "UTC" } } }
 ```
 
 **Constant folding.** When every argument to `new Date(...)` is a compile-time literal, jsmql evaluates the constructor and emits a real BSON `Date`, **not** the aggregation `{ $toDate }` / `$dateFromParts` form. This matters because a `Date` is the only shape that works in *both* an aggregation expression *and* a query document: `{ field: { $gte: { $toDate: "..." } } }` does **not** match in a Filter / `$match` — MongoDB's query language reads `{ $toDate: ... }` as a literal subdocument, never matching anything. Only genuinely runtime forms (`new Date()`, `new Date($.field)`) keep the aggregation form. If the constant arguments don't form a valid date (`new Date("not-a-date")`), jsmql rejects it at compile time rather than emit MQL the server would refuse.
 
-**Months are 1-based here too — `new Date(2024, 1, 15)` is 15 January.** This is the one place JSMQL's month base differs from JavaScript's, whose `new Date(y, m, d)` and `Date.UTC(y, m, d)` count January as `0`. JSMQL uses MongoDB's base everywhere instead — the constructors, `.getMonth()`, `.set({ month })`, `$month` and `$dateFromParts` all agree — so a month never changes meaning as a value moves through your query. A literal `0` or negative month is rejected at compile time rather than silently read as the previous December:
+**Months count from 0, as in JavaScript — `new Date(2024, 1, 15)` is 15 February.** A JavaScript spelling gets JavaScript's behaviour: the constructor, `Date.UTC` and `.getMonth()` all count January as `0`, so a getter round trip needs no adjustment (`new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the month) and code pasted from a JavaScript file means what it meant there. An out-of-range part rolls over exactly as in JavaScript: `new Date(2024, 12, 1)` is 1 January 2025. MongoDB's own operators keep MongoDB's base when you reach for them through the escape hatch: `$month($.t)` is 1-based and `$dateFromParts({ year: 2024, month: 1, day: 15 })` is January — the compiler leaves a `$op(…)` untouched.
 
 ```js
-new Date(2024, 0, 15)
-// ✗ Month 0 is out of range — months are 1-based in jsmql, as in MongoDB: January is 1,
-//   December is 12. JavaScript's own 'new Date(y, m, d)' is 0-based, so a pasted-in 0
-//   means January there and December of the previous year here. Write 1 for January.
+new Date(2024, 0, 15)              // Date(2024-01-15T00:00:00Z)  — January is 0
+new Date(2024, 12, 1)              // Date(2025-01-01T00:00:00Z)  — rolls over, as JavaScript does
+$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   — January is 0
+$month($.createdAt)                // { $month: "$createdAt" }                        — MongoDB's: January is 1
 ```
-
-A month **above** 12 is left alone: `new Date(2024, 13, 1)` is 1 January 2025 in both engines, which is what `m + 1` arithmetic legitimately produces.
 
 **Note:** JS's multi-arg `new Date(y, m, d, …)` is interpreted in the runtime's *local time*; jsmql interprets it as **UTC** (MQL's `$dateFromParts` default / `Date.UTC` for the constant fold), since "local time" on a MongoDB server is rarely what a query author wants. Use `Date.UTC(...)` or `new Date(Date.UTC(...))` when the UTC semantics matter explicitly.
 
@@ -2259,9 +2258,9 @@ Call on any expression that produces a date:
 
 ```js
 $.createdAt.getFullYear()          // { $year: "$createdAt" }
-$.createdAt.getMonth()             // { $month: "$createdAt" }    (1-based: January = 1)
+$.createdAt.getMonth()             // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0, as in JS)
 $.createdAt.getDate()              // { $dayOfMonth: "$createdAt" }
-$.createdAt.getDay()               // { $dayOfWeek: "$createdAt" }   (1 = Sunday … 7 = Saturday)
+$.createdAt.getDay()               // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday … 6 = Saturday, as in JS)
 $.createdAt.getHours()             // { $hour: "$createdAt" }
 $.createdAt.getMinutes()           // { $minute: "$createdAt" }
 $.createdAt.getSeconds()           // { $second: "$createdAt" }
@@ -2274,7 +2273,7 @@ Each component getter has a `getUTC*` variant that reads the date in UTC instead
 
 ```js
 $.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
-$.createdAt.getUTCMonth()          // { $month: "$createdAt" }   (1-based)
+$.createdAt.getUTCMonth()          // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0)
 $.createdAt.getUTCDate()           // { $dayOfMonth: "$createdAt" }
 $.createdAt.getUTCDay()            // { $dayOfWeek: "$createdAt" }   (1 = Sunday)
 $.createdAt.getUTCHours()          // { $hour: "$createdAt" }
@@ -2409,7 +2408,7 @@ $.t.set({ year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, milliseco
 // { $dateFromParts: { year: 2030, month: 1, day: 1, hour: 0, minute: 0, second: 0, millisecond: 0 } }
 ```
 
-**Months are 1-based** — `{ month: 1 }` is January, the same base `.getMonth()` and `$month` use. (Luxon agrees; Moment's `.set('month', 0)` does not.) Every part must be an integer, and a literal that isn't is rejected at compile time, exactly as the `$dateFromParts(…)` operator form rejects it.
+**`.set` counts months from 1** — `{ month: 1 }` is January, as in Luxon's `.set` and MongoDB's `$dateFromParts`, whose vocabulary this method borrows; it is the one date API here that is not a JavaScript spelling, so it does not share `.getMonth()`'s zero base (`$.t.set({ month: $.t.getMonth() + 1 })` round-trips). Every part must be an integer, and a literal that isn't is rejected at compile time, exactly as the `$dateFromParts` operator would reject it at run time.
 
 The parts come in two families, and `.set` follows whichever one you name: `year` / `month` / `day`, or the ISO-week `isoWeekYear` / `isoWeek` / `isoDayOfWeek`. Either family may be combined with `hour` / `minute` / `second` / `millisecond`, but the two cannot be mixed — MongoDB builds a date from one family or the other, and a mix is rejected with both offending keys named.
 
@@ -2446,11 +2445,11 @@ Which options a method accepts is exactly the set of fields its operator has lef
 
 The options form must be **written out** as an object literal: MongoDB reads these fields by name from the operator document, so the key names have to exist in your source. Their *values* are free to be field paths or `jsmql.compile` parameters (`{ timezone: $.tz }`), and any non-object argument in this slot is the timezone shorthand.
 
-**Every date number is MongoDB's, not JavaScript's.** `getMonth()` / `getUTCMonth()` return `$month` unchanged (January = `1`), and `getDay()` / `getUTCDay()` return `$dayOfWeek` unchanged (Sunday = `1` … Saturday = `7`). JavaScript's own getters are 0-based in both cases, and this is the deliberate divergence: one base per concept beats a per-method one, and it is the base you see in the emitted MQL and in every other month or weekday slot — `.set({ month })`, `new Date(y, m, d)`, `$month`, `$dayOfWeek`, `$dateFromParts`. For the ISO weekday (Monday = `1`) use `isoWeekday()`. There is no `getUTCTime()` — JS's `getTime()` is already UTC epoch milliseconds.
+**Every date number is JavaScript's.** `getMonth()` / `getUTCMonth()` count January as `0` (`{ $subtract: [{ $month: "$t" }, 1] }`), `getDay()` / `getUTCDay()` count Sunday as `0` (`{ $subtract: [{ $dayOfWeek: "$t" }, 1] }`), and the constructors and `Date.UTC` read their month the same way — so a getter round trip needs no adjustment, and code pasted from a JavaScript file means what it meant there. MongoDB's own numbering is one `$op(…)` away: `$month($.t)` is 1-based, `$dayOfWeek($.t)` is 1 = Sunday, and the compiler leaves both untouched.
 
 Week numbering needs no adjustment at all: `week()` is `$week` (0–53, weeks begin Sunday), `isoWeek()` is `$isoWeek` (1–53), `isoWeekday()` is `$isoDayOfWeek` (1 = Monday), and the `startOfWeek` option and `%U` / `%V` / `%u` / `%w` format specifiers are MongoDB's own.
 
-**Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow) for the compile-time rejection of a 0-based month.
+**Note:** the constructors use the same base, so a getter round trip needs no adjustment: `new Date($.t.getFullYear(), $.t.getMonth(), 1)` is the first of the receiver's own month. See [the constructor note](#date-constructor-and-datenow).
 
 **Note:** these methods require a date receiver, so a literal non-date is rejected at compile time (`"2020-01-01".getFullYear()` → *"'.getFullYear' expects a date, but got a string. Use a field path or new Date(…)."*). A field path or `new Date(…)` passes through. The one exception is `.getTime()`, which lowers to `$toLong` and so also accepts numeric strings/numbers.
 

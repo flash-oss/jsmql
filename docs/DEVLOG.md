@@ -10,6 +10,12 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-06 — feat!: a JavaScript date spelling counts as JavaScript does — months from 0, Sunday as 0 — in the constant fold too
+
+The runtime cells already gave a JavaScript spelling JavaScript's numbering (`$.t.getMonth()` → `{ $subtract: [{ $month: "$t" }, 1] }`, `new Date($.y, $.m, 1)` → `month: { $add: ["$m", 1] }`), while the constant fold kept the 2026-08-13 rule — one month base for the whole language, MongoDB's — so `new Date(2024, 1, 15)` was 15 January and `new Date(2024, $.one, 15)` was 15 February. The developer chose consistency in the direction of the general ruling: a JavaScript spelling gets JavaScript's behaviour, and MongoDB's numbering is what the `$op(…)` escape hatch gives untouched (`$month($.t)`, `$dateFromParts({ month: 1 })`). `src/compiler/passes/fold-dates.ts` now folds `getMonth()` / `getDay()` as JavaScript answers them, reads the calendar-parts constructor's month from 0 and rolls an out-of-range part over as JavaScript does (`new Date(2024, 12, 1)` is 1 January 2025; the server's `$dateFromParts` rolls the same way), and `Date.UTC(2020)` is January again. `.set({ month: 1 })` keeps Luxon's 1-based vocabulary — it is the one date API here that is not a JavaScript spelling — and says so. This supersedes the 2026-08-13 and 2026-08-12 entries on the month and weekday base; `docs/LANGUAGE.md` § Date Operations states the rule.
+
+---
+
 ## 2026-09-06 — docs: the language reference and the feature specs describe the compiler that ships
 
 `docs/LANGUAGE.md` stated the shipped compiler's behaviour in a dozen places: a `$lookup` in "basic form" (`localField` / `foreignField`), which jsmql never emits — one route, `let` + `pipeline` + `$expr`, because the basic form matches any element of an array on either side; filters without the own-value clause (`$.age > 18` is `{ age: { $gt: 18, $not: { $type: "array" } } }`, and a negation a two-branch `$or`); `jsmql.update` as a pipeline with a stage whitelist, where it is the update DOCUMENT of constants; `jsmql.expr` returning a bare `{ $set }`, where it refuses a write; an automatic `$literal` around every `"$…"` string, where HR1 makes a source string MongoDB's field path and only a run-time value is wrapped. Each passage now shows the emitted MQL, derived by the CLI.

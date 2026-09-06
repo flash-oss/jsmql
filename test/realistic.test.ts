@@ -84,8 +84,25 @@ $ = candidateProductIds
   .take(10);
       `,
       ).toEqual([
-        { $match: { _id: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } } } },
-        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        {
+          $match: {
+            _id: {
+              $eq: new ObjectId("507f1f77bcf86cd799439011"),
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $setWindowFields: {
+            output: {
+              "__jsmql.length": {
+                $count: {},
+              },
+            },
+          },
+        },
         {
           $match: {
             $expr: {
@@ -93,7 +110,12 @@ $ = candidateProductIds
                 input: true,
                 to: {
                   $cond: [
-                    { $eq: ["$__jsmql.length", 1] },
+                    {
+                      $eq: [
+                        "$__jsmql.length",
+                        1,
+                      ],
+                    },
                     "bool",
                     "jsmql assertion failed: More than one user with such ID found",
                   ],
@@ -106,9 +128,24 @@ $ = candidateProductIds
           $lookup: {
             from: "orders",
             pipeline: [
-              { $match: { userId: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } } } },
-              { $sort: { createdAt: -1 } },
-              { $limit: 10 },
+              {
+                $match: {
+                  userId: {
+                    $eq: new ObjectId("507f1f77bcf86cd799439011"),
+                    $not: {
+                      $type: "array",
+                    },
+                  },
+                },
+              },
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+              {
+                $limit: 10,
+              },
             ],
             as: "__jsmql.tmp.0",
           },
@@ -118,9 +155,30 @@ $ = candidateProductIds
             "__jsmql.var.myProductIds": {
               $setUnion: {
                 $reduce: {
-                  input: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.productIds" } },
+                  input: {
+                    $map: {
+                      input: "$__jsmql.tmp.0",
+                      as: "x",
+                      in: "$$x.productIds",
+                    },
+                  },
                   initialValue: [],
-                  in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+                  in: {
+                    $concatArrays: [
+                      "$$value",
+                      {
+                        $cond: [
+                          {
+                            $isArray: "$$this",
+                          },
+                          "$$this",
+                          [
+                            "$$this",
+                          ],
+                        ],
+                      },
+                    ],
+                  },
                 },
               },
             },
@@ -129,23 +187,41 @@ $ = candidateProductIds
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
+            let: {
+              jsmql_v0_myProductIds: "$__jsmql.var.myProductIds",
+            },
             pipeline: [
               {
                 $match: {
                   $expr: {
                     $anyElementTrue: {
                       $map: {
-                        input: { $ifNull: ["$productIds", []] },
+                        input: {
+                          $ifNull: [
+                            "$productIds",
+                            [],
+                          ],
+                        },
                         as: "p",
-                        in: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
+                        in: {
+                          $in: [
+                            "$$p",
+                            "$$jsmql_v0_myProductIds",
+                          ],
+                        },
                       },
                     },
                   },
                 },
               },
-              { $sort: { createdAt: -1 } },
-              { $limit: 100 },
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+              {
+                $limit: 100,
+              },
             ],
             as: "__jsmql.tmp.1",
           },
@@ -163,22 +239,52 @@ $ = candidateProductIds
                             $filter: {
                               input: {
                                 $reduce: {
-                                  input: { $map: { input: "$__jsmql.tmp.1", as: "x", in: "$$x.productIds" } },
+                                  input: {
+                                    $map: {
+                                      input: "$__jsmql.tmp.1",
+                                      as: "x",
+                                      in: "$$x.productIds",
+                                    },
+                                  },
                                   initialValue: [],
                                   in: {
                                     $concatArrays: [
                                       "$$value",
-                                      { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] },
+                                      {
+                                        $cond: [
+                                          {
+                                            $isArray: "$$this",
+                                          },
+                                          "$$this",
+                                          [
+                                            "$$this",
+                                          ],
+                                        ],
+                                      },
                                     ],
                                   },
                                 },
                               },
                               as: "p",
-                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
+                              cond: {
+                                $not: {
+                                  $in: [
+                                    "$$p",
+                                    "$__jsmql.var.myProductIds",
+                                  ],
+                                },
+                              },
                             },
                           },
                           as: "jsmqlX",
-                          in: { $ifNull: [{ $toString: "$$jsmqlX" }, "null"] },
+                          in: {
+                            $ifNull: [
+                              {
+                                $toString: "$$jsmqlX",
+                              },
+                              "null",
+                            ],
+                          },
                         },
                       },
                       [],
@@ -194,22 +300,57 @@ $ = candidateProductIds
                             $filter: {
                               input: {
                                 $reduce: {
-                                  input: { $map: { input: "$__jsmql.tmp.1", as: "x", in: "$$x.productIds" } },
+                                  input: {
+                                    $map: {
+                                      input: "$__jsmql.tmp.1",
+                                      as: "x",
+                                      in: "$$x.productIds",
+                                    },
+                                  },
                                   initialValue: [],
                                   in: {
                                     $concatArrays: [
                                       "$$value",
-                                      { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] },
+                                      {
+                                        $cond: [
+                                          {
+                                            $isArray: "$$this",
+                                          },
+                                          "$$this",
+                                          [
+                                            "$$this",
+                                          ],
+                                        ],
+                                      },
                                     ],
                                   },
                                 },
                               },
                               as: "p",
-                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
+                              cond: {
+                                $not: {
+                                  $in: [
+                                    "$$p",
+                                    "$__jsmql.var.myProductIds",
+                                  ],
+                                },
+                              },
                             },
                           },
                           as: "jsmqlX",
-                          cond: { $eq: [{ $ifNull: [{ $toString: "$$jsmqlX" }, "null"] }, "$$jsmqlKey"] },
+                          cond: {
+                            $eq: [
+                              {
+                                $ifNull: [
+                                  {
+                                    $toString: "$$jsmqlX",
+                                  },
+                                  "null",
+                                ],
+                              },
+                              "$$jsmqlKey",
+                            ],
+                          },
                         },
                       },
                     },
@@ -225,13 +366,17 @@ $ = candidateProductIds
               $map: {
                 input: {
                   $map: {
-                    input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
+                    input: {
+                      $objectToArray: "$__jsmql.var.candidateProductIdCounts",
+                    },
                     as: "jsmqlKv",
                     in: "$$jsmqlKv.k",
                   },
                 },
                 as: "x",
-                in: { $toObjectId: "$$x" },
+                in: {
+                  $toObjectId: "$$x",
+                },
               },
             },
           },
@@ -239,8 +384,24 @@ $ = candidateProductIds
         {
           $lookup: {
             from: "products",
-            let: { jsmql_v0_candidateProductIds: "$__jsmql.var.candidateProductIds" },
-            pipeline: [{ $match: { $expr: { $in: ["$_id", "$$jsmql_v0_candidateProductIds"] } } }, { $limit: 500 }],
+            let: {
+              jsmql_v0_candidateProductIds: "$__jsmql.var.candidateProductIds",
+            },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $in: [
+                      "$_id",
+                      "$$jsmql_v0_candidateProductIds",
+                    ],
+                  },
+                },
+              },
+              {
+                $limit: 500,
+              },
+            ],
             as: "__jsmql.var.candidateProducts",
           },
         },
@@ -258,7 +419,14 @@ $ = candidateProductIds
                           productId: "$$id",
                           score: {
                             $getField: {
-                              field: { $toString: { $ifNull: ["$$id", ""] } },
+                              field: {
+                                $toString: {
+                                  $ifNull: [
+                                    "$$id",
+                                    "",
+                                  ],
+                                },
+                              },
                               input: "$__jsmql.var.candidateProductIdCounts",
                             },
                           },
@@ -271,7 +439,12 @@ $ = candidateProductIds
                                     $filter: {
                                       input: "$__jsmql.var.candidateProducts",
                                       as: "x",
-                                      cond: { $eq: ["$$x._id", "$$id"] },
+                                      cond: {
+                                        $eq: [
+                                          "$$x._id",
+                                          "$$id",
+                                        ],
+                                      },
                                     },
                                   },
                                   0,
@@ -282,7 +455,9 @@ $ = candidateProductIds
                         },
                       },
                     },
-                    sortBy: { score: -1 },
+                    sortBy: {
+                      score: -1,
+                    },
                   },
                 },
                 10,
@@ -290,8 +465,12 @@ $ = candidateProductIds
             },
           },
         },
-        { $unwind: "$__jsmql.tmp.2" },
-        { $replaceWith: "$__jsmql.tmp.2" },
+        {
+          $unwind: "$__jsmql.tmp.2",
+        },
+        {
+          $replaceWith: "$__jsmql.tmp.2",
+        },
       ]);
     },
   );
@@ -326,8 +505,25 @@ $$ = $$$.orders
   .take(5);
           `,
         ).toEqual([
-          { $match: { email: { $eq: "me@example.com", $not: { $type: "array" } } } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+          {
+            $match: {
+              email: {
+                $eq: "me@example.com",
+                $not: {
+                  $type: "array",
+                },
+              },
+            },
+          },
+          {
+            $setWindowFields: {
+              output: {
+                "__jsmql.length": {
+                  $count: {},
+                },
+              },
+            },
+          },
           {
             $match: {
               $expr: {
@@ -335,7 +531,12 @@ $$ = $$$.orders
                   input: true,
                   to: {
                     $cond: [
-                      { $eq: ["$__jsmql.length", 1] },
+                      {
+                        $eq: [
+                          "$__jsmql.length",
+                          1,
+                        ],
+                      },
                       "bool",
                       "jsmql assertion failed: More than one user with such email found",
                     ],
@@ -347,17 +548,38 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
+              let: {
+                jsmql_f0__id: "$_id",
+              },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-                { $sort: { placedAt: -1 } },
-                { $limit: 5 },
+                {
+                  $match: {
+                    $expr: {
+                      $eq: [
+                        "$userId",
+                        "$$jsmql_f0__id",
+                      ],
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    placedAt: -1,
+                  },
+                },
+                {
+                  $limit: 5,
+                },
               ],
               as: "__jsmql.tmp.0",
             },
           },
-          { $unwind: "$__jsmql.tmp.0" },
-          { $replaceWith: "$__jsmql.tmp.0" },
+          {
+            $unwind: "$__jsmql.tmp.0",
+          },
+          {
+            $replaceWith: "$__jsmql.tmp.0",
+          },
         ]);
       },
     );
@@ -388,22 +610,68 @@ const cohortRevenue = $$$.orders
 $set({ topRegions: cohortRevenue });
 `,
       ).toEqual([
-        { $match: { status: { $eq: "active", $not: { $type: "array" } } } },
+        {
+          $match: {
+            status: {
+              $eq: "active",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $lookup: {
             from: "orders",
             pipeline: [
-              { $match: { status: "shipped" } },
-              { $group: { _id: "$region", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
-              { $sort: { revenue: -1 } },
-              { $limit: 5 },
-              { $replaceWith: { region: "$_id", revenue: "$revenue", avgOrder: { $divide: ["$revenue", "$orders"] } } },
+              {
+                $match: {
+                  status: "shipped",
+                },
+              },
+              {
+                $group: {
+                  _id: "$region",
+                  revenue: {
+                    $sum: "$total",
+                  },
+                  orders: {
+                    $sum: 1,
+                  },
+                },
+              },
+              {
+                $sort: {
+                  revenue: -1,
+                },
+              },
+              {
+                $limit: 5,
+              },
+              {
+                $replaceWith: {
+                  region: "$_id",
+                  revenue: "$revenue",
+                  avgOrder: {
+                    $divide: [
+                      "$revenue",
+                      "$orders",
+                    ],
+                  },
+                },
+              },
             ],
             as: "__jsmql.var.cohortRevenue",
           },
         },
-        { $set: { topRegions: "$__jsmql.var.cohortRevenue" } },
-        { $unset: "__jsmql" },
+        {
+          $set: {
+            topRegions: "$__jsmql.var.cohortRevenue",
+          },
+        },
+        {
+          $unset: "__jsmql",
+        },
       ]);
     },
   );
@@ -424,16 +692,60 @@ $limit(3);
     ).toEqual([
       {
         $match: {
-          status: { $eq: "shipped", $not: { $type: "array" } },
-          placedAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+          status: {
+            $eq: "shipped",
+            $not: {
+              $type: "array",
+            },
+          },
+          placedAt: {
+            $gte: new Date("2026-01-01T00:00:00.000Z"),
+            $not: {
+              $type: "array",
+            },
+          },
         },
       },
-      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
-      { $unwind: "$buyer" },
-      { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
-      { $set: { avgOrder: { $divide: ["$revenue", "$orders"] } } },
-      { $sort: { revenue: -1 } },
-      { $limit: 3 },
+      {
+        $lookup: {
+          from: "users",
+          localField: "userId",
+          foreignField: "_id",
+          as: "buyer",
+        },
+      },
+      {
+        $unwind: "$buyer",
+      },
+      {
+        $group: {
+          _id: "$buyer.department",
+          revenue: {
+            $sum: "$total",
+          },
+          orders: {
+            $sum: 1,
+          },
+        },
+      },
+      {
+        $set: {
+          avgOrder: {
+            $divide: [
+              "$revenue",
+              "$orders",
+            ],
+          },
+        },
+      },
+      {
+        $sort: {
+          revenue: -1,
+        },
+      },
+      {
+        $limit: 3,
+      },
     ]);
   });
 });
@@ -448,7 +760,14 @@ $project({
 });
       `,
     ).toEqual([
-      { $group: { _id: "$shopId", statuses: { $push: "$status" } } },
+      {
+        $group: {
+          _id: "$shopId",
+          statuses: {
+            $push: "$status",
+          },
+        },
+      },
       {
         $project: {
           counts: {
@@ -468,7 +787,17 @@ $project({
                               {
                                 $ifNull: [
                                   {
-                                    $getField: { field: { $toString: { $ifNull: ["$$this", ""] } }, input: "$$value" },
+                                    $getField: {
+                                      field: {
+                                        $toString: {
+                                          $ifNull: [
+                                            "$$this",
+                                            "",
+                                          ],
+                                        },
+                                      },
+                                      input: "$$value",
+                                    },
                                   },
                                   0,
                                 ],
@@ -498,15 +827,47 @@ describe("tally shipped orders by payment method (lodash `.countBy`)", { feature
     // value-mode `$.items.countBy(...)`, not a `{ _id, count }` stream. (For the
     // count-descending stream instead, write `$sortByCount(...)`.)
     expect(jsmql`$$.filter({ status: "shipped" }).countBy("paymentMethod");`).toEqual([
-      { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
-      { $group: { _id: "$paymentMethod", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $match: {
+          status: {
+            $eq: "shipped",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
+      {
+        $group: {
+          _id: "$paymentMethod",
+          __jsmqlTmp: {
+            $sum: 1,
+          },
+        },
+      },
       {
         $group: {
           _id: null,
-          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+          __jsmqlTmp: {
+            $push: {
+              k: {
+                $ifNull: [
+                  {
+                    $toString: "$_id",
+                  },
+                  "null",
+                ],
+              },
+              v: "$__jsmqlTmp",
+            },
+          },
         },
       },
-      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+      {
+        $replaceWith: {
+          $arrayToObject: "$__jsmqlTmp",
+        },
+      },
     ]);
   });
 });
@@ -530,7 +891,20 @@ describe(
             $map: {
               input: {
                 $setUnion: [
-                  { $map: { input: "$ratings", as: "x", in: { $ifNull: [{ $toString: "$$x" }, "null"] } } },
+                  {
+                    $map: {
+                      input: "$ratings",
+                      as: "x",
+                      in: {
+                        $ifNull: [
+                          {
+                            $toString: "$$x",
+                          },
+                          "null",
+                        ],
+                      },
+                    },
+                  },
                   [],
                 ],
               },
@@ -542,7 +916,19 @@ describe(
                     $filter: {
                       input: "$ratings",
                       as: "x",
-                      cond: { $eq: [{ $ifNull: [{ $toString: "$$x" }, "null"] }, "$$jsmqlKey"] },
+                      cond: {
+                        $eq: [
+                          {
+                            $ifNull: [
+                              {
+                                $toString: "$$x",
+                              },
+                              "null",
+                            ],
+                          },
+                          "$$jsmqlKey",
+                        ],
+                      },
                     },
                   },
                 },
@@ -571,13 +957,53 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
     ).toEqual([
       {
         $match: {
-          status: { $eq: "pending", $not: { $type: "array" } },
-          $or: [{ paidAt: { $ne: null } }, { paidAt: { $type: "array" } }],
+          status: {
+            $eq: "pending",
+            $not: {
+              $type: "array",
+            },
+          },
+          $or: [
+            {
+              paidAt: {
+                $ne: null,
+              },
+            },
+            {
+              paidAt: {
+                $type: "array",
+              },
+            },
+          ],
         },
       },
-      { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
-      { $unset: ["tempToken", "_processingState"] },
-      { $set: { status: "complete" } },
+      {
+        $set: {
+          lineTotal: {
+            $multiply: [
+              "$qty",
+              "$unitPrice",
+            ],
+          },
+          invoiceCount: {
+            $add: [
+              "$invoiceCount",
+              1,
+            ],
+          },
+        },
+      },
+      {
+        $unset: [
+          "tempToken",
+          "_processingState",
+        ],
+      },
+      {
+        $set: {
+          status: "complete",
+        },
+      },
     ]);
   });
 });
@@ -597,12 +1023,50 @@ $ = {
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
-      { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
+      {
+        $match: {
+          status: {
+            $eq: "shipped",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
       {
         $facet: {
-          topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
-          recent: [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } }],
-          byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
+          topByScore: [
+            {
+              $sort: {
+                score: -1,
+              },
+            },
+            {
+              $limit: 10,
+            },
+          ],
+          recent: [
+            {
+              $match: {
+                createdAt: {
+                  $gte: new Date("2026-01-01T00:00:00.000Z"),
+                  $not: {
+                    $type: "array",
+                  },
+                },
+              },
+            },
+          ],
+          byStatus: [
+            {
+              $group: {
+                _id: "$status",
+                n: {
+                  $sum: 1,
+                },
+              },
+            },
+          ],
         },
       },
     ]);
@@ -620,15 +1084,29 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
     expect(
       jsmql`$$ = $$$.transactions.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`,
     ).toEqual([
-      { $match: { $expr: false } },
+      {
+        $match: {
+          $expr: false,
+        },
+      },
       {
         $unionWith: {
           coll: "transactions",
           pipeline: [
             {
               $match: {
-                createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-                client: { $eq: 156, $not: { $type: "array" } },
+                createdAt: {
+                  $gte: new Date("2026-01-01T00:00:00.000Z"),
+                  $not: {
+                    $type: "array",
+                  },
+                },
+                client: {
+                  $eq: 156,
+                  $not: {
+                    $type: "array",
+                  },
+                },
               },
             },
           ],
@@ -654,8 +1132,18 @@ describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines
     expect(jsmql`$$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
       {
         $match: {
-          createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-          client: { $eq: 156, $not: { $type: "array" } },
+          createdAt: {
+            $gte: new Date("2026-01-01T00:00:00.000Z"),
+            $not: {
+              $type: "array",
+            },
+          },
+          client: {
+            $eq: 156,
+            $not: {
+              $type: "array",
+            },
+          },
         },
       },
     ]);
@@ -683,10 +1171,35 @@ $$.filter(p => p.season === "2026" && p.score > 0)
   .map(p => ({ player: p.name, score: p.score, rank: p.rank }));
       `,
       ).toEqual([
-        { $match: { season: { $eq: "2026", $not: { $type: "array" } }, score: { $gt: 0, $not: { $type: "array" } } } },
-        { $skip: 40 },
-        { $limit: 20 },
-        { $replaceWith: { player: "$name", score: "$score", rank: "$rank" } },
+        {
+          $match: {
+            season: {
+              $eq: "2026",
+              $not: {
+                $type: "array",
+              },
+            },
+            score: {
+              $gt: 0,
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $skip: 40,
+        },
+        {
+          $limit: 20,
+        },
+        {
+          $replaceWith: {
+            player: "$name",
+            score: "$score",
+            rank: "$rank",
+          },
+        },
       ]);
     },
   );
@@ -705,9 +1218,40 @@ $ = $.profile;
 $ = { ...$, computedScore: $.points * 1.1 };
       `,
     ).toEqual([
-      { $match: { $or: [{ profile: { $ne: null } }, { profile: { $type: "array" } }] } },
-      { $replaceWith: "$profile" },
-      { $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } },
+      {
+        $match: {
+          $or: [
+            {
+              profile: {
+                $ne: null,
+              },
+            },
+            {
+              profile: {
+                $type: "array",
+              },
+            },
+          ],
+        },
+      },
+      {
+        $replaceWith: "$profile",
+      },
+      {
+        $replaceWith: {
+          $mergeObjects: [
+            "$$ROOT",
+            {
+              computedScore: {
+                $multiply: [
+                  "$points",
+                  1.1,
+                ],
+              },
+            },
+          ],
+        },
+      },
     ]);
   });
 });
@@ -725,22 +1269,67 @@ describe(
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
+            let: {
+              jsmql_f0__id: "$_id",
+            },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-              { $group: { _id: "$status", __jsmqlTmp: { $sum: 1 } } },
+              {
+                $match: {
+                  $expr: {
+                    $eq: [
+                      "$userId",
+                      "$$jsmql_f0__id",
+                    ],
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: "$status",
+                  __jsmqlTmp: {
+                    $sum: 1,
+                  },
+                },
+              },
               {
                 $group: {
                   _id: null,
-                  __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+                  __jsmqlTmp: {
+                    $push: {
+                      k: {
+                        $ifNull: [
+                          {
+                            $toString: "$_id",
+                          },
+                          "null",
+                        ],
+                      },
+                      v: "$__jsmqlTmp",
+                    },
+                  },
                 },
               },
-              { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+              {
+                $replaceWith: {
+                  $arrayToObject: "$__jsmqlTmp",
+                },
+              },
             ],
             as: "statusBreakdown",
           },
         },
-        { $set: { statusBreakdown: { $ifNull: [{ $first: "$statusBreakdown" }, {}] } } },
+        {
+          $set: {
+            statusBreakdown: {
+              $ifNull: [
+                {
+                  $first: "$statusBreakdown",
+                },
+                {},
+              ],
+            },
+          },
+        },
       ]);
     });
   },
@@ -757,12 +1346,33 @@ $$.filter({ plan: "active" });
 $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.expiresAt.minus(3, "day") };
       `,
     ).toEqual([
-      { $match: { plan: { $eq: "active", $not: { $type: "array" } } } },
+      {
+        $match: {
+          plan: {
+            $eq: "active",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
       {
         $replaceWith: {
           userId: "$_id",
-          graceEndsAt: { $dateAdd: { startDate: "$subscribedAt", unit: "day", amount: 30 } },
-          remindAt: { $dateSubtract: { startDate: "$expiresAt", unit: "day", amount: 3 } },
+          graceEndsAt: {
+            $dateAdd: {
+              startDate: "$subscribedAt",
+              unit: "day",
+              amount: 30,
+            },
+          },
+          remindAt: {
+            $dateSubtract: {
+              startDate: "$expiresAt",
+              unit: "day",
+              amount: 3,
+            },
+          },
         },
       },
     ]);
@@ -786,19 +1396,44 @@ $sort({ "_id.month": -1 });
 $limit(12);
       `,
     ).toEqual([
-      { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+      {
+        $match: {
+          status: {
+            $eq: "paid",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
       {
         $group: {
           _id: {
-            month: { $dateTrunc: { date: "$createdAt", unit: "month", timezone: "America/New_York" } },
+            month: {
+              $dateTrunc: {
+                date: "$createdAt",
+                unit: "month",
+                timezone: "America/New_York",
+              },
+            },
             store: "$storeId",
           },
-          revenue: { $sum: "$total" },
-          orders: { $sum: 1 },
+          revenue: {
+            $sum: "$total",
+          },
+          orders: {
+            $sum: 1,
+          },
         },
       },
-      { $sort: { "_id.month": -1 } },
-      { $limit: 12 },
+      {
+        $sort: {
+          "_id.month": -1,
+        },
+      },
+      {
+        $limit: 12,
+      },
     ]);
   });
 });
@@ -816,20 +1451,42 @@ $$.filter({ status: "paid" });
 $ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
       `,
     ).toEqual([
-      { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+      {
+        $match: {
+          status: {
+            $eq: "paid",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
       {
         $set: {
           "__jsmql.tmp.0": {
             $map: {
               input: "$lineItems",
               as: "li",
-              in: { orderId: "$_id", sku: "$$li.sku", revenue: { $multiply: ["$$li.qty", "$$li.price"] } },
+              in: {
+                orderId: "$_id",
+                sku: "$$li.sku",
+                revenue: {
+                  $multiply: [
+                    "$$li.qty",
+                    "$$li.price",
+                  ],
+                },
+              },
             },
           },
         },
       },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
+      {
+        $unwind: "$__jsmql.tmp.0",
+      },
+      {
+        $replaceWith: "$__jsmql.tmp.0",
+      },
     ]);
   });
 });
@@ -857,19 +1514,51 @@ $ = ["sender", "recipient"].map(party => {
             $filter: {
               input: {
                 $map: {
-                  input: ["sender", "recipient"],
+                  input: [
+                    "sender",
+                    "recipient",
+                  ],
                   as: "party",
                   in: {
                     $let: {
                       vars: {
                         leg: {
                           $cond: {
-                            if: { $isArray: { $ifNull: ["$legs", []] } },
-                            then: { $arrayElemAt: [{ $ifNull: ["$legs", []] }, "$$party"] },
+                            if: {
+                              $isArray: {
+                                $ifNull: [
+                                  "$legs",
+                                  [],
+                                ],
+                              },
+                            },
+                            then: {
+                              $arrayElemAt: [
+                                {
+                                  $ifNull: [
+                                    "$legs",
+                                    [],
+                                  ],
+                                },
+                                "$$party",
+                              ],
+                            },
                             else: {
                               $getField: {
-                                field: { $toString: { $ifNull: ["$$party", ""] } },
-                                input: { $ifNull: ["$legs", []] },
+                                field: {
+                                  $toString: {
+                                    $ifNull: [
+                                      "$$party",
+                                      "",
+                                    ],
+                                  },
+                                },
+                                input: {
+                                  $ifNull: [
+                                    "$legs",
+                                    [],
+                                  ],
+                                },
                               },
                             },
                           },
@@ -877,21 +1566,59 @@ $ = ["sender", "recipient"].map(party => {
                       },
                       in: {
                         $let: {
-                          vars: { score: "$$leg.riskScore" },
+                          vars: {
+                            score: "$$leg.riskScore",
+                          },
                           in: {
                             $cond: {
                               if: {
                                 $and: [
-                                  { $ne: [{ $ifNull: ["$$score", null] }, null] },
-                                  { $ne: ["$$score", false] },
-                                  { $ne: ["$$score", ""] },
-                                  { $ne: ["$$score", 0] },
+                                  {
+                                    $ne: [
+                                      {
+                                        $ifNull: [
+                                          "$$score",
+                                          null,
+                                        ],
+                                      },
+                                      null,
+                                    ],
+                                  },
+                                  {
+                                    $ne: [
+                                      "$$score",
+                                      false,
+                                    ],
+                                  },
+                                  {
+                                    $ne: [
+                                      "$$score",
+                                      "",
+                                    ],
+                                  },
+                                  {
+                                    $ne: [
+                                      "$$score",
+                                      0,
+                                    ],
+                                  },
                                 ],
                               },
                               then: {
                                 party: "$$party",
                                 score: "$$score",
-                                band: { $cond: { if: { $gt: ["$$score", 50] }, then: "high", else: "low" } },
+                                band: {
+                                  $cond: {
+                                    if: {
+                                      $gt: [
+                                        "$$score",
+                                        50,
+                                      ],
+                                    },
+                                    then: "high",
+                                    else: "low",
+                                  },
+                                },
                               },
                               else: null,
                             },
@@ -905,18 +1632,47 @@ $ = ["sender", "recipient"].map(party => {
               as: "x",
               cond: {
                 $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
+                  {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          "$$x",
+                          null,
+                        ],
+                      },
+                      null,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      false,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      "",
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      0,
+                    ],
+                  },
                 ],
               },
             },
           },
         },
       },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
+      {
+        $unwind: "$__jsmql.tmp.0",
+      },
+      {
+        $replaceWith: "$__jsmql.tmp.0",
+      },
     ]);
   });
 });
@@ -933,13 +1689,53 @@ $.status = 'complete'
     ).toEqual([
       {
         $match: {
-          status: { $eq: "pending", $not: { $type: "array" } },
-          $or: [{ paidAt: { $ne: null } }, { paidAt: { $type: "array" } }],
+          status: {
+            $eq: "pending",
+            $not: {
+              $type: "array",
+            },
+          },
+          $or: [
+            {
+              paidAt: {
+                $ne: null,
+              },
+            },
+            {
+              paidAt: {
+                $type: "array",
+              },
+            },
+          ],
         },
       },
-      { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
-      { $unset: ["tempToken", "_processingState"] },
-      { $set: { status: "complete" } },
+      {
+        $set: {
+          lineTotal: {
+            $multiply: [
+              "$qty",
+              "$unitPrice",
+            ],
+          },
+          invoiceCount: {
+            $add: [
+              "$invoiceCount",
+              1,
+            ],
+          },
+        },
+      },
+      {
+        $unset: [
+          "tempToken",
+          "_processingState",
+        ],
+      },
+      {
+        $set: {
+          status: "complete",
+        },
+      },
     ]);
   });
 });
@@ -954,7 +1750,15 @@ describe("uppercase a user's name via updateOne", { features: ["Update filters"]
       // aggregation expressions on the RHS) when the second `updateOne` arg
       // is an array; the bare-doc form would store the literal expression
       // object instead. See docs/specs/update-filter.md.
-      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([{ $set: { name: { $toUpper: "$name" } } }]);
+      expect(jsmql(`$.name = $.name.toUpperCase()`)).toEqual([
+        {
+          $set: {
+            name: {
+              $toUpper: "$name",
+            },
+          },
+        },
+      ]);
     },
   );
 });
@@ -977,9 +1781,40 @@ $.events.sort("timestamp");
 $.events = $.events.takeRight(10);
       `,
       ).toEqual([
-        { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } },
-        { $set: { events: { $sortArray: { input: "$events", sortBy: { timestamp: 1 } } } } },
-        { $set: { events: { $slice: ["$events", -10] } } },
+        {
+          $set: {
+            events: {
+              $concatArrays: [
+                "$events",
+                [
+                  "$newEvent",
+                ],
+              ],
+            },
+          },
+        },
+        {
+          $set: {
+            events: {
+              $sortArray: {
+                input: "$events",
+                sortBy: {
+                  timestamp: 1,
+                },
+              },
+            },
+          },
+        },
+        {
+          $set: {
+            events: {
+              $slice: [
+                "$events",
+                -10,
+              ],
+            },
+          },
+        },
       ]);
     },
   );
@@ -991,7 +1826,19 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
     { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
       expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
-        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+        {
+          $set: {
+            loginCount: {
+              $add: [
+                "$loginCount",
+                1,
+              ],
+            },
+            lastSeenAt: {
+              $toDate: "$$NOW",
+            },
+          },
+        },
       ]);
     },
   );
@@ -1005,7 +1852,20 @@ describe("race podium via lodash .orderBy + .take", { features: ["Update filters
     expect(jsmql(`$.podium = $.results.orderBy(["score", "finishSeconds"], ["desc", "asc"]).take(3);`)).toEqual([
       {
         $set: {
-          podium: { $slice: [{ $sortArray: { input: "$results", sortBy: { score: -1, finishSeconds: 1 } } }, 3] },
+          podium: {
+            $slice: [
+              {
+                $sortArray: {
+                  input: "$results",
+                  sortBy: {
+                    score: -1,
+                    finishSeconds: 1,
+                  },
+                },
+              },
+              3,
+            ],
+          },
         },
       },
     ]);
@@ -1022,9 +1882,36 @@ let withShip = withTax + $.shipping;  // with tax and shipping
 $project({ sku: 1, subtotal, withTax, final: withShip });
       `,
     ).toEqual([
-      { $set: { "__jsmql.var.subtotal": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.var.withTax": { $multiply: ["$__jsmql.var.subtotal", 1.2] } } },
-      { $set: { "__jsmql.var.withShip": { $add: ["$__jsmql.var.withTax", "$shipping"] } } },
+      {
+        $set: {
+          "__jsmql.var.subtotal": {
+            $multiply: [
+              "$price",
+              "$qty",
+            ],
+          },
+        },
+      },
+      {
+        $set: {
+          "__jsmql.var.withTax": {
+            $multiply: [
+              "$__jsmql.var.subtotal",
+              1.2,
+            ],
+          },
+        },
+      },
+      {
+        $set: {
+          "__jsmql.var.withShip": {
+            $add: [
+              "$__jsmql.var.withTax",
+              "$shipping",
+            ],
+          },
+        },
+      },
       {
         $project: {
           sku: 1,
@@ -1033,7 +1920,9 @@ $project({ sku: 1, subtotal, withTax, final: withShip });
           final: "$__jsmql.var.withShip",
         },
       },
-      { $unset: "__jsmql" },
+      {
+        $unset: "__jsmql",
+      },
     ]);
   });
 });
@@ -1051,10 +1940,34 @@ basePrice = basePrice * 0.9;
 $project({ total: basePrice });
       `),
     ).toEqual([
-      { $set: { "__jsmql.var.basePrice": { $multiply: ["$price", "$qty"] } } },
-      { $set: { "__jsmql.var.basePrice": { $multiply: ["$__jsmql.var.basePrice", 0.9] } } },
-      { $project: { total: "$__jsmql.var.basePrice" } },
-      { $unset: "__jsmql" },
+      {
+        $set: {
+          "__jsmql.var.basePrice": {
+            $multiply: [
+              "$price",
+              "$qty",
+            ],
+          },
+        },
+      },
+      {
+        $set: {
+          "__jsmql.var.basePrice": {
+            $multiply: [
+              "$__jsmql.var.basePrice",
+              0.9,
+            ],
+          },
+        },
+      },
+      {
+        $project: {
+          total: "$__jsmql.var.basePrice",
+        },
+      },
+      {
+        $unset: "__jsmql",
+      },
     ]);
   });
 });
@@ -1083,10 +1996,29 @@ describe("active premium subscribers", { features: ["Filters"] }, () => {
     expect(
       jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > new Date("2026-05-01")`),
     ).toEqual({
-      "subscription.tier": { $eq: "premium", $not: { $type: "array" } },
-      subscription: { $not: { $type: "array" } },
-      status: { $eq: "active", $not: { $type: "array" } },
-      expiresAt: { $gt: new Date("2026-05-01T00:00:00.000Z"), $not: { $type: "array" } },
+      "subscription.tier": {
+        $eq: "premium",
+        $not: {
+          $type: "array",
+        },
+      },
+      subscription: {
+        $not: {
+          $type: "array",
+        },
+      },
+      status: {
+        $eq: "active",
+        $not: {
+          $type: "array",
+        },
+      },
+      expiresAt: {
+        $gt: new Date("2026-05-01T00:00:00.000Z"),
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1100,13 +2032,25 @@ $.placedAt >= new Date("2026-01-01") && $.placedAt < new Date("2026-02-01") &&
 $.status === "shipped"
       `,
     ).toEqual({
-      customerId: { $eq: "cust_42", $not: { $type: "array" } },
+      customerId: {
+        $eq: "cust_42",
+        $not: {
+          $type: "array",
+        },
+      },
       placedAt: {
         $gte: new Date("2026-01-01T00:00:00.000Z"),
-        $not: { $type: "array" },
+        $not: {
+          $type: "array",
+        },
         $lt: new Date("2026-02-01T00:00:00.000Z"),
       },
-      status: { $eq: "shipped", $not: { $type: "array" } },
+      status: {
+        $eq: "shipped",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1114,7 +2058,24 @@ $.status === "shipped"
 describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.posts.find(jsmql(...))" }, () => {
     expect(jsmql(`$.pinned === true || $.author === "ada"`)).toEqual({
-      $or: [{ pinned: { $eq: true, $not: { $type: "array" } } }, { author: { $eq: "ada", $not: { $type: "array" } } }],
+      $or: [
+        {
+          pinned: {
+            $eq: true,
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+        {
+          author: {
+            $eq: "ada",
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      ],
     });
   });
 });
@@ -1122,8 +2083,24 @@ describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
 describe("archivable docs (not pinned, untouched since)", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$.pinned !== true && $.lastModifiedAt < new Date("2025-01-01")`)).toEqual({
-      $or: [{ pinned: { $ne: true } }, { pinned: { $type: "array" } }],
-      lastModifiedAt: { $lt: new Date("2025-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+      $or: [
+        {
+          pinned: {
+            $ne: true,
+          },
+        },
+        {
+          pinned: {
+            $type: "array",
+          },
+        },
+      ],
+      lastModifiedAt: {
+        $lt: new Date("2025-01-01T00:00:00.000Z"),
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1131,8 +2108,19 @@ describe("archivable docs (not pinned, untouched since)", { features: ["Filters"
 describe("in-stock products within a price range", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.products.find(jsmql(...))" }, () => {
     expect(jsmql(`$.inStock === true && $.price >= 50 && $.price <= 200`)).toEqual({
-      inStock: { $eq: true, $not: { $type: "array" } },
-      price: { $gte: 50, $not: { $type: "array" }, $lte: 200 },
+      inStock: {
+        $eq: true,
+        $not: {
+          $type: "array",
+        },
+      },
+      price: {
+        $gte: 50,
+        $not: {
+          $type: "array",
+        },
+        $lte: 200,
+      },
     });
   });
 });
@@ -1140,8 +2128,24 @@ describe("in-stock products within a price range", { features: ["Filters"] }, ()
 describe("users with a non-null email", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
     expect(jsmql(`$.email != null && $.status === "active"`)).toEqual({
-      $or: [{ email: { $ne: null } }, { email: { $type: "array" } }],
-      status: { $eq: "active", $not: { $type: "array" } },
+      $or: [
+        {
+          email: {
+            $ne: null,
+          },
+        },
+        {
+          email: {
+            $type: "array",
+          },
+        },
+      ],
+      status: {
+        $eq: "active",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1152,8 +2156,18 @@ describe("payments since a cutoff (Date folded into query doc)", { features: ["F
   // instead of being trapped inside an `$expr`.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
     expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)).toEqual({
-      method: { $eq: "postalDelivery", $not: { $type: "array" } },
-      createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+      method: {
+        $eq: "postalDelivery",
+        $not: {
+          $type: "array",
+        },
+      },
+      createdAt: {
+        $gte: new Date("2026-01-01T00:00:00.000Z"),
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1161,8 +2175,18 @@ describe("payments since a cutoff (Date folded into query doc)", { features: ["F
 describe("typeof check for documents with an object profile", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
     expect(jsmql(`typeof $.profile === "object" && $.status === "active"`)).toEqual({
-      profile: { $type: "object", $not: { $type: "array" } },
-      status: { $eq: "active", $not: { $type: "array" } },
+      profile: {
+        $type: "object",
+        $not: {
+          $type: "array",
+        },
+      },
+      status: {
+        $eq: "active",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1170,8 +2194,18 @@ describe("typeof check for documents with an object profile", { features: ["Filt
 describe("lookup by `_id` and tenant", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$._id === "doc_42" && $.tenantId === "acme"`)).toEqual({
-      _id: { $eq: "doc_42", $not: { $type: "array" } },
-      tenantId: { $eq: "acme", $not: { $type: "array" } },
+      _id: {
+        $eq: "doc_42",
+        $not: {
+          $type: "array",
+        },
+      },
+      tenantId: {
+        $eq: "acme",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1184,8 +2218,18 @@ describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
   // match uses the `_id` index directly.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$._id === 0x507f1f77bcf86cd799439011 && $.tenantId === "acme"`)).toEqual({
-      _id: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } },
-      tenantId: { $eq: "acme", $not: { $type: "array" } },
+      _id: {
+        $eq: new ObjectId("507f1f77bcf86cd799439011"),
+        $not: {
+          $type: "array",
+        },
+      },
+      tenantId: {
+        $eq: "acme",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1194,8 +2238,34 @@ describe("exclude deleted and archived", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.posts.find(jsmql(...))" }, () => {
     expect(jsmql(`$.deleted !== true && $.archived !== true`)).toEqual({
       $and: [
-        { $or: [{ deleted: { $ne: true } }, { deleted: { $type: "array" } }] },
-        { $or: [{ archived: { $ne: true } }, { archived: { $type: "array" } }] },
+        {
+          $or: [
+            {
+              deleted: {
+                $ne: true,
+              },
+            },
+            {
+              deleted: {
+                $type: "array",
+              },
+            },
+          ],
+        },
+        {
+          $or: [
+            {
+              archived: {
+                $ne: true,
+              },
+            },
+            {
+              archived: {
+                $type: "array",
+              },
+            },
+          ],
+        },
       ],
     });
   });
@@ -1204,8 +2274,18 @@ describe("exclude deleted and archived", { features: ["Filters"] }, () => {
 describe("top-level posts (no parent) that are published", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.comments.find(jsmql(...))" }, () => {
     expect(jsmql(`$.parent === null && $.published === true`)).toEqual({
-      parent: { $type: "null", $not: { $type: "array" } },
-      published: { $eq: true, $not: { $type: "array" } },
+      parent: {
+        $type: "null",
+        $not: {
+          $type: "array",
+        },
+      },
+      published: {
+        $eq: true,
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1213,8 +2293,18 @@ describe("top-level posts (no parent) that are published", { features: ["Filters
 describe("parameterised lookup via the template tag", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
     expect(jsmql(`$.tier === "gold" && $.country === "AU"`)).toEqual({
-      tier: { $eq: "gold", $not: { $type: "array" } },
-      country: { $eq: "AU", $not: { $type: "array" } },
+      tier: {
+        $eq: "gold",
+        $not: {
+          $type: "array",
+        },
+      },
+      country: {
+        $eq: "AU",
+        $not: {
+          $type: "array",
+        },
+      },
     });
   });
 });
@@ -1229,20 +2319,70 @@ $.cart.items.length < 20 &&
 $.customer.region.trim().toLowerCase() === "us"
       `,
     ).toEqual({
-      "cart.total": { $gte: 50, $not: { $type: "array" } },
-      cart: { $not: { $type: "array" } },
+      "cart.total": {
+        $gte: 50,
+        $not: {
+          $type: "array",
+        },
+      },
+      cart: {
+        $not: {
+          $type: "array",
+        },
+      },
       $expr: {
         $and: [
-          { $in: ["$customer.status", ["premium", "gold", "platinum"]] },
+          {
+            $in: [
+              "$customer.status",
+              [
+                "premium",
+                "gold",
+                "platinum",
+              ],
+            ],
+          },
           {
             $lt: [
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$cart.items" }, ["array"]] }, then: { $size: "$cart.items" } },
                     {
-                      case: { $in: [{ $type: "$cart.items" }, ["string", "null", "missing"]] },
-                      then: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
+                      case: {
+                        $in: [
+                          {
+                            $type: "$cart.items",
+                          },
+                          [
+                            "array",
+                          ],
+                        ],
+                      },
+                      then: {
+                        $size: "$cart.items",
+                      },
+                    },
+                    {
+                      case: {
+                        $in: [
+                          {
+                            $type: "$cart.items",
+                          },
+                          [
+                            "string",
+                            "null",
+                            "missing",
+                          ],
+                        ],
+                      },
+                      then: {
+                        $strLenCP: {
+                          $ifNull: [
+                            "$cart.items",
+                            "",
+                          ],
+                        },
+                      },
                     },
                   ],
                   default: "$$REMOVE",
@@ -1251,7 +2391,18 @@ $.customer.region.trim().toLowerCase() === "us"
               20,
             ],
           },
-          { $eq: [{ $toLower: { $trim: { input: "$customer.region" } } }, "us"] },
+          {
+            $eq: [
+              {
+                $toLower: {
+                  $trim: {
+                    input: "$customer.region",
+                  },
+                },
+              },
+              "us",
+            ],
+          },
         ],
       },
     });
@@ -1273,7 +2424,10 @@ describe(
         // spells is the property they get. `$["cart.field.length"]` on the bare root
         // is a plain field reference (the root is never an array).
         expect(jsmql.expr(`$["cart.field.length"] * $.cart.field.width`)).toEqual({
-          $multiply: ["$cart.field.length", "$cart.field.width"],
+          $multiply: [
+            "$cart.field.length",
+            "$cart.field.width",
+          ],
         });
       },
     );
@@ -1284,9 +2438,28 @@ describe(
       // object-field at query time (a BSON value can be either).
       expect(jsmql.expr(`$.cart.field[$.mainSide]`)).toEqual({
         $cond: {
-          if: { $isArray: "$cart.field" },
-          then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
-          else: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
+          if: {
+            $isArray: "$cart.field",
+          },
+          then: {
+            $arrayElemAt: [
+              "$cart.field",
+              "$mainSide",
+            ],
+          },
+          else: {
+            $getField: {
+              field: {
+                $toString: {
+                  $ifNull: [
+                    "$mainSide",
+                    "",
+                  ],
+                },
+              },
+              input: "$cart.field",
+            },
+          },
         },
       });
     });
@@ -1302,17 +2475,82 @@ describe("admin permission with operand-preserving &&", { features: ["Comparison
         $cond: {
           if: {
             $and: [
-              { $ne: [{ $ifNull: ["$active", null] }, null] },
-              { $ne: ["$active", false] },
-              { $ne: ["$active", ""] },
-              { $ne: ["$active", 0] },
+              {
+                $ne: [
+                  {
+                    $ifNull: [
+                      "$active",
+                      null,
+                    ],
+                  },
+                  null,
+                ],
+              },
+              {
+                $ne: [
+                  "$active",
+                  false,
+                ],
+              },
+              {
+                $ne: [
+                  "$active",
+                  "",
+                ],
+              },
+              {
+                $ne: [
+                  "$active",
+                  0,
+                ],
+              },
             ],
           },
           then: {
             $cond: {
-              if: { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
-              then: { $gt: [{ $strLenCP: { $ifNull: [{ $trim: { input: "$name" } }, ""] } }, 0] },
-              else: { $gte: [{ $indexOfCP: [{ $toLower: "$role" }, "admin"] }, 0] },
+              if: {
+                $gte: [
+                  {
+                    $indexOfCP: [
+                      {
+                        $toLower: "$role",
+                      },
+                      "admin",
+                    ],
+                  },
+                  0,
+                ],
+              },
+              then: {
+                $gt: [
+                  {
+                    $strLenCP: {
+                      $ifNull: [
+                        {
+                          $trim: {
+                            input: "$name",
+                          },
+                        },
+                        "",
+                      ],
+                    },
+                  },
+                  0,
+                ],
+              },
+              else: {
+                $gte: [
+                  {
+                    $indexOfCP: [
+                      {
+                        $toLower: "$role",
+                      },
+                      "admin",
+                    ],
+                  },
+                  0,
+                ],
+              },
             },
           },
           else: "$active",
@@ -1343,9 +2581,35 @@ describe("tiered loyalty discount price", { features: ["Ternaries"] }, () => {
               "$price",
               {
                 $cond: {
-                  if: { $and: [{ $gte: ["$loyalty.years", 5] }, { $gte: ["$loyalty.totalSpend", 10000] }] },
+                  if: {
+                    $and: [
+                      {
+                        $gte: [
+                          "$loyalty.years",
+                          5,
+                        ],
+                      },
+                      {
+                        $gte: [
+                          "$loyalty.totalSpend",
+                          10000,
+                        ],
+                      },
+                    ],
+                  },
                   then: 0.85,
-                  else: { $cond: { if: { $gte: ["$loyalty.years", 2] }, then: 0.92, else: 1 } },
+                  else: {
+                    $cond: {
+                      if: {
+                        $gte: [
+                          "$loyalty.years",
+                          2,
+                        ],
+                      },
+                      then: 0.92,
+                      else: 1,
+                    },
+                  },
                 },
               },
             ],
@@ -1364,9 +2628,25 @@ describe("stock status label", { features: ["Ternaries"] }, () => {
     () => {
       expect(jsmql.expr(`$.stock >= $.reorderPoint ? "ok" : $.stock > 0 ? "low" : "out-of-stock"`)).toEqual({
         $cond: {
-          if: { $gte: ["$stock", "$reorderPoint"] },
+          if: {
+            $gte: [
+              "$stock",
+              "$reorderPoint",
+            ],
+          },
           then: "ok",
-          else: { $cond: { if: { $gt: ["$stock", 0] }, then: "low", else: "out-of-stock" } },
+          else: {
+            $cond: {
+              if: {
+                $gt: [
+                  "$stock",
+                  0,
+                ],
+              },
+              then: "low",
+              else: "out-of-stock",
+            },
+          },
         },
       });
     },
@@ -1387,9 +2667,36 @@ $.quantity > 1 && $.price >= 10 && $.category in ["sale", "clearance"]
       ).toEqual({
         $cond: {
           if: {
-            $and: [{ $gt: ["$quantity", 1] }, { $gte: ["$price", 10] }, { $in: ["$category", ["sale", "clearance"]] }],
+            $and: [
+              {
+                $gt: [
+                  "$quantity",
+                  1,
+                ],
+              },
+              {
+                $gte: [
+                  "$price",
+                  10,
+                ],
+              },
+              {
+                $in: [
+                  "$category",
+                  [
+                    "sale",
+                    "clearance",
+                  ],
+                ],
+              },
+            ],
           },
-          then: { $multiply: ["$price", 0.8] },
+          then: {
+            $multiply: [
+              "$price",
+              0.8,
+            ],
+          },
           else: "$price",
         },
       });
@@ -1418,17 +2725,96 @@ describe("scientific projection (hypot, log2/log10, sign, cbrt, PI, E)", { featu
         distance: {
           $sqrt: {
             $add: [
-              { $pow: [{ $subtract: ["$point.x", "$origin.x"] }, 2] },
-              { $pow: [{ $subtract: ["$point.y", "$origin.y"] }, 2] },
+              {
+                $pow: [
+                  {
+                    $subtract: [
+                      "$point.x",
+                      "$origin.x",
+                    ],
+                  },
+                  2,
+                ],
+              },
+              {
+                $pow: [
+                  {
+                    $subtract: [
+                      "$point.y",
+                      "$origin.y",
+                    ],
+                  },
+                  2,
+                ],
+              },
             ],
           },
         },
-        octave: { $log: [{ $divide: ["$frequency", 440] }, 2] },
-        decibels: { $multiply: [{ $log10: "$amplitude" }, 20] },
-        fovRad: { $divide: [{ $multiply: ["$fovDeg", 3.141592653589793] }, 180] },
-        growthFactor: { $pow: [2.718281828459045, "$rate"] },
-        trend: { $cmp: ["$delta", 0] },
-        cubeSide: { $multiply: [{ $cmp: ["$volume", 0] }, { $pow: [{ $abs: "$volume" }, { $divide: [1, 3] }] }] },
+        octave: {
+          $log: [
+            {
+              $divide: [
+                "$frequency",
+                440,
+              ],
+            },
+            2,
+          ],
+        },
+        decibels: {
+          $multiply: [
+            {
+              $log10: "$amplitude",
+            },
+            20,
+          ],
+        },
+        fovRad: {
+          $divide: [
+            {
+              $multiply: [
+                "$fovDeg",
+                3.141592653589793,
+              ],
+            },
+            180,
+          ],
+        },
+        growthFactor: {
+          $pow: [
+            2.718281828459045,
+            "$rate",
+          ],
+        },
+        trend: {
+          $cmp: [
+            "$delta",
+            0,
+          ],
+        },
+        cubeSide: {
+          $multiply: [
+            {
+              $cmp: [
+                "$volume",
+                0,
+              ],
+            },
+            {
+              $pow: [
+                {
+                  $abs: "$volume",
+                },
+                {
+                  $divide: [
+                    1,
+                    3,
+                  ],
+                },
+              ],
+            },
+          ],
+        },
       });
     },
   );
@@ -1442,14 +2828,54 @@ describe("reorder alert with ** and unary !", { features: ["Arithmetic and Math"
           {
             $not: {
               $and: [
-                { $ne: [{ $ifNull: ["$discontinued", null] }, null] },
-                { $ne: ["$discontinued", false] },
-                { $ne: ["$discontinued", ""] },
-                { $ne: ["$discontinued", 0] },
+                {
+                  $ne: [
+                    {
+                      $ifNull: [
+                        "$discontinued",
+                        null,
+                      ],
+                    },
+                    null,
+                  ],
+                },
+                {
+                  $ne: [
+                    "$discontinued",
+                    false,
+                  ],
+                },
+                {
+                  $ne: [
+                    "$discontinued",
+                    "",
+                  ],
+                },
+                {
+                  $ne: [
+                    "$discontinued",
+                    0,
+                  ],
+                },
               ],
             },
           },
-          { $lt: ["$stock", { $multiply: ["$baseReorder", { $pow: [2, "$urgencyLevel"] }] }] },
+          {
+            $lt: [
+              "$stock",
+              {
+                $multiply: [
+                  "$baseReorder",
+                  {
+                    $pow: [
+                      2,
+                      "$urgencyLevel",
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
         ],
       },
     });
@@ -1463,7 +2889,22 @@ describe("score normalisation with grouping", { features: ["Arithmetic and Math"
     () => {
       expect(jsmql.expr(`($.score - $.minScore) / ($.maxScore - $.minScore) * 100`)).toEqual({
         $multiply: [
-          { $divide: [{ $subtract: ["$score", "$minScore"] }, { $subtract: ["$maxScore", "$minScore"] }] },
+          {
+            $divide: [
+              {
+                $subtract: [
+                  "$score",
+                  "$minScore",
+                ],
+              },
+              {
+                $subtract: [
+                  "$maxScore",
+                  "$minScore",
+                ],
+              },
+            ],
+          },
           100,
         ],
       });
@@ -1477,7 +2918,17 @@ describe("age decade bucket via Math.floor", { features: ["Arithmetic and Math"]
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { ageDecade: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.floor($.age / 10) * 10`)).toEqual({
-        $multiply: [{ $floor: { $divide: ["$age", 10] } }, 10],
+        $multiply: [
+          {
+            $floor: {
+              $divide: [
+                "$age",
+                10,
+              ],
+            },
+          },
+          10,
+        ],
       });
     },
   );
@@ -1489,7 +2940,25 @@ describe("invoice line total with compound tax", { features: ["Arithmetic and Ma
     { kind: "expression", usage: "db.invoices.aggregate([{ $addFields: { lineTotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`($.quantity * ($.unitPrice + $.unitPrice * $.taxRate)).round(2)`)).toEqual({
-        $round: [{ $multiply: ["$quantity", { $add: ["$unitPrice", { $multiply: ["$unitPrice", "$taxRate"] }] }] }, 2],
+        $round: [
+          {
+            $multiply: [
+              "$quantity",
+              {
+                $add: [
+                  "$unitPrice",
+                  {
+                    $multiply: [
+                      "$unitPrice",
+                      "$taxRate",
+                    ],
+                  },
+                ],
+              },
+            ],
+          },
+          2,
+        ],
       });
     },
   );
@@ -1502,9 +2971,23 @@ describe("URL slug via .toLowerCase().trim().replaceAll()", { features: ["String
     () => {
       expect(jsmql.expr(`String($.articleId) + "-" + $.title.toLowerCase().trim().replaceAll(" ", "-")`)).toEqual({
         $concat: [
-          { $toString: "$articleId" },
+          {
+            $toString: "$articleId",
+          },
           "-",
-          { $replaceAll: { input: { $trim: { input: { $toLower: "$title" } } }, find: " ", replacement: "-" } },
+          {
+            $replaceAll: {
+              input: {
+                $trim: {
+                  input: {
+                    $toLower: "$title",
+                  },
+                },
+              },
+              find: " ",
+              replacement: "-",
+            },
+          },
         ],
       });
     },
@@ -1517,7 +3000,17 @@ describe("email domain via .split().at().toLowerCase()", { features: ["String me
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { domain: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.email.split("@").at(1).toLowerCase()`)).toEqual({
-        $toLower: { $arrayElemAt: [{ $split: ["$email", "@"] }, 1] },
+        $toLower: {
+          $arrayElemAt: [
+            {
+              $split: [
+                "$email",
+                "@",
+              ],
+            },
+            1,
+          ],
+        },
       });
     },
   );
@@ -1528,7 +3021,14 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({ $size: { $split: ["$tags", ","] } });
+      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({
+        $size: {
+          $split: [
+            "$tags",
+            ",",
+          ],
+        },
+      });
     },
   );
 });
@@ -1545,11 +3045,36 @@ describe("invoice line greeting with ?., ??, and .startsWith", { features: ["Tem
       ).toEqual({
         $concat: [
           "Hi ",
-          { $toString: { $ifNull: ["$customer.firstName", "there"] } },
+          {
+            $toString: {
+              $ifNull: [
+                "$customer.firstName",
+                "there",
+              ],
+            },
+          },
           " — your ",
-          { $cond: { if: { $eq: [{ $indexOfCP: ["$invoice.id", "INV-VIP-"] }, 0] }, then: "VIP ", else: "" } },
+          {
+            $cond: {
+              if: {
+                $eq: [
+                  {
+                    $indexOfCP: [
+                      "$invoice.id",
+                      "INV-VIP-",
+                    ],
+                  },
+                  0,
+                ],
+              },
+              then: "VIP ",
+              else: "",
+            },
+          },
           "invoice ",
-          { $toString: "$invoice.id" },
+          {
+            $toString: "$invoice.id",
+          },
           " is ready",
         ],
       });
@@ -1566,11 +3091,25 @@ describe("audit log line with .toISOString and .charAt(0).toUpperCase", { featur
         jsmql.expr(`\`\${$.event.ts.toISOString()} [\${$.event.level.charAt(0).toUpperCase()}] \${$.event.message}\``),
       ).toEqual({
         $concat: [
-          { $dateToString: { date: "$event.ts" } },
+          {
+            $dateToString: {
+              date: "$event.ts",
+            },
+          },
           " [",
-          { $toUpper: { $substrCP: ["$event.level", 0, 1] } },
+          {
+            $toUpper: {
+              $substrCP: [
+                "$event.level",
+                0,
+                1,
+              ],
+            },
+          },
           "] ",
-          { $toString: "$event.message" },
+          {
+            $toString: "$event.message",
+          },
         ],
       });
     },
@@ -1594,13 +3133,26 @@ $.sessions
           $map: {
             input: {
               $reduce: {
-                input: { $map: { input: "$sessions", as: "x", in: "$$x.events" } },
+                input: {
+                  $map: {
+                    input: "$sessions",
+                    as: "x",
+                    in: "$$x.events",
+                  },
+                },
                 initialValue: [],
-                in: { $concatArrays: ["$$value", "$$this"] },
+                in: {
+                  $concatArrays: [
+                    "$$value",
+                    "$$this",
+                  ],
+                },
               },
             },
             as: "e",
-            in: { $toLong: "$$e.ts" },
+            in: {
+              $toLong: "$$e.ts",
+            },
           },
         },
       });
@@ -1614,7 +3166,18 @@ describe("cart subtotal via .sumBy", { features: ["Array methods"] }, () => {
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { subtotal: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.items.sumBy(item => item.qty * item.price)`)).toEqual({
-        $sum: { $map: { input: "$items", as: "item", in: { $multiply: ["$$item.qty", "$$item.price"] } } },
+        $sum: {
+          $map: {
+            input: "$items",
+            as: "item",
+            in: {
+              $multiply: [
+                "$$item.qty",
+                "$$item.price",
+              ],
+            },
+          },
+        },
       });
     },
   );
@@ -1629,14 +3192,43 @@ describe("full display name via .filter(Boolean).join", { features: ["Array meth
         $reduce: {
           input: {
             $filter: {
-              input: ["$firstName", "$middleName", "$lastName"],
+              input: [
+                "$firstName",
+                "$middleName",
+                "$lastName",
+              ],
               as: "x",
               cond: {
                 $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
+                  {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          "$$x",
+                          null,
+                        ],
+                      },
+                      null,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      false,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      "",
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      0,
+                    ],
+                  },
                 ],
               },
             },
@@ -1644,9 +3236,24 @@ describe("full display name via .filter(Boolean).join", { features: ["Array meth
           initialValue: "",
           in: {
             $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
+              if: {
+                $eq: [
+                  "$$value",
+                  "",
+                ],
+              },
+              then: {
+                $toString: "$$this",
+              },
+              else: {
+                $concat: [
+                  "$$value",
+                  " ",
+                  {
+                    $toString: "$$this",
+                  },
+                ],
+              },
             },
           },
         },
@@ -1675,13 +3282,43 @@ describe("full address with conditional inclusion + filter + join", { features: 
                   $cond: {
                     if: {
                       $and: [
-                        { $ne: [{ $ifNull: ["$building", null] }, null] },
-                        { $ne: ["$building", false] },
-                        { $ne: ["$building", ""] },
-                        { $ne: ["$building", 0] },
+                        {
+                          $ne: [
+                            {
+                              $ifNull: [
+                                "$building",
+                                null,
+                              ],
+                            },
+                            null,
+                          ],
+                        },
+                        {
+                          $ne: [
+                            "$building",
+                            false,
+                          ],
+                        },
+                        {
+                          $ne: [
+                            "$building",
+                            "",
+                          ],
+                        },
+                        {
+                          $ne: [
+                            "$building",
+                            0,
+                          ],
+                        },
                       ],
                     },
-                    then: { $concat: ["$building", ","] },
+                    then: {
+                      $concat: [
+                        "$building",
+                        ",",
+                      ],
+                    },
                     else: "$building",
                   },
                 },
@@ -1695,10 +3332,35 @@ describe("full address with conditional inclusion + filter + join", { features: 
               as: "x",
               cond: {
                 $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
+                  {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          "$$x",
+                          null,
+                        ],
+                      },
+                      null,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      false,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      "",
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$$x",
+                      0,
+                    ],
+                  },
                 ],
               },
             },
@@ -1706,9 +3368,24 @@ describe("full address with conditional inclusion + filter + join", { features: 
           initialValue: "",
           in: {
             $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
+              if: {
+                $eq: [
+                  "$$value",
+                  "",
+                ],
+              },
+              then: {
+                $toString: "$$this",
+              },
+              else: {
+                $concat: [
+                  "$$value",
+                  " ",
+                  {
+                    $toString: "$$this",
+                  },
+                ],
+              },
             },
           },
         },
@@ -1726,17 +3403,43 @@ describe("tag aggregation via .map.flat.join", { features: ["Array methods"] }, 
         $reduce: {
           input: {
             $reduce: {
-              input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
+              input: {
+                $map: {
+                  input: "$posts",
+                  as: "x",
+                  in: "$$x.tags",
+                },
+              },
               initialValue: [],
-              in: { $concatArrays: ["$$value", "$$this"] },
+              in: {
+                $concatArrays: [
+                  "$$value",
+                  "$$this",
+                ],
+              },
             },
           },
           initialValue: "",
           in: {
             $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", ", ", { $toString: "$$this" }] },
+              if: {
+                $eq: [
+                  "$$value",
+                  "",
+                ],
+              },
+              then: {
+                $toString: "$$this",
+              },
+              else: {
+                $concat: [
+                  "$$value",
+                  ", ",
+                  {
+                    $toString: "$$this",
+                  },
+                ],
+              },
             },
           },
         },
@@ -1760,19 +3463,64 @@ describe("immutable replace and indexed map via .with / (x, i)", { features: ["A
       ).toEqual({
         lineup: {
           $let: {
-            vars: { jsmqlArr: "$roster", jsmqlIdx: "$swap.slot", jsmqlVal: "$swap.in" },
+            vars: {
+              jsmqlArr: "$roster",
+              jsmqlIdx: "$swap.slot",
+              jsmqlVal: "$swap.in",
+            },
             in: {
               $concatArrays: [
-                { $slice: ["$$jsmqlArr", "$$jsmqlIdx"] },
-                ["$$jsmqlVal"],
+                {
+                  $slice: [
+                    "$$jsmqlArr",
+                    "$$jsmqlIdx",
+                  ],
+                },
+                [
+                  "$$jsmqlVal",
+                ],
                 {
                   $cond: [
-                    { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] }, 0] },
+                    {
+                      $gt: [
+                        {
+                          $subtract: [
+                            {
+                              $size: "$$jsmqlArr",
+                            },
+                            {
+                              $add: [
+                                "$$jsmqlIdx",
+                                1,
+                              ],
+                            },
+                          ],
+                        },
+                        0,
+                      ],
+                    },
                     {
                       $slice: [
                         "$$jsmqlArr",
-                        { $add: ["$$jsmqlIdx", 1] },
-                        { $subtract: [{ $size: "$$jsmqlArr" }, { $add: ["$$jsmqlIdx", 1] }] },
+                        {
+                          $add: [
+                            "$$jsmqlIdx",
+                            1,
+                          ],
+                        },
+                        {
+                          $subtract: [
+                            {
+                              $size: "$$jsmqlArr",
+                            },
+                            {
+                              $add: [
+                                "$$jsmqlIdx",
+                                1,
+                              ],
+                            },
+                          ],
+                        },
                       ],
                     },
                     [],
@@ -1784,12 +3532,42 @@ describe("immutable replace and indexed map via .with / (x, i)", { features: ["A
         },
         labelled: {
           $map: {
-            input: { $zip: { inputs: [{ $range: [0, { $size: "$roster" }] }, "$roster"] } },
+            input: {
+              $zip: {
+                inputs: [
+                  {
+                    $range: [
+                      0,
+                      {
+                        $size: "$roster",
+                      },
+                    ],
+                  },
+                  "$roster",
+                ],
+              },
+            },
             as: "jsmqlPair",
             in: {
               $let: {
-                vars: { p: { $arrayElemAt: ["$$jsmqlPair", 1] }, i: { $arrayElemAt: ["$$jsmqlPair", 0] } },
-                in: { slot: "$$i", name: "$$p.name" },
+                vars: {
+                  p: {
+                    $arrayElemAt: [
+                      "$$jsmqlPair",
+                      1,
+                    ],
+                  },
+                  i: {
+                    $arrayElemAt: [
+                      "$$jsmqlPair",
+                      0,
+                    ],
+                  },
+                },
+                in: {
+                  slot: "$$i",
+                  name: "$$p.name",
+                },
               },
             },
           },
@@ -1808,14 +3586,42 @@ $.file.name.endsWith($.file.ext) &&
 $.file.size <= 25_000_000
       `,
     ).toEqual({
-      "file.size": { $lte: 25000000, $not: { $type: "array" } },
-      file: { $not: { $type: "array" } },
+      "file.size": {
+        $lte: 25000000,
+        $not: {
+          $type: "array",
+        },
+      },
+      file: {
+        $not: {
+          $type: "array",
+        },
+      },
       $expr: {
         $and: [
-          { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
+          {
+            $in: [
+              {
+                $toLower: "$file.ext",
+              },
+              [
+                ".jpg",
+                ".png",
+                ".pdf",
+                ".docx",
+              ],
+            ],
+          },
           {
             $let: {
-              vars: { jsmqlStr: { $ifNull: ["$file.name", ""] } },
+              vars: {
+                jsmqlStr: {
+                  $ifNull: [
+                    "$file.name",
+                    "",
+                  ],
+                },
+              },
               in: {
                 $eq: [
                   {
@@ -1824,10 +3630,31 @@ $.file.size <= 25_000_000
                       {
                         $max: [
                           0,
-                          { $subtract: [{ $strLenCP: "$$jsmqlStr" }, { $strLenCP: { $ifNull: ["$file.ext", ""] } }] },
+                          {
+                            $subtract: [
+                              {
+                                $strLenCP: "$$jsmqlStr",
+                              },
+                              {
+                                $strLenCP: {
+                                  $ifNull: [
+                                    "$file.ext",
+                                    "",
+                                  ],
+                                },
+                              },
+                            ],
+                          },
                         ],
                       },
-                      { $strLenCP: { $ifNull: ["$file.ext", ""] } },
+                      {
+                        $strLenCP: {
+                          $ifNull: [
+                            "$file.ext",
+                            "",
+                          ],
+                        },
+                      },
                     ],
                   },
                   "$file.ext",
@@ -1844,7 +3671,25 @@ $.file.size <= 25_000_000
 describe("chat moderation with ?. inside an array spread", { features: ["Optional chaining"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.chatRooms.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }] },
+      $expr: {
+        $in: [
+          "$userId",
+          {
+            $concatArrays: [
+              "$moderators",
+              {
+                $ifNull: [
+                  "$room.mods",
+                  [],
+                ],
+              },
+              [
+                "root",
+              ],
+            ],
+          },
+        ],
+      },
     });
   });
 });
@@ -1858,9 +3703,23 @@ describe("?. inside a template literal", { features: ["Optional chaining"] }, ()
         $trim: {
           input: {
             $concat: [
-              { $toString: { $ifNull: ["$name.first", ""] } },
+              {
+                $toString: {
+                  $ifNull: [
+                    "$name.first",
+                    "",
+                  ],
+                },
+              },
               " ",
-              { $toString: { $ifNull: ["$name.last", ""] } },
+              {
+                $toString: {
+                  $ifNull: [
+                    "$name.last",
+                    "",
+                  ],
+                },
+              },
             ],
           },
         },
@@ -1884,8 +3743,43 @@ describe("full name with three-step ?? fallback chain", { features: ["Nullish co
           {
             $switch: {
               branches: [
-                { case: { $in: [{ $type: "$aliases" }, ["string"]] }, then: { $substrCP: ["$aliases", 0, 1] } },
-                { case: { $in: [{ $type: "$aliases" }, ["array"]] }, then: { $arrayElemAt: ["$aliases", 0] } },
+                {
+                  case: {
+                    $in: [
+                      {
+                        $type: "$aliases",
+                      },
+                      [
+                        "string",
+                      ],
+                    ],
+                  },
+                  then: {
+                    $substrCP: [
+                      "$aliases",
+                      0,
+                      1,
+                    ],
+                  },
+                },
+                {
+                  case: {
+                    $in: [
+                      {
+                        $type: "$aliases",
+                      },
+                      [
+                        "array",
+                      ],
+                    ],
+                  },
+                  then: {
+                    $arrayElemAt: [
+                      "$aliases",
+                      0,
+                    ],
+                  },
+                },
               ],
               default: "$$REMOVE",
             },
@@ -1910,8 +3804,18 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
       `,
       ).toEqual({
         $ifNull: [
-          { $dateToString: { date: "$publishedAt", format: "%Y-%m-%d" } },
-          { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } },
+          {
+            $dateToString: {
+              date: "$publishedAt",
+              format: "%Y-%m-%d",
+            },
+          },
+          {
+            $dateToString: {
+              date: "$createdAt",
+              format: "%Y-%m-%d",
+            },
+          },
           "unknown",
         ],
       });
@@ -1922,7 +3826,20 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
 describe("moderator membership check via [...a, ...b]", { features: ["Array spread"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.threads.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }] },
+      $expr: {
+        $in: [
+          "$userId",
+          {
+            $concatArrays: [
+              "$moderators",
+              "$room.mods",
+              [
+                "root",
+              ],
+            ],
+          },
+        ],
+      },
     });
   });
 });
@@ -1934,8 +3851,21 @@ describe("Math.max(...arr) - Math.min(...arr) with Array.isArray guard", { featu
     () => {
       expect(jsmql.expr(`Array.isArray($.scores) ? Math.max(...$.scores) - Math.min(...$.scores) : 0`)).toEqual({
         $cond: {
-          if: { $isArray: ["$scores"] },
-          then: { $subtract: [{ $max: "$scores" }, { $min: "$scores" }] },
+          if: {
+            $isArray: [
+              "$scores",
+            ],
+          },
+          then: {
+            $subtract: [
+              {
+                $max: "$scores",
+              },
+              {
+                $min: "$scores",
+              },
+            ],
+          },
           else: 0,
         },
       });
@@ -1955,8 +3885,14 @@ describe("dynamic pivot row with computed key + shorthand property", { features:
           in: {
             $arrayToObject: [
               [
-                { k: "$$p.category", v: "$$p.price" },
-                { k: "p", v: "$$p" },
+                {
+                  k: "$$p.category",
+                  v: "$$p.price",
+                },
+                {
+                  k: "p",
+                  v: "$$p",
+                },
               ],
             ],
           },
@@ -1972,7 +3908,16 @@ describe("pivot table row via Object.fromEntries(.map(...))", { features: ["Obje
     { kind: "expression", usage: "db.metrics.aggregate([{ $addFields: { row: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Object.fromEntries($.metrics.map(m => [m.name, m.value]))`)).toEqual({
-        $arrayToObject: { $map: { input: "$metrics", as: "m", in: ["$$m.name", "$$m.value"] } },
+        $arrayToObject: {
+          $map: {
+            input: "$metrics",
+            as: "m",
+            in: [
+              "$$m.name",
+              "$$m.value",
+            ],
+          },
+        },
       });
     },
   );
@@ -1984,7 +3929,23 @@ describe("shopping cart total with 10_000 cap", { features: ["Numeric separators
     { kind: "expression", usage: "db.carts.aggregate([{ $addFields: { total: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.min(10_000, $.lines.sumBy(l => l.qty * l.price))`)).toEqual({
-        $min: [10000, { $sum: { $map: { input: "$lines", as: "l", in: { $multiply: ["$$l.qty", "$$l.price"] } } } }],
+        $min: [
+          10000,
+          {
+            $sum: {
+              $map: {
+                input: "$lines",
+                as: "l",
+                in: {
+                  $multiply: [
+                    "$$l.qty",
+                    "$$l.price",
+                  ],
+                },
+              },
+            },
+          },
+        ],
       });
     },
   );
@@ -1997,9 +3958,22 @@ describe("normalise a string-or-number field with typeof", { features: ["Type ch
     () => {
       expect(jsmql.expr(`typeof $.value === "string" ? $.value.trim() : String($.value)`)).toEqual({
         $cond: {
-          if: { $eq: [{ $type: "$value" }, "string"] },
-          then: { $trim: { input: "$value" } },
-          else: { $toString: "$value" },
+          if: {
+            $eq: [
+              {
+                $type: "$value",
+              },
+              "string",
+            ],
+          },
+          then: {
+            $trim: {
+              input: "$value",
+            },
+          },
+          else: {
+            $toString: "$value",
+          },
         },
       });
     },
@@ -2015,7 +3989,18 @@ describe("days since last login (Math.abs + $dateDiff + ?? + new Date)", { featu
         jsmql.expr(`Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)`),
       ).toEqual({
         $abs: {
-          $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }, -1],
+          $ifNull: [
+            {
+              $dateDiff: {
+                startDate: "$lastLoginAt",
+                endDate: {
+                  $toDate: "$$NOW",
+                },
+                unit: "day",
+              },
+            },
+            -1,
+          ],
         },
       });
     },
@@ -2028,7 +4013,13 @@ describe("days since document was created", { features: ["Date and time"] }, () 
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })`)).toEqual({
-        $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" },
+        $dateDiff: {
+          startDate: "$createdAt",
+          endDate: {
+            $toDate: "$$NOW",
+          },
+          unit: "day",
+        },
       });
     },
   );
@@ -2040,7 +4031,21 @@ describe("days since event (Date.now + .getTime + 86_400_000)", { features: ["Da
     { kind: "expression", usage: "db.events.aggregate([{ $addFields: { daysSinceEvent: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Math.floor((Date.now() - $.event.ts.getTime()) / 86_400_000)`)).toEqual({
-        $floor: { $divide: [{ $subtract: [{ $toLong: "$$NOW" }, { $toLong: "$event.ts" }] }, 86400000] },
+        $floor: {
+          $divide: [
+            {
+              $subtract: [
+                {
+                  $toLong: "$$NOW",
+                },
+                {
+                  $toLong: "$event.ts",
+                },
+              ],
+            },
+            86400000,
+          ],
+        },
       });
     },
   );
@@ -2054,7 +4059,24 @@ describe("event fell within UTC business hours (.getUTCHours)", { features: ["Da
       // Was the event logged between 09:00 and 17:00 UTC? Reading the hour in UTC
       // (not the server's local zone) keeps the window stable across deployments.
       expect(jsmql.expr(`$.event.ts.getUTCHours() >= 9 && $.event.ts.getUTCHours() < 17`)).toEqual({
-        $and: [{ $gte: [{ $hour: "$event.ts" }, 9] }, { $lt: [{ $hour: "$event.ts" }, 17] }],
+        $and: [
+          {
+            $gte: [
+              {
+                $hour: "$event.ts",
+              },
+              9,
+            ],
+          },
+          {
+            $lt: [
+              {
+                $hour: "$event.ts",
+              },
+              17,
+            ],
+          },
+        ],
       });
     },
   );
@@ -2074,11 +4096,41 @@ $.policy.kmPerYear <= 30_000 &&
 !($.driver.occupation in ["stunt-double", "test-pilot", "demolition-engineer"])
       `,
     ).toEqual({
-      "driver.age": { $gte: 25, $not: { $type: "array" }, $lte: 70 },
-      driver: { $not: { $type: "array" } },
-      "policy.kmPerYear": { $lte: 30000, $not: { $type: "array" } },
-      policy: { $not: { $type: "array" } },
-      $expr: { $not: { $in: ["$driver.occupation", ["stunt-double", "test-pilot", "demolition-engineer"]] } },
+      "driver.age": {
+        $gte: 25,
+        $not: {
+          $type: "array",
+        },
+        $lte: 70,
+      },
+      driver: {
+        $not: {
+          $type: "array",
+        },
+      },
+      "policy.kmPerYear": {
+        $lte: 30000,
+        $not: {
+          $type: "array",
+        },
+      },
+      policy: {
+        $not: {
+          $type: "array",
+        },
+      },
+      $expr: {
+        $not: {
+          $in: [
+            "$driver.occupation",
+            [
+              "stunt-double",
+              "test-pilot",
+              "demolition-engineer",
+            ],
+          ],
+        },
+      },
     });
   });
 });
@@ -2098,11 +4150,43 @@ describe("discount breakdown — bind once, reuse across fields", { features: ["
       `,
       ).toEqual({
         $let: {
-          vars: { discount: { $multiply: ["$price", { $subtract: [1, "$loyalty.multiplier"] }] } },
+          vars: {
+            discount: {
+              $multiply: [
+                "$price",
+                {
+                  $subtract: [
+                    1,
+                    "$loyalty.multiplier",
+                  ],
+                },
+              ],
+            },
+          },
           in: {
-            finalPrice: { $subtract: ["$price", "$$discount"] },
+            finalPrice: {
+              $subtract: [
+                "$price",
+                "$$discount",
+              ],
+            },
             savings: "$$discount",
-            savingsPercent: { $round: [{ $multiply: [{ $divide: ["$$discount", "$price"] }, 100] }, 0] },
+            savingsPercent: {
+              $round: [
+                {
+                  $multiply: [
+                    {
+                      $divide: [
+                        "$$discount",
+                        "$price",
+                      ],
+                    },
+                    100,
+                  ],
+                },
+                0,
+              ],
+            },
           },
         },
       });
@@ -2129,20 +4213,93 @@ $ = {
         $replaceWith: {
           subtotal: {
             $let: {
-              vars: { n: { $multiply: ["$price", "$qty"] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              vars: {
+                n: {
+                  $multiply: [
+                    "$price",
+                    "$qty",
+                  ],
+                },
+              },
+              in: {
+                $divide: [
+                  {
+                    $round: [
+                      {
+                        $multiply: [
+                          "$$n",
+                          100,
+                        ],
+                      },
+                      0,
+                    ],
+                  },
+                  100,
+                ],
+              },
             },
           },
           tax: {
             $let: {
-              vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              vars: {
+                n: {
+                  $multiply: [
+                    "$price",
+                    "$qty",
+                    "$taxRate",
+                  ],
+                },
+              },
+              in: {
+                $divide: [
+                  {
+                    $round: [
+                      {
+                        $multiply: [
+                          "$$n",
+                          100,
+                        ],
+                      },
+                      0,
+                    ],
+                  },
+                  100,
+                ],
+              },
             },
           },
           total: {
             $let: {
-              vars: { n: { $multiply: ["$price", "$qty", { $add: [1, "$taxRate"] }] } },
-              in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+              vars: {
+                n: {
+                  $multiply: [
+                    "$price",
+                    "$qty",
+                    {
+                      $add: [
+                        1,
+                        "$taxRate",
+                      ],
+                    },
+                  ],
+                },
+              },
+              in: {
+                $divide: [
+                  {
+                    $round: [
+                      {
+                        $multiply: [
+                          "$$n",
+                          100,
+                        ],
+                      },
+                      0,
+                    ],
+                  },
+                  100,
+                ],
+              },
             },
           },
         },
@@ -2172,14 +4329,59 @@ $ = {
           $replaceWith: {
             subtotal: {
               $let: {
-                vars: { n: { $multiply: ["$price", "$qty"] } },
-                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+                vars: {
+                  n: {
+                    $multiply: [
+                      "$price",
+                      "$qty",
+                    ],
+                  },
+                },
+                in: {
+                  $divide: [
+                    {
+                      $round: [
+                        {
+                          $multiply: [
+                            "$$n",
+                            100,
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                    100,
+                  ],
+                },
               },
             },
             tax: {
               $let: {
-                vars: { n: { $multiply: ["$price", "$qty", "$taxRate"] } },
-                in: { $divide: [{ $round: [{ $multiply: ["$$n", 100] }, 0] }, 100] },
+                vars: {
+                  n: {
+                    $multiply: [
+                      "$price",
+                      "$qty",
+                      "$taxRate",
+                    ],
+                  },
+                },
+                in: {
+                  $divide: [
+                    {
+                      $round: [
+                        {
+                          $multiply: [
+                            "$$n",
+                            100,
+                          ],
+                        },
+                        0,
+                      ],
+                    },
+                    100,
+                  ],
+                },
               },
             },
           },
@@ -2194,7 +4396,14 @@ describe("$round of $sum as a plain expression", { features: ["Escape hatch"] },
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.invoices.aggregate([{ $addFields: { result: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$round($sum($.lineTotal), 2)`)).toEqual({ $round: [{ $sum: "$lineTotal" }, 2] });
+      expect(jsmql.expr(`$round($sum($.lineTotal), 2)`)).toEqual({
+        $round: [
+          {
+            $sum: "$lineTotal",
+          },
+          2,
+        ],
+      });
     },
   );
 });
@@ -2205,7 +4414,13 @@ describe("$toLower wrapping a string-context +", { features: ["Escape hatch"] },
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { handle: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$toLower($.firstName + " " + $.lastName)`)).toEqual({
-        $toLower: { $concat: ["$firstName", " ", "$lastName"] },
+        $toLower: {
+          $concat: [
+            "$firstName",
+            " ",
+            "$lastName",
+          ],
+        },
       });
     },
   );
@@ -2220,9 +4435,27 @@ $.grade in ["A", "B"] &&
 $.submitted === true
       `,
     ).toEqual({
-      score: { $gte: 75, $not: { $type: "array" } },
-      submitted: { $eq: true, $not: { $type: "array" } },
-      $expr: { $in: ["$grade", ["A", "B"]] },
+      score: {
+        $gte: 75,
+        $not: {
+          $type: "array",
+        },
+      },
+      submitted: {
+        $eq: true,
+        $not: {
+          $type: "array",
+        },
+      },
+      $expr: {
+        $in: [
+          "$grade",
+          [
+            "A",
+            "B",
+          ],
+        ],
+      },
     });
   });
 });
@@ -2241,15 +4474,41 @@ let nOrders = $$$.orders.filter({ userId: $._id }).length;
 $project({ name: 1, recentOrders: 1, nOrders });
       `,
     ).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      {
+        $match: {
+          active: {
+            $eq: true,
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
+          let: {
+            jsmql_f0__id: "$_id",
+          },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 5 },
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$userId",
+                    "$$jsmql_f0__id",
+                  ],
+                },
+              },
+            },
+            {
+              $sort: {
+                createdAt: -1,
+              },
+            },
+            {
+              $limit: 5,
+            },
           ],
           as: "recentOrders",
         },
@@ -2257,14 +4516,41 @@ $project({ name: 1, recentOrders: 1, nOrders });
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          let: {
+            jsmql_f0__id: "$_id",
+          },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$userId",
+                    "$$jsmql_f0__id",
+                  ],
+                },
+              },
+            },
+          ],
           as: "__jsmql.tmp.0",
         },
       },
-      { $set: { "__jsmql.var.nOrders": { $size: "$__jsmql.tmp.0" } } },
-      { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.var.nOrders" } },
-      { $unset: "__jsmql" },
+      {
+        $set: {
+          "__jsmql.var.nOrders": {
+            $size: "$__jsmql.tmp.0",
+          },
+        },
+      },
+      {
+        $project: {
+          name: 1,
+          recentOrders: 1,
+          nOrders: "$__jsmql.var.nOrders",
+        },
+      },
+      {
+        $unset: "__jsmql",
+      },
     ]);
   });
 });
@@ -2297,24 +4583,65 @@ $.recentOrders = $$$.orders.aggregate(o => {
 $project({ name: 1, recentOrders: 1 });
       `,
       ).toEqual([
-        { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+        {
+          $match: {
+            active: {
+              $eq: true,
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
+            let: {
+              jsmql_f0__id: "$_id",
+            },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-              { $sort: { createdAt: -1 } },
-              { $limit: 5 },
+              {
+                $match: {
+                  $expr: {
+                    $eq: [
+                      "$userId",
+                      "$$jsmql_f0__id",
+                    ],
+                  },
+                },
+              },
+              {
+                $sort: {
+                  createdAt: -1,
+                },
+              },
+              {
+                $limit: 5,
+              },
               {
                 $lookup: {
                   from: "shipments",
-                  let: { jsmql_f1__id: "$_id" },
+                  let: {
+                    jsmql_f1__id: "$_id",
+                  },
                   pipeline: [
                     {
                       $match: {
                         $expr: {
-                          $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$userId", "$$jsmql_f0__id"] }],
+                          $and: [
+                            {
+                              $eq: [
+                                "$orderId",
+                                "$$jsmql_f1__id",
+                              ],
+                            },
+                            {
+                              $eq: [
+                                "$userId",
+                                "$$jsmql_f0__id",
+                              ],
+                            },
+                          ],
                         },
                       },
                     },
@@ -2326,7 +4653,12 @@ $project({ name: 1, recentOrders: 1 });
             as: "recentOrders",
           },
         },
-        { $project: { name: 1, recentOrders: 1 } },
+        {
+          $project: {
+            name: 1,
+            recentOrders: 1,
+          },
+        },
       ]);
     });
   },
@@ -2355,14 +4687,31 @@ $sort({ name: 1 });
 $limit(50);
       `,
       ).toEqual([
-        { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+        {
+          $match: {
+            active: {
+              $eq: true,
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $unionWith: {
             pipeline: [
               {
                 $documents: [
-                  { _id: "system", name: "System", role: "synthetic" },
-                  { _id: "anon", name: "Anonymous", role: "synthetic" },
+                  {
+                    _id: "system",
+                    name: "System",
+                    role: "synthetic",
+                  },
+                  {
+                    _id: "anon",
+                    name: "Anonymous",
+                    role: "synthetic",
+                  },
                 ],
               },
             ],
@@ -2371,11 +4720,28 @@ $limit(50);
         {
           $unionWith: {
             coll: "archive_users",
-            pipeline: [{ $match: { deleted: { $eq: true, $not: { $type: "array" } } } }],
+            pipeline: [
+              {
+                $match: {
+                  deleted: {
+                    $eq: true,
+                    $not: {
+                      $type: "array",
+                    },
+                  },
+                },
+              },
+            ],
           },
         },
-        { $sort: { name: 1 } },
-        { $limit: 50 },
+        {
+          $sort: {
+            name: 1,
+          },
+        },
+        {
+          $limit: 50,
+        },
       ]);
     },
   );
@@ -2405,11 +4771,26 @@ $$$$.dw.archive_users = $$;
       ).toEqual([
         {
           $match: {
-            active: { $eq: false, $not: { $type: "array" } },
-            lastSeen: { $lt: new Date("2025-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+            active: {
+              $eq: false,
+              $not: {
+                $type: "array",
+              },
+            },
+            lastSeen: {
+              $lt: new Date("2025-01-01T00:00:00.000Z"),
+              $not: {
+                $type: "array",
+              },
+            },
           },
         },
-        { $out: { db: "dw", coll: "archive_users" } },
+        {
+          $out: {
+            db: "dw",
+            coll: "archive_users",
+          },
+        },
       ]);
     },
   );
@@ -2421,8 +4802,22 @@ describe("archive expired users via $out (inline filter)", { features: ["Pipelin
     { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
     () => {
       expect(jsmql(`$$$$.dw.archive = $$.filter({ status: "expired" });`)).toEqual([
-        { $match: { status: { $eq: "expired", $not: { $type: "array" } } } },
-        { $out: { db: "dw", coll: "archive" } },
+        {
+          $match: {
+            status: {
+              $eq: "expired",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $out: {
+            db: "dw",
+            coll: "archive",
+          },
+        },
       ]);
     },
   );
@@ -2448,16 +4843,43 @@ $$$$.reporting.daily_revenue = $$
   .$sort({ _id: -1 });
       `),
       ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
         {
-          $group: {
-            _id: { $dateTrunc: { date: "$placedAt", unit: "day" } },
-            revenue: { $sum: "$total" },
-            orders: { $sum: 1 },
+          $match: {
+            status: {
+              $eq: "shipped",
+              $not: {
+                $type: "array",
+              },
+            },
           },
         },
-        { $sort: { _id: -1 } },
-        { $out: { db: "reporting", coll: "daily_revenue" } },
+        {
+          $group: {
+            _id: {
+              $dateTrunc: {
+                date: "$placedAt",
+                unit: "day",
+              },
+            },
+            revenue: {
+              $sum: "$total",
+            },
+            orders: {
+              $sum: 1,
+            },
+          },
+        },
+        {
+          $sort: {
+            _id: -1,
+          },
+        },
+        {
+          $out: {
+            db: "reporting",
+            coll: "daily_revenue",
+          },
+        },
       ]);
     },
   );
@@ -2474,8 +4896,26 @@ describe("quarantine invalid orders via $out (`.reject`)", { features: ["Pipelin
       // emits a query-form De Morgan). Verified on a live mongod — only the
       // `valid: false` order lands in `quarantine.bad_orders`.
       expect(jsmql(`$$$$.quarantine.bad_orders = $$.reject({ valid: true });`)).toEqual([
-        { $match: { $nor: [{ valid: { $eq: true, $not: { $type: "array" } } }] } },
-        { $out: { db: "quarantine", coll: "bad_orders" } },
+        {
+          $match: {
+            $nor: [
+              {
+                valid: {
+                  $eq: true,
+                  $not: {
+                    $type: "array",
+                  },
+                },
+              },
+            ],
+          },
+        },
+        {
+          $out: {
+            db: "quarantine",
+            coll: "bad_orders",
+          },
+        },
       ]);
     },
   );
@@ -2499,10 +4939,23 @@ $$$.top_customers = $$
   .map(c => ({ userId: c._id, spend: c.lifetimeSpend }));
       `),
       ).toEqual([
-        { $sort: { lifetimeSpend: -1 } },
-        { $limit: 100 },
-        { $replaceWith: { userId: "$_id", spend: "$lifetimeSpend" } },
-        { $out: "top_customers" },
+        {
+          $sort: {
+            lifetimeSpend: -1,
+          },
+        },
+        {
+          $limit: 100,
+        },
+        {
+          $replaceWith: {
+            userId: "$_id",
+            spend: "$lifetimeSpend",
+          },
+        },
+        {
+          $out: "top_customers",
+        },
       ]);
     },
   );
@@ -2551,10 +5004,27 @@ $$.filter({ status: "shipped" });
 $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
         `,
       ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
-        { $sort: { placedAt: -1 } },
-        { $skip: 25 },
-        { $limit: 25 },
+        {
+          $match: {
+            status: {
+              $eq: "shipped",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $sort: {
+            placedAt: -1,
+          },
+        },
+        {
+          $skip: 25,
+        },
+        {
+          $limit: 25,
+        },
       ]);
     },
   );
@@ -2578,20 +5048,47 @@ assert($.qty >= 0, "order qty must be non-negative");
 $.revenue = $.qty * $.unitPrice;
         `,
       ).toEqual([
-        { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+        {
+          $match: {
+            status: {
+              $eq: "paid",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $match: {
             $expr: {
               $convert: {
                 input: true,
                 to: {
-                  $cond: [{ $gte: ["$qty", 0] }, "bool", "jsmql assertion failed: order qty must be non-negative"],
+                  $cond: [
+                    {
+                      $gte: [
+                        "$qty",
+                        0,
+                      ],
+                    },
+                    "bool",
+                    "jsmql assertion failed: order qty must be non-negative",
+                  ],
                 },
               },
             },
           },
         },
-        { $set: { revenue: { $multiply: ["$qty", "$unitPrice"] } } },
+        {
+          $set: {
+            revenue: {
+              $multiply: [
+                "$qty",
+                "$unitPrice",
+              ],
+            },
+          },
+        },
       ]);
     },
   );
@@ -2620,12 +5117,58 @@ $.sharePct = 100 / $$.length;
 assert($$.length <= 1000, "too many in-stock products to render");
         `,
         ).toEqual([
-          { $match: { inStock: { $eq: true, $not: { $type: "array" } } } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-          { $set: { totalInStock: "$__jsmql.length" } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-          { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+          {
+            $match: {
+              inStock: {
+                $eq: true,
+                $not: {
+                  $type: "array",
+                },
+              },
+            },
+          },
+          {
+            $setWindowFields: {
+              output: {
+                "__jsmql.length": {
+                  $count: {},
+                },
+              },
+            },
+          },
+          {
+            $set: {
+              totalInStock: "$__jsmql.length",
+            },
+          },
+          {
+            $setWindowFields: {
+              output: {
+                "__jsmql.length": {
+                  $count: {},
+                },
+              },
+            },
+          },
+          {
+            $set: {
+              sharePct: {
+                $divide: [
+                  100,
+                  "$__jsmql.length",
+                ],
+              },
+            },
+          },
+          {
+            $setWindowFields: {
+              output: {
+                "__jsmql.length": {
+                  $count: {},
+                },
+              },
+            },
+          },
           {
             $match: {
               $expr: {
@@ -2633,7 +5176,12 @@ assert($$.length <= 1000, "too many in-stock products to render");
                   input: true,
                   to: {
                     $cond: [
-                      { $lte: ["$__jsmql.length", 1000] },
+                      {
+                        $lte: [
+                          "$__jsmql.length",
+                          1000,
+                        ],
+                      },
                       "bool",
                       "jsmql assertion failed: too many in-stock products to render",
                     ],
@@ -2642,7 +5190,9 @@ assert($$.length <= 1000, "too many in-stock products to render");
               },
             },
           },
-          { $unset: "__jsmql" },
+          {
+            $unset: "__jsmql",
+          },
         ]);
       },
     );
@@ -2668,12 +5218,26 @@ $$.map(o => ({
 }));
         `,
       ).toEqual([
-        { $match: { shipped: { $eq: true, $not: { $type: "array" } } } },
+        {
+          $match: {
+            shipped: {
+              $eq: true,
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $replaceWith: {
             orderId: "$_id",
             customer: "$userId",
-            total: { $multiply: ["$qty", "$unitPrice"] },
+            total: {
+              $multiply: [
+                "$qty",
+                "$unitPrice",
+              ],
+            },
             shippedAt: "$shippedAt",
           },
         },
@@ -2693,9 +5257,25 @@ $group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
 $$.toSorted({ revenue: -1 }).take(10);
         `,
     ).toEqual([
-      { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
-      { $sort: { revenue: -1 } },
-      { $limit: 10 },
+      {
+        $group: {
+          _id: "$userId",
+          revenue: {
+            $sum: "$total",
+          },
+          orders: {
+            $sum: 1,
+          },
+        },
+      },
+      {
+        $sort: {
+          revenue: -1,
+        },
+      },
+      {
+        $limit: 10,
+      },
     ]);
   });
 });
@@ -2718,11 +5298,30 @@ $sort({ price: -1 });
 $limit(50);
         `,
       ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
-        { $unwind: "$items" },
-        { $replaceWith: "$items" },
-        { $sort: { price: -1 } },
-        { $limit: 50 },
+        {
+          $match: {
+            status: {
+              $eq: "shipped",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $unwind: "$items",
+        },
+        {
+          $replaceWith: "$items",
+        },
+        {
+          $sort: {
+            price: -1,
+          },
+        },
+        {
+          $limit: 50,
+        },
       ]);
     },
   );
@@ -2743,9 +5342,29 @@ $$.filter({ region: "AU" });
 $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
         `,
       ).toEqual([
-        { $match: { region: { $eq: "AU", $not: { $type: "array" } } } },
-        { $match: { amount: { $gt: 100, $not: { $type: "array" } } } },
-        { $unionWith: "archive_transactions" },
+        {
+          $match: {
+            region: {
+              $eq: "AU",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $match: {
+            amount: {
+              $gt: 100,
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
+        {
+          $unionWith: "archive_transactions",
+        },
       ]);
     },
   );
@@ -2777,7 +5396,9 @@ $$ = [{
           $match: {
             placedAt: {
               $gte: new Date("2026-05-01T00:00:00.000Z"),
-              $not: { $type: "array" },
+              $not: {
+                $type: "array",
+              },
               $lt: new Date("2026-06-01T00:00:00.000Z"),
             },
           },
@@ -2785,18 +5406,36 @@ $$ = [{
         {
           $group: {
             _id: null,
-            orders: { $sum: 1 },
-            revenue: { $sum: "$total" },
-            biggest: { $max: "$total" },
-            smallest: { $min: "$total" },
+            orders: {
+              $sum: 1,
+            },
+            revenue: {
+              $sum: "$total",
+            },
+            biggest: {
+              $max: "$total",
+            },
+            smallest: {
+              $min: "$total",
+            },
           },
         },
         {
           $replaceWith: {
             orders: "$orders",
             revenue: "$revenue",
-            biggest: { $max: [0, "$biggest"] },
-            smallest: { $min: [0, "$smallest"] },
+            biggest: {
+              $max: [
+                0,
+                "$biggest",
+              ],
+            },
+            smallest: {
+              $min: [
+                0,
+                "$smallest",
+              ],
+            },
           },
         },
       ]);
@@ -2836,7 +5475,9 @@ $$ = [$$.reduce(
             $match: {
               placedAt: {
                 $gte: new Date("2026-05-01T00:00:00.000Z"),
-                $not: { $type: "array" },
+                $not: {
+                  $type: "array",
+                },
                 $lt: new Date("2026-06-01T00:00:00.000Z"),
               },
             },
@@ -2844,18 +5485,36 @@ $$ = [$$.reduce(
           {
             $group: {
               _id: null,
-              orders: { $sum: 1 },
-              revenue: { $sum: "$total" },
-              biggest: { $max: "$total" },
-              smallest: { $min: "$total" },
+              orders: {
+                $sum: 1,
+              },
+              revenue: {
+                $sum: "$total",
+              },
+              biggest: {
+                $max: "$total",
+              },
+              smallest: {
+                $min: "$total",
+              },
             },
           },
           {
             $replaceWith: {
               orders: "$orders",
               revenue: "$revenue",
-              biggest: { $max: [0, "$biggest"] },
-              smallest: { $min: [0, "$smallest"] },
+              biggest: {
+                $max: [
+                  0,
+                  "$biggest",
+                ],
+              },
+              smallest: {
+                $min: [
+                  0,
+                  "$smallest",
+                ],
+              },
             },
           },
         ]);
@@ -2896,20 +5555,77 @@ $$$$.exports.email_contacts = $$;
             $match: {
               $expr: {
                 $and: [
-                  { $ne: [{ $ifNull: ["$active", null] }, null] },
-                  { $ne: ["$active", false] },
-                  { $ne: ["$active", ""] },
-                  { $ne: ["$active", 0] },
-                  { $ne: [{ $ifNull: ["$contactDetails.email", null] }, null] },
-                  { $ne: ["$contactDetails.email", false] },
-                  { $ne: ["$contactDetails.email", ""] },
-                  { $ne: ["$contactDetails.email", 0] },
+                  {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          "$active",
+                          null,
+                        ],
+                      },
+                      null,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$active",
+                      false,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$active",
+                      "",
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$active",
+                      0,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      {
+                        $ifNull: [
+                          "$contactDetails.email",
+                          null,
+                        ],
+                      },
+                      null,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$contactDetails.email",
+                      false,
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$contactDetails.email",
+                      "",
+                    ],
+                  },
+                  {
+                    $ne: [
+                      "$contactDetails.email",
+                      0,
+                    ],
+                  },
                 ],
               },
             },
           },
-          { $replaceWith: "$contactDetails" },
-          { $out: { db: "exports", coll: "email_contacts" } },
+          {
+            $replaceWith: "$contactDetails",
+          },
+          {
+            $out: {
+              db: "exports",
+              coll: "email_contacts",
+            },
+          },
         ]);
       },
     );
@@ -2955,21 +5671,56 @@ $$ = $$$.users.filter({ active: true }).map(u => ({
 }));
           `,
         ).toEqual([
-          { $match: { $expr: false } },
+          {
+            $match: {
+              $expr: false,
+            },
+          },
           {
             $unionWith: {
               coll: "users",
               pipeline: [
-                { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+                {
+                  $match: {
+                    active: {
+                      $eq: true,
+                      $not: {
+                        $type: "array",
+                      },
+                    },
+                  },
+                },
                 {
                   $lookup: {
                     from: "orders",
-                    let: { jsmql_f1__id: "$_id" },
-                    pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f1__id"] } } }, { $limit: 1 }],
+                    let: {
+                      jsmql_f1__id: "$_id",
+                    },
+                    pipeline: [
+                      {
+                        $match: {
+                          $expr: {
+                            $eq: [
+                              "$userId",
+                              "$$jsmql_f1__id",
+                            ],
+                          },
+                        },
+                      },
+                      {
+                        $limit: 1,
+                      },
+                    ],
                     as: "__jsmql.tmp.0",
                   },
                 },
-                { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+                {
+                  $set: {
+                    "__jsmql.tmp.0": {
+                      $first: "$__jsmql.tmp.0",
+                    },
+                  },
+                },
                 {
                   $replaceWith: {
                     user: "$_id",
@@ -2979,7 +5730,9 @@ $$ = $$$.users.filter({ active: true }).map(u => ({
                     lastOrder: "$__jsmql.tmp.0",
                   },
                 },
-                { $unset: "__jsmql" },
+                {
+                  $unset: "__jsmql",
+                },
               ],
             },
           },
@@ -3036,12 +5789,35 @@ $.recentOrders = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
+              let: {
+                jsmql_f0__id: "$_id",
+              },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-                { $sort: { placedAt: -1 } },
-                { $limit: 5 },
-                { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
+                {
+                  $match: {
+                    $expr: {
+                      $eq: [
+                        "$userId",
+                        "$$jsmql_f0__id",
+                      ],
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    placedAt: -1,
+                  },
+                },
+                {
+                  $limit: 5,
+                },
+                {
+                  $replaceWith: {
+                    id: "$_id",
+                    total: "$total",
+                    placedAt: "$placedAt",
+                  },
+                },
               ],
               as: "recentOrders",
             },
@@ -3090,17 +5866,38 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
+              let: {
+                jsmql_f0__id: "$_id",
+              },
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-                { $sort: { placedAt: -1 } },
-                { $limit: 5 },
+                {
+                  $match: {
+                    $expr: {
+                      $eq: [
+                        "$userId",
+                        "$$jsmql_f0__id",
+                      ],
+                    },
+                  },
+                },
+                {
+                  $sort: {
+                    placedAt: -1,
+                  },
+                },
+                {
+                  $limit: 5,
+                },
               ],
               as: "__jsmql.tmp.0",
             },
           },
-          { $unwind: "$__jsmql.tmp.0" },
-          { $replaceWith: "$__jsmql.tmp.0" },
+          {
+            $unwind: "$__jsmql.tmp.0",
+          },
+          {
+            $replaceWith: "$__jsmql.tmp.0",
+          },
         ]);
       },
     );
@@ -3130,27 +5927,68 @@ $$ = $$$.orders
   .take(10);
           `,
         ).toEqual([
-          { $set: { "__jsmql.var.minSpend": { $cond: { if: { $eq: ["$tier", "gold"] }, then: 500, else: 100 } } } },
+          {
+            $set: {
+              "__jsmql.var.minSpend": {
+                $cond: {
+                  if: {
+                    $eq: [
+                      "$tier",
+                      "gold",
+                    ],
+                  },
+                  then: 500,
+                  else: 100,
+                },
+              },
+            },
+          },
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id", jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
+              let: {
+                jsmql_f0__id: "$_id",
+                jsmql_v0_minSpend: "$__jsmql.var.minSpend",
+              },
               pipeline: [
                 {
                   $match: {
                     $expr: {
-                      $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_minSpend"] }],
+                      $and: [
+                        {
+                          $eq: [
+                            "$userId",
+                            "$$jsmql_f0__id",
+                          ],
+                        },
+                        {
+                          $gt: [
+                            "$total",
+                            "$$jsmql_v0_minSpend",
+                          ],
+                        },
+                      ],
                     },
                   },
                 },
-                { $sort: { placedAt: -1 } },
-                { $limit: 10 },
+                {
+                  $sort: {
+                    placedAt: -1,
+                  },
+                },
+                {
+                  $limit: 10,
+                },
               ],
               as: "__jsmql.tmp.0",
             },
           },
-          { $unwind: "$__jsmql.tmp.0" },
-          { $replaceWith: "$__jsmql.tmp.0" },
+          {
+            $unwind: "$__jsmql.tmp.0",
+          },
+          {
+            $replaceWith: "$__jsmql.tmp.0",
+          },
         ]);
       },
     );
@@ -3265,37 +6103,95 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
 });
           `),
     ).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $match: {
+          createdAt: {
+            $gte: new Date("2026-02-01T00:00:00.000Z"),
+            $not: {
+              $type: "array",
+            },
+          },
+        },
+      },
+      {
+        $setWindowFields: {
+          output: {
+            "__jsmql.length": {
+              $count: {},
+            },
+          },
+        },
+      },
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
+          let: {
+            jsmql_f0__id: "$_id",
+            jsmql_s0_length: "$__jsmql.length",
+          },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$userId",
+                    "$$jsmql_f0__id",
+                  ],
+                },
+              },
+            },
             {
               $lookup: {
                 from: "shipments",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } }],
+                let: {
+                  jsmql_f1__id: "$_id",
+                },
+                pipeline: [
+                  {
+                    $match: {
+                      $expr: {
+                        $eq: [
+                          "$orderId",
+                          "$$jsmql_f1__id",
+                        ],
+                      },
+                    },
+                  },
+                ],
                 as: "__jsmql.tmp.0",
               },
             },
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $setWindowFields: {
+                output: {
+                  "__jsmql.length": {
+                    $count: {},
+                  },
+                },
+              },
+            },
             {
               $replaceWith: {
-                totalShipments: { $size: "$__jsmql.tmp.0" },
+                totalShipments: {
+                  $size: "$__jsmql.tmp.0",
+                },
                 totalOrders: "$__jsmql.length",
                 totalUsers: "$$jsmql_s0_length",
               },
             },
-            { $unset: "__jsmql" },
+            {
+              $unset: "__jsmql",
+            },
           ],
           as: "__jsmql.tmp.0",
         },
       },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
+      {
+        $unwind: "$__jsmql.tmp.0",
+      },
+      {
+        $replaceWith: "$__jsmql.tmp.0",
+      },
     ]);
   });
 });
@@ -3318,10 +6214,18 @@ $.recentCoPurchaseOrders = $$$.orders
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
+          let: {
+            jsmql_f0__id: "$_id",
+          },
           pipeline: [
-            { $sort: { createdAt: -1 } },
-            { $limit: 200 },
+            {
+              $sort: {
+                createdAt: -1,
+              },
+            },
+            {
+              $limit: 200,
+            },
             {
               $match: {
                 $expr: {
@@ -3334,12 +6238,45 @@ $.recentCoPurchaseOrders = $$$.orders
                               $switch: {
                                 branches: [
                                   {
-                                    case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                                    then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                                    case: {
+                                      $in: [
+                                        {
+                                          $type: "$productIds",
+                                        },
+                                        [
+                                          "array",
+                                        ],
+                                      ],
+                                    },
+                                    then: {
+                                      $in: [
+                                        "$$jsmql_f0__id",
+                                        "$productIds",
+                                      ],
+                                    },
                                   },
                                   {
-                                    case: { $in: [{ $type: "$productIds" }, ["string"]] },
-                                    then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
+                                    case: {
+                                      $in: [
+                                        {
+                                          $type: "$productIds",
+                                        },
+                                        [
+                                          "string",
+                                        ],
+                                      ],
+                                    },
+                                    then: {
+                                      $gte: [
+                                        {
+                                          $indexOfCP: [
+                                            "$productIds",
+                                            "$$jsmql_f0__id",
+                                          ],
+                                        },
+                                        0,
+                                      ],
+                                    },
                                   },
                                 ],
                                 default: "$$REMOVE",
@@ -3357,12 +6294,45 @@ $.recentCoPurchaseOrders = $$$.orders
                           $switch: {
                             branches: [
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                                then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
                               },
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["string"]] },
-                                then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
                               },
                             ],
                             default: "$$REMOVE",
@@ -3377,12 +6347,45 @@ $.recentCoPurchaseOrders = $$$.orders
                           $switch: {
                             branches: [
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                                then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
                               },
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["string"]] },
-                                then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
                               },
                             ],
                             default: "$$REMOVE",
@@ -3397,12 +6400,45 @@ $.recentCoPurchaseOrders = $$$.orders
                           $switch: {
                             branches: [
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                                then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "array",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $in: [
+                                    "$$jsmql_f0__id",
+                                    "$productIds",
+                                  ],
+                                },
                               },
                               {
-                                case: { $in: [{ $type: "$productIds" }, ["string"]] },
-                                then: { $gte: [{ $indexOfCP: ["$productIds", "$$jsmql_f0__id"] }, 0] },
+                                case: {
+                                  $in: [
+                                    {
+                                      $type: "$productIds",
+                                    },
+                                    [
+                                      "string",
+                                    ],
+                                  ],
+                                },
+                                then: {
+                                  $gte: [
+                                    {
+                                      $indexOfCP: [
+                                        "$productIds",
+                                        "$$jsmql_f0__id",
+                                      ],
+                                    },
+                                    0,
+                                  ],
+                                },
                               },
                             ],
                             default: "$$REMOVE",
@@ -3450,18 +6486,64 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
+          let: {
+            jsmql_f0__id: "$_id",
+          },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$userId",
+                    "$$jsmql_f0__id",
+                  ],
+                },
+              },
+            },
             {
               $lookup: {
                 from: "shipments",
-                let: { jsmql_f1__id: "$_id" },
+                let: {
+                  jsmql_f1__id: "$_id",
+                },
                 pipeline: [
-                  { $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  {
+                    $match: {
+                      $expr: {
+                        $eq: [
+                          "$orderId",
+                          "$$jsmql_f1__id",
+                        ],
+                      },
+                    },
+                  },
+                  {
+                    $setWindowFields: {
+                      output: {
+                        "__jsmql.length": {
+                          $count: {},
+                        },
+                      },
+                    },
+                  },
+                  {
+                    $setWindowFields: {
+                      output: {
+                        "__jsmql.length": {
+                          $count: {},
+                        },
+                      },
+                    },
+                  },
+                  {
+                    $setWindowFields: {
+                      output: {
+                        "__jsmql.length": {
+                          $count: {},
+                        },
+                      },
+                    },
+                  },
                   {
                     $match: {
                       $expr: {
@@ -3469,7 +6551,12 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $gt: ["$__jsmql.length", 2] },
+                              {
+                                $gt: [
+                                  "$__jsmql.length",
+                                  2,
+                                ],
+                              },
                               "bool",
                               {
                                 $concat: [
@@ -3478,9 +6565,13 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                                     $toString: {
                                       $concat: [
                                         "order ",
-                                        { $toString: "$$jsmql_f1__id" },
+                                        {
+                                          $toString: "$$jsmql_f1__id",
+                                        },
                                         " for user ",
-                                        { $toString: "$$jsmql_f0__id" },
+                                        {
+                                          $toString: "$$jsmql_f0__id",
+                                        },
                                         " has too few shipments",
                                       ],
                                     },
@@ -3500,7 +6591,12 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $lt: ["$__jsmql.length", "$__jsmql.length"] },
+                              {
+                                $lt: [
+                                  "$__jsmql.length",
+                                  "$__jsmql.length",
+                                ],
+                              },
                               "bool",
                               "jsmql assertion failed: fewer shipments than orders",
                             ],
@@ -3509,18 +6605,32 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                       },
                     },
                   },
-                  { $replaceWith: { id: "$_id", weight: "$weight" } },
+                  {
+                    $replaceWith: {
+                      id: "$_id",
+                      weight: "$weight",
+                    },
+                  },
                 ],
                 as: "__jsmql.var.shipments",
               },
             },
-            { $replaceWith: { orderId: "$_id", shipments: "$__jsmql.var.shipments" } },
+            {
+              $replaceWith: {
+                orderId: "$_id",
+                shipments: "$__jsmql.var.shipments",
+              },
+            },
           ],
           as: "__jsmql.tmp.0",
         },
       },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
+      {
+        $unwind: "$__jsmql.tmp.0",
+      },
+      {
+        $replaceWith: "$__jsmql.tmp.0",
+      },
     ]);
   });
 });
@@ -3560,15 +6670,48 @@ $.monthlySpend = $$$.orders.aggregate((o) => {
 $.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }]);
       `),
       ).toEqual([
-        { $match: { status: { $eq: "active", $not: { $type: "array" } } } },
+        {
+          $match: {
+            status: {
+              $eq: "active",
+              $not: {
+                $type: "array",
+              },
+            },
+          },
+        },
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
+            let: {
+              jsmql_f0__id: "$_id",
+            },
             pipeline: [
-              { $match: { $expr: { $eq: ["$customerId", "$$jsmql_f0__id"] } } },
-              { $group: { _id: { $month: "$placedAt" }, spent: { $sum: "$total" } } },
-              { $sort: { _id: 1 } },
+              {
+                $match: {
+                  $expr: {
+                    $eq: [
+                      "$customerId",
+                      "$$jsmql_f0__id",
+                    ],
+                  },
+                },
+              },
+              {
+                $group: {
+                  _id: {
+                    $month: "$placedAt",
+                  },
+                  spent: {
+                    $sum: "$total",
+                  },
+                },
+              },
+              {
+                $sort: {
+                  _id: 1,
+                },
+              },
             ],
             as: "monthlySpend",
           },
@@ -3576,7 +6719,21 @@ $.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 },
         {
           $lookup: {
             from: "products",
-            pipeline: [{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }],
+            pipeline: [
+              {
+                $sort: {
+                  sales: -1,
+                },
+              },
+              {
+                $limit: 5,
+              },
+              {
+                $project: {
+                  name: 1,
+                },
+              },
+            ],
             as: "topProducts",
           },
         },
@@ -3603,9 +6760,28 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
           $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES
         `),
       ).toEqual({
-        createdAt: { $gte: new Date("2024-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-        retries: { $lte: 16, $not: { $type: "array" } },
-        $expr: { $in: ["$status", ["CANCELLED", "REJECTED", "REFUNDED"]] },
+        createdAt: {
+          $gte: new Date("2024-01-01T00:00:00.000Z"),
+          $not: {
+            $type: "array",
+          },
+        },
+        retries: {
+          $lte: 16,
+          $not: {
+            $type: "array",
+          },
+        },
+        $expr: {
+          $in: [
+            "$status",
+            [
+              "CANCELLED",
+              "REJECTED",
+              "REFUNDED",
+            ],
+          ],
+        },
       });
     },
   );
@@ -3625,21 +6801,66 @@ $$.toSorted({ readAt: 1 }).takeWhile({ status: "ok" });
 $group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
         `),
     ).toEqual([
-      { $match: { deviceId: { $eq: "dev-7", $not: { $type: "array" } } } },
-      { $sort: { readAt: 1 } },
       {
-        $setWindowFields: {
-          sortBy: { readAt: 1 },
-          output: {
-            "__jsmql.tmp.0": {
-              $max: { $cond: [{ $eq: ["$status", "ok"] }, 0, 1] },
-              window: { documents: ["unbounded", "current"] },
+        $match: {
+          deviceId: {
+            $eq: "dev-7",
+            $not: {
+              $type: "array",
             },
           },
         },
       },
-      { $match: { "__jsmql.tmp.0": 0 } },
-      { $group: { _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } } },
+      {
+        $sort: {
+          readAt: 1,
+        },
+      },
+      {
+        $setWindowFields: {
+          sortBy: {
+            readAt: 1,
+          },
+          output: {
+            "__jsmql.tmp.0": {
+              $max: {
+                $cond: [
+                  {
+                    $eq: [
+                      "$status",
+                      "ok",
+                    ],
+                  },
+                  0,
+                  1,
+                ],
+              },
+              window: {
+                documents: [
+                  "unbounded",
+                  "current",
+                ],
+              },
+            },
+          },
+        },
+      },
+      {
+        $match: {
+          "__jsmql.tmp.0": 0,
+        },
+      },
+      {
+        $group: {
+          _id: null,
+          lastGood: {
+            $max: "$readAt",
+          },
+          readings: {
+            $sum: 1,
+          },
+        },
+      },
     ]);
   });
 });

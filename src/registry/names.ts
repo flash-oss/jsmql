@@ -13162,8 +13162,7 @@ export const NAMES = {
     returns: "number",
     where: ["value"],
     filter: viaFallback,
-    // 1-based months are deliberate: $dateFromParts is 1-based, and silently shifting the
-    // user's number would be worse than refusing 0.
+    // The month counts from 0, as JavaScript's does; the cell adds one for `$dateFromParts`.
     expr: {
       args: {
         sig: "year[, month, day, hour, minute, second, ms]",

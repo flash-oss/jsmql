@@ -342,23 +342,25 @@ describe("compiler/passes/fold — a scope is a scope, and a write is a write", 
 });
 
 describe("compiler/passes/fold — a constant date, and the named conversions", () => {
-  it("answers in UTC and in MongoDB's numbering", () => {
-    // `$month` counts from 1 where JavaScript's getUTCMonth counts from 0, and
-    // `$dayOfWeek` counts from 1 with Sunday first where JavaScript says 4 for a
-    // Thursday. The LOCAL-sounding getters read UTC, because `$hour` does — one
-    // that read local time would answer differently on every machine.
+  it("answers in UTC and in JavaScript's numbering", () => {
+    // A JavaScript spelling gets JavaScript's behaviour: `getMonth()` counts from
+    // 0 and `getDay()` says 4 for a Thursday, as the runtime cells do over
+    // `$month` and `$dayOfWeek`. The LOCAL-sounding getters read UTC, because
+    // `$hour` does — one that read local time would answer differently on every machine.
     const d = 'new Date("2020-03-05T20:30:40.123Z")';
-    expect(valueOf(`${d}.getMonth()`)).toBe(3);
-    expect(valueOf(`${d}.getDay()`)).toBe(5);
+    expect(valueOf(`${d}.getMonth()`)).toBe(2);
+    expect(valueOf(`${d}.getDay()`)).toBe(4);
     expect(valueOf(`${d}.getHours()`)).toBe(20);
     expect(valueOf(`${d}.getFullYear()`)).toBe(2020);
     expect(valueOf(`${d}.dayOfYear()`)).toBe(65);
     expect(valueOf(`${d}.quarter()`)).toBe(1);
   });
 
-  it("counts the calendar-parts constructor's months from ONE", () => {
-    // `new Date(2020, 1, 1)` is January here and February in JavaScript.
+  it("counts the calendar-parts constructor's months from ZERO, as JavaScript does", () => {
+    // `new Date(2020, 1, 1)` is February; `new Date(2024, 12, 1)` rolls over to January 2025.
     expect(valueOf("new Date(2020, 1, 1).getMonth()")).toBe(1);
+    expect(valueOf("new Date(2024, 12, 1).getFullYear()")).toBe(2025);
+    expect(valueOf("new Date(2024, 0, 15).getMonth()")).toBe(0);
     expect(valueOf("new Date(2020, 1, 1).getFullYear()")).toBe(2020);
   });
 

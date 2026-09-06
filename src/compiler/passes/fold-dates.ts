@@ -1,11 +1,10 @@
 // What a date computes when it is a constant.
 //
-// Every rule here answers in UTC and MongoDB's own numbering, because that is
-// what the language means — measured, not assumed:
-//   new Date("2020-03-05…").getMonth()   →  3   ($month is 1-based; JavaScript's
-//                                              getUTCMonth is 0-based)
-//   new Date("2020-03-05…").getDay()     →  5   ($dayOfWeek is 1 = Sunday, so a
-//                                              Thursday is 5; JavaScript says 4)
+// Every rule here answers in UTC and JavaScript's own numbering, because a
+// JavaScript spelling gets JavaScript's behaviour — the runtime cells shift
+// MongoDB's 1-based `$month` and `$dayOfWeek` the same way:
+//   new Date("2020-03-05…").getMonth()   →  2   (March; `$month` would say 3)
+//   new Date("2020-03-05…").getDay()     →  4   (Thursday; `$dayOfWeek` would say 5)
 //   new Date("2020-03-05…").getHours()   →  20  the LOCAL-sounding getters read
 //                                              UTC, because `$hour` does
 // A getter that read local time would answer differently on every machine that
@@ -47,15 +46,13 @@ export function foldDateMethod(d: Date, name: string, args: readonly unknown[]):
       return ok(d.getUTCFullYear());
     case "getMonth":
     case "getUTCMonth":
-      // `$month` counts from 1.
-      return ok(d.getUTCMonth() + 1);
+      return ok(d.getUTCMonth());
     case "getDate":
     case "getUTCDate":
       return ok(d.getUTCDate());
     case "getDay":
     case "getUTCDay":
-      // `$dayOfWeek` counts from 1, with Sunday first.
-      return ok(d.getUTCDay() + 1);
+      return ok(d.getUTCDay());
     case "getHours":
     case "getUTCHours":
       return ok(d.getUTCHours());
@@ -104,9 +101,10 @@ export function foldDateMethod(d: Date, name: string, args: readonly unknown[]):
 /**
  * `new Date(…)` with constant arguments.
  *
- * The calendar-parts form counts months from ONE, matching `$dateFromParts` and
- * every other month in the language — `new Date(2020, 1, 1)` is January here and
- * February in JavaScript.
+ * The calendar-parts form counts months from ZERO and rolls an out-of-range part
+ * over, exactly as JavaScript does — `new Date(2020, 1, 1)` is February, and
+ * `new Date(2024, 12, 1)` is January 2025. The runtime cell adds one for
+ * `$dateFromParts`, which counts from one and rolls over the same way.
  */
 export function foldNewDate(args: readonly unknown[]): Evaluation {
   // `new Date()` reads the clock, so it is never a constant.
@@ -122,8 +120,7 @@ export function foldNewDate(args: readonly unknown[]): Evaluation {
   }
   if (!args.every((v) => typeof v === "number" && Number.isInteger(v))) return NO;
   const [year, month, day = 1, hour = 0, minute = 0, second = 0, ms = 0] = args as number[];
-  if (month < 1 || month > 12) return NO;
-  return ok(new Date(Date.UTC(year, month - 1, day, hour, minute, second, ms)));
+  return ok(new Date(Date.UTC(year, month, day, hour, minute, second, ms)));
 }
 
 /**
@@ -135,7 +132,7 @@ export function foldNewDate(args: readonly unknown[]): Evaluation {
  * the two spellings cannot disagree.
  */
 export function foldDateUTC(args: readonly unknown[]): Evaluation {
-  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 1] : args;
+  const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 0] : args;
   const date = foldNewDate(parts);
   return date.ok ? ok((date.value as Date).getTime()) : NO;
 }

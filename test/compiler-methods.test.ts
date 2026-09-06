@@ -605,7 +605,8 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
     expect(expr('$switch([$case($.n > 1, "big")], "small")')).toEqual({
       $switch: { branches: [{ case: { $gt: ["$n", 1] }, then: "big" }], default: "small" },
     });
-    expect(expr("new Date(2026, 0, 15)")).toEqual({ $dateFromParts: { year: 2026, month: 1, day: 15 } });
+    // a constant constructor folds; its month counts from 0, as JavaScript's does
+    expect(expr("new Date(2026, 0, 15)")).toEqual(new Date("2026-01-15T00:00:00.000Z"));
     expect(expr("new Date($.n, $.neg)")).toEqual({ $dateFromParts: { year: "$n", month: { $add: ["$neg", 1] } } });
     expect(compiled("Date.UTC($.d.getFullYear(), 0, 1)", () => Date.UTC(DOC.d.getUTCFullYear(), 0, 1))).toEqual({
       $toLong: { $dateFromParts: { year: { $year: "$d" }, month: 1, day: 1, timezone: "UTC" } },

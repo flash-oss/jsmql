@@ -8,7 +8,7 @@
 // Every rule here answers the LANGUAGE's question, not JavaScript's, wherever
 // the two differ — and they do differ, in ways worth naming:
 //   'Ä'.toUpperCase()     JSMQL: 'Ä'      JavaScript: 'Ä'   ($toUpper is ASCII)
-//   new Date(2020, 1, 1)  JSMQL: January  JavaScript: February  (months are 1-based)
+//   new Date(2020, 1, 1)  February, in both — a JavaScript spelling gets JavaScript's behaviour
 //   (2.5).round()         JSMQL: 2        JavaScript: 3     (banker's rounding)
 // A rule that cannot answer the language's question returns nothing, and the
 // call stays a runtime one.
