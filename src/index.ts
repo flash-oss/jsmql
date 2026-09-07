@@ -301,7 +301,10 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
         : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      if (shapeOf(injected) !== "pipeline") {
+      // A BRACKETED program is a pipeline the developer wrote as one, whatever is in it.
+      // Handing it to the shape refusal would answer a typo inside it with "use
+      // jsmql.pipeline()" — the entry they already called; the lowering names the stage.
+      if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
         throw wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);

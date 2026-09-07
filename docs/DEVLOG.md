@@ -10,6 +10,15 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix: a bracketed program is diagnosed as the pipeline it is
+
+`jsmql.pipeline("[{ $macth: … }]")` answered "jsmql.pipeline() expects a Pipeline … Use jsmql.pipeline()" — the entry the developer had just called. The strict-shape entries ask `shapeOf` first, and a bracketed list whose stage name is misspelled does not look like a pipeline, so the shape refusal spoke before the lowering could name the typo. `jsmql()` on the same source named it and suggested `$match`.
+
+A BRACKETED program is a pipeline the developer wrote as one, whatever is inside it, so the pipeline entry no longer asks the shape question about it: the lowering answers, and names the stage. `jsmql.filter` still says "Use jsmql.pipeline()" for a bracketed program, because there the advice is true.
+
+---
+
+
 ## 2026-09-07 — fix!: a callback's own stream is refused where its count cannot stay true
 
 `(o, _i, c) => { … }` binds `c` to the body's own stream, and `c.length` is its count. MQL has no inline cardinality operator, so the count is stamped into a field by a `$setWindowFields` — and that stage is HOISTED to the front of the body, wherever the read sits. Any stage between the stamp and the read that changes the count or drops the fields makes the stamp untrue, and nothing recomputed it.
