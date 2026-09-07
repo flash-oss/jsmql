@@ -234,9 +234,20 @@ function fromPerFamily(
   // An unprovable receiver. One field family in `on`: it IS that family. Two or
   // more: the runtime dispatch, in the row's own order, over the families that
   // hold a rule, with the row's `uncertain` as the default.
-  const fieldFamilies = (
+  const listed = (
     on === undefined || on === "any" ? FIELD_FAMILIES : on.filter(isFieldFamily)
   ) as readonly FieldFamily[];
+  // A `$switch` separates only what `$type` tells apart: `set` and `array` share the
+  // one test, so no branch can choose between them. The row's declaration order is its
+  // precedence, so the first family with a given test answers — and the one that loses
+  // is reached through its PROVEN receiver above (`new Set(…)` is proven at the source).
+  const tests = new Set<string>();
+  const fieldFamilies = listed.filter((family) => {
+    const test = TYPES[family].join(",");
+    if (tests.has(test)) return false;
+    tests.add(test);
+    return true;
+  });
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name, got: null, accepts: on ?? "any" };
   if (fieldFamilies.length === 1) {
     const branch = branches[fieldFamilies[0]];

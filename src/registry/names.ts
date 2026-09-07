@@ -59,6 +59,7 @@ import {
   type Minted,
   uniqByReduce,
   wordsExpr,
+  atPrecision,
 } from "./mql.ts";
 import type {
   Expr,
@@ -657,6 +658,18 @@ const logicalList = ({ name, args, query }: FilterIn): QueryDoc => {
   return { [name]: list.map(query) };
 };
 const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement";
+
+/**
+ * lodash's `_.difference`: the receiver's elements that the other array does not
+ * hold, DUPLICATES KEPT — `_.difference([3, 3, 2, 1], [2])` is `[3, 3, 1]`. A
+ * `new Set(…)` receiver answers with the deduping set operator instead, and a
+ * receiver whose family is not proven is never a Set, because `new Set(…)` is.
+ */
+const lodashDifference = ({ recv, args, value, bind }: ExprIn): unknown => {
+  const other = value(args[0]);
+  const item = bind("item");
+  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
+};
 
 /** lodash's `groupBy` as a value: `{ <key>: [elements whose key is <key>] }`, one entry per distinct key. */
 function groupedByKey(
@@ -6343,7 +6356,10 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}$`) }, OWN_VALUE);
+        // `\z` is the end of the subject. PCRE's `$` also matches before a final
+        // newline, so it accepted "report.pdf\n" where JavaScript's endsWith does not.
+        // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
+        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) }, OWN_VALUE);
       },
     },
     expr: {
@@ -10898,7 +10914,11 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.ceil(2) takes the precision; Math.ceil($.n, 2) is refused.
       perFamily: {
-        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $ceil: recv }) },
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) =>
+            args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0])),
+        },
         Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ceil: value(args[0]) }) },
       },
     },
@@ -10921,7 +10941,11 @@ export const NAMES = {
     expr: {
       // MEASURED: $.n.floor(2) takes the precision; Math.floor($.n, 2) is refused.
       perFamily: {
-        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $floor: recv }) },
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) =>
+            args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0])),
+        },
         Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $floor: value(args[0]) }) },
       },
     },
@@ -10981,12 +11005,19 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
-        const other = value(args[0]);
-        const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
+      perFamily: {
+        array: { args: { sig: "other", exact: 1 }, emit: lodashDifference },
+        // A Set holds each value once, and so must its difference. MEASURED:
+        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
+        set: {
+          args: { sig: "other", exact: 1 },
+          emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] }),
+        },
       },
+      // Both families test `$type: "array"`, so no runtime test tells them apart. It
+      // needs none: `new Set(…)` is proven at the source, so an unproven receiver is
+      // an array and takes lodash's reading.
+      uncertain: lodashDifference,
     },
     stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported(

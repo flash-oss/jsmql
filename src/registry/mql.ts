@@ -397,6 +397,17 @@ export const indexedPairs = (arr: unknown): Record<string, unknown> => ({
   $zip: { inputs: [{ $range: [0, sizeOf(arr)] }, arr] },
 });
 
+/**
+ * `.ceil(p)` / `.floor(p)` at a precision. Only `$round` takes one on the server, so
+ * the value is scaled by 10^p, rounded to a whole number, and scaled back. MEASURED
+ * on 1.234: ceil(2) → 1.24, floor(2) → 1.23, and ceil(2) of -1.234 → -1.23, each
+ * JavaScript's own answer.
+ */
+export const atPrecision = (op: "$ceil" | "$floor", value: unknown, precision: unknown): unknown => {
+  const scale = { $pow: [10, precision] };
+  return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
+};
+
 /** `Math.cbrt` keeps the sign: `$pow` of a negative base to a fractional exponent is NaN on the server. */
 export const cbrt = (v: unknown): Record<string, unknown> => ({
   $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }],

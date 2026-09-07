@@ -6318,7 +6318,14 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
   it(".ceil()/.floor() → $ceil/$floor; with precision, scale via $pow", () => {
     expect(jsmql.expr("$.n.ceil()")).toEqual({ $ceil: "$n" });
     expect(jsmql.expr("$.n.floor()")).toEqual({ $floor: "$n" });
-    expect(jsmql.expr("$.n.ceil(2)")).toEqual({ $ceil: "$n" });
+    // Only $round takes a precision on the server, so a precision scales by 10^p,
+    // rounds to a whole number and scales back. MEASURED on 1.234: ceil(2) → 1.24.
+    expect(jsmql.expr("$.n.ceil(2)")).toEqual({
+      $divide: [{ $ceil: { $multiply: ["$n", { $pow: [10, 2] }] } }, { $pow: [10, 2] }],
+    });
+    expect(jsmql.expr("$.n.floor(2)")).toEqual({
+      $divide: [{ $floor: { $multiply: ["$n", { $pow: [10, 2] }] } }, { $pow: [10, 2] }],
+    });
   });
 });
 
@@ -6505,8 +6512,11 @@ describe("ES2025 Set methods", () => {
   it("union", () => {
     expect(jsmql.expr("new Set($.a).union(new Set($.b))")).toEqual({ $setUnion: ["$a", "$b"] });
   });
-  it("difference", () => {
-    expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({
+  it("difference — a Set holds each value once, so the set operator answers", () => {
+    // MEASURED: { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a Set gives.
+    expect(jsmql.expr("new Set($.a).difference(new Set($.b))")).toEqual({ $setDifference: ["$a", "$b"] });
+    // lodash keeps the receiver's duplicates, so an ARRAY receiver stays a filter.
+    expect(jsmql.expr("$.a.difference($.b)")).toEqual({
       $filter: { input: "$a", as: "jsmqlItem", cond: { $not: [{ $in: ["$$jsmqlItem", "$b"] }] } },
     });
   });

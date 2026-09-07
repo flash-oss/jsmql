@@ -250,7 +250,9 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
     expect(filter('["a", "b"].includes($.s)')).toEqual({ s: { $in: ["a", "b"], $not: { $type: "array" } } });
     expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/, $not: { $type: "array" } } });
-    expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.$/, $not: { $type: "array" } } });
+    // `\z` is the end of the SUBJECT. PCRE's `$` also matches before a final newline,
+    // so it accepted "z.\n" where JavaScript's endsWith does not.
+    expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/, $not: { $type: "array" } } });
     expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i, $not: { $type: "array" } } });
     // `.some` IS the element test, so `$elemMatch` is its own reading; the element's
     // own fields take the rule again.

@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong
+
+The differential gate compares every harvested program through both compilers and runs both MQL documents on a live mongod. Three answers came back wrong, each silently: the query ran and returned the wrong thing.
+
+`.ceil(p)` and `.floor(p)` dropped the precision. `$.n.ceil(2)` on 1.234 answered 2 where JavaScript answers 1.24. Only `$round` takes a precision on the server, so the row's own comment ("MEASURED: $.n.ceil(2) takes the precision") and `docs/LANGUAGE.md` both described a lowering the emit never built. It scales by 10^p, rounds to a whole number and scales back — measured against JavaScript for a positive value, a negative one, and a zero precision.
+
+`new Set($.a).difference(new Set($.b))` kept the receiver's duplicates, so it answered something that is not a set: `[3, 3, 2, 1]` less `[2]` gave `[3, 3, 1]`. One emit served both receiver families, and the two want different answers — lodash's `_.difference` keeps duplicates, a Set holds each value once. The row states both now. The two families share one `$type` test, so no `$switch` can separate them, and the dispatch was building a branch that could never be chosen; a dispatch now covers only the families `$type` tells apart, and the row's declaration order decides the rest. A `new Set(…)` receiver is proven at the source, so it never reaches the dispatch at all.
+
+`.endsWith(".pdf")` matched `"report.pdf\n"`. PCRE reads `$` as the end of the subject OR the position before a final newline; `\z` is the end of the subject alone, which is what JavaScript's `endsWith` means. Measured on mongod: `/\.pdf$/` selects both strings, `\z` selects one.
+
+---
+
+
 ## 2026-09-07 — refactor: the pointers the old compiler left behind
 
 The removal deleted thirty source modules and seven specs. The prose stayed. Comments, spec paragraphs and test titles across thirty-five files still named a deleted file or a deleted symbol as a thing that exists — `internalVar()` "in codegen.ts", a sort order "read by mql-sort.ts", "Divergence 3 in match-query-translation.md". A reader who followed one of those pointers found nothing, and a reader who trusted one learned a fact about a compiler that is gone.
