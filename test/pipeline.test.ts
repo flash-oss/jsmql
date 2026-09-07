@@ -27,7 +27,7 @@ describe("pipeline detection", () => {
 
 describe("pipeline — stage-object form", () => {
   it("$match with translatable expression body emits an index-friendly query doc", () => {
-    // See `docs/specs/match-query-translation.md` for the full rules; cases
+    // See `docs/specs/emit-pass.md` § The filter target for the full rules; cases
     // that fall outside the translatable subset are exercised in
     // `test/match-translation.test.ts`.
     expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
@@ -213,8 +213,8 @@ describe("raw MQL stage bodies pass through UNGUARDED (escape hatch — see src/
   // "replace stream"): jsmql rejects `$$$$.<db>.<coll>` reads because it minted
   // that surface (HR3), but it must NEVER guard the RAW operator/stage form — the
   // developer owns hand-written MQL, and a `{ db, coll }` namespace IS valid on
-  // Atlas Data Federation. A guard creeping onto these (e.g. extending
-  // requireSameDbColl to raw stages) must fail here.
+  // Atlas Data Federation. A guard creeping onto these (e.g. extending the
+  // cross-database refusal to raw stages) must fail here.
   it("a raw cross-database $lookup `{ db, coll }` from is emitted verbatim", () => {
     expect(
       jsmql(`[{ $lookup: { from: { db: "x", coll: "y" }, localField: "a", foreignField: "b", as: "c" } }]`),
@@ -330,8 +330,8 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("cross-database replace-root `$ = $$$$.<db>.<coll>.find(...)` is rejected", () => {
     // Distinct lowering path from the field-assign/source-switch/union cases:
-    // the cross-DB guard fires from `lowerReplaceRoot` (its own `requireSameDbColl`
-    // call site), so it gets its own coverage.
+    // the root replacement reads the chain through `joinRoot`
+    // (src/compiler/emit/join.ts), so it gets its own coverage.
     expect(() => jsmql("[ $ = $$$$.analytics.users.find(u => u._id === $.userId) ]")).toThrow(
       "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
@@ -386,8 +386,8 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   });
 
   it("single-statement `$ = <expr>` still reuses the full replace-root machinery (non-document reject)", () => {
-    // The reroute goes through `lowerReplaceRoot`, so the no-`;` form gets the
-    // same actionable rejection as the `;`-form.
+    // Both spellings reach the same `writeStages` (src/compiler/emit/statement.ts),
+    // so the no-`;` form gets the same actionable rejection as the `;`-form.
     expect(() => jsmql("$ = 5")).toThrow(
       "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
@@ -854,11 +854,11 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 });
 
-// A lone `$$ = <expr>` with no trailing `;` parses as a one-op UpdateFilter, not
-// a Pipeline, so it reaches the update-op lowerer — which has no write path for a
-// `CollectionRef` target. `updateFilterHasReplaceStream` reroutes it to the
-// pipeline lowerer at every entry, exactly as the sister `$ = <expr>` sugar does,
-// so the no-`;` form is byte-identical to the `;`-terminated one.
+// A lone `$$ = <expr>` with no trailing `;` parses as a one-op UpdateFilter, and
+// the stream target is a stage of its own wherever it stands: `writeStages`
+// (src/compiler/emit/statement.ts) reads it the same way it reads the `;`-terminated
+// run, exactly as the sister `$ = <expr>` sugar is read — so the no-`;` form is
+// byte-identical to the `;`-terminated one.
 describe("replace stream (`$$ = <expr>`) — single statement without a trailing `;`", () => {
   it("`$$ = $$.filter(p)` lowers to `$match`, same as the `;` form", () => {
     expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }]);
@@ -900,9 +900,9 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
   });
 
   it("an unsupported RHS reaches its actionable rejection with a real `.pos`", () => {
-    // Before the reroute this hit `internalError` (pos 0) instead of the
-    // `rejectInvalidReplaceStream` catalogue, so `.validate()` had nothing to
-    // underline. Both spellings must land on the same message and offset.
+    // An unsupported RHS is a worded refusal carrying the offending node's own
+    // position, never an internal error at pos 0 — `.validate()` has to have
+    // something to underline. Both spellings land on the same message and offset.
     const noSemi = jsmql.validate(`$$ = 5`);
     expect(noSemi.valid).toBe(false);
     expect(noSemi.errors[0].message).toMatch(
@@ -1048,9 +1048,10 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   });
 
   it("cross-database correlated pivot ($$$$.<db>.<coll>) is rejected", () => {
-    // A correlated predicate dispatches to `lowerLookupPivot` — a DIFFERENT
-    // `requireSameDbColl` call site than the flat source-switch (the union branch,
-    // covered in the "replace stream" describe). Distinct path → own test.
+    // A correlated predicate takes the `$lookup` branch of `joinStream`
+    // (src/compiler/emit/join.ts) — a different road from the uncorrelated
+    // source-switch (the union branch, covered in the "replace stream" describe).
+    // Distinct path → own test.
     expect(() => jsmql(`$$ = $$$$.analytics.events.filter(e => e.userId === $._id);`)).toThrow(
       "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
@@ -1601,8 +1602,8 @@ describe("chained stage calls on the current stream", () => {
 
 // HR3: mongod rejects `$out` / `$merge` in ANY sub-pipeline (Location51047), and
 // each diagnostic stage in exactly one container. Both come from `forbiddenIn` in the
-// registry, judged against `GenerateCtx.subPipelineContainer` — the container the ctx
-// builders stamp on — so a stage written inside an `.aggregate` block is named as
+// registry, judged against the boundaries the Env records on the way into a
+// sub-pipeline — so a stage written inside an `.aggregate` block is named as
 // precisely as the chained-stage spelling is.
 describe("a bare `$$$.<coll>.<chain>;` statement names its missing destination", () => {
   it("points at the three destinations", () => {
@@ -1671,13 +1672,11 @@ describe("$facet branches accept any `$$` chain", () => {
 });
 
 // One predicate position, one vocabulary: every container that lowers a local
-// `$$.filter(...)` / `$$.reject(...)` routes its argument through the shared gate
-// (`requireStreamPredicate` in lookup-translation.ts), so which spelling you write
-// never changes the emitted MQL. Before that gate existed each container hand-rolled
-// its own arg handling and the three drifted apart: `$out` rejected everything but an
-// arrow, the `$$ =` stream lowered a matches-object down a raw-query path (emitting
-// `{ a: { $add: [...] } }`, which mongod rejects with "unknown operator: $add"), and
-// the field-name / ["field", value] spellings worked in neither.
+// `$$.filter(...)` / `$$.reject(...)` reads the same spellings, because the
+// `iterateeShorthand` rule (src/compiler/passes/desugar.ts) rewrites a matches-object,
+// a field name and a ["field", value] pair to the arrow they mean before any container
+// sees them, and the `predicate` service (src/compiler/emit/inputs.ts) lowers that one
+// arrow. So which spelling you write never changes the emitted MQL.
 describe("`$$` predicate spellings are interchangeable in every container", () => {
   // Each spelling means exactly `o => o.a === 1`, so each must emit exactly `$match: { a: 1 }`.
   const SPELLINGS = [

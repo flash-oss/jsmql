@@ -511,10 +511,10 @@ describe("$$$.coll.find/filter — error cases", () => {
     );
   });
 
-  // The mode gates key off `containsLookupCall`, which used to recognise only
-  // the `.find`/`.filter`/`.aggregate` heads. A stream-method head slipped
-  // through every one of them: the strict entries fell back to generic shape
-  // errors, and `jsmql.expr()` silently RETURNED a `$lookup` pipeline.
+  // The mode gates key off the chain's BASE, not its head method: `readsAContextRef`
+  // (src/compiler/passes/shape.ts) says a chain rooted in `$$$` is a statement, so a
+  // stream-method head is lookup syntax at every gate — the strict entries name the
+  // shape, and `jsmql.expr()` refuses rather than returning a `$lookup` pipeline.
   describe("a stream-method-headed chain is lookup syntax at every mode gate", () => {
     const streamHead = "$.x = $$$.users.toSorted({ createdAt: -1 }).take(5)";
     const findHead = "$.x = $$$.users.find(u => u._id === $._id)";
@@ -757,9 +757,9 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
   });
 
   // ── Block-body nested lookups ──────────────────────────────────────────────
-  // The block-body path threads `EnclosingLookupContext` via the ctx carrier
-  // `GenerateCtx.enclosingLookup`; an inner lookup written as a statement /
-  // stage-body expr / block-bodied lambda lowers the same as the expr-body form.
+  // A body over another collection is a level of its own, and the Env carries the
+  // boundary that owns its `let` (src/compiler/emit/env.ts); an inner lookup written as
+  // a statement / stage-body expr / block-bodied lambda lowers the same as the expr-body form.
   // All three emitted shapes were run against a live mongod and join correctly.
 
   it("nested lookup as a STATEMENT inside a block body (as from the LHS field)", () => {
@@ -851,9 +851,9 @@ describe("$$$$.<db>.<coll>.find/filter — cross-database reads are rejected", (
   });
 
   // `.find` vs `.filter`, dot vs bracket access, and the nested-with-same-db-inner
-  // case all reject at the SAME `requireSameDbColl` point as the `.filter` case
-  // above — not retested. The chained terminal is a DISTINCT lowering path
-  // (`tryExtractChainedLookup`, not `lowerLookup`), so it keeps its own case:
+  // case all reject at the SAME chain-base check as the `.filter` case above — not
+  // retested. The chained terminal reads the slot as a VALUE afterwards
+  // (`joinValue` in src/compiler/emit/join.ts), so it keeps its own case:
   it("a chained .length on a cross-DB .filter is rejected", () => {
     expect(() => jsmql("let n = $$$$.analytics.orders.filter(o => o.userId === $._id).length;")).toThrow(
       "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
@@ -1044,9 +1044,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("existing chained terminals (.length, .reduce) still take precedence over the chain extension", () => {
-    // `.length` and `.reduce(fn, init)` are MemberAccess / MethodCall shapes
-    // that fire BEFORE the chain-extension check in extractLookupCalls; they
-    // continue to lower the same way they did before this commit.
+    // `.length` and `.reduce(fn, init)` have no stream rule, so `lookupOf`
+    // (src/compiler/emit/join.ts) stops peeling at them and the rest of the chain
+    // reads the slot as a value — the `$size` / `$reduce` shapes.
     expect(jsmql("$.count = $$$.users.filter(u => u.active).length;")).toEqual([
       {
         $lookup: {
@@ -1074,13 +1074,12 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
   });
 
   it("non-registered chain methods (e.g. .toLowerCase) fall through to the existing expression-form path", () => {
-    // `.toLowerCase()` isn't a stream method — the chain extension returns
-    // null and `descendAndExtract` handles it, producing the bulkier but
-    // still correct expression-form output. This keeps unrelated string /
-    // array operators on lookup results unaffected.
+    // `.toLowerCase()` isn't a stream method, so the chain stops peeling there and
+    // the rest reads the slot as a value (`joinValue` in src/compiler/emit/join.ts),
+    // producing the bulkier but still correct expression form. Unrelated string /
+    // array operators on lookup results are unaffected.
     const out = jsmql("$.firstName = $$$.users.find(u => u._id === $.userId).name;") as object[];
-    // The .find + member-access path runs through existing logic — not the
-    // new chain extension — and produces the same shape it always did.
+    // The .find + member-access path is that same value road over the slot.
     expect(out).toEqual([
       {
         $lookup: {
@@ -1193,7 +1192,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
     );
   });
 
-  it("a cross-database stream-method head is still rejected at requireSameDbColl", () => {
+  it("a cross-database stream-method head is still rejected at the chain base", () => {
     expect(() => jsmql("$.x = $$$$.other.orders.toSorted({ x: -1 });")).toThrow(
       "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );
@@ -1204,8 +1203,8 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
   // Each of these emitted invalid or wrong MQL before the generic-head change fixed them;
   // verified against a live mongod. See docs/DEVLOG.md.
   it("a lone shorthand .filter({obj}) head lowers exactly like the equivalent arrow", () => {
-    // The shorthand is desugared to its arrow at DETECTION (`filterArgToLambda` in
-    // detectLookupCall), so it takes the same direct-lookup path — including the
+    // The shorthand is rewritten to its arrow by the desugar pass, before any road
+    // reads it, so it takes the same direct-lookup path — including the
     // `as: "x"` write straight to the destination field (no tmp slot, no trailing
     // `$set`/`$unset`) that the arrow form has always had.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
@@ -1216,13 +1215,11 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     ]);
   });
 
-  // Spelling must never change the emitted MQL. Before the detection-time
-  // normalisation, a shorthand predicate skipped `detectLookupCall` entirely and
-  // fell through to the chain assembler, which ALWAYS builds the correlated
-  // pipeline form — so `.filter({ userId: $._id })` silently lost the indexed
-  // `localField`/`foreignField` `$lookup` its arrow twin got, and `.length` on it
-  // lost the `$size` materialisation for an `$isArray`-guarded `$strLenCP`
-  // fallback. Same meaning, strictly worse plan. Verified against a live mongod.
+  // Spelling must never change the emitted MQL. The desugar pass rewrites a shorthand
+  // predicate to its arrow before the join road reads it, so `.filter({ userId: $._id })`
+  // earns the same indexed `localField`/`foreignField` `$lookup` its arrow twin does, and
+  // `.length` on it the same `$size` materialisation. A road that read the two apart would
+  // give one of them a strictly worse plan for the same meaning. Verified against a live mongod.
   const SPELLINGS: ReadonlyArray<readonly [string, string]> = [
     ["matches-object", `{ userId: $._id }`],
     ["matchesProperty", `["userId", $._id]`],
@@ -2047,7 +2044,7 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   it("the chained form (.filter(p).aggregate(bad)) validates via the same rules", () => {
-    // Routes through AGGREGATE.validate (stream-methods), not validateAggregateShape.
+    // The row's own callback rule answers, whether the chain heads at the collection or peels first.
     expect(() => jsmql("$.x = $$$.c.filter(o => o.v > 1).aggregate(o => o.v);")).toThrow(
       "'.aggregate()' takes an arrow whose body is a block of stages — 'o => { $match(…); $limit(1); }' — or a bracketed list of them.",
     );

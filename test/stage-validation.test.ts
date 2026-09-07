@@ -1,9 +1,9 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-// Per-stage body validation — see docs/specs/pipeline-validation.md.
-// Most checks are literal-gated: a non-literal slot (field/expression) compiles
-// (rule #2). The EXCEPTION is the constant-only slots ($limit/$skip/$sample.size/
+// Per-stage body validation — see docs/specs/aggregation-stages.md § Lowering.
+// Most checks are literal-gated: a non-literal slot (field/expression) compiles.
+// The EXCEPTION is the constant-only slots ($limit/$skip/$sample.size/
 // $bucket.boundaries/$lookup.pipeline/…), where a non-constant is itself a
 // certain violation and throws (HR3). Each block pairs throwing and compiling
 // cases.

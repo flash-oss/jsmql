@@ -151,7 +151,7 @@ describe("registry — a spelling a slot leaves out is refused", () => {
     // not a slot form — a form is identified by its spelling.
     // The one spelling every sort-taking row shares is the key string; which
     // OTHER forms each takes (an object, an array of keys, no argument) is that
-    // row's arity and mql-sort.ts's business. A mutator is a statement, so it is
+    // row's arity and src/compiler/emit/sort-spec.ts's business. A mutator is a statement, so it is
     // tried where a statement stands.
     const orders: string[] = [];
     for (const [name, row] of rows()) {

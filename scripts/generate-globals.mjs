@@ -124,13 +124,13 @@ const CONTEXT_REFS = {
 
 // `$$.<method>(...)` completions beyond the diagnostic source stages: the
 // chainable / statement-level stream vocabulary on the current collection.
-// Names that come from `STREAM_METHODS` (src/stream-methods.ts) are asserted
-// against `streamMethodNames()` below so the registry stays the source of truth
-// — a new stream method without a signature here is a build-time error.
+// Names are asserted against `streamMethodNames()` (src/compiler/rows.ts, over
+// the rows in src/registry/names.ts) below, so the registry stays the source of
+// truth — a new stream method without a signature here is a build-time error.
 // `.filter` (special-cased chain head) and `.push` (statement-level `$unionWith`)
-// aren't in that registry, so they're listed explicitly. Only the collection
-// ref (`$$`) gets these — `$$$` / `$$$$` reach the same methods via member
-// access on their permissive `[key: string]: any` tail.
+// are listed by hand below. Only the collection ref (`$$`) gets these — `$$$` /
+// `$$$$` reach the same methods via member access on their permissive
+// `[key: string]: any` tail.
 //
 // Name of the ambient interface the `$$` collection ref is typed as. Stream
 // methods return it (not `any`) so chains keep their completion AND their
@@ -225,11 +225,11 @@ const STREAM_METHOD_SIGNATURES = {
   push: { doc: "Append documents to the stream → `$unionWith`.", params: "(...docs: any[])" },
 };
 
-// Stream methods that are NOT in the STREAM_METHODS registry, so they can't be
-// derived from it: `.filter` / `.reject` are special-cased chain heads (their
-// predicate translation is shared with `$unionWith` / `$facet`), and `.push` is
-// the statement-level `$unionWith`. `.push` belongs to the current stream alone;
-// the other two are valid on a foreign collection too.
+// Stream methods listed by hand rather than taken from `streamMethodNames()`:
+// `.filter` / `.reject` are special-cased chain heads (their predicate reading is
+// shared with `$unionWith` / `$facet`), and `.push` is the statement-level
+// `$unionWith`. `.push` belongs to the current stream alone; the other two are
+// valid on a foreign collection too.
 const NON_REGISTRY_STREAM_METHODS = ["filter", "reject"];
 const COLLECTION_ONLY_STREAM_METHODS = ["push"];
 
@@ -284,9 +284,10 @@ function stageLinkMembers(spec, returnType) {
 }
 
 // The value terminals — `.head()`, `.sum()`, `.size()`, … — end a chain with a
-// value rather than a stream. Names come from the `VALUE_TERMINAL_METHODS`
-// registry in src/stream-methods.ts; the return types are `any` because the
-// result is a document or a field of one, except the numeric aggregates.
+// value rather than a stream. Names come from `valueTerminalMethodNames()`
+// (src/compiler/rows.ts, over the rows in src/registry/names.ts); the return types
+// are `any` because the result is a document or a field of one, except the
+// numeric aggregates.
 const VALUE_TERMINAL_RETURNS = { size: "number", sum: "number", mean: "number", sumBy: "number", meanBy: "number" };
 /** A stated signature wins; else the registry's arity: a no-argument terminal is `()`, anything else is typed loosely. */
 function terminalParams(name) {
@@ -404,9 +405,10 @@ const VALUE_METHOD_SKIP = {
   ]),
   // Native `Date.prototype` — the accessors plus `.getTime()` / `.toISOString()`,
   // which lib.d.ts types already. The single source of truth is
-  // `NATIVE_DATE_METHODS` in src/codegen.ts, which also drives their zero-argument
-  // arity check. jsmql's OTHER date methods (`.plus`, `.startOf`, `.format`, …) are
-  // NOT native, so they ARE augmented — see VALUE_METHOD_SIGNATURES.
+  // `nativeDateMethodNames()` (src/compiler/rows.ts), read off the rows that also
+  // state their zero-argument arity. jsmql's OTHER date methods (`.plus`,
+  // `.startOf`, `.format`, …) are NOT native, so they ARE augmented — see
+  // VALUE_METHOD_SIGNATURES.
   dateNative: new Set(NATIVE_DATE_METHODS),
   // Object-receiver — no safe interface (Object is the base of everything).
   object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),
@@ -571,9 +573,10 @@ const VALUE_METHOD_SIGNATURES = {
   },
   // ── Date → Date / number / string / boolean ─────────────────────────────────
   // jsmql's date vocabulary beyond what lib.d.ts already types. Every parameter
-  // list mirrors the method's own `checkArity` spec in src/codegen.ts, and every
-  // `unit` is the MQL timeUnit union rather than `string`, so a typo is caught in
-  // the editor by the same closed set `checkEnum` enforces at compile time.
+  // list mirrors the `args` the method's row states (src/registry/names.ts), and
+  // every `unit` is the MQL timeUnit union rather than `string`, so a typo is
+  // caught in the editor by the same closed set the row's `slotEnums` enforces at
+  // compile time (src/compiler/emit/check.ts).
   plus: {
     recv: "Date",
     sig: `(amount: number, unit: ${TIME_UNIT_LITERAL}, timezone?: string): Date`,
@@ -834,7 +837,7 @@ function mapType(t) {
     if (only === "pipeline") return "unknown[]";
     // `query` and `object` could in principle narrow to `Record<string, any>`,
     // but jsmql accepts richer inputs than the MQL spec lets on: `$match`
-    // takes a boolean expression that's wrapped in `$expr` at codegen time,
+    // takes a boolean expression that jsmql wraps in `$expr` when it compiles,
     // not just a query-document literal. Tightening the type would reject
     // the most common usage (`$match($.age >= 18)`). Stay permissive.
     if (only === "query") return "any";
@@ -1019,9 +1022,10 @@ function emitBlock(name, jsdoc, callableSigs) {
 // Emit the `$$` / `$$$` / `$$$$` ambient declarations (`$$` is `var` — it is
 // reassigned by `$$ = …`; the other two are `const`, only their members are
 // written). Diagnostic methods are
-// derived from the STAGES `diagnostic` field (the single source of truth, also
-// read by src/system-stage-translation.ts); each method reuses the same JSDoc
-// the stage's own block gets, so descriptions stay consistent.
+// derived from the STAGES `diagnostic` field (the single source of truth for the
+// scope tiers; the sugar's own lowering is stated on the rows in
+// src/registry/names.ts); each method reuses the same JSDoc the stage's own block
+// gets, so descriptions stay consistent.
 function contextRefBlock(spec) {
   const methodsByScope = { collection: [], database: [], cluster: [] };
   for (const [stageName, def] of Object.entries(STAGES)) {
@@ -1145,7 +1149,7 @@ function constructionFormsBlock() {
 // form to type-check. `assert(condition[, message])` is a pipeline-statement
 // guard with no value (it lowers to a `$match`), so it's typed as returning
 // `void` — using it in expression position is a compile error in jsmql too.
-// See src/codegen.ts (generateAssertGuardExpr) and docs/specs/assert.md.
+// See the `assert` row in src/registry/names.ts and docs/specs/assert.md.
 function statementFormsBlock() {
   const jsdoc =
     "/**\n" +

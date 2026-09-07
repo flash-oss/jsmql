@@ -48,7 +48,7 @@ When you add a new operator or syntax feature, add a table row or code example h
 | `specs/replace-stream-stage.md` | `$$ = <expr>` → `$match` (narrow) / `$match`+`$unionWith` (source switch) |
 | `specs/out-stage.md` | `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` |
 | `specs/system-stages.md` | `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages |
-| `specs/stream-methods.md` | Registry of chainable array-shaped methods on a `$$ = …` RHS, plus the `.reduce` wrap forms |
+| `specs/stream-methods.md` | The chainable array-shaped methods a stream chain (`$$.<method>(…)`) accepts, plus the `.reduce` wrap forms |
 | `specs/assert.md` | `assert(condition[, message])` → conditional-error `$match` guard (`$convert` "Unknown type name") |
 | `specs/stream-length.md` | `$$.length` → stream-cardinality value via lazily-materialised `$setWindowFields` `$count` (`__jsmql.length`) |
 | `specs/cli.md` | The `jsmql` command-line bin (`src/cli.ts` → `dist/cjs/cli.cjs`) |

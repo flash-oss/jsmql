@@ -386,11 +386,6 @@ read. `$$ = [ … ]` starts the
 stream from a literal list of documents (`$documents`, a source stage that must
 stand first); the empty list is a stream of nothing.
 
-What this target has NOT built yet is stated as data — `PENDING_CONSTRUCTS` in
-`emit/errors.ts` — so the differential harness can VERIFY a "not yet" rather
-than trust one, and so the work left is countable. The list emptying is what
-finishing the statement target means.
-
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand

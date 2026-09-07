@@ -6,7 +6,7 @@
 // is 2, `foldedSubtract(5, 2)` is 3, and a constant that stays a constant is what
 // lets a later `$substrCP` take a plain number.
 //
-// See docs/specs/lowering-grid.md for the cells that use these.
+// See docs/specs/emit-pass.md § The method cells for the cells that use these.
 
 import type { Expr } from "./ast.ts";
 

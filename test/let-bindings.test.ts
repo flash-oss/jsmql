@@ -915,9 +915,9 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 
 describe("a let tombstone survives every lambda depth", () => {
   // A lambda body is inside everything its surroundings are inside, so the scope
-  // context spreads rather than being re-listed field by field. When it was
-  // enumerated, `sourceSwitch` fell off and the actionable message degraded to a
-  // generic one at the second nesting level — correct at depth 1, wrong at depth 2.
+  // travels with the Env rather than being re-listed field by field: a binding
+  // declared before the switch is captured at every nesting depth, not only the
+  // first, and the actionable message holds just as deep.
   const SWITCH = /replaces the stream with a different collection/;
 
   it("reports the source switch at depth 1", () => {

@@ -1,11 +1,10 @@
-// The codegen error classes.
+// The compiler's error classes.
 //
-// A LEAF, and deliberately so. These classes were declared in `codegen.ts`, which made
-// every module that merely needs to REJECT something depend on the whole compiler — and a
-// module `codegen.ts` imports back (`literal-gate.ts`, `operator-validation.ts`, the method
-// families) then closes a cycle. A cycle here is not a style complaint: it evaluates the
-// importer before the module it depends on, which is how nine string methods once fell
-// silently out of the registry with no error anywhere.
+// A LEAF, and deliberately so. A module that merely needs to REJECT something must not
+// depend on the whole compiler — the registry rejects, and it imports nothing outside
+// itself. A cycle here is not a style complaint: it evaluates the importer before the
+// module it depends on, so a name can fall silently out of the registry with no error
+// anywhere.
 //
 // Throwing is not a compiler service. It belongs where anything can reach it.
 //

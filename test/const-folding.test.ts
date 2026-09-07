@@ -1,7 +1,8 @@
 import { describe, it, expect } from "vitest";
 import { jsmql, ObjectId } from "../src/index.ts";
 
-// Compile-time constant folding of `const`/`let` (see docs/specs/const-folding.md).
+// Compile-time constant folding of `const`/`let` (see docs/specs/let-bindings.md
+// § Constant folding, and docs/specs/desugar-pass.md for the pass that does it).
 // A foldable RHS is evaluated at compile time and inlined at every reference;
 // the declaration emits no stage, and when only one expression survives the
 // program collapses to a Filter. Non-constant RHS keeps the runtime `$set`

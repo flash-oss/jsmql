@@ -141,8 +141,8 @@ The row states one of three things per receiver family, each a different fact
 with its own name: a **layout** (which slots take which spellings, all of them
 meaning an arrow), **`arrowOnly`** (only an arrow is accepted — `.mapValues` takes
 a two-parameter callback and refuses `"name"`), or **`sortSpec`** (the string,
-object and array spellings are an ORDER, read by mql-sort.ts, and are accepted
-without being rewritten — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`).
+object and array spellings are an ORDER, read by `sortSpecOf` in
+`src/compiler/emit/sort-spec.ts`, and are accepted without being rewritten — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`).
 Only a layout has slots for the rule to rewrite. The receiver's FAMILY is read
 off the chain — a chain rooted in `$$` or `$$$.<coll>` is the stream family
 wherever the call stands — never off the call's own position, which gave two
@@ -343,8 +343,8 @@ The row states one of three things per receiver family, each a different fact
 with its own name: a **layout** (which slots take which spellings, all of them
 meaning an arrow), **`arrowOnly`** (only an arrow is accepted — `.mapValues` takes
 a two-parameter callback and refuses `"name"`), or **`sortSpec`** (the string,
-object and array spellings are an ORDER, read by mql-sort.ts, and are accepted
-without being rewritten — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`).
+object and array spellings are an ORDER, read by `sortSpecOf` in
+`src/compiler/emit/sort-spec.ts`, and are accepted without being rewritten — `$.a.toSorted("k")` means `{ k: 1 }`, not `x => x.k`).
 Only a layout has slots for the rule to rewrite. The receiver's FAMILY is read
 off the chain — a chain rooted in `$$` or `$$$.<coll>` is the stream family
 wherever the call stands — never off the call's own position, which gave two

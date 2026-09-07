@@ -3184,11 +3184,11 @@ describe("invalid stage placement — validate() catches a misplaced $merge", { 
 
 // ---------------------------------------------------------------------------
 // Pre-flight guard rails — `kind: "err"` examples. Each shows a frequent
-// developer mistake that jsmql rejects at compile time (the pipeline-validation
-// layer), so the playground can demonstrate the guard with a red error panel
+// developer mistake that jsmql rejects at compile time (the stage-body checks),
+// so the playground can demonstrate the guard with a red error panel
 // instead of letting a broken query reach the server. Written in throwing-call
 // form so the test verifies the guard AND exposes an extractable `jsmql(...)`
-// call for the playground sync. See docs/specs/pipeline-validation.md.
+// call for the playground sync. See docs/specs/aggregation-stages.md.
 // ---------------------------------------------------------------------------
 
 describe("$group without _id is rejected at compile time", { features: ["Pipelines"] }, () => {

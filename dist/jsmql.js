@@ -1606,6 +1606,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$eq" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1627,6 +1628,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$ne" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1648,6 +1650,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$gt" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1669,6 +1672,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$gte" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1690,6 +1694,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$lt" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -1711,6 +1716,7 @@ var NAMES = {
     category: "comparison",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$lte" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -2481,6 +2487,7 @@ var NAMES = {
     category: "array",
     returns: "bool",
     where: ["value", "filter"],
+    liftsTo: { op: "$in" },
     shape: "flex",
     filter: { args: { sig: "field, value", exact: 2 }, emit: fieldClause },
     expr: {
@@ -6636,7 +6643,7 @@ var NAMES = {
     doc: "'.at()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["string", "array"],
-    returns: "unknown",
+    returns: { array: "element", string: "string" },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6947,6 +6954,7 @@ var NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
+        // JavaScript counts a negative start from the end; resolving one needs the receiver's length. [DEF-035]
         slotRange: { 0: [0, Infinity], 1: [0, Infinity] }
       },
       emit: ({ recv, args, value, bind }) => {
@@ -7164,7 +7172,7 @@ var NAMES = {
     picksOne: "filter",
     params: ["value", "index", "collection"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "unknown",
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7222,7 +7230,7 @@ var NAMES = {
     on: "array",
     params: ["value", "index", "collection"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "unknown",
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8900,7 +8908,7 @@ var NAMES = {
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "unknown",
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -8936,7 +8944,7 @@ var NAMES = {
     on: "array",
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "unknown",
+    returns: "element",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9480,7 +9488,7 @@ var NAMES = {
     doc: "'.head()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "unknown",
+    returns: "element",
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
@@ -9495,7 +9503,7 @@ var NAMES = {
     doc: "'.first()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "unknown",
+    returns: "element",
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => firstOf(recv) },
@@ -9510,7 +9518,7 @@ var NAMES = {
     doc: "'.last()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: "array",
-    returns: "unknown",
+    returns: "element",
     where: ["value", "group", "window"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => lastOf(recv) },
@@ -9525,7 +9533,7 @@ var NAMES = {
     doc: "'.nth()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["string", "array"],
-    returns: "unknown",
+    returns: { array: "element", string: "string" },
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9729,7 +9737,7 @@ var NAMES = {
     doc: "'.sample()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
-    returns: { array: "unknown", stream: "stream" },
+    returns: { array: "element", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -11567,6 +11575,7 @@ var NAMES = {
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
     where: ["filter"],
+    liftsTo: { op: "$in", negated: true },
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
       "'$nin' is a query operator with no aggregation-expression form. '$nin' is a field-level query operator: write it under a field, e.g. '{ <field>: $nin(\u2026) }'."
@@ -14365,9 +14374,11 @@ function bodyRuleOf(name2) {
 function operandPositionOf(name2) {
   return row(name2)?.operandPosition;
 }
+function liftsToOf(name2) {
+  return row(name2)?.liftsTo;
+}
 function stageBodyRuleOf(name2) {
-  const body = row(name2)?.body;
-  return body !== void 0 && !("pending" in body) ? body : void 0;
+  return row(name2)?.body;
 }
 function operandShapeOf(name2) {
   const shape = emitRow(name2)?.shape;
@@ -18086,7 +18097,7 @@ var Scope = class _Scope {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);
@@ -18183,7 +18194,6 @@ function readCell(name2, position, cell) {
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
   }
-  if (typeof cell.pending === "string") return { kind: "pending", name: name2, position, livesIn: cell.pending };
   return { kind: "lower", name: name2, position, cell };
 }
 function consult(name2, position, family) {
@@ -18215,15 +18225,6 @@ function everyName() {
 }
 
 // src/compiler/emit/errors.ts
-var PendingLowering = class extends CodegenError {
-  constructor(name2, position, livesIn, pos) {
-    super(`'${name2}' in ${position} position is not lowered by src/compiler yet \u2014 it still lives in ${livesIn}.`, pos);
-    this.name = "PendingLowering";
-    this.name_ = name2;
-    this.position = position;
-    this.livesIn = livesIn;
-  }
-};
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
 var countList = (ns) => ns.length === 2 ? `${ns[0]} or ${ns[1]}` : `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 var countWord = (args) => {
@@ -18245,8 +18246,6 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
         ),
         pos
       );
-    case "pending":
-      return new PendingLowering(sel.name, position, sel.livesIn, pos);
     case "unknown":
       return new CodegenError(
         `Unknown ${container === "" ? "name" : "method"} '${spelled3}${container === "" ? "" : "()"}' at position ${pos}.${didYouMean(sel.name, near, format)}`,
@@ -18256,7 +18255,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
-      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
+      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -19405,15 +19404,20 @@ function familyOfKind(k) {
       return null;
   }
 }
-function resolveReturns(r, receiver, family) {
+function resolveReturns(r, receiver, family, elements = "unknown") {
   if (typeof r === "string") {
     if (r === "same") return receiver;
-    if (r === "element") return "unknown";
+    if (r === "element") return elements;
     return r;
   }
   const byFamily = family === null ? void 0 : r[family];
-  if (byFamily === void 0 || byFamily === "element") return "unknown";
+  if (byFamily === void 0) return "unknown";
+  if (byFamily === "element") return elements;
   return byFamily;
+}
+function elementsRead(node, env) {
+  if (node.type !== "Ident" || !env.scope.has(node.name)) return "unknown";
+  return env.lookup(node.name, node.pos).elements;
 }
 function sourceFamily(node) {
   if (node.type === "Ident" && NAMESPACES2.has(node.name)) return node.name;
@@ -19458,13 +19462,19 @@ function kindOf(node, env) {
       return env.scope.has(node.name) ? env.lookup(node.name, node.pos).type : "unknown";
     case "MemberAccess": {
       if (!isCallable(node.name) || sourceFamily(node.object) !== null) {
-        return resolveReturns(returnsOf(node.name), kindOf(node.object, env), receiverFamilyOf(node.object, env));
+        return resolveReturns(
+          returnsOf(node.name),
+          kindOf(node.object, env),
+          receiverFamilyOf(node.object, env),
+          elementsRead(node.object, env)
+        );
       }
       return "unknown";
     }
     case "MethodCall": {
       const family = receiverFamilyOf(node.object, env);
-      if (family !== null) return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family);
+      if (family !== null)
+        return resolveReturns(returnsOf(node.name), kindOf(node.object, env), family, elementsRead(node.object, env));
       const r = returnsOf(node.name);
       if (typeof r === "string" && r !== "same" && r !== "element" && r !== "unknown") return r;
       const sole = soleFieldFamilyOf(node.name);
@@ -19628,7 +19638,13 @@ function joinValue(node, env, S) {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name2 = `#join${slot.path}`;
-  const bound = env.bind(name2, { ref: { kind: "field", slot }, type: l.yields, mutable: false, pos: l.pos });
+  const bound = env.bind(name2, {
+    ref: { kind: "field", slot },
+    type: l.yields,
+    elements: l.yields === "array" ? "object" : "unknown",
+    mutable: false,
+    pos: l.pos
+  });
   const rebased = rebase(node, l.peeledTo, { type: "Ident", name: name2, pos: l.pos });
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
@@ -19898,7 +19914,6 @@ function guardFor(family, also = []) {
 var FIELD_FAMILIES2 = Object.keys(TYPES);
 var isFieldFamily = (f) => FIELD_FAMILIES2.includes(f);
 var isRefusal = (v) => isObj3(v) && typeof v.unsupported === "string";
-var isPending = (v) => isObj3(v) && typeof v.pending === "string";
 var isRule = (v) => isObj3(v) && typeof v.emit === "function" && isObj3(v.args);
 function countOf(name2, args, n2) {
   const rejected = args.reject?.[n2];
@@ -19910,12 +19925,7 @@ function settle(name2, branch, shaped, count) {
   if (isRefusal(branch)) {
     return { kind: "refused", name: name2, message: branch.unsupported, needsSubject: branch.subjectFromCaller === true };
   }
-  if (isPending(branch)) {
-    const bad = branch.args === void 0 || shaped.kind === "spread" ? null : countOf(name2, branch.args, count);
-    return bad ?? { kind: "pending", name: name2, livesIn: branch.pending };
-  }
-  if (!isRule(branch))
-    internalError(`the row '${name2}' holds a cell part that is neither a rule, a refusal nor a pending`);
+  if (!isRule(branch)) internalError(`the row '${name2}' holds a cell part that is neither a rule nor a refusal`);
   if (shaped.kind === "spread") {
     if (branch.args.spread === true) {
       internalError(`a spread reached '${name2}', whose rule reads one array argument \u2014 the desugar pass packs it`);
@@ -19984,20 +19994,17 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
     return settle(name2, branch, shaped, count);
   }
-  if (!(typeof uncertain === "function" || isRefusal(uncertain) || isPending(uncertain))) {
+  if (!(typeof uncertain === "function" || isRefusal(uncertain))) {
     internalError(`the row '${name2}' lists ${fieldFamilies.length} field families and states no 'uncertain'`);
   }
   const out = [];
   for (const family of fieldFamilies) {
     const branch = branches[family];
     if (isRefusal(branch) || branch === void 0) continue;
-    if (!isRule(branch) && !isPending(branch))
-      internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
-    if (isRule(branch)) {
-      const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
-      if (bad !== null && bad.kind !== "rule") return bad;
-    }
-    out.push({ family, guard: guardFor(family, isRule(branch) ? branch.alsoTypes ?? [] : []), rule: branch });
+    if (!isRule(branch)) internalError(`the row '${name2}' holds an unreadable '${family}' branch`);
+    const bad = shaped.kind === "spread" ? settle(name2, branch, shaped, count) : countOf(name2, branch.args, count);
+    if (bad !== null && bad.kind !== "rule") return bad;
+    out.push({ family, guard: guardFor(family, branch.alsoTypes ?? []), rule: branch });
   }
   return { kind: "dispatch", name: name2, branches: out, otherwise: uncertain };
 }
@@ -20012,8 +20019,6 @@ function select(verdict, receiver, shaped, count) {
       return { kind: "fallback", name: name2 };
     case "composedOnly":
       return { kind: "composedOnly", name: name2, owners: verdict.owners };
-    case "pending":
-      return { kind: "pending", name: name2, livesIn: verdict.livesIn };
     case "noCell":
       return { kind: "noCell", name: name2 };
     case "perFamily":
@@ -20078,23 +20083,27 @@ function rawQuery(node, env) {
       continue;
     }
     const key = staticKey(e);
-    if (isRuntimeRead(e.value)) {
-      lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
+    const ops = operatorEntries(e.value);
+    if (ops !== null) {
+      const runtime = ops.filter((o) => readsAtRunTime(o.value));
+      if (runtime.length === 0) {
+        kept.push(e);
+        continue;
+      }
+      for (const o of runtime) {
+        const twin = liftsToOf(o.op);
+        if (twin === void 0) throw runtimeInQueryOperator(o.op, o.pos);
+        const clause = { [twin.op]: ["$" + key, lowerValue(o.value, valueEnv)] };
+        lifted.push(twin.negated === true ? { $not: [clause] } : clause);
+      }
+      if (e.value.type === "ObjectLiteral") {
+        const stay = e.value.entries.filter((o) => o.type === "KeyValueEntry" && !readsAtRunTime(o.value));
+        if (stay.length > 0) kept.push({ ...e, value: { ...e.value, entries: stay } });
+      }
       continue;
     }
-    if (e.value.type === "ObjectLiteral" && e.value.entries.some((o) => o.type === "KeyValueEntry" && isRuntimeRead(o.value))) {
-      const stay = [];
-      for (const o of e.value.entries) {
-        if (o.type !== "KeyValueEntry" || !isRuntimeRead(o.value)) {
-          stay.push(o);
-          continue;
-        }
-        const op = staticKey(o);
-        if (op === null || !LIFTABLE.has(op)) throw runtimeInQueryOperator(op ?? "?", o.pos);
-        const operand = lowerValue(o.value, valueEnv);
-        lifted.push(op === "$nin" ? { $not: [{ $in: ["$" + key, operand] }] } : { [op]: ["$" + key, operand] });
-      }
-      if (stay.length > 0) kept.push({ ...e, value: { ...e.value, entries: stay } });
+    if (readsAtRunTime(e.value)) {
+      lifted.push({ $eq: ["$" + key, lowerValue(e.value, valueEnv)] });
       continue;
     }
     kept.push(e);
@@ -20108,8 +20117,20 @@ function rawQuery(node, env) {
 }
 var NEAR = /* @__PURE__ */ new Set(["$near", "$nearSphere"]);
 var LOGICAL = /* @__PURE__ */ new Set(["$and", "$or", "$nor"]);
-var LIFTABLE = /* @__PURE__ */ new Set(["$eq", "$ne", "$gt", "$gte", "$lt", "$lte", "$in", "$nin"]);
-function isRuntimeRead(e) {
+function operatorEntries(e) {
+  if (e.type === "OperatorCall" && e.args.length === 1 && e.args[0].type !== "SpreadElement") {
+    return [{ op: e.name, value: e.args[0], pos: e.pos }];
+  }
+  if (e.type !== "ObjectLiteral" || e.entries.length === 0) return null;
+  const out = [];
+  for (const entry of e.entries) {
+    const key = staticKey(entry);
+    if (entry.type !== "KeyValueEntry" || key === null || !key.startsWith("$")) return null;
+    out.push({ op: key, value: entry.value, pos: entry.pos });
+  }
+  return out;
+}
+function readsAtRunTime(e) {
   switch (e.type) {
     case "FieldRef":
     case "Ident":
@@ -20118,6 +20139,10 @@ function isRuntimeRead(e) {
     case "MethodCall":
     case "CallExpression":
       return constantIn(e) === null;
+    case "ArrayLiteral":
+      return e.elements.some((el) => el.type !== "SpreadElement" && readsAtRunTime(el));
+    case "ObjectLiteral":
+      return e.entries.some((o) => o.type === "KeyValueEntry" && readsAtRunTime(o.value));
     default:
       return false;
   }
@@ -20461,6 +20486,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
     bodyEnv = bodyEnv.bind(acc, {
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
+      elements: "unknown",
       mutable: false,
       pos: cb.pos
     });
@@ -20474,6 +20500,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
       bodyEnv = bodyEnv.bind(elem, {
         ref: { kind: "var", ref: reduceVar("this") },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos
       });
@@ -20579,7 +20606,13 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
     nativeQuery: (e) => read.lowerNativeFilter(e, argEnv),
     elementQuery: (cb) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) return null;
-      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
+        ref: { kind: "document" },
+        type: "unknown",
+        elements: "unknown",
+        mutable: false,
+        pos: cb.pos
+      });
       return read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
     },
     value: (e) => read.lowerValue(e, argEnv),
@@ -20599,7 +20632,13 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) {
         throw elementNeedsQuery(name2, cb.pos);
       }
-      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+      const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
+        ref: { kind: "document" },
+        type: "unknown",
+        elements: "unknown",
+        mutable: false,
+        pos: cb.pos
+      });
       const q = read.lowerNativeFilter(cb.body, childEnv(bodyEnv, cb, "body"));
       if (q === null) throw elementNeedsQuery(name2, cb.pos);
       return q;
@@ -20613,7 +20652,13 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
     let e = argEnv.block();
     if (cb.params.length >= 1) {
-      e = e.bind(cb.params[0], { ref: { kind: "document" }, type: "unknown", mutable: false, pos: cb.pos });
+      e = e.bind(cb.params[0], {
+        ref: { kind: "document" },
+        type: "unknown",
+        elements: "unknown",
+        mutable: false,
+        pos: cb.pos
+      });
     }
     if (cb.params.length >= 2) {
       e = e.bind(cb.params[1], {
@@ -20623,6 +20668,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
           replaced: false
         },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos
       });
@@ -20631,6 +20677,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
       e = e.bind(cb.params[2], {
         ref: { kind: "streamHandle", source: cb },
         type: "stream",
+        elements: "unknown",
         mutable: false,
         pos: cb.pos
       });
@@ -21135,7 +21182,6 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
   const ref = bound === null ? lowered : bound.ref;
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule) => {
-    if ("pending" in rule) throw new PendingLowering(name2, position, rule.pending, node.pos);
     checkSlots(name2, rule.args, args);
     return rule.emit(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
   };
@@ -21144,7 +21190,6 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
   let fallback;
   if (typeof otherwise === "function")
     fallback = otherwise(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
-  else if ("pending" in otherwise) throw new PendingLowering(name2, position, otherwise.pending, node.pos);
   else
     throw refusalFor(
       { kind: "refused", name: name2, message: otherwise.unsupported, needsSubject: otherwise.subjectFromCaller === true },
@@ -21208,6 +21253,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
     bodyEnv = bodyEnv.bind(fnName, {
       ref: { kind: "dropped", message: recursiveFunction(fnName, pos).message, replaced: false },
       type: "unknown",
+      elements: "unknown",
       mutable: false,
       pos
     });
@@ -21828,6 +21874,7 @@ function statementStages(stmt, env, first) {
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda, expanding: lambda.body === void 0 },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: decl.pos
       })
@@ -21844,13 +21891,20 @@ function letStages(decl, env) {
     throw shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type) => env.bind(decl.name, { ref: { kind: "field", slot }, type, mutable: decl.kind === "let", pos: decl.pos });
+  const bind = (type) => env.bind(decl.name, {
+    ref: { kind: "field", slot },
+    type,
+    elements: "unknown",
+    mutable: decl.kind === "let",
+    pos: decl.pos
+  });
   if (decl.value.type === "Lambda") {
     return {
       stages: [],
       env: env.bind(decl.name, {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === void 0 },
         type: "unknown",
+        elements: "unknown",
         mutable: false,
         pos: decl.pos
       })
@@ -22107,6 +22161,7 @@ function writeStages(uf, env, first) {
       const binding = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
         type: kindOf(op.value, inner),
+        elements: "unknown",
         mutable: true,
         pos: op.target.pos
       };

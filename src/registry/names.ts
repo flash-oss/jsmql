@@ -390,8 +390,7 @@ type MongoSpec<
    *   let t = $.a; $sort({a:1});      $.b = t   → compiles
    * Three separate consumers need it: the scope tracker that drops `let`
    * bindings, the peephole that skips the trailing namespace cleanup, and the
-   * stream-chain form. It was six hardcoded strings in src/pipeline.ts, so all
-   * three read a set no row declared.
+   * stream-chain form. One row states it, so all three read the same fact.
    */
   /**
    * The stage drops every field the input document carried, so a binding held

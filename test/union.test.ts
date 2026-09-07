@@ -115,11 +115,11 @@ describe("$$.push — inline document(s)", () => {
 });
 
 describe("$$.push — cross-database via $$$$ is rejected", () => {
-  // Two DISTINCT `requireSameDbColl` call sites in union-translation: the
-  // `.filter`/`.find` spread goes through `buildUnionWith`, the bare collection
-  // through the short-form `$unionWith` branch. Each gets a test so a refactor
+  // Both spread sources resolve through `lookupOf` (src/compiler/emit/join.ts), whose
+  // chain base refuses a `$$$$.<db>.` root: the `.filter`/`.find` form carries a
+  // sub-pipeline, the bare collection carries none. Each gets a test so a refactor
   // that bypasses the guard on either path is caught.
-  it("a cross-DB .filter() spread source throws (buildUnionWith path)", () => {
+  it("a cross-DB .filter() spread source throws (sub-pipeline form)", () => {
     expect(() => jsmql("$$.push(...$$$$.archive.users.filter(u => u.deleted))")).toThrow(
       "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix — '$$$.<coll>' — and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
     );

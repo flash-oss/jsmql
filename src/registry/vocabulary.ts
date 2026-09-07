@@ -625,7 +625,8 @@ export type IterateeSlots =
    *   $.a.toSorted("k")          means an ORDER, `{ k: 1 }` — not `x => x.k`
    *   $.a.toSorted({ k: -1 })    the same, descending
    *   $.a.toSorted()             the natural order
-   * Accepted, read by mql-sort.ts, and never rewritten to a callback. A different
+   * Accepted, read by src/compiler/emit/sort-spec.ts, and never rewritten to a
+   * callback. A different
    * fact from `arrowOnly` (those spellings are refused) and from a layout (those
    * spellings MEAN an arrow), so it has its own name.
    */
@@ -1233,9 +1234,7 @@ type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] 
  * A `Refusal` is an answer too — "cannot tell which" is a decision.
  */
 export type Uncertain<F extends Family, In, Out> =
-  IsUnion<Extract<F, FieldFamily>> extends true
-    ? { uncertain: Emit<In, Out> | Refusal }
-    : { uncertain?: never };
+  IsUnion<Extract<F, FieldFamily>> extends true ? { uncertain: Emit<In, Out> | Refusal } : { uncertain?: never };
 
 /**
  * One answer per ARGUMENT class — see `ArgShape` for the partition. Keyed, not

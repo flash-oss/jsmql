@@ -1,12 +1,12 @@
 // test/fold-consistency.test.ts — the HR3 gate for constant folding.
 //
-// A folded method (const-eval.ts) has TWO implementations of the same
+// A folded method (src/compiler/passes/fold-methods.ts) has TWO implementations of the same
 // semantics: the compile-time JS fold, and the server-side MQL lowering that a
 // runtime receiver would take. If they disagree, folding would emit a value the
 // server never would. This suite proves they agree: for each foldable method ×
 // a battery of inputs it compares the compile-time fold to the MQL lowering run
 // on a real mongod (via `$documents`, so no collection write). Any method/shape
-// that can't be proven equal must be removed from const-eval.ts (→ runtime
+// that can't be proven equal must be removed from fold-methods.ts (→ runtime
 // fallback), never shipped.
 //
 // It connects to a local mongod (mongodb://127.0.0.1:27017, like test/probe) and

@@ -3,9 +3,10 @@
 // Stages live in stage position — the elements of a top-level pipeline array
 // like `[ { $match: ... }, { $sort: ... } ]`. They are distinct from
 // expression operators (src/operators.ts), which live in value position
-// inside a stage spec. Both registries follow the same single-source-of-truth
-// rule: do not hand-write `if (name === "$match")` in the parser or codegen
-// or pipeline lowering — register the stage here and read it back.
+// inside a stage spec. Both tables hold the shapes and categories the globals
+// generator reads; the compiler reads the rows in src/registry/names.ts. The
+// single-source-of-truth rule is the same on both sides: do not hand-write
+// `if (name === "$match")` in a phase — state the fact on a row and read it back.
 //
 // Descriptions are lifted from vendor/mql-specifications/definitions/stage/<name>.yaml
 // at the pinned commit (see vendor/fetch-mql-specs.mjs).
@@ -24,8 +25,9 @@ export type StageDef = {
    * one — so they must be the pipeline's first stage, and they differ by
    * *where* they legally run. jsmql surfaces a scope-encoding sugar
    * (`$$.indexStats()` collection, `$$$$.currentOp()` / `$$$$.shardedDataDistribution()`
-   * cluster/server) driven entirely off this field; see
-   * src/system-stage-translation.ts. Two tiers are in use — collection (`$$`)
+   * cluster/server); this field types those members in the generated globals, and
+   * the lowering is stated on the rows in src/registry/names.ts. See
+   * docs/specs/system-stages.md. Two tiers are in use — collection (`$$`)
    * and cluster/server (`$$$$`); the `currentOp` family runs on the admin
    * database, not the current one, so it's cluster-scoped, not `database`.
    * `options: false` marks the stages that take no options object
@@ -40,9 +42,10 @@ export type StageDef = {
    *             must-be-first — `stageMustBeFirst` derives that from
    *             `diagnostic`, so they do NOT repeat `position` here.
    *   "last"  — must be the final stage (a write / terminal stage).
-   * Enforced for the literal stage forms (`{ $merge: … }`) by pipeline.ts; the
-   * sugar forms (`$out` / `$$.indexStats()` / …) keep their own dedicated,
-   * sugar-aware messages. See docs/specs/pipeline-validation.md.
+   * The compiler enforces placement from the row's own `only` (`stageFirst` /
+   * `stageLast`) in `place` — src/compiler/emit/statement.ts — so a sugar form
+   * (`$out` / `$$.indexStats()` / …) and its literal form answer alike. See
+   * docs/specs/aggregation-stages.md.
    */
   position?: "first" | "last";
   /**
@@ -296,8 +299,8 @@ export function lookupStage(name: string): StageDef | undefined {
  * `position: "first"` source stages AND for every diagnostic stage — a
  * diagnostic produces its own document stream (index/collection stats, running
  * ops, …) and ignores any input, so a non-first placement has no valid runtime
- * context. Deriving the diagnostics here keeps the literal-form check in step
- * with the sugar-form check (system-stage-translation.ts) off one source.
+ * context. Deriving the diagnostics here keeps the literal form and the sugar
+ * form (`$$.indexStats()`) on one source.
  */
 export function stageMustBeFirst(def: StageDef): boolean {
   return def.position === "first" || def.diagnostic !== undefined;
@@ -312,8 +315,9 @@ export function stageMustBeLast(def: StageDef): boolean {
  * Is `def` forbidden in EVERY sub-pipeline container? Such a stage ($out /
  * $merge) is illegal anywhere but the top-level pipeline, so it can be rejected
  * without knowing which container we're in — which is what lets block-body
- * sub-pipelines (`.aggregate((o) => { … })`) enforce it too, and what the
- * emitted-output backstop in pipeline.ts reads.
+ * sub-pipelines (`.aggregate((o) => { … })`) enforce it too. The compiler applies
+ * the same rule from the row's `forbiddenIn`, against the containers the site
+ * carries (src/compiler/emit/statement.ts).
  */
 export function stageForbiddenInAnySubPipeline(def: StageDef): boolean {
   return stageForbiddenIn(def, "facet") && stageForbiddenIn(def, "lookup") && stageForbiddenIn(def, "unionWith");

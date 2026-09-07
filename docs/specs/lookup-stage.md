@@ -2,7 +2,7 @@
 
 ## What this covers
 
-The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection of the `$$$.<coll>` same-database shape (a `$$$$.<db>.<coll>` cross-database **read** is detected only to be **rejected** — see § Cross-database reads are rejected), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, the mode-gate behaviour, the cross-database rejection at the `requireSameDbColl` choke point, and the error catalog.
+The implementation-facing companion to the user-facing reference in [LANGUAGE.md → Cross-collection lookups](../LANGUAGE.md#cross-collection-lookups-coll-find--filter). Covers detection of the `$$$.<coll>` same-database shape (a `$$$$.<db>.<coll>` cross-database **read** is detected only to be **rejected** — see § Cross-database reads are rejected), predicate translation (basic vs pipeline form, auto-`let` extraction), the chained-terminal materialisation (`.length`, `.reduce`, member access), the slot-allocation contract for internal `__jsmql.tmp.<N>` slots, the mode-gate behaviour, the cross-database rejection at the `foreignChain` choke point in [src/compiler/emit/join.ts](../../src/compiler/emit/join.ts), and the error catalog.
 
 ## Why `$$$` (and not `this.`)
 

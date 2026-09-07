@@ -2,19 +2,18 @@
 // top-level object jsmql stashes compiler-generated temporaries in, so values
 // can be threaded between stages without flooding the developer's output.
 // Everything here is removed before output by a single trailing
-// `{ $unset: "__jsmql" }` (peephole-skipped when a reshape stage already
-// dropped the document). See src/CLAUDE.md § the `__jsmql` namespace.
+// `{ $unset: "__jsmql" }`, which the Env appends when a stage has written under
+// the namespace (src/compiler/emit/env.ts). See src/CLAUDE.md § Invariants.
 //
 // The scheme — sub-bucketed by kind:
 //   __jsmql.var.<name>   — `let` / `const` bindings           → bindingSlot()
 //   __jsmql.tmp.<n>      — anonymous compiler scratch          → tmpSlot()
 //                          (lookup result slots, fan-out / $unwind slots,
 //                          stream-method intermediates; the per-pipeline
-//                          counter `createSlotAllocator` lives in
-//                          lookup-translation.ts for import-cycle reasons but
-//                          builds its path here)
+//                          counter is the Env's, in src/compiler/emit/env.ts,
+//                          and it builds its path here)
 //   __jsmql.<reserved>   — named system values                (e.g. the stream
-//                          length `__jsmql.length`, added with that feature)
+//                          length `__jsmql.length`)
 //
 // THE ONE EXCEPTION: `$group` / `$bucket` accumulator OUTPUT keys may not
 // contain dots, so scratch produced *inside* a group can't live under the
@@ -46,11 +45,9 @@ export const LENGTH_SLOT = `${JSMQL_NS}.length`;
 
 /**
  * The `$setWindowFields` stage that stamps the stream's document count onto
- * every document as `__jsmql.length`. The single home for this shape: the
- * top-level `$$.length` materialiser (pipeline.ts) and the lookup-chain
- * sub-stream length (stream-methods.ts) both emit it, one level apart. Lives
- * in this leaf module so both importers avoid a pipeline ↔ stream-methods
- * cycle. See docs/specs/stream-length.md.
+ * every document as `__jsmql.length` — the shape behind `$$.length`, one level
+ * per stream. The stage the compiler emits is a fact on the `$$.length` row in
+ * src/registry/names.ts. See docs/specs/stream-length.md.
  */
 export function streamLengthStage(): object {
   return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
@@ -137,15 +134,14 @@ const JSMQL_NS_VAR = "jsmql_";
 // lead, `[A-Za-z0-9_]`), so the shared `jsmql` prefix carries over.
 //
 // The prefix alone is only a convention, though — nothing stops a user naming a
-// param `jsmqlArr`. Uniqueness is `internalVar()` in codegen.ts, which gensyms
-// this name against the in-scope params; this module owns the SPELLING only.
+// param `jsmqlArr`. Uniqueness is `Scope.bind` in src/compiler/emit/names.ts,
+// which gensyms this name against every name the program introduces; this
+// module owns the SPELLING only.
 
 /**
  * Name for a compiler-emitted `$let` / `$map` / `$filter` variable —
- * `exprVar("arr")` → `jsmqlArr`. Callers should reach this through
- * `internalVar(ctx, base)` in codegen.ts, which adds the collision check; call
- * it directly only where no `GenerateCtx` is in scope AND the binding is
- * provably unreferenced by user codegen.
+ * `exprVar("arr")` → `jsmqlArr`. Callers reach this through `Scope.bind(hint)`
+ * in src/compiler/emit/names.ts, which adds the collision check.
  */
 export function exprVar(base: string): string {
   return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
@@ -162,10 +158,8 @@ export function isCorrelationVar(name: string): boolean {
 
 /**
  * Matches a `$lookup.let` correlation-var name produced by `letFieldVar` /
- * `letBindingVar` / `letSysVar` (`jsmql_<f|v|s><depth>_<name>`). Used by codegen
- * to recognise a compiler-generated correlation `ParamRef` and emit `$$<name>`
- * even when it isn't in the current `lambdaParams` set — a deeper level's
- * cross-level read can capture into an enclosing lookup's `let` after this
- * level's `lambdaParams` was frozen, and `$$` vars propagate through nested
- * `$lookup.pipeline` boundaries, so the var is in scope by construction. */
+ * `letBindingVar` / `letSysVar` (`jsmql_<f|v|s><depth>_<name>`). A name of this
+ * shape is in scope by construction wherever it is read: a deeper level's
+ * cross-level read captures into an enclosing lookup's `let`, and `$$` vars
+ * propagate through nested `$lookup.pipeline` boundaries. */
 export const CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;

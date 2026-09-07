@@ -874,7 +874,7 @@ Reference a collection in the CURRENT database instead — write '$$$.orders'
 (drop the '$$$$.cold_storage.' prefix) …
 ```
 
-**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives at the `requireSameDbColl` choke point in [`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts).
+**Why.** A cross-database `.find` / `.filter` would have to compile to `$lookup` (or `$unionWith`) with a `from: { db, coll }` *namespace object*. That object form is **Atlas-Data-Federation-only**: every regular MongoDB deployment (standalone, replica set, sharded cluster) server-validates `$lookup.from` to a bare collection-name *string* and rejects the object at runtime. Per HR3 (jsmql never knowingly emits invalid MQL), we reject these reads at compile time rather than emit a shape that won't run. The rejection lives at the `foreignChain` choke point in [`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts), which every join chain passes through.
 
 **What to write instead.** Reference the collection in the *current* database with same-database `$$$.<coll>` (drop the `$$$$.<db>.` prefix) and run the pipeline against the database that holds the data:
 

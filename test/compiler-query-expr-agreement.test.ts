@@ -1,10 +1,10 @@
-// The two NEW targets must select the same documents — where the language says they do.
+// The two targets must select the same documents — where the language says they do.
 //
 // A predicate reaches MQL by two roads: the QUERY language (`filter`) and the
 // aggregation EXPRESSION language (`expr`, under `$expr`). Two lowerings of one
 // source, in two files. This suite runs both over the same documents on a real
 // mongod and compares the ids that come back. The divergences the language
-// documents (docs/specs/match-query-translation.md § divergences) live in a
+// documents (docs/specs/emit-pass.md § The filter target) live in a
 // table with a reason each, and are asserted to STILL differ — a repair cannot
 // land silently; it moves the row.
 //
@@ -36,8 +36,8 @@ const DOCS = [
 /** Sources whose two roads must select the SAME documents. */
 const AGREE: readonly string[] = [
   "$.a === 0",
-  // A JavaScript spelling reads the field's OWN value on BOTH roads now, so the
-  // array-element match that used to divide them is gone (src/registry/vocabulary.ts § queryOwnValue).
+  // A JavaScript spelling reads the field's OWN value on BOTH roads, so an array
+  // element never divides them (src/registry/vocabulary.ts § queryOwnValue).
   "$.a === 1",
   'typeof $.a === "object"',
   "$.a === 1 || $.n * 2 > 10",

@@ -177,24 +177,24 @@ function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                   intercepts the identifier by value. *)
 
 math_call      = "Math" "." MATH_METHOD "(" call_arg_list ")"
-MATH_METHOD    = (* see `MathMethod` in src/registry/ast.ts *)
+MATH_METHOD    = (* the rows in src/registry/names.ts with `on: "Math"` and `call: true` *)
 
 math_const     = "Math" "." MATH_CONST
-MATH_CONST     = (* see `MathConstant` in src/registry/ast.ts *)
+MATH_CONST     = (* the rows in src/registry/names.ts with `on: "Math"` and `call: false` *)
 
 object_call    = "Object" "." OBJECT_METHOD "(" call_arg_list ")"
-OBJECT_METHOD  = (* see `ObjectMethod` in src/registry/ast.ts *)
+OBJECT_METHOD  = (* the rows in src/registry/names.ts with `on: "Object"` *)
 
 type_cast      = TYPE_CAST_NAME "(" expression ","? ")"      (* exactly one arg; a lone trailing comma is allowed *)
-TYPE_CAST_NAME = (* see `TypeCastOp` in src/registry/ast.ts *)
+TYPE_CAST_NAME = (* the global rows in src/registry/names.ts that cast one value *)
 
 type_cast_ref  = BARE_CAST_NAME                              (* bare callback shorthand, no `(` *)
-BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* see `BareCastOp` in src/registry/ast.ts *)
+BARE_CAST_NAME = "Boolean" | "Number" | "String"             (* the cast rows that also say `asReference: true` *)
 
 objectid_ref   = "ObjectId"                                  (* bare callback shorthand, no `(` *)
 
 number_static  = "Number" "." NUMBER_STATIC "(" expression ","? ")"
-NUMBER_STATIC  = (* see `NumberStaticMethod` in src/registry/ast.ts *)
+NUMBER_STATIC  = (* the rows in src/registry/names.ts with `on: "Number"` *)
 
 new_date_or_set = "new" ("Date" | "Set") "(" (expression ("," expression)* ","?)? ")"
 objectid_literal = "new"? "ObjectId" "(" (expression ","?)? ")"
@@ -255,7 +255,7 @@ Every expression accepted by this grammar is also valid JavaScript syntax. Addin
 
 ## Trailing commas
 
-Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` `(params, { $, … })` signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Shared helpers `parseDelimitedList` / `parseCommaTail` / `consumeTrailingComma` in `src/compiler/parse/parser.ts` enforce this uniformly.
+Because JS allows a single trailing comma after the last element of any comma-separated list (`f(a, b,)`, `[1, 2,]`, `{ a: 1, }`, `(x, y,) => …`), the parser accepts one **everywhere a comma list appears** — call args (method / `$op` / `Math` / `Object` / `Date.UTC` / `new Date|Set`), array & object literals, destructure patterns, arrow / `function` parameter lists, the `jsmql.compile` `(params, { $, … })` signature, and the in-stage update-op chain (`$.a = 1, $.b = 2,`). The EBNF spells the `","?` on the core lists above and elides it on the fixed-arity built-ins (`type_cast`, `number_static`, `Array.isArray`, `objectid_literal`) where only a *lone* trailing comma is meaningful; a trailing comma never changes the parse, so output is byte-identical to the comma-free form (`$op({…})` ≡ `$op({…},)` stays object-style). A trailing comma is *not* a way to pass an extra argument: `Number(x, y)` still raises the fixed-arity error. Every comma loop in `src/compiler/parse/parser.ts` — `args`, `arrayLiteral`, `objectLiteral`, `paramList`, `destructure` — is written the same way, `do { if (<closer>) break; … } while (eat("Comma"))`, so one shape enforces this uniformly.
 
 ## Function-form input is not part of the grammar
 
@@ -282,7 +282,7 @@ JavaScript-style comments are skipped by the lexer, with semantics identical to 
 - `// …` to end-of-line (any of LF, CR, LSEP U+2028, PSEP U+2029) or EOF.
 - `/* … */` block comments. Nesting is **not** supported — the first `*/` closes. Unclosed block comments raise a `LexError`.
 
-Comments are trivia: they are discarded during tokenisation by `skipTrivia()` (which alternates whitespace and comment passes until neither makes progress) and never appear in the token stream or AST. They are valid anywhere whitespace is, including inside template `${…}` interpolations. They are **not** recognised inside string literals, regex literals, or template-literal quasi text — those are consumed atomically by `readString` / `readRegex` / `readTemplateChunk`.
+Comments are trivia: they are discarded during tokenisation by `skipTrivia()` (which alternates whitespace and comment passes until neither makes progress) and never appear in the token stream or AST. They are valid anywhere whitespace is, including inside template `${…}` interpolations. They are **not** recognised inside string literals, regex literals, or template-literal quasi text — those are consumed atomically by `scanString` / `scanRegex` in [src/compiler/lex/scanners.ts](../../src/compiler/lex/scanners.ts), and by `templateChunk` inside `lex()`.
 
 ## Spread
 
@@ -331,13 +331,12 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 
 ## Built-in call vs bare reference
 
-A one-value-in/one-value-out built-in is ambiguous between its call form (`Boolean(x)`, `ObjectId(x)`) and a bare callback reference (`arr.filter(Boolean)`, `ids.map(ObjectId)`). The parser disambiguates by 1-token lookahead in `parsePrimary()`, one rule per name family:
+A one-value-in/one-value-out built-in reads two ways: its call form (`Boolean(x)`, `ObjectId(x)`) and a bare callback reference (`arr.filter(Boolean)`, `ids.map(ObjectId)`). The parser is **name-blind** and settles neither — `Boolean(x)` is a `CallExpression`, a bare `Boolean` is an `Ident`, and `Math.abs` is a `MemberAccess`, whatever the name spells. Which of them MEANS a callback is decided later, by facts on the row:
 
-- If the name is followed by `(`, parse the call form (`type_cast` / `object_id`).
-- Otherwise, if the name is bare-callable, emit its `*Ref` node — `type_cast_ref` for `BARE_CAST_NAMES` (`Boolean` / `Number` / `String`), `object_id_ref` for `ObjectId`. `Math.<unary>` reaches `math_call_ref` the same way, on the member-access path.
-- `parseInt` / `parseFloat` are not in `BARE_CAST_NAMES` — without `(` they fall through to the existing `parseTypeCast()` "Expected LParen" error. `Date` has no bare form either. This is intentional: real-JS `arr.map(parseInt)` has the index-as-radix footgun, and `Date` without `new` ignores its argument, so users must write the explicit arrow to opt in.
+- The desugar pass rewrites a bare callable in an iteratee slot into the arrow that applies it — `bareCall` in [src/compiler/passes/desugar.ts](../../src/compiler/passes/desugar.ts) turns `Boolean` into `x => Boolean(x)` and `Math.abs` into `x => Math.abs(x)`. Which slots accept the spelling is the row's `iterateeSlots` layout, never the rewrite's guess.
+- A name reaches that rewrite only when its row says `asReference: true` and `call` is not `false`, and a name whose row says `new` is *required* (`Date`) is refused as a bare callable — real-JS `Date` without `new` ignores its argument, so the explicit arrow is what jsmql asks for.
 
-A `*Ref` node is only meaningful as a callback to a higher-order array method. In any other position, codegen throws an actionable error directing the user to the call form.
+Outside an iteratee slot a bare name has no value to stand for, and the emit phase refuses it with the call form named: `'Boolean' used as a value is only valid as a callback to a higher-order array method … To apply it to one value, write Boolean(value).`
 
 ## Context-sensitive `/` (regex vs divide)
 
@@ -359,9 +358,9 @@ A lambda body is either an expression (`x => x * 2`) or a **statement-laden bloc
 
 - **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE, `Object.groupBy`, `Array.from`). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [emit-pass.md → Block-body arrows](emit-pass.md#block-body-arrows--nested-let)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
   A block that holds anything else is refused with the mistake it shows: a stage call, a bare call (`assert(…)`) or a write is "a pipeline stage, not part of a callback" (with the `.aggregate((o) => { … })` rewrite), a stray expression statement is the block's own rule ("must end with a `return <expr>`", or "holds 'const' declarations and one 'return'" when a return is present).
-- **Statement block** (`block_body`, the `$lookup`/facet sub-pipeline form) — parsed inside a stream-rooted callback whose method is in `STREAM_BLOCK_METHODS`, e.g. `$$$.<coll>.aggregate((o) => { … })` and `$$.filter(...)`. Its statements are stages/update ops, not a single `return`. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [emit-pass.md](emit-pass.md#callback-block-bodies).
+- **Statement block** (the `$lookup`/facet sub-pipeline form) — a `{ … }` body with **no `return`**, e.g. `$$$.<coll>.aggregate((o) => { … })`. Its statements are stages/update ops. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [emit-pass.md](emit-pass.md#callback-block-bodies).
 
-The parser threads a `BlockArgCtx` (`{ kind: "expr" }` default, `kind: "pipeline"` for the lookup positions) from the method-call dispatch to decide which to parse. It also carries the receiver context — the `method` name and whether it was `streamRooted` — so a **statement block in an expression-block position** can be diagnosed for what it is. When `parseExprBlockBody` reaches its missing-`return` check and the next token is `$` (a stage call), `subPipelineBlockError` reports the real mistake instead of demanding a `return` the user never wanted: a `didYouMean` over `STREAM_BLOCK_METHODS` when the receiver was a stream (so the method name is the error — `.aggregat(o => { $group(…); })`), or "stage calls need a stream receiver" when it wasn't (`$.items.map(d => { $group(…); })`). A block with no stage call keeps the original message. `return` is a reserved keyword (lexed as its own token; still usable as a property name / object key, matching JS).
+The parser needs no lookahead to tell the two apart: `lambdaBody` parses the braces once and the `return` decides — present, the body is an `ExprBlock`; absent, the statements are a stages `Pipeline`. WHOSE stages they are is the row's fact, not the parser's guess: `args` claims the body for a callee whose row says `blockBody: "stages"` (`blockBodyOf` in [src/compiler/rows.ts](../../src/compiler/rows.ts)), and leaves an unknown callee's body unclaimed so the emit phase can name the nearest method instead. `finish()` runs after the whole tree is built and refuses a stages body nobody claimed, reporting the real mistake — the stage the developer wrote, with the `.aggregate((o) => { … })` and `$$.$match(…)` rewrites — rather than demanding a `return` they never wanted. `return` is a reserved keyword (lexed as its own token; still usable as a property name / object key, matching JS).
 
 ## `$let` with lambda
 
@@ -384,8 +383,8 @@ A `CallExpression` whose callee is a `Lambda` literal compiles to `$let`, with e
 `CallExpression` nodes whose callee is *not* a Lambda are rejected at codegen with an error directing the user to `$opName(...)` (operator) or `receiver.method(...)` (method) — there is no other callable value in MQL.
 
 Two parser surfaces produce a Lambda usable here:
-- `(IDENT, ..., IDENT) => expr` — handled by `isLambdaStart()` + `parseLambdaParen()`.
-- `(IDENT => expr)` — single param without inner parens; handled by a check inside `parseGrouped()` (see source).
+- `(IDENT, ..., IDENT) => expr` — `parenthesised()` reads the names, and rewinds to a plain parenthesised expression when no `=>` follows.
+- `IDENT => expr` — a single param without parens; `identifierOrLambda()` takes the arrow after the name.
 
 Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse errors.
 
@@ -410,17 +409,17 @@ Spread args (`(...arr)`) and arity mismatches are codegen errors, not parse erro
 
 ## String-context `+`
 
-When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing expressions: string and template literals, `String(x)` casts, `typeof x`, any `OperatorCall` in `STRING_OUTPUT_OPS`, any `MethodCall` to a method in `STRING_RETURNING_METHODS` — both sets are defined in `src/compiler/emit/lower.ts` — and recursively, a nested `+` chain with at least one string-producing operand.
+When any operand of a `+` chain is **string-producing**, the entire chain emits `$concat` instead of `$add`. String-producing is a PROOF and not a list: `kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts) answers `"string"` for a string or template literal, for a call or method whose row states `returns: "string"` (`String(x)`, `typeof x`, `$.name.trim()`), and — recursively — for a nested `+` chain with at least one string-producing operand. A field path proves nothing and stays `"unknown"`, so `$.a + $.b` is `$add`.
 
 ## JS truthy/falsy semantics for `&&`, `||`, `!`, `?:`, `Boolean()`, predicate methods
 
-The `truth` service (`src/compiler/emit/inputs.ts`, over the value road in `src/compiler/emit/lower.ts`) implements JavaScript's truthy/falsy rules over MQL primitives; a renderer whose result is provably a boolean carries the `Truth` brand ([src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)) and passes bare.
+`lowerTruth` in [src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts) is the truth READING of an expression, and [src/compiler/emit/mode.ts](../../src/compiler/emit/mode.ts) holds the rules it applies over MQL primitives. `Truth` is a brand the vocabulary declares ([src/registry/vocabulary.ts](../../src/registry/vocabulary.ts)) and `mode.ts` alone mints, and every slot that reads a boolean is typed to take one — so a value cannot land in `$cond.if` without passing through, and a value that is provably a boolean passes bare.
 
 - The JavaScript test emits `{ $and: [{$ne:[{$ifNull:[v,null]},null]}, {$ne:[v,false]}, {$ne:[v,""]}, {$ne:[v,0]}] }`. The null-check operand is wrapped in `$ifNull(v, null)` so it catches **both** `null` and *missing*: a bare `$ne:[v,null]` does **not** match missing — MongoDB's `$eq`/`$ne` treat a missing value as distinct from null (`{$eq:["$absent",null]}` is `false`), so without the wrap `arr.filter(x => x.f)` would wrongly keep elements where `f` is absent. `$ifNull` collapses missing → null first, matching JS where `undefined`/missing is falsy. The other three clauses compare the raw value (false/`""`/`0` are never "missing") and rely on type-bracketed comparison for the cross-type checks (e.g. `{$ne: ["abc", 0]}` is true). Empty array `[]` and empty object `{}` correctly stay truthy. NaN is treated as truthy — see "Truthy and falsy" in `LANGUAGE.md`.
-- `truth` lowers an expression in **boolean position** — anywhere only its truthiness is observed. Every such position goes through it, so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body (`genLambdaBoolBody`), the lodash predicate-run family (`resolvePredicate` — see `emit-pass.md`), `.compact()`, and the `$match` / Filter residual (`mergeTranslatedQuery` — see `emit-pass.md`). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
-- A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. Same answer (`jsBool(a && b)` is "a truthy AND b truthy"), but the `$cond` is invisible where nothing reads the returned operand, and wrapping it instead would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
-- An expression is provably boolean when it always compiles to a boolean MQL value: `BooleanLiteral`; `UnaryExpr` op `!`; comparison `BinaryExpr` (`==`, `===`, `!=`, `!==`, `<`, `<=`, `>`, `>=`, `in`); `&&` / `||` whose every operand is itself provably bool; `TypeCast` cast `Boolean`; `OperatorCall` whose name is in `BOOL_OUTPUT_OPS` (registry-driven); `MethodCall` whose name is in `BOOL_RETURNING_METHODS`. When true the codegen elides the `jsBool` wrap.
-- The `Truth` brand asks the same of the **rendered** value, for constructs that are boolean only after lowering and so have no bool-shaped AST to inspect: an inlined reusable function or IIFE (a `$let` whose body is a comparison), and a `jsmql.compile` parameter bound to a boolean. A sole key in `BOOL_OUTPUT_OPS`, a JS boolean, or a `$let` whose `in` is itself bool-valued all elide the wrap.
+- The truth reading covers every **boolean position** — anywhere only an expression's truthiness is observed — so one rule covers the whole language: a `?:` test, `!`, `Boolean()`, `assert()`, a predicate lambda body and the lodash predicate-run family (the `predicate` and `condition` services in [src/compiler/emit/inputs.ts](../../src/compiler/emit/inputs.ts), which read a callback's body through `lowerTruth`), `.compact()`, and the `$expr` residual the filter road emits where no row states a native query form (`matchExpr` in [src/compiler/emit/filter.ts](../../src/compiler/emit/filter.ts)). That is what makes `.compact()` identical to `.filter(Boolean)`, `.reject(p)` the exact complement of `.filter(p)`, and a stream `$$.filter(p)` agree with the value-mode `.filter(p)`.
+- A `&&` / `||` chain in boolean position becomes `$and` / `$or` of its **boolified operands**, spliced flat when an operand is already the same connective — *not* the operand-preserving `$cond` that value position emits. Same answer (`a && b` read for truth is "a truthy AND b truthy"), but the `$cond` is invisible where nothing reads the returned operand, and wrapping it instead would repeat the whole chain once per falsy-value clause. Value position (`$set({ v: $.a && $.b })`) keeps the `$cond`.
+- An expression is provably boolean when `kindOf` proves it so, from the registry alone: a boolean literal; a call, operator or method whose row states `returns: "bool"` — a comparison and `!` among them, each a production with its own row; `&&` / `||` whose every operand is itself provably bool; a `jsmql.compile` parameter the call bound to a JavaScript boolean. When it is, the check is elided and the lowered value is minted as a `Truth` unchanged, so `$.a > 1 ? 1 : 2` carries no test the comparison already made.
+- Constructs that are boolean only AFTER lowering have no bool-shaped node to inspect, and `lowerTruth` reads them structurally instead: a `&&` / `||` chain, a `!`, a `?:`, and an `ExprBlock` — an inlined reusable function or IIFE — each read for truth through its own parts and returned as a `Truth`.
 
 **Codegen rules:**
 

@@ -130,10 +130,10 @@ describe("$out — LHS shape errors", () => {
 });
 
 describe("$out — RHS shape errors", () => {
-  it("unrecognised chain method (not in the stream-methods registry) names the workaround", () => {
-    // A chain method resolves through the stream-methods registry (plus `.filter` /
-    // `.reject` and the stage-link form). Only a name in NONE of those reaches the
-    // "use a separate stage" hint.
+  it("a chain method no row states names the workaround", () => {
+    // A chain link is a method whose row carries a `stream` cell, or a stage
+    // ('$$.$match(…)'). Only a name that is neither reaches the "a stage is a link
+    // too" hint.
     expect(() => jsmql("$$$.coll = $$.unknownMethod();")).toThrow(
       "'.unknownMethod()' is not a method of the stream '$$'. A stage is a link too: '$$.$match(…)'.",
     );
@@ -148,9 +148,10 @@ describe("$out — RHS shape errors", () => {
     );
   });
 
-  // `STAGE_EQUIVALENT_HINT` only fires for a method the registry does NOT carry, so a
-  // registered one listed there would be dead weight — suggesting a workaround for
-  // something that already works. These are the two that genuinely have no chain form.
+  // A method the stream deliberately lacks says so on its own row: the `stream` cell is a
+  // refusal that names the alternative (src/registry/names.ts). A method the stream DOES
+  // carry states a rule there instead, so no refusal can suggest a workaround for something
+  // that already works. These are the two that genuinely have no chain form.
   it("names the stage equivalent for a JS method a stream chain deliberately lacks", () => {
     expect(() => jsmql("$$$.coll = $$.reduce((a, d) => a + d.n, 0);")).toThrow(
       "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",

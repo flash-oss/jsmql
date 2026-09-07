@@ -17,8 +17,8 @@
 // the value and stream forms.
 //
 // Where the two legitimately differ, the row says so and says WHY — see
-// docs/specs/match-query-translation.md § Documented semantic divergences. A divergence
-// without a row fails the suite.
+// docs/specs/emit-pass.md § The filter target for the documented divergences. A
+// divergence without a row fails the suite.
 //
 // Self-skips (green) when no mongod is reachable, like the other server-backed suites, and
 // carries the coverage guard that goes with that: a suite that quietly stops comparing is
@@ -62,7 +62,8 @@ const AGREE: readonly string[] = [
   "$.t === false",
   "$.s === 'hello'",
   "$.d > new Date('2024-01-01')",
-  // TypeIs — shared through src/predicate-ir.ts, and the reason this suite exists.
+  // `typeof` — one alias table in src/registry/vocabulary.ts read by both the query and
+  // the expression cells, and the reason this suite exists.
   'typeof $.a === "number"',
   'typeof $.s === "string"',
   // Mod
@@ -121,7 +122,7 @@ const DIVERGE: readonly { src: string; why: string }[] = [
     why:
       "Ordered comparison against a MISSING field. The query form `{a:{$lt:0}}` requires the " +
       "field to exist; the expression form compares `$a` as missing, which sorts BEFORE every " +
-      "number in BSON order, so `missing < 0` is true. Divergence 3 in match-query-translation.md.",
+      "number in BSON order, so `missing < 0` is true. Documented in emit-pass.md § The filter target.",
   },
   { src: "$.a <= 0", why: "Same as `<` — ordered comparison against a missing field." },
 ];

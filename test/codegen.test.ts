@@ -2,11 +2,11 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
 import { requiredReceiverFamily, valueMethodNames } from "../src/compiler/rows.ts";
-// The `jsBool()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
+// The `jsTruthy()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
 // `Boolean()`, and predicate bodies wherever the operand is not provably boolean.
 import { truthy, truthyAnd, truthyOr } from "./truthy.ts";
 
-// Mirror of `generateNumericIndexAccess`'s unknown-receiver branch: `v[i]` where
+// Mirror of the unknown-receiver branch of index access: `v[i]` where
 // the receiver type can't be proven means all three JS readings are live, so the
 // dispatch is array position → string character → document field named `"i"`.
 const indexAt = (v: unknown, i: number) => ({
@@ -37,7 +37,7 @@ const atOf = (v: unknown, i: unknown, strIndex: unknown = i) => ({
   },
 });
 
-/** Mirror of `coerceFieldKey`: the coercion an unprovable `$getField` key gets. */
+/** Mirror of src/compiler/emit/lower.ts: the coercion an unprovable `$getField` key gets. */
 const keyOf = (k: unknown) => ({ $toString: { $ifNull: [k, ""] } });
 
 /** The `$substrCP` start a negative `.at(-n)` resolves to on a string receiver. */
@@ -1108,10 +1108,10 @@ describe("ObjectId plausibility floor (timestamp predating MongoDB = typo)", () 
 });
 
 describe("jsmql.compile — opaque BSON bindings outside query-doc position", () => {
-  // Pre-existing bug, fixed in tandem with the template-tag side channel:
-  // `safeBoundValue` used to iterate `Object.entries(bsonInstance)` and
-  // silently collapse the value to `{}`. Bindings consumed inside an update
-  // op body, an aggregation expression, etc. now pass through intact.
+  // A bound value the source could not have spelled — a Date, a RegExp, an ObjectId —
+  // enters the tree as the value itself (`spellValue` in src/compiler/passes/inject.ts),
+  // so a binding consumed inside an update op body, an aggregation expression, etc.
+  // arrives intact.
 
   it("Date binding lands as a real Date inside an update op", () => {
     const q = jsmql.compile(({ at }: { at: Date }, { $ }) => ($.lastSeenAt = at));
@@ -1128,10 +1128,10 @@ describe("jsmql.compile — opaque BSON bindings outside query-doc position", ()
   });
 
   // Nested-BSON cases — symmetric with the template-tag nested-interp tests.
-  // `safeBoundValue` recurses through plain objects/arrays and short-circuits
-  // on `isOpaqueBsonValue`, so the same shapes that work via interpolation
-  // also work via parameter bindings — no manual unpacking required at the
-  // call site.
+  // A bound value goes in whole, so a Date or a RegExp nested inside a plain
+  // object or array keeps its instance: the same shapes that work via
+  // interpolation also work via parameter bindings — no manual unpacking
+  // required at the call site.
 
   it("Date nested inside a binding object preserves the instance", () => {
     const q = jsmql.compile(({ window }: { window: { since: Date; until: Date; unit: string } }) => $set({ window }));
@@ -2354,16 +2354,16 @@ describe("string methods", () => {
   });
 });
 
-describe("a Predicate IR cell says what the compiler actually emits", () => {
-  // A node can be declared before both sides CALL it — `Mod`'s expression form is still
-  // reached through codegen's generic binary path. That is fine only while the declared cell
-  // and the emitted MQL agree; a cell nobody checks is a comment pretending to be code.
-  it("Mod's Expr cell matches the generic binary lowering", () => {
+describe("a registry cell says what the compiler actually emits", () => {
+  // `%` states its value form on the `remainder` production and its query form through the
+  // equality cells that compose it (src/registry/productions.ts). That is fine only while the
+  // declared cell and the emitted MQL agree; a cell nobody checks is a comment pretending to be code.
+  it("the value cell of `%` matches the generic binary lowering", () => {
     expect(jsmql.expr("$.a % 5 === 0")).toEqual({ $eq: [{ $mod: ["$a", 5] }, 0] });
     expect(jsmql.expr("$.a % 5 !== 0")).toEqual({ $ne: [{ $mod: ["$a", 5] }, 0] });
   });
 
-  it("Mod's Query cell keeps $mod's [divisor, remainder] order", () => {
+  it("the query cell of `%` keeps $mod's [divisor, remainder] order", () => {
     // The single most swappable pair in the surface — 5 is the divisor, 0 the remainder.
     expect(jsmql("$.a % 5 === 0")).toEqual({ a: { $mod: [5, 0], $not: { $type: "array" } } });
     expect(jsmql("$.a % 5 !== 0")).toEqual({ $or: [{ a: { $not: { $mod: [5, 0] } } }, { a: { $type: "array" } }] });
@@ -2398,8 +2398,9 @@ describe("`=== undefined` is an existence test in both targets", () => {
 });
 
 describe("enum slots: an operator's is an expression slot, a stage's is not", () => {
-  // `checkArgEnum` and `checkEnum` look like duplicates and are NOT. Unifying them would
-  // break one side, so this pins the difference: verified on a live mongod, an operator's
+  // One `checkEnum` reads both slots and the ROW says which is which: a `$`-led string is a
+  // runtime field reference unless the slot is constant-only, where the server reads the
+  // string as itself. This pins the difference: verified on a live mongod, an operator's
   // enum slot evaluates an expression while a stage's is read literally.
   it("an operator's enum slot accepts a field reference — the server evaluates it", () => {
     expect(jsmql.expr("$dateTrunc({ date: $.d, unit: $.u })")).toEqual({ $dateTrunc: { date: "$d", unit: "$u" } });
@@ -2471,8 +2472,8 @@ describe("typeof: the Query and Expr targets agree", () => {
   });
 });
 
-describe("method arg-count errors (standardized via checkArity)", () => {
-  // The single `checkArity` formatter words every arg-count error as
+describe("method arg-count errors (one formatter over the row's `args`)", () => {
+  // One formatter in src/compiler/emit/errors.ts words every arg-count error as
   // `.<method>(<signature>) <quantity-clause>` — the signature shows the
   // intended call shape, the quantity clause is uniform across methods.
   it("exact count names the parameters in the signature", () => {
@@ -2920,8 +2921,9 @@ describe("reduce accumulator type narrowing", () => {
   });
 });
 
-// A `const` whose initialiser has a provable static type is recorded in
-// `ctx.bindingTypes`, and every receiver-type dispatch reads it — so a method on
+// A `const` whose initialiser has a provable static type is recorded as the
+// `Binding.type` the Env carries (src/compiler/emit/names.ts), and every
+// receiver-type dispatch reads it — so a method on
 // that binding picks its branch at compile time instead of emitting a runtime
 // `$cond` on `$isArray` whose other branch can never run. A `let` stays
 // conservative on purpose: it can be reassigned, so its type can drift.
@@ -3004,8 +3006,9 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
 
   it("jsmql's OWN materialised lookup slot is typed, so a chained method resolves at compile time", () => {
     // The rewritten receiver is a plain field path (`__jsmql.tmp.N`), but jsmql
-    // filled it from `$lookup.as` and records that in `ctx.slotTypes` — so a method
-    // chained onto it needs no runtime guard over the compiler's own scratch.
+    // filled it from `$lookup.as` and binds the slot with what the join yields
+    // (src/compiler/emit/join.ts) — so a method chained onto it needs no runtime
+    // guard over the compiler's own scratch.
     const setOfLast = (src: string) => {
       const p = jsmql.pipeline(src);
       return (p[p.length - 2] as { $set: Record<string, unknown> }).$set;
@@ -3067,7 +3070,8 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
   it("a nested lookup inherits the ancestor's correlation-var type", () => {
     // The inner `$lookup` reads the OUTER level's `$$jsmql_v0_ids` (MQL `$$` vars
     // are lexically scoped through sub-pipeline boundaries), so it allocates no
-    // `let` of its own — the type has to travel down with `inScopeLetNames`.
+    // `let` of its own — the type has to travel down with the binding, which the
+    // Env carries across the sub-pipeline boundary (`Binding.level`).
     const p = jsmql.pipeline(
       `const ids = $.tags.uniq();
        const r = $$$.orders.aggregate(o => { const inner = $$$.items.filter(i => ids.includes(i.pid)); });`,
@@ -4274,7 +4278,7 @@ describe("$let with lambda", () => {
 // right-folded nest of $let — one binding per decl, in source order, so each
 // decl's initialiser and the return see all prior decls as $$name. JS-faithful:
 // `=> {` always opens a block; an object return needs `=> ({ … })`.
-// See docs/specs/method-dispatch.md.
+// See docs/specs/grammar.md § Body: expression or block.
 describe("block-body arrow lambdas (→ nested $let)", () => {
   it(".map() with a single-decl block", () => {
     expect(jsmql.expr("$.items.map(x => { const y = x * 2; return y; })")).toEqual({
@@ -4495,7 +4499,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     // The suggestion names the method the developer meant, but must not imply that
     // method would accept the block as written: only `.aggregate` takes a pipeline,
-    // so the rule is stated either way (see src/callback-block.ts).
+    // so the rule is stated either way (the parser's own message — src/compiler/parse/parser.ts).
     it("states the callback rule rather than promising the suggested method takes stages", () => {
       for (const src of [
         "$.r = $$$.orders.aggregat((o) => { $limit(2); });",
@@ -8256,9 +8260,9 @@ describe("encrypted-string operators ($encStr*)", () => {
 });
 
 describe("window operators ($setWindowFields-only)", () => {
-  // Window operators are gated to `$setWindowFields.output` slots by
-  // `checkOperatorContext` in codegen.ts. Each test wraps the operator in
-  // a `$setWindowFields` stage and extracts the inner emission.
+  // A window operator states `where: ["window"]` on its row, so every other
+  // position is a refusal that names the `$setWindowFields` rewrite. Each test
+  // wraps the operator in a `$setWindowFields` stage and extracts the inner emission.
   function inWindow(opSrc: string): unknown {
     const src = `[$setWindowFields({ partitionBy: $.cat, sortBy: { ts: 1 }, output: { x: ${opSrc} } })]`;
     const out = jsmql(src) as Array<{ $setWindowFields: { output: { x: unknown } } }>;
@@ -9178,9 +9182,9 @@ describe("trailing commas (JS syntax)", () => {
 
 // The `jsmql` prefix on a compiler-emitted `$let`/`$map`/`$filter` variable is only
 // a convention — nothing stops a developer naming a param the same thing. What makes
-// the "never collides with a user-named param" invariant hold is `internalVar`'s
-// gensym (src/codegen.ts, over `exprVar` in src/namespace.ts): OUR binding moves
-// aside, the developer's name is left exactly as written.
+// the "never collides with a user-named param" invariant hold is the Env mint
+// `Scope.bind` (src/compiler/emit/names.ts, over `exprVar` in src/namespace.ts),
+// which gensyms: OUR binding moves aside, the developer's name is left exactly as written.
 describe("internal expression-variable names never capture a user param", () => {
   // One case per lowering that binds an internal var AND splices outer-scope
   // codegen into it — [source, the internal name the user's param collides with].

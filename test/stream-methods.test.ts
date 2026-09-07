@@ -1731,8 +1731,8 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   }
 
   it(".groupBy(<arrow>) still gets the collapsing $first unwrap the string form gets", () => {
-    // The regression this guards: `isCollapsingTerminal` keyed on `StringLiteral`, so
-    // only the string spelling was recognised as collapsing to a single object.
+    // `.groupBy`'s stream cell is the same collapse whichever spelling names the key
+    // (src/registry/names.ts), so the arrow form gathers into one object like the string one.
     const stages = jsmql(`$.o = $$$.orders.groupBy(d => d.cat);`) as object[];
     expect(JSON.stringify(stages)).toContain("$arrayToObject");
   });
@@ -1799,17 +1799,17 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   });
 
   it("a plain field key still emits byte-identically after the computed-key change", () => {
-    // The `fieldKeyArg` fast path in `keyExpr` exists so adding expression support
-    // couldn't perturb the overwhelmingly common spelling.
+    // A plain field key reads straight to its path, so expression support for the
+    // key cannot perturb the overwhelmingly common spelling.
     for (const m of ["groupBy", "countBy", "keyBy", "uniqBy"]) {
       expect(JSON.stringify(jsmql(`$$ = $$.${m}("cat");`)), m).toContain(`"_id":"$cat"`);
     }
   });
 
   it(".groupBy(<computed>) still collapses — the unwrap follows the key FORM, not its spelling", () => {
-    // Each time the key surface grew, `isCollapsingTerminal` stopped recognising the
-    // new spelling and silently returned the raw `[obj]` slot. It now tests "not the
-    // $group-body form", so it can't fall behind again.
+    // The collapse is the row's `collapses` fact (src/registry/names.ts), which every
+    // key spelling shares; only the raw `$group`-body form `{ _id: … }` keeps a stream.
+    // So a new key spelling collapses like the ones before it.
     for (const key of [`"cat"`, `d => d.cat`, `d => d.cat.toLowerCase()`]) {
       expect(JSON.stringify(jsmql(`$.o = $$$.orders.groupBy(${key});`)), key).toContain("$arrayToObject");
     }

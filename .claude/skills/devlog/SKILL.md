@@ -74,7 +74,7 @@ jsmql now parses `0x<24 hex digits>` as a live BSON ObjectId literal, so
 `$._id == 0x65a1…` round-trips to a real `ObjectId(...)` instead of a number.
 Chose the `0x` spelling over surfacing Extended-JSON `$oid` because [reason];
 `ObjectId("…")` and `new ObjectId("…")` are accepted as equivalent forms. See
-[src/lexer.ts](src/lexer.ts) and [docs/LANGUAGE.md](docs/LANGUAGE.md).
+[src/compiler/lex/lexer.ts](src/compiler/lex/lexer.ts) and [docs/LANGUAGE.md](docs/LANGUAGE.md).
 ```
 
 (Illustrative only — match the tone and depth of the entries already at the top of

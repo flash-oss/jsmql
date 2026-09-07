@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — refactor: the pointers the old compiler left behind
+
+The removal deleted thirty source modules and seven specs. The prose stayed. Comments, spec paragraphs and test titles across thirty-five files still named a deleted file or a deleted symbol as a thing that exists — `internalVar()` "in codegen.ts", a sort order "read by mql-sort.ts", "Divergence 3 in match-query-translation.md". A reader who followed one of those pointers found nothing, and a reader who trusted one learned a fact about a compiler that is gone.
+
+Each pointer now names the live owner, verified by opening the file and finding the symbol: the gensym is `Scope.bind` in `emit/names.ts`, the sort order is read by `emit/sort-spec.ts`, truthiness is `truthOf` in `emit/mode.ts`, the callback rule is the row's own cell, and the filter divergences are documented in `emit-pass.md § The filter target`. Where the only content was history — "five key-group dimensions were declared here and never populated", "which is how nine string methods once fell silently out of the registry" — the sentence is restated as the rule it was really about, or dropped.
+
+Two tables survive with corrected comments rather than a rewrite. `src/operators.ts` and `src/stages.ts` state operator and stage shapes that only the globals generator reads, and their comments claimed the compiler read them; the compiler reads `src/registry/`. That duplication is the next thing to remove.
+
+---
+
+
 ## 2026-09-07 — refactor: the words the old compiler left behind, part one — the pending machinery
 
 A registry cell could say `pending(<file>)`: the fact is stated, the lowering still lives in the module the string names, and a ratchet test counts the cells down. That was the migration's own scaffolding. Every lowering arrived, the ratchet reached zero, and the scaffolding stayed — a type in the vocabulary, an arm on three cell shapes, a verdict in `consult`, a branch in `select`, two throws in `lower`, an error class, a skip class in the differential gate, and a ratchet test counting a thing that cannot occur.

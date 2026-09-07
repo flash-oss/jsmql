@@ -5,8 +5,8 @@ import { jsmql } from "../src/index.ts";
 // when the predicate is index-safe, falling back to $expr for the parts that
 // aren't. This avoids the silent index-disabling effect of `{ $expr: ... }`.
 //
-// See `docs/specs/match-query-translation.md` for the translation rules and
-// the four documented semantic divergences from aggregation $eq.
+// See `docs/specs/emit-pass.md` § The filter target for the translation rules and
+// the documented semantic divergences from the aggregation form.
 
 describe("$match translation — equality", () => {
   it("translates `===` against a string literal", () => {

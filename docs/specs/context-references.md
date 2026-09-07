@@ -11,13 +11,13 @@ Four levels of jsmql doc-context prefix, one per scope:
 | `$$$`  | Current database  | `$$$.myColl.find(…)`     |
 | `$$$$` | Current cluster   | `$$$$.myDb.myColl.find(…)` |
 
-The first level (`$.` → `FieldRef`) has been the only doc-context prefix since the project started. The three new levels exist to give jsmql a uniform vocabulary for cross-collection / cross-database / cross-cluster references — the primary intended use is driving `$lookup` and similar multi-collection operators from a syntax users already understand.
+The four levels give jsmql one uniform vocabulary for document / collection / database / cluster references — the surface that drives `$lookup`, `$unionWith`, `$out` and the diagnostic source stages from a syntax users already understand.
 
-This spec covers **syntax only**. Codegen throws a `CodegenError` for any use of each prefix that isn't already wired into a shipped lowering (`$$.push(...)`, `$$$.coll.find/filter(...)`, the cross-database `$out` write `$$$$.db.coll = $$`, and the `$$$$` diagnostic source stages). A cross-database **read** (`$$$$.db.coll.find/filter(...)`) is parsed but **rejected at compile time** — see the `$$$$` status entry below. The semantic API surface for the remaining shapes (`$$.find/.filter` on the current collection, etc.) is staged into future releases.
+This spec covers the **syntax**: the tokens, the AST nodes and the parse. What each prefix MEANS belongs to the road that lowers it, and each road has its own spec — see [What each reference carries](#what-each-reference-carries). A prefix that reaches a position no row gives it a meaning in is refused there in that row's own words. A cross-database **read** (`$$$$.db.coll.find/filter(...)`) parses and is **rejected at compile time** — see the `$$$$` entry below.
 
 ## Lexer
 
-[`src/compiler/lex/lexer.ts`](../../src/compiler/lex/lexer.ts) — the `$` branch in `tokenize()` does longest-match counting over consecutive `$` characters, then chooses one of:
+[`src/compiler/lex/lexer.ts`](../../src/compiler/lex/lexer.ts) — `lex()` takes the longest token the table in [`src/registry/tokens.ts`](../../src/registry/tokens.ts) holds, so a run of `$` characters reads as one of:
 
 | Source              | Token            |
 | ------------------- | ---------------- |
@@ -28,9 +28,9 @@ This spec covers **syntax only**. Codegen throws a `CodegenError` for any use of
 | `$$$$` (4 `$`)      | `QuadDollar`     |
 | `$$$$$+` (5 or more)| `LexError`       |
 
-The trailing `.` / `[` is **not** consumed by the new prefix tokens — they're bare. Postfix parsing handles the dot or bracket via the existing `Dot` / `LBracket` token + `MemberAccess` / `IndexAccess` AST rule. The existing `$.` baked-in dot stays for back-compat (rewriting it would churn the parser and codegen for no DX gain).
+The trailing `.` / `[` is **not** part of a prefix token — each prefix is bare, and postfix parsing reads the dot or bracket as a `Dot` / `LBracket` token that a `MemberAccess` / `IndexAccess` node wraps. `$.` is the one prefix whose dot IS baked in: `$` alone is the document handle, so the two readings are told apart at the lexeme.
 
-`TOKEN_DISPLAY` entries are `'$$'`, `'$$$'`, `'$$$$'` so error messages stay human-readable.
+The table's row keys — `'$$'`, `'$$$'`, `'$$$$'` — are the spellings the parser's messages print, so an internal token name never leaks into a user-facing string.
 
 5+ consecutive `$` followed by anything throws:
 
@@ -38,7 +38,7 @@ The trailing `.` / `[` is **not** consumed by the new prefix tokens — they're 
 
 ## AST
 
-[`src/registry/ast.ts`](../../src/registry/ast.ts) — three new bare marker nodes added immediately after `FieldRef`:
+[`src/registry/ast.ts`](../../src/registry/ast.ts) — three bare marker nodes, beside `FieldRef`:
 
 ```ts
 | { type: "CollectionRef"; pos: number }   // $$
@@ -52,55 +52,43 @@ They carry no payload because the path / key information is captured by the exis
 - `$$["foo"]` → `IndexAccess { object: CollectionRef, index: StringLiteral "foo" }`
 - `$$$$[db].coll` → `MemberAccess { object: IndexAccess { object: ClusterRef, index: <ParamRef db> }, member: "coll" }`
 
-Why separate node types instead of a single `ContextRef { depth }`? Cleaner pattern-matching in codegen, and the three levels will diverge as semantics land — e.g. database-level needs a `coll` follow-up, cluster-level needs `db.coll` or `db[coll]`, collection-level may be a value of its own.
+Why separate node types instead of a single `ContextRef { depth }`? Each level carries a different surface — a database ref needs a collection after it, a cluster ref a database and a collection, and `$$` is a stream in its own right — so each is matched on its own rather than by counting a depth.
 
 ## Parser
 
-[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parsePrimary()` adds three cases that dispatch to one shared helper:
+[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `atom()` matches each prefix token on its own and returns the bare marker node, two lines apiece:
 
 ```ts
-case TokenType.DoubleDollar:  return this.parseContextRef("CollectionRef", "$$");
-case TokenType.TripleDollar:  return this.parseContextRef("DatabaseRef", "$$$");
-case TokenType.QuadDollar:    return this.parseContextRef("ClusterRef", "$$$$");
+case "DoubleDollar":
+  this.c.next();
+  return { type: "CollectionRef", pos: t.pos };
+// TripleDollar → DatabaseRef and QuadDollar → ClusterRef read the same way.
 ```
 
-`parseContextRef(nodeType, displayPrefix)`:
-1. Consumes the prefix token (captures `pos`).
-2. Sanity-guards that the next token is `Dot` or `LBracket`. Otherwise throws `ParseError`:
-   > `Expected '.<name>' or '[<expr>]' after '${displayPrefix}' at position N`
+The prefix carries no follow-token guard of its own, because a prefix IS a whole expression: `$$$.<coll> = $$` has a bare `$$` as its RHS. What may follow one is the surrounding grammar's question — the typo `$$foo` (no separator, an identifier next) is a parse error where the statement ends, and a bare prefix that no road claims is refused at emit, in the words its row states.
 
-   This matches the spirit of `parseFieldRef`'s "expected field name after `$.`" check — bare `$$`, `$$foo`, etc. yield an actionable message instead of a downstream surprise.
-3. Returns the bare marker node `{ type: nodeType, pos }`.
+Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens in the standard primary-postfix loop.
 
-Postfix wrapping (`MemberAccess`, `IndexAccess`, optional chains, calls) happens in the standard primary-postfix loop — no parser changes needed there.
+## Lowering
 
-## Codegen
+[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — the three marker nodes share one case on the value road, `rootAsValue`, which asks the node's registry row what it says about the position the node stands in and throws that refusal with the node's own `pos`:
 
-[`src/compiler/emit/lower.ts`](../../src/compiler/emit/lower.ts) — three new cases in the main `_generate` switch immediately after `FieldRef`. Each throws a `CodegenError` with the offending node's `pos`:
-
-```ts
-case "CollectionRef":
-  throw new CodegenError(
-    "'$$' (current-collection reference) is reserved syntax — " +
-    "not yet lowered to MQL. Coming in a future release.",
-    expr.pos,
-  );
-// DatabaseRef and ClusterRef follow the same pattern.
+```
+$.x = $$
+→ '$$' (current collection) is statement-only. In a value slot use a name on it, e.g. '$$.length'.
 ```
 
-Because postfix wraps recurse into their `object` first, any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) reaches the leaf marker node, fires `CodegenError`, and never needs special handling at the wrapper site.
+Because postfix wraps recurse into their `object` first, any chained form (`$$.foo`, `$$$[x]`, `$$$$[a].b.c()`) that no road claims reaches the leaf marker node and is refused there, so no wrapper site needs a case of its own.
 
-`src/index.ts` already maps `CodegenError` → `ValidationError` (see the [error table in src/CLAUDE.md](../../src/CLAUDE.md)), so `jsmql.validate("$$.foo")` returns `{ valid: false, errors: [{ ..., pos: <prefix-pos> }] }` automatically. No `index.ts` changes were required.
+`src/index.ts` maps `CodegenError` → `ValidationError` (see the [error table in src/CLAUDE.md](../../src/CLAUDE.md)), so `jsmql.validate("$.x = $$")` returns `{ valid: false, errors: [{ ..., pos: <prefix-pos> }] }`.
 
 ## Helpers that pattern-match `FieldRef`
 
-The emitter locates a `FieldRef` through one function, `locate` in `src/compiler/emit/lower.ts`, which every write target and read shares.
+The emitter locates a `FieldRef` through one function, `locate` in `src/compiler/emit/lower.ts`, which every write target and read shares. A context ref is not a document field path, so `locate` answers `null` for one and each caller says its own thing:
 
-- Path extractors give up — context refs aren't document field paths.
-- Assignment-target validator rejects them — you can't write to `$$.foo`.
-- Match-translation falls through to `$expr`, which then triggers the codegen throw.
-
-No changes needed to any of these helpers.
+- A read has no path to render.
+- A write target is rejected — you cannot write to `$$.foo`.
+- The filter road drops to `$expr`, where the value road's refusal fires.
 
 ## Tests
 
@@ -109,12 +97,12 @@ No changes needed to any of these helpers.
 - Both postfix forms (`.name`, `[expr]`) at every depth.
 - All four mixed forms at depth 4 (`.dot.dot`, `[bracket][bracket]`, `[bracket].dot`, `.dot[bracket]`).
 - `.pos` correctness — every error points at the prefix token, not zero.
-- Postfix composition through the ref (`$$$.myColl.find(...)` still throws at the leaf).
-- Parser sanity-guard messages for bare `$$` / `$$foo` / `$$$` / `$$$$`.
+- Postfix composition through the ref (`$$$.myColl.find(...)` in a value position outside a Pipeline reaches the leaf refusal).
+- The refusal for a bare `$$` / `$$$` / `$$$$`, each naming its own prefix, and the parse error for the typo `$$foo`.
 - Lexer cap (5+ `$`).
-- Existing `$.` behaviour is unchanged.
+- `$.` behaviour is unaffected by the prefix tokens.
 
-Tests use the string form rather than the arrow form, but the arrow form now type-checks too: `$$` / `$$$` / `$$$$` are declared as ambient globals in [`src/globals.ts`](../../src/globals.ts) (via `import "@koresar/jsmql/globals"`), with completion for the diagnostic source stages and — on `$$` — the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …) — see `globals-generation.md` § Context references.
+Tests use the string form rather than the arrow form, but the arrow form type-checks too: `$$` / `$$$` / `$$$$` are declared as ambient globals in [`src/globals.ts`](../../src/globals.ts) (via `import "@koresar/jsmql/globals"`), with completion for the diagnostic source stages and — on `$$` — the stream vocabulary (`$$.filter(...)`, `$$.map(...)`, `$$.slice(...)`, …) — see `globals-generation.md` § Context references.
 
 ## What each reference carries
 

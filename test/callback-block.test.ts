@@ -2,7 +2,7 @@
 // method is JavaScript — `const`/`let` bindings plus one `return <expr>` — and
 // pipeline stages belong to `.aggregate(pipeline)` alone.
 //
-// See src/callback-block.ts and docs/specs/method-dispatch.md § Callback block bodies.
+// See docs/specs/grammar.md § Statement block and docs/specs/lookup-stage.md § Block bodies.
 
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
@@ -179,12 +179,12 @@ describe("in-document array callbacks are untouched", () => {
   });
 });
 
-// The `$$ =` source switch reaches a lookup by two steps that both classify the
-// predicate before the lowering folds it: `chainHasCorrelatingFilter` decides whether
-// the chain correlates, and `lowerLookupPivot` builds its own `LookupCall` instead of
-// taking one from `detectLookupCall`. Both must apply the fold, or a `{ return <pred> }`
-// block picks the wrong lowering and then loses the predicate — an empty sub-pipeline
-// that matches every foreign document, which is valid MQL and therefore silent.
+// The `$$ =` source switch reaches a lookup through the same `lookupOf` every other
+// join road takes (src/compiler/emit/join.ts), and whether the chain correlates is what
+// its body captured — never a separate reading of the predicate. So a `{ return <pred> }`
+// block classifies exactly as the bare expression does. A spelling that lost the
+// predicate would leave an empty sub-pipeline matching every foreign document, which is
+// valid MQL and therefore silent.
 describe("the `$$ =` source switch folds a callback block before it classifies", () => {
   const PAIRS: [string, string, string][] = [
     [

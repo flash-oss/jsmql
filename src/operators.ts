@@ -10,11 +10,12 @@ export type FlexShape = { kind: "flex" };
 export type OperatorShape = SingleShape | ArrayShape | ObjectShape | NoneShape | FlexShape;
 
 // ── Argument-validation metadata (the `args` dimension) ──────────────────────
-// Optional per-operator rules that drive the literal-gated operator-argument
-// validator in src/operator-validation.ts (the mirror of stage-validation.ts).
-// Every field is optional and only consulted for the call shapes it applies to;
-// an operator with no `args` is validated by shape alone (arity for none/single/
-// array). See docs/specs/operator-validation.md.
+// Optional per-operator rules: the argument shape an operator accepts, stated as
+// data. Every field is optional and only applies to the call shapes it names; an
+// operator with no `args` is described by its shape alone (arity for none/single/
+// array). The compiler's own literal-gated checks read the cells on the row in
+// src/registry/names.ts, not this table — see docs/specs/emit-pass.md § Operand
+// shapes and the checks.
 
 /** The BSON type family a literal arg must belong to (a literal of another family is a certain violation). */
 export type ArgType =
@@ -29,7 +30,7 @@ export type ArgType =
   | "timestamp"
   | "number-or-date";
 
-/** A named, shared enum set resolved in operator-validation.ts, or an inline literal set.
+/** A named, shared enum set the rule's reader resolves, or an inline literal set.
  *  `weekday` matches case-insensitively; `regexFlags` is a per-character charset check. */
 export type EnumRef = readonly string[] | "timeUnit" | "weekday" | "bsonTypeName" | "regexFlags";
 
@@ -56,16 +57,9 @@ export type ArgRules = {
   keyTypes?: Record<string, ArgType>;
 };
 
-// Five more key-group dimensions were declared here and never populated by any operator:
-// `keyIntBounds`, `exactlyOneOf`, `atLeastOneOf`, `mutuallyExclusive`, `branches`. A rule
-// nothing produces and nothing reads is not a capability — it is a claim the registry
-// cannot back, and it makes the vocabulary look wider than it is. They are gone.
-//
-// Two of them describe checks that DO exist, hand-written in `stage-validation.ts`
-// (`$setWindowFields` window `documents`/`range`, `$fill` output `value`/`method`). Those
-// are STAGE body rules, and `StageDef` has no `args` field yet — so the shared vocabulary
-// gets rebuilt from what the stages actually need, not from what was guessed in advance.
-// See docs/specs/lowering-grid.md.
+// Every field above is populated by at least one operator. A rule nothing produces
+// and nothing reads is not a capability — it is a claim the registry cannot back,
+// and it makes the vocabulary look wider than it is.
 
 export const OPERATOR_CATEGORIES = [
   "arithmetic",
@@ -97,17 +91,17 @@ export type OperatorDef = {
   category: OperatorCategory;
   description: string;
   // Accumulator-only operators (`$push`, `$addToSet`, `$top`, …) are valid only
-  // inside `$group` field-value slots or `$setWindowFields` output slots. Codegen
-  // gates them on this flag — it is the single source of truth, so adding an
-  // accumulator-only operator is one edit here (no shadow set in codegen). Ops
-  // that have *both* expression and accumulator forms ($sum, $avg, $max, …) are
-  // unrestricted and leave this unset.
+  // inside `$group` field-value slots or `$setWindowFields` output slots. This flag
+  // marks them for the readers of this table; the compiler's own gate is the row's
+  // `where` in src/registry/names.ts. Ops that have *both* expression and
+  // accumulator forms ($sum, $avg, $max, …) are unrestricted and leave this unset.
   accumulatorOnly?: boolean;
   // Query-position-only operators ($sampleRate): valid as a `$match` BODY key, never as
   // an aggregation expression. The server has no expression form, so emitting one is an
   // HR3 violation — `$match($sampleRate(0.1))` must produce `{ $match: { $sampleRate: 0.1 } }`,
-  // not an `$expr` wrap. This flag is the single source of truth; the match translator
-  // reads it to lower the query form, and codegen reads it to reject everywhere else.
+  // not an `$expr` wrap. This flag marks them for the readers of this table; the
+  // compiler lowers the query form and refuses every other position from the row's
+  // `where: ["filter"]` in src/registry/names.ts.
   matchOnly?: boolean;
   // Optional argument-validation rules (see ArgRules). Attached via withArgs(...).
   args?: ArgRules;
@@ -331,9 +325,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
 
   // ── Array ──────────────────────────────────────────────────────────────────
   $arrayElemAt: array("array", "Returns the element at the specified array index."),
-  // A literal pairs-array argument is wrapped one level deeper in codegen
-  // (`{ $arrayToObject: [pairs] }`) so MongoDB reads it as the single argument
-  // rather than an argument list — see `arrayToObjectOfLiteralPairs` in codegen.ts.
+  // Single-shape: the one argument IS the pairs array, so the emitted
+  // `{ $arrayToObject: [[k, v], …] }` reads as one operand, never as an argument list.
   $arrayToObject: single("array", "Converts an array of key-value pairs to a document."),
   $concatArrays: array("array", "Concatenates arrays to return the concatenated array."),
   $filter: obj(
@@ -409,8 +402,8 @@ export const OPERATORS: Record<string, OperatorDef> = {
   ),
 
   // ── Date ───────────────────────────────────────────────────────────────────
-  // Argument *types* (date slots, integer amounts, …) are validated via the
-  // `args` rules below + src/operator-validation.ts — see OPERATOR_ARG_RULES.
+  // Argument *types* (date slots, integer amounts, …) are stated in the `args`
+  // rules below — see OPERATOR_ARG_RULES.
   $dateAdd: obj("date", "Adds a number of time units to a date object.", "startDate", "unit", "amount", "timezone"),
   $dateDiff: obj(
     "date",
@@ -662,9 +655,10 @@ export type OperatorReturn = "string" | "number" | "bool" | "array" | "object" |
 
 /**
  * The result category of every operator whose return type is **invariant** — the
- * same whatever its arguments are. Single source of truth for the type-inference
- * passes in codegen (string context, array-ness, boolean-ness) and for the chain
- * type-check that rejects a JavaScript method on an incompatible receiver.
+ * same whatever its arguments are. What the compiler proves a value to be comes
+ * from each row's own measured `returns` (src/registry/names.ts, read through
+ * src/compiler/emit/types.ts); a test holds the two in step, so a category here
+ * and a category on the row can never disagree.
  *
  * **Every entry was read off a live mongod** with `{ $type: { <op>: <args> } }`,
  * not lifted from the vendored spec: the spec's `type:` field is wrong in at
@@ -828,7 +822,9 @@ export function operatorsReturning(cat: OperatorReturn): Set<string> {
 // ── Argument-validation rules ────────────────────────────────────────────────
 // Per-operator ArgRules, attached to the OPERATORS entries above via withArgs at
 // module load (one reviewable block beats inline withArgs on 40+ multi-line
-// rows). Consumed by src/operator-validation.ts; see docs/specs/operator-validation.md.
+// rows). The compiler enforces its own copy of these rules from the cells on the
+// rows in src/registry/names.ts; see docs/specs/emit-pass.md § Operand shapes and
+// the checks.
 //
 // `required ∪ optional` is the CLOSED key set used for object-form unknown-key
 // detection — list EVERY valid key (incl. ones absent from the positional `keys`

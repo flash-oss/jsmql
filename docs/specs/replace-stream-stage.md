@@ -43,16 +43,15 @@ The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
 
 ## Bare `$$` as an assignment target
 
-`parseContextRef` in `src/compiler/parse/parser.ts` lets the `CollectionRef`
-variant (`$$`) accept a following `=` token, in addition to `.` and `[`.
-The other context prefixes (`$$$`, `$$$$`) keep the strict rule —
-`$$$ = X` / `$$$$ = X` are meaningless and stay parse-rejected.
+The parser's write check — `requirePlace` / `requireWriteTarget` in
+`src/compiler/parse/parser.ts` — counts a context ref as a PLACE alongside a
+`FieldRef`, a binding and a `MemberAccess` chain, so `$$ = X` parses like any
+other assignment. WHICH target then means something is the emit phase's
+question: `$$` is the stream, `$$$.<coll>` and `$$$$.<db>.<coll>` are `$out`
+destinations ([out-stage.md](out-stage.md)), and a bare `$$$` / `$$$$` is
+refused there, naming the segment that is missing.
 
-`isFieldPathTarget` in `src/compiler/parse/parser.ts` accepts
-`CollectionRef` as an assignment target, alongside the existing `FieldRef`
-and `MemberAccess` chains.
-
-No new tokens or AST nodes. The shape is `AssignExpr { target: CollectionRef, value: <expr>, pos }`.
+No tokens or AST nodes of its own. The shape is `AssignExpr { target: CollectionRef, value: <expr>, pos }`.
 
 ## Lowering
 
