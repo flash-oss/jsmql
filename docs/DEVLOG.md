@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — feat!: one grouping spelling, and a generator says what it is
+
+`Object.groupBy($.items, x => x.k)` and `$.items.groupBy(x => x.k)` emitted the identical MQL. Two spellings of one capability is the friction jsmql rejects, so the `Object` receiver is refused. The name still parses, which is the point: a refused name gets a message that names the form that works, where a deleted one would leave "unknown identifier". Its two internal errors go with it — a non-arrow discriminator and a two-parameter arrow both used to answer "jsmql internal error (please report to the jsmql maintainers)" with `.pos = 0`, which asked the developer to file a bug for their own typo and left tooling with no position.
+
+Two registry audits caught the change honestly and had to learn one thing: a family listed in `on` whose value cell is a REFUSAL takes no callback, so it states no iteratee layout. Every other family still must.
+
+`function*` said "Expected '(' but got '*'". `docs/LANGUAGE.md` states twice that a generator is refused with a pointer to the plain form, and the parser's own test said so in its title while asserting the token error. Both spellings — a declaration and a function expression — now name the plain `function` and the arrow. `async function` got the same treatment, because the documented sentence covers both and its old message ("Expected an assignment but got 'function'") named nothing. A binding or field NAMED `async` is untouched: the refusal fires only where the next word is `function`.
+
+---
+
+
 ## 2026-09-07 — fix(compiler): a refusal names the method the source spells, and the way out compiles
 
 `$.a.reverse(1)` answered "'.toReversed()' takes no arguments, got 1". A mutator is rewritten to its immutable twin before it is lowered — `.reverse()` becomes `$.a = $.a.toReversed()` — and the arity refusal then named the twin, a name the developer cannot find anywhere in their program. A rewritten call carries `wrote`, the name the SOURCE spells, and every message reads that. `.sort(1, 2)` names `.sort` now, `.splice` names `.splice`, and a call no pass renamed is unaffected. `wrote` is provenance, not meaning: the desugar suite strips it beside `pos`, because a sugar still MEANS the plain form it becomes.

@@ -10194,10 +10194,6 @@ export const NAMES = {
       // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
       // '_id' is the group key. The other two spellings are iteratees as usual.
       stream: { 0: ["propertyPath", "matchesPropertyPair"] },
-      Object: {
-        arrowOnly:
-          "'Object.groupBy(collection, discriminator)' takes the collection first; its discriminator is an arrow only.",
-      },
     },
     returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
@@ -10211,10 +10207,11 @@ export const NAMES = {
             groupedByKey(recv, args[0] === undefined ? identity(bind) : iteratee(args[0]), bind),
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value — see its 'stream' cell."),
-        Object: {
-          args: { sig: "items, x => key", exact: 2 },
-          emit: ({ args, value, iteratee, bind }) => groupedByKey(value(args[0]), iteratee(args[1]), bind),
-        },
+        // Parsed so the name gets an answer, and refused: the receiver form is the one spelling,
+        // and it emits the identical MQL.
+        Object: unsupported(
+          "'Object.groupBy(collection, discriminator)' is not part of jsmql — the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL.",
+        ),
       },
     },
     stream: {

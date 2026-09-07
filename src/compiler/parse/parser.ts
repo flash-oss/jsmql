@@ -397,6 +397,7 @@ class Parser {
 
   private statement(): PipelineStmt {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    this.refuseAsync();
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writes();
     return this.expression();
@@ -407,9 +408,38 @@ class Parser {
     return this.c.is("Ident") && WORDS.get(this.c.peek().text) === "functionBinding" && this.c.peek(1).type === "Ident";
   }
 
+  /**
+   * `function*` — a generator. MQL evaluates an expression; it has no way to suspend
+   * one, so the star has no meaning here and the plain forms do. Refused where the
+   * star sits, rather than as a stray token the parser trips over.
+   */
+  private refuseGenerator(): void {
+    if (!this.c.is("Star")) return;
+    throw new ParseError(
+      `jsmql does not support generator functions ('function*') at position ${this.c.peek().pos}. Write a plain 'function (…) { return <expr>; }' or an arrow '(…) => <expr>'.`,
+      this.c.peek().pos,
+    );
+  }
+
+  /**
+   * `async function` — a promise. MQL evaluates an expression and has nothing to
+   * await, so the word has no meaning here. Refused where it sits, beside the
+   * generator refusal, rather than as a stray token further along.
+   */
+  private refuseAsync(): void {
+    const t = this.c.peek();
+    if (t.type !== "Ident" || t.text !== "async") return;
+    if (WORDS.get(this.c.peek(1).text ?? "") !== "functionBinding") return;
+    throw new ParseError(
+      `jsmql does not support async functions ('async function') at position ${t.pos}. Write a plain 'function (…) { return <expr>; }' or an arrow '(…) => <expr>'.`,
+      t.pos,
+    );
+  }
+
   /** `function name(params) { … }` — the same node the arrow spelling builds. */
   private functionDecl(): FuncDecl {
     const kw = this.c.next();
+    this.refuseGenerator();
     const name = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaBody(params, kw.pos);
@@ -436,6 +466,7 @@ class Parser {
    */
   private functionExpr(): Lambda {
     const kw = this.c.next();
+    this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
     return this.lambdaBody(params, kw.pos);
@@ -902,6 +933,7 @@ class Parser {
         return { type: "NewExpression", callee, args, pos: t.pos };
       }
       case "Ident":
+        this.refuseAsync();
         if (WORDS.get(t.text) === "functionBinding") return this.functionExpr();
         return this.identifierOrLambda();
       default:

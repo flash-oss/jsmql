@@ -52,13 +52,30 @@ function source(name: string, family: Family, slot: number, arg: string): { src:
 
 const compile = (src: string, expr: boolean): string => canon(expr ? jsmql.expr(src) : jsmql(src));
 
+/**
+ * Is this family REFUSED in value position? A refused family takes no callback, so it
+ * states no iteratee layout — `groupBy` is spelled on `Object` only to give
+ * `Object.groupBy(…)` a message that names the receiver form.
+ */
+const refusedFamily = (row: { expr?: unknown }, family: string): boolean => {
+  const cell = row.expr as { perFamily?: Record<string, unknown> } | undefined;
+  const branch = cell?.perFamily?.[family];
+  return (
+    typeof branch === "object" &&
+    branch !== null &&
+    typeof (branch as { unsupported?: unknown }).unsupported === "string"
+  );
+};
 describe("registry — iterateeSlots covers exactly the receivers the row lists", () => {
   it("has one entry per family in `on`, and no entry outside it", () => {
     const wrong: string[] = [];
     for (const [name, row] of rows()) {
       const listed = new Set<string>(familiesOf(row));
       const declared = new Set(Object.keys(row.iterateeSlots as object));
-      for (const f of listed) if (!declared.has(f)) wrong.push(`${name}: '${f}' is in \`on\` with no layout`);
+      for (const f of listed) {
+        if (refusedFamily(row, f)) continue;
+        if (!declared.has(f)) wrong.push(`${name}: '${f}' is in \`on\` with no layout`);
+      }
       for (const f of declared) if (!listed.has(f)) wrong.push(`${name}: layout for '${f}', which \`on\` omits`);
     }
     expect(wrong).toEqual([]);

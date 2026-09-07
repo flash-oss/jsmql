@@ -6819,9 +6819,23 @@ describe("BigInt literals", () => {
   });
 });
 
-describe("Object.groupBy", () => {
-  it("groups by category", () => {
-    expect(jsmql.expr("Object.groupBy($.items, x => x.category)")).toEqual({
+describe("Object.groupBy — refused; the receiver form is the one spelling", () => {
+  // `Object.groupBy(items, fn)` and `items.groupBy(fn)` emitted the identical MQL, and
+  // one capability gets one spelling. The refused name still parses, so the message
+  // names the form that works instead of leaving an unknown identifier.
+  for (const src of [
+    "Object.groupBy($.items, x => x.category)",
+    "Object.groupBy($.items, $.f)",
+    "Object.groupBy($.items, (a, b) => a)",
+  ]) {
+    it(`refuses ${src}`, () => {
+      expect(() => jsmql.expr(src)).toThrow(/'Object\.groupBy\(collection, discriminator\)' is not part of jsmql/);
+      expect(() => jsmql.expr(src)).toThrow(/Write '<collection>\.groupBy\(<discriminator>\)'/);
+    });
+  }
+
+  it("the receiver form groups by the key, as lodash does", () => {
+    expect(jsmql.expr("$.items.groupBy(x => x.category)")).toEqual({
       $arrayToObject: {
         $map: {
           input: {
@@ -6844,16 +6858,6 @@ describe("Object.groupBy", () => {
         },
       },
     });
-  });
-  it("rejects non-lambda discriminator", () => {
-    expect(() => jsmql.expr("Object.groupBy($.items, $.f)")).toThrow(
-      "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a callback body from an argument that is not an expression arrow",
-    );
-  });
-  it("rejects multi-param lambda", () => {
-    expect(() => jsmql.expr("Object.groupBy($.items, (a, b) => a)")).toThrow(
-      "jsmql internal error (please report to the jsmql maintainers): a renderer asked for a one-parameter callback and the arrow has 2",
-    );
   });
 });
 

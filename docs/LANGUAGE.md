@@ -1903,14 +1903,22 @@ new Set($.a).isSupersetOf(new Set($.b))   // { $setIsSubset: ["$b", "$a"] }   (s
 
 Need `$allElementsTrue` / `$anyElementTrue`? Use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
-### `Object.groupBy()` (ES2024)
+### Grouping: `<collection>.groupBy()`
+
+```js
+$.items.groupBy(x => x.category)
+// → an object keyed by the discriminator, each key holding the matching elements
+```
+
+The discriminator is a single-parameter arrow, a field name (`"category"`), or omitted for the element itself. A non-string key is wrapped in `$toString`, matching JavaScript, where an object key is coerced to a string.
+
+**`Object.groupBy(collection, discriminator)` is not a jsmql name.** It said the same thing as the receiver form and emitted the identical MQL, and one capability gets one spelling. The name still parses, so writing it names the form that works:
 
 ```js
 Object.groupBy($.items, x => x.category)
-// → $reduce that accumulates an object keyed by the discriminator
+// → ❌ CodegenError: 'Object.groupBy(collection, discriminator)' is not part of jsmql …
+//    Write '<collection>.groupBy(<discriminator>)'
 ```
-
-The discriminator must be a single-parameter arrow function. Non-string discriminators are wrapped in `$toString` automatically (matching JS, where the key is coerced to a string property name). `Map.groupBy()` is not supported — MQL has no Map type.
 
 ### lodash object methods
 

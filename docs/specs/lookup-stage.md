@@ -32,7 +32,7 @@ All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/
 | { type: "Lambda"; params: string[]; body?: Expr; block?: Pipeline; pos: number }
 ```
 
-Exactly one of `body` / `block` is set. Every consumer that needs a value (an array method's callback, an IIFE, `Object.groupBy`, `$let`) refuses a block-form lambda with an actionable error — `.aggregate` is the one position that keeps a block — so a call site that reads `lambda.body` is total after that check.
+Exactly one of `body` / `block` is set. Every consumer that needs a value (an array method's callback, an IIFE, `$let`) refuses a block-form lambda with an actionable error — `.aggregate` is the one position that keeps a block — so a call site that reads `lambda.body` is total after that check.
 
 ## The join road
 

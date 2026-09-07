@@ -446,8 +446,13 @@ describe("`function` keyword — parity with the arrow form", () => {
 
   it("rejects a generator `function*` with an actionable message", () => {
     expect(() => jsmql("function* f(x) { return x } $ = { a: f($.n) }")).toThrow(
-      "Expected '(' but got '*' at position 8",
+      "jsmql does not support generator functions ('function*') at position 8. Write a plain 'function (…) { return <expr>; }' or an arrow '(…) => <expr>'.",
     );
+    // `async` gets the same sentence, and a binding or field NAMED async is untouched
+    expect(() => jsmql("async function f(x) { return x } $.a = f($.n);")).toThrow(
+      /jsmql does not support async functions/,
+    );
+    expect(() => jsmql("let async = 1; $.a = async;")).not.toThrow();
   });
 
   it("`function` is not a reserved keyword — object keys and field paths keep working", () => {
@@ -470,8 +475,8 @@ describe("compile params resolve inside every higher-order callback", () => {
     });
   });
 
-  it("resolves a param inside Object.groupBy", () => {
-    const build = jsmql.expr.compile<{ k: string }>(({ k }, { $ }) => Object.groupBy($.items, (x) => x[k]));
+  it("resolves a param inside .groupBy", () => {
+    const build = jsmql.expr.compile<{ k: string }>(({ k }, { $ }) => $.items.groupBy((x) => x[k]));
     expect(JSON.stringify(build({ k: "t" }))).toContain('"t"');
   });
 });

@@ -867,12 +867,9 @@ function padded(side, recv, args, value, bind) {
   const need = { $subtract: [target, { $strLenCP: v.ref }] };
   const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
   const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  return {
-    $let: {
-      vars: { [v.as]: coerceStringBinding(recv) },
-      in: { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] }
-    }
-  };
+  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
+  const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
+  return { $let: { vars: { [v.as]: coerceStringBinding(recv) }, in: bounded } };
 }
 function identity(bind) {
   const x = bind("x");
@@ -6781,7 +6778,10 @@ var NAMES = {
     expr: unsupported(
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
-    stream: unsupported("'.reverse()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
+    // The twin is refused here for the same reason, so naming it would be a dead end.
+    stream: because(
+      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want."
+    ),
     statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.reverse()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reverse()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
@@ -6795,7 +6795,7 @@ var NAMES = {
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => reverseArrayOf(recv) },
     stream: because(
-      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want."
+      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want."
     ),
     statement: unsupported(
       "'.toReversed()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toReversed();'"
@@ -9987,7 +9987,7 @@ var NAMES = {
     window: unsupported("'.keyBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   groupBy: name({
-    collapses: "withFieldName",
+    collapses: "unlessRawBody",
     doc: "'.groupBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream", "Object"],
@@ -9996,10 +9996,7 @@ var NAMES = {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
       // '_id' is the group key. The other two spellings are iteratees as usual.
-      stream: { 0: ["propertyPath", "matchesPropertyPair"] },
-      Object: {
-        arrowOnly: "'Object.groupBy(collection, discriminator)' takes the collection first; its discriminator is an arrow only."
-      }
+      stream: { 0: ["propertyPath", "matchesPropertyPair"] }
     },
     returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
@@ -10012,10 +10009,11 @@ var NAMES = {
           emit: ({ recv, args, iteratee, bind }) => groupedByKey(recv, args[0] === void 0 ? identity(bind) : iteratee(args[0]), bind)
         },
         stream: unsupported("'.groupBy()' on a stream is a stage, not a value \u2014 see its 'stream' cell."),
-        Object: {
-          args: { sig: "items, x => key", exact: 2 },
-          emit: ({ args, value, iteratee, bind }) => groupedByKey(value(args[0]), iteratee(args[1]), bind)
-        }
+        // Parsed so the name gets an answer, and refused: the receiver form is the one spelling,
+        // and it emits the identical MQL.
+        Object: unsupported(
+          "'Object.groupBy(collection, discriminator)' is not part of jsmql \u2014 the collection's own method says the same thing, and one capability gets one spelling. Write '<collection>.groupBy(<discriminator>)': '$.items.groupBy(d => d.k)' emits the identical MQL."
+        )
       }
     },
     stream: {
@@ -10193,7 +10191,8 @@ var NAMES = {
     doc: "'.pick()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["object", "stream"],
-    returns: { object: "unknown", stream: "stream" },
+    // The value form builds a document literal, so the result IS an object.
+    returns: { object: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10230,7 +10229,8 @@ var NAMES = {
     doc: "'.omit()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["object", "stream"],
-    returns: { object: "unknown", stream: "stream" },
+    // The value form builds a document literal, so the result IS an object.
+    returns: { object: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -14948,6 +14948,7 @@ var Parser = class _Parser {
   }
   statement() {
     if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    this.refuseAsync();
     if (this.functionAhead()) return this.functionDecl();
     if (this.writeAhead()) return this.writes();
     return this.expression();
@@ -14956,9 +14957,36 @@ var Parser = class _Parser {
   functionAhead() {
     return this.c.is("Ident") && WORDS.get(this.c.peek().text) === "functionBinding" && this.c.peek(1).type === "Ident";
   }
+  /**
+   * `function*` — a generator. MQL evaluates an expression; it has no way to suspend
+   * one, so the star has no meaning here and the plain forms do. Refused where the
+   * star sits, rather than as a stray token the parser trips over.
+   */
+  refuseGenerator() {
+    if (!this.c.is("Star")) return;
+    throw new ParseError(
+      `jsmql does not support generator functions ('function*') at position ${this.c.peek().pos}. Write a plain 'function (\u2026) { return <expr>; }' or an arrow '(\u2026) => <expr>'.`,
+      this.c.peek().pos
+    );
+  }
+  /**
+   * `async function` — a promise. MQL evaluates an expression and has nothing to
+   * await, so the word has no meaning here. Refused where it sits, beside the
+   * generator refusal, rather than as a stray token further along.
+   */
+  refuseAsync() {
+    const t = this.c.peek();
+    if (t.type !== "Ident" || t.text !== "async") return;
+    if (WORDS.get(this.c.peek(1).text ?? "") !== "functionBinding") return;
+    throw new ParseError(
+      `jsmql does not support async functions ('async function') at position ${t.pos}. Write a plain 'function (\u2026) { return <expr>; }' or an arrow '(\u2026) => <expr>'.`,
+      t.pos
+    );
+  }
   /** `function name(params) { … }` — the same node the arrow spelling builds. */
   functionDecl() {
     const kw = this.c.next();
+    this.refuseGenerator();
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaBody(params, kw.pos);
@@ -14983,6 +15011,7 @@ var Parser = class _Parser {
    */
   functionExpr() {
     const kw = this.c.next();
+    this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
     return this.lambdaBody(params, kw.pos);
@@ -15386,6 +15415,7 @@ var Parser = class _Parser {
         return { type: "NewExpression", callee, args, pos: t.pos };
       }
       case "Ident":
+        this.refuseAsync();
         if (WORDS.get(t.text) === "functionBinding") return this.functionExpr();
         return this.identifierOrLambda();
       default:
@@ -17656,7 +17686,8 @@ var mutatorTwin = {
     if (target === null) return node;
     return writeBack(
       target,
-      { type: "MethodCall", object: target, name: twin, args: n2.args, optional: false, pos: n2.pos },
+      // `wrote` keeps the source spelling, so a refusal names `.reverse()` and not the twin.
+      { type: "MethodCall", object: target, name: twin, wrote: n2.name, args: n2.args, optional: false, pos: n2.pos },
       n2.pos
     );
   }
@@ -18288,7 +18319,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
-      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
+      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array: chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -19624,7 +19655,7 @@ function lookupOf(node, env, S, over = "$lookup") {
     body.chain.emitted.push(...stages);
     peeledTo = link;
     const c = collapsesOf(link.name);
-    const collapsed = c === true || c === "withFieldName" && link.args[0]?.type === "StringLiteral";
+    const collapsed = c === true || c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral";
     one = collapsed ? "collapse" : false;
     yields = collapsed ? "object" : "array";
   }
@@ -19753,7 +19784,7 @@ function keySortSpec(arg, method, objects = true) {
   if (arg.type === "ObjectLiteral") {
     if (!objects) {
       throw new CodegenError(
-        `.${method}({ \u2026 }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.`,
+        `.${method}({ \u2026 }) reads an object as a lodash matcher, not as directions \u2014 lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.`,
         arg.pos
       );
     }
@@ -21161,6 +21192,7 @@ function receiverOf(recv, env) {
   return kind === "unknown" ? { kind: "opaque", lowered } : { kind: "opaque", lowered, proved: kind };
 }
 var spelledMethod = (name2, recv) => recv.type === "Ident" && NAMESPACES3.has(recv.name) ? `${recv.name}.${name2}` : `.${name2}`;
+var wroteName = (node, name2) => node.type === "MethodCall" && node.wrote !== void 0 ? node.wrote : name2;
 var JS_NAMES = everyName().filter((n2) => !n2.startsWith("$"));
 function methodCall2(node, env) {
   return dispatchOn(node, node.name, node.object, node.args, env, node.optional);
@@ -21174,7 +21206,7 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
   }
   const exprArgs = args.filter(isExpr2);
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
-  const spelled3 = spelledMethod(name2, recvNode);
+  const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
   const container = receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   if (sel.kind === "rule") {
     if (elementsOf(name2) === "scalar") {
