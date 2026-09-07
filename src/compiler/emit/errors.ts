@@ -236,17 +236,13 @@ export const listOperand = (name: string, pos: number): CodegenError =>
     pos,
   );
 
-/** `$ = []` — a fan-out of nothing drops every document, which `$$ = []` says outright. */
-export const fanOutEmpty = (pos: number): CodegenError =>
+/**
+ * `$ = <array>` — the root takes ONE document, and the stream is what takes an array.
+ * The destination has to say which: `$` is the document, `$$` is the stream.
+ */
+export const rootIsArray = (pos: number): CodegenError =>
   new CodegenError(
-    "'$ = []' would fan out nothing and drop every document. To drop them all, write '$$ = []'; to drop some, fan out a data-dependent array ('$ = $.items.filter(…)').",
-    pos,
-  );
-
-/** `$ = [1, 2]` — each element becomes a document root, and a scalar cannot be one. */
-export const fanOutScalars = (noun: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'$ = [ … ]' fans out: each element becomes a document root, and ${noun} is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').`,
+    "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     pos,
   );
 

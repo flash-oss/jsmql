@@ -795,7 +795,7 @@ const candidateProducts = $$$.products
   .filter(pr => pr._id in candidateProductIds)
   .take(500);
 
-$ = candidateProductIds
+$$ = candidateProductIds
   .map(id => ({
     productId: id,
     score: candidateProductIdCounts[id],

@@ -74,7 +74,7 @@ const candidateProducts = $$$.products
   .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator
   .$limit(500); // same as .take(500)
 
-$ = candidateProductIds
+$$ = candidateProductIds
   .map(id => ({
     productId: id,
     score: candidateProductIdCounts[id],
@@ -803,7 +803,7 @@ $limit(12);
   });
 });
 
-describe("explode order line-items into per-item documents (`$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
+describe("explode order line-items into per-item documents (`$$ = [...]` fan-out)", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" }, () => {
     // Flatten each paid order into one document per line item, carrying the
     // order id and a computed revenue. When the `$ = <expr>` RHS is provably an
@@ -813,7 +813,7 @@ describe("explode order line-items into per-item documents (`$ = [...]` fan-out)
     expect(
       jsmql`
 $$.filter({ status: "paid" });
-$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
+$$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
       `,
     ).toEqual([
       { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
@@ -844,7 +844,7 @@ describe("fan out per-party risk bands (block-body arrow → nested `$let`)", { 
     // `$ = <array>` fans the survivors out into one document each.
     expect(
       jsmql`
-$ = ["sender", "recipient"].map(party => {
+$$ = ["sender", "recipient"].map(party => {
   const leg = $.legs?.[party];
   const score = leg?.riskScore;
   return score ? { party, score, band: score > 50 ? "high" : "low" } : null;

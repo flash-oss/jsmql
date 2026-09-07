@@ -18388,12 +18388,8 @@ var listOperand = (name2, pos) => new CodegenError(
   `${name2} operates on a list of operands \u2014 pass two or more (${name2}(a, b)) or a single array (${name2}([a, b])).`,
   pos
 );
-var fanOutEmpty = (pos) => new CodegenError(
-  "'$ = []' would fan out nothing and drop every document. To drop them all, write '$$ = []'; to drop some, fan out a data-dependent array ('$ = $.items.filter(\u2026)').",
-  pos
-);
-var fanOutScalars = (noun, pos) => new CodegenError(
-  `'$ = [ \u2026 ]' fans out: each element becomes a document root, and ${noun} is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').`,
+var rootIsArray = (pos) => new CodegenError(
+  "'$ = \u2026' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
   pos
 );
 var joinNeedsPipeline = (pos) => new CodegenError(
@@ -22129,6 +22125,14 @@ function writeStages(uf, env, first) {
         out.push(...documentsStages(op.value, inner, first && out.length === 0));
         continue;
       }
+      const chainOn = chainBase(op.value);
+      const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn, inner);
+      if (!streamRoad && kindOf(op.value, inner) === "array") {
+        const slot = inner.chain.slot();
+        const arr = lowerValue(op.value, childEnv(inner, op, "value").at({ at: "value" }));
+        out.push({ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
+        continue;
+      }
       out.push(...streamStages(op.value, inner, first && out.length === 0));
       continue;
     }
@@ -22170,21 +22174,7 @@ function writeStages(uf, env, first) {
         throw rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
       const kind = kindOf(op.value, inner);
-      if (kind === "array") {
-        if (op.value.type === "ArrayLiteral") {
-          const elements = op.value.elements;
-          if (elements.length === 0) throw fanOutEmpty(op.value.pos);
-          for (const el of elements) {
-            const k = el.type === "SpreadElement" ? "unknown" : kindOf(el, inner);
-            if (k !== "unknown" && k !== "object" && k !== "array")
-              throw fanOutScalars(KIND_NOUN[k] ?? `a ${k}`, el.pos);
-          }
-        }
-        const slot = inner.chain.slot();
-        flush();
-        out.push({ $set: { [slot.path]: value } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
-        continue;
-      }
+      if (kind === "array") throw rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
       out.push({ $replaceWith: value });

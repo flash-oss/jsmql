@@ -2935,36 +2935,35 @@ Compile-time rejections (each with an actionable hint):
 
 #### Fan-out: one document to many documents
 
-When the RHS is **provably an array** — an array literal, or an array-typed expression like `.map()`, `.filter()`, or `Object.entries()` — `$ = …` fans out: each input document produces one output document **per array element** (via `$unwind`).
+The root takes ONE document and the stream takes an array, so the destination says which you mean. `$$ = <array>` makes the stream from the array's elements — one document per element, per input document. `$ = <array>` is refused, and the message names the spelling that takes it.
 
 ```js
-// Explode an array literal: 1 input doc → 2 output docs
-jsmql("$ = [{ kind: 'a' }, { kind: 'b' }];")
-// → [
-//     { $set: { "__jsmql.tmp.1": [{ kind: "a" }, { kind: "b" }] } },
-//     { $unwind: "$__jsmql.tmp.1" },
-//     { $replaceWith: "$__jsmql.tmp.1" }
-//   ]
-
 // Explode each order's line-items into per-item documents
-jsmql("$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku }));")
+jsmql("$$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku }));")
 // → $set the $map into a slot, then $unwind + $replaceWith
 
-// Turn a sub-document into one {k, v} document per key
-jsmql("$ = Object.entries($.scores);")
+// Turn a sub-document into one [k, v] document per key
+jsmql("$$ = Object.entries($.scores);")
 // → $set the $objectToArray into a slot, then $unwind + $replaceWith
+
+// The root is one document, so an array there is refused
+jsmql("$ = $.lineItems;")
+// → '$ = …' replaces ONE document, and this value is an array. Name the destination
+//   that takes an array: '$$ = <array>;' …
 ```
 
-A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan out a field, spread it into a literal: **`$ = [...$.items]`**.
+A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan a field out, name the stream and spread it: `$$ = [...$.items]`.
 
-**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array, so fanning out a possibly-empty array drops exactly the documents whose array came out empty and fans out the rest:
+An array LITERAL on the stream is a different operation: `$$ = [{ … }, { … }]` is `$documents`, a source stage that replaces the whole stream with those documents and must stand first. The fan-out reading belongs to an array the data decides, one answer per input document.
+
+**Conditional drop falls out for free.** `$unwind` emits nothing for an empty array, so fanning out a possibly-empty array drops exactly the documents whose array came out empty and fans out the rest.
 
 ```js
 // Docs with no qualifying item are dropped; the rest fan out per qualifying item
-jsmql("$ = $.items.filter(x => x.qty > 0);")
+jsmql("$$ = $.items.filter(x => x.qty > 0);")
 ```
 
-This is the idiomatic way to conditionally drop documents. (To empty the *whole* stream unconditionally, that's a different operation — `$$ = []`.)
+This is the idiomatic way to conditionally drop documents. (To empty the *whole* stream unconditionally, write `$$ = []`.)
 
 #### `$facet` via `$ = { key: <$$ chain>, … }`
 

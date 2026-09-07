@@ -87,17 +87,11 @@ describe("compiler/emit/statement — the writes", () => {
     // — or a name whose measured return type says so — is known at compile time.
     expect(() => pipeline("$ = 5;")).toThrow(/has to BE a document — a number/);
     expect(() => pipeline('$ = "x";')).toThrow(/a string is not one/);
-    // an ARRAY fans out: one input document becomes one document per element — of documents
-    expect(pipeline("$ = [{ a: 1 }, { a: 2 }];")).toEqual([
-      { $set: { "__jsmql.tmp.0": [{ a: 1 }, { a: 2 }] } },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
-    ]);
-    // a scalar cannot be a document root, and the server would refuse every one
-    expect(() => pipeline("$ = [1, 2];")).toThrow(
-      /fans out: each element becomes a document root, and a number is not a document/,
-    );
-    expect(() => pipeline("$ = [];")).toThrow(/would fan out nothing and drop every document/);
+    // `$` is ONE document and `$$` is the stream, so an array names the wrong
+    // destination whatever it holds: a list of documents, scalars, or nothing.
+    for (const src of ["$ = [{ a: 1 }, { a: 2 }];", "$ = [1, 2];", "$ = [];", "$ = $.items.map(x => ({ v: x }));"]) {
+      expect(() => pipeline(src)).toThrow(/replaces ONE document, and this value is an array/);
+    }
     expect(() => pipeline("$ = null;")).toThrow(/null is not one/);
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
@@ -638,8 +632,8 @@ describe("compiler/emit/statement — the server accepts every pipeline this fil
 });
 
 describe("compiler/emit/statement — a root write of a provable array fans out", () => {
-  it("an array-returning method on an unproven field is an array, so `$ = $.items.map(…)` fans out", () => {
-    expect(pipeline("$ = $.items.map(x => ({ v: x }))")).toEqual([
+  it("an array-returning method on an unproven field is an array, so `$$ = $.items.map(…)` fans out", () => {
+    expect(pipeline("$$ = $.items.map(x => ({ v: x }))")).toEqual([
       { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { v: "$$x" } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },

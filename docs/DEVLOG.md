@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — feat!: an array names the STREAM, not the document root
+
+`$ = <array>` fanned out: one input document became one output document per element. The destination said "document" and the operation said "stream", and the two readings of `$` had to be held in the head at once — the root replacement `$ = { … }` writes ONE document, the same spelling with an array wrote many.
+
+The destination says which now. `$$ = <array>` fans out, with the lowering the root spelling had (`$set` into a slot, `$unwind`, `$replaceWith` — `$unwind` needs a materialised path, so an inline array expression cannot be unwound where it stands). `$ = <array>` is refused, and the message names the spelling that takes one. The two element refusals the root road carried, for an empty literal and for a provably scalar element, are retired with it: the stream road's own readings answer instead.
+
+Three readings of `$$ = …` now stand side by side, and each is the honest meaning of its right side. A chain on the stream, on the callback's own stream, or on another collection is the STREAM road whatever kind its last link returns — a `$lookup` yields an array, and `$$ = $$$.orders.filter(p)` is still a source switch. An array LITERAL is `$documents`, a source stage that replaces the whole stream and must stand first. Anything else that is provably an array fans out, one answer per input document.
+
+This closes an HR3 break the acceptance gate measured: `$ = Object.entries($.scores)` fanned out arrays as document roots and the server stopped the query with Location40228. The root refuses the array outright now, and the developer is sent to the destination that takes one.
+
+Two of the three spellings the change recommends do not exist: appending an in-document array to the stream needs `$documents` over a field path, and MEASURED, the server refuses that ("an array is expected"). `$$.push(...)` and `.concat(…)` append another COLLECTION and keep their own messages.
+
+---
+
+
 ## 2026-09-07 — feat!: `Number` is the one numeric conversion; `parseInt` and `parseFloat` are refused
 
 Three spellings converted a value to a number, and two of them cannot mean in MQL what they mean in JavaScript.

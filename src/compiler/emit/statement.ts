@@ -571,6 +571,23 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         out.push(...documentsStages(op.value, inner, first && out.length === 0));
         continue;
       }
+      // `$$ = <array>` starts the stream from the array's elements, one document
+      // each. `$unwind` needs a materialised path, so the array is parked in a
+      // scratch slot first — an inline array expression is not a path.
+      // A chain on the stream, on the callbacks own stream, or on another collection is
+      // the STREAM road, whatever kind its last link returns: a `$lookup` yields an array
+      // and `$$ = $$$.orders.filter(p)` is still a source switch, not a value.
+      const chainOn = chainBase(op.value) as { type: string };
+      const streamRoad =
+        chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn as Expr, inner);
+      if (!streamRoad && kindOf(op.value, inner) === "array") {
+        const slot = inner.chain.slot();
+        // The position pass marks this edge STREAM, because `$$ = <chain>` is the usual
+        // spelling here; an array is a VALUE, and is read as one.
+        const arr = lowerValue(op.value, childEnv(inner, op, "value").at({ at: "value" }));
+        out.push({ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
+        continue;
+      }
       out.push(...streamStages(op.value, inner, first && out.length === 0));
       continue;
     }
@@ -620,24 +637,9 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         throw E.rootMustBeDocument(op.value.type === "NullLiteral" ? "null" : "undefined", op.pos);
       }
       const kind = kindOf(op.value, inner);
-      if (kind === "array") {
-        // `$ = <array>` FANS OUT: each element becomes a document of the stream —
-        // so a literal with nothing in it, or with an element that is provably not a
-        // document, is refused here rather than by the server on every root.
-        if (op.value.type === "ArrayLiteral") {
-          const elements = op.value.elements;
-          if (elements.length === 0) throw E.fanOutEmpty(op.value.pos);
-          for (const el of elements) {
-            const k = el.type === "SpreadElement" ? "unknown" : kindOf(el as Expr, inner);
-            if (k !== "unknown" && k !== "object" && k !== "array")
-              throw E.fanOutScalars(KIND_NOUN[k] ?? `a ${k}`, el.pos);
-          }
-        }
-        const slot = inner.chain.slot();
-        flush();
-        out.push({ $set: { [slot.path]: value } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
-        continue;
-      }
+      // `$` is ONE document and `$$` is the stream, so an array names the wrong
+      // destination. The message says which spelling takes it.
+      if (kind === "array") throw E.rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw E.rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
       out.push({ $replaceWith: value });

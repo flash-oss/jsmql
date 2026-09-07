@@ -714,7 +714,7 @@ const candidateProducts = $$$.products
   .filter(pr =&gt; pr._id in candidateProductIds) //  { $in: [] } operator
   .$limit(500); // same as .take(500)
 
-$ = candidateProductIds
+$$ = candidateProductIds
   .map(id =&gt; ({
     productId: id,
     score: candidateProductIdCounts[id],

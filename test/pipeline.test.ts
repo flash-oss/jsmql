@@ -391,8 +391,9 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(() => jsmql("$ = 5")).toThrow(
       "'$ = …' replaces the document, so the value has to BE a document — a number is not one. Put it under a field ('$ = { value: … };'), or write to a field instead ('$.value = …;').",
     );
+    expect(() => jsmql("$ = [1, 2]")).toThrow(/replaces ONE document, and this value is an array/);
     expect(() => jsmql("$ = [1, 2]")).toThrow(
-      "'$ = [ … ]' fans out: each element becomes a document root, and a number is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').",
+      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
@@ -410,23 +411,15 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   });
 
   it("fans out an array-literal of documents (one output doc per element)", () => {
-    expect(jsmql("[ $ = [{ a: 1 }, { b: 2 }] ]")).toEqual([
-      { $set: { "__jsmql.tmp.0": [{ a: 1 }, { b: 2 }] } },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
-    ]);
+    expect(jsmql("[ $$ = [{ a: 1 }, { b: 2 }] ]")).toEqual([{ $documents: [{ a: 1 }, { b: 2 }] }]);
   });
 
-  it("fans out a spread field (`$ = [...$.items]`)", () => {
-    expect(jsmql("[ $ = [...$.items] ]")).toEqual([
-      { $set: { "__jsmql.tmp.0": "$items" } },
-      { $unwind: "$__jsmql.tmp.0" },
-      { $replaceWith: "$__jsmql.tmp.0" },
-    ]);
+  it("fans out a spread field (`$$ = [...$.items]`)", () => {
+    expect(jsmql("[ $$ = [...$.items] ]")).toEqual([{ $documents: "$items" }]);
   });
 
   it("fans out a provably-array expression (`.map`)", () => {
-    expect(jsmql("[ $ = $.items.map(x => ({ sku: x.sku })) ]")).toEqual([
+    expect(jsmql("[ $$ = $.items.map(x => ({ sku: x.sku })) ]")).toEqual([
       { $set: { "__jsmql.tmp.0": { $map: { input: "$items", as: "x", in: { sku: "$$x.sku" } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
@@ -434,7 +427,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   });
 
   it("fans out `Object.entries(...)` into {k, v} documents", () => {
-    expect(jsmql("[ $ = Object.entries($.scores) ]")).toEqual([
+    expect(jsmql("[ $$ = Object.entries($.scores) ]")).toEqual([
       {
         $set: {
           "__jsmql.tmp.0": {
@@ -450,8 +443,9 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   it("a possibly-empty filter fan-out drops docs whose array is empty (per-document drop)", () => {
     // `$unwind` of an empty array emits no document — so docs with no matching
     // element are dropped, while others fan out. This is how a conditional drop
-    // is spelled (rather than a stream-wide `$$ = []`).
-    expect(jsmql("[ $ = $.items.filter(x => x.qty > 0) ]")).toEqual([
+    // is spelled; a literal list (`$$ = [{ … }]`) is `$documents` and replaces the
+    // whole stream instead.
+    expect(jsmql("[ $$ = $.items.filter(x => x.qty > 0) ]")).toEqual([
       { $set: { "__jsmql.tmp.0": { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
@@ -460,19 +454,19 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 
   it("a bare field-ref RHS stays a single-doc `$replaceWith` (not provably an array)", () => {
     // `$.items` carries no compile-time type, so it is NOT fanned out — to fan
-    // out a field the user writes `$ = [...$.items]`.
+    // out a field the user writes `$$ = [...$.items]`.
     expect(jsmql("[ $ = $.items ]")).toEqual([{ $replaceWith: "$items" }]);
   });
 
-  it("rejects an empty array RHS, pointing at the conditional and stream-drop forms", () => {
+  it("rejects an array RHS, naming the destination that takes one", () => {
     expect(() => jsmql("[ $ = [] ]")).toThrow(
-      "'$ = []' would fan out nothing and drop every document. To drop them all, write '$$ = []'; to drop some, fan out a data-dependent array ('$ = $.items.filter(…)').",
+      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
-  it("rejects an array of scalar literals (elements must be documents)", () => {
+  it("rejects an array of scalar literals with the same message — the destination decides first", () => {
     expect(() => jsmql("[ $ = [1, 2] ]")).toThrow(
-      "'$ = [ … ]' fans out: each element becomes a document root, and a number is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').",
+      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 
@@ -518,7 +512,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     expect(r.errors[0].code).toBe("CODEGEN_ERROR");
     expect(r.errors[0].pos).toBeGreaterThan(0);
     expect(r.errors[0].message).toMatch(
-      "'$ = [ … ]' fans out: each element becomes a document root, and a number is not a document. Wrap each element ('$ = [{ value: 1 }, { value: 2 }]'), or write the values to a field ('$.values = [1, 2]').",
+      "'$ = …' replaces ONE document, and this value is an array. Name the destination that takes an array: '$$ = <array>;' makes the stream from its elements, one document per element. To keep the array as a field of this document, write '$.<field> = <array>;'.",
     );
   });
 

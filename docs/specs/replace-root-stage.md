@@ -116,38 +116,44 @@ $ = {
 
 **Statement-position `$$.filter(...)`.** A bare `$$.filter(...)` at a statement position is valid — it lowers to `$match` as the stream road's own spelling (see [stream-methods.md § Bare-statement stream chains](./stream-methods.md)); only inside `$ = { … }` does the same call name a facet branch.
 
-## Fan-out variant
+## Fan-out belongs to the stream, not the root
 
-When the RHS of `$ = …` is **provably an array**, the statement fans out: one
-input document produces one output document per array element. `$unwind` needs
-a materialised field path (it can't unwind an inline array expression), so the
-array is first parked in a fresh compiler slot via `$set`, unwound, then each
-element becomes the new root via `$replaceWith`:
+`$` is ONE document and `$$` is the stream, so an array names the destination that
+takes one. `$ = <array>` is refused by `rootIsArray`; `$$ = <array>` fans out.
+
+When the right side of `$$ = …` is **provably an array** and is not a chain on a
+stream (`kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts)),
+one input document produces one output document per element. `$unwind` needs a
+materialised field path — it cannot unwind an inline array expression — so the array
+is parked in a fresh compiler slot via `$set`, unwound, then each element becomes the
+new root:
 
 ```
-$ = [{ a: 1 }, { b: 2 }];
+$$ = $.lineItems.map(li => ({ sku: li.sku }));
 // → [
-//   { $set:         { "__jsmql.tmp.1": [{ a: 1 }, { b: 2 }] } },
+//   { $set:         { "__jsmql.tmp.1": { $map: { input: "$lineItems", … } } } },
 //   { $unwind:      "$__jsmql.tmp.1" },
 //   { $replaceWith: "$__jsmql.tmp.1" },
 // ]
 ```
 
-The write road (`writeStages`) fans out when the value's kind is provably an array (`kindOf` in [src/compiler/emit/types.ts](../../src/compiler/emit/types.ts)): an array literal, an array-returning method on any receiver (`.map`, `.filter`, `.uniq`, `.slice` of an array, …), an array operator, `Object.entries` / `keys` / `values`. A bare field ref `$ = $.items` is **not** provably an array (a field path carries no compile-time kind), so it stays a single-document `$replaceWith`; to fan out a field, spread it into a literal: `$ = [...$.items]`. A join in the value is hoisted ahead into its own slot first ([lookup-stage.md](lookup-stage.md)). No cleanup follows: the closing `$replaceWith` discards the `__jsmql` namespace with the old root.
+A chain on the stream, on the callback's own stream, or on another collection is the
+STREAM road whatever kind its last link returns — a `$lookup` yields an array, and
+`$$ = $$$.orders.filter(p)` is still a source switch. The array road is taken only
+when none of those holds.
 
-**Per-document drop is emergent, not a special case.** Default `$unwind` emits
-no document for an empty/missing array, so fanning out a possibly-empty array
-drops exactly the documents whose array came out empty and fans out the rest:
+An array LITERAL is a third reading: `$$ = [{ … }, { … }]` is `$documents`, a source
+stage that replaces the whole stream and must stand first, and its element check is
+the `$documents` row's own body rule. The fan-out reading belongs to an array the
+data decides, which has one answer per input document.
+
+**Per-document drop is emergent, not a special case.** Default `$unwind` emits no
+document for an empty or missing array, so fanning out a possibly-empty array drops
+exactly the documents whose array came out empty and fans out the rest:
 
 ```
-$ = $.items.filter(x => x.qty > 0);   // docs with no qualifying item are dropped
+$$ = $.items.filter(x => x.qty > 0);   // docs with no qualifying item are dropped
 ```
-
-This is the idiomatic conditional-drop. There is deliberately **no** "drop"
-lowering for `$ = []` or `$ = undefined` — both are rejected/unchanged (see
-[Validation](#validation)); the "empty the whole stream" intent is already
-spelled `$$ = []` (see [replace-stream](#)/`$$ = <expr>`), and one behaviour with
-two spellings is a footgun we avoid.
 
 ## Lowering and refusals
 
