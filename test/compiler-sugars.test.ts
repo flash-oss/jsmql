@@ -136,7 +136,11 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
     expect(() => pipeline("$$.push(...$$$.archive.find(o => o.a > 1));")).toThrow(
       /gives ONE document, which JavaScript would not spread/,
     );
-    expect(() => pipeline("$$.push(...$.items);")).toThrow(/Only another collection spreads/);
+    expect(() => pipeline("$$.push(...$.items);")).toThrow(/An array the DATA decides cannot be appended/);
+    // a WRITTEN list of documents is appendable: `$documents` takes a spelled-out list
+    expect(pipeline("$$.push(...[{ a: 1 }, { a: 2 }]);")).toEqual([
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } },
+    ]);
     expect(() => pipeline("$$.push(5);")).toThrow(/this is a number/);
     // `$documents` runs with no input document, and a `$unionWith` body has no `let` — measured
     expect(() => pipeline("$$.push({ a: $.a });")).toThrow(/has no 'let'/);

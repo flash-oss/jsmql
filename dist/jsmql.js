@@ -18624,7 +18624,7 @@ var notAnArrowCallback = (name2, pos) => new CodegenError(`'.${name2}((x[, i[, a
 var tooManyCallbackParams = (name2, got, pos) => new CodegenError(`'.${name2}()' callbacks take at most 3 parameters (element, index, array); got ${got}.`, pos);
 var objIterateeShape = (name2, pos) => new CodegenError(`'.${name2}((value[, key]) => \u2026)' takes a one- or two-parameter arrow with an expression body.`, pos);
 var unionSpreadSource = (pos) => new CodegenError(
-  "Only another collection spreads into the stream: '...$$$.<coll>' or '...$$$.<coll>.filter(pred)'. A document goes in on its own: '$$.push({ \u2026 })'.",
+  `The stream takes another collection ('...$$$.<coll>', '...$$$.<coll>.filter(pred)') or documents the program spells out ('$$.push({ \u2026 })', '$$.push(...[{ \u2026 }, { \u2026 }])'). An array the DATA decides cannot be appended: '$documents' takes a written list, and MEASURED the server refuses a field path there ("an array is expected"). To make the stream FROM such an array, write '$$ = <array>;'.`,
   pos
 );
 var unionSpreadOfOne = (pos) => new CodegenError(
@@ -18636,7 +18636,7 @@ var unionNeedsSpread = (pos) => new CodegenError(
   pos
 );
 var unionArg = (kind, pos) => new CodegenError(
-  `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ \u2026 })') or another collection ('$$.push(...$$$.<coll>)').`,
+  `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ \u2026 })'), a written list of them ('$$.push(...[{ \u2026 }])'), or another collection ('$$.push(...$$$.<coll>)').`,
   pos
 );
 var outNeedsStream = (pos) => new CodegenError(
@@ -21529,6 +21529,15 @@ function exprBlock(node, env, ret) {
 }
 
 // src/compiler/emit/union.ts
+function writtenDocuments(e) {
+  if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
+  const out = [];
+  for (const el of e.elements) {
+    if (el.type === "SpreadElement") return null;
+    out.push(el);
+  }
+  return out;
+}
 function unionStages(args, env, node, S) {
   if (args.length === 0) throw unionNeedsArgument(node.pos);
   const out = [];
@@ -21542,6 +21551,11 @@ function unionStages(args, env, node, S) {
   };
   for (const a of args) {
     if (a.type === "SpreadElement") {
+      const spread = writtenDocuments(a.argument);
+      if (spread !== null) {
+        docs.push(...spread);
+        continue;
+      }
       flushDocs();
       if (!readsAnotherCollection(a.argument)) throw unionSpreadSource(a.pos);
       const l = lookupOf(a.argument, env, S, "$unionWith");
@@ -21566,6 +21580,11 @@ function unionStages(args, env, node, S) {
     }
     if (a.type === "NullLiteral" || a.type === "UndefinedLiteral")
       throw unionArg(a.type === "NullLiteral" ? "null" : "undefined", a.pos);
+    const asList = writtenDocuments(a);
+    if (asList !== null && node.name === "concat") {
+      docs.push(...asList);
+      continue;
+    }
     const kind = kindOf(a, env);
     if (kind === "object" || kind === "unknown") {
       docs.push(a);

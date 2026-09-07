@@ -888,7 +888,9 @@ $.archivedOrders = $$$.orders.filter(o => o.userId === $._id);  // ✅ same-db $
 
 `$$` is the current collection. `.push(...items)` appends those items to the current stream — the JS-faithful name for MongoDB's [`$unionWith`](https://www.mongodb.com/docs/manual/reference/operator/aggregation/unionWith/) stage. **Statement-only**: `$$.push(...)` emits one or more `$unionWith` stages and has no value. It cannot be used on a RHS, in arithmetic, inside a Filter, or anywhere else an expression is read.
 
-The spread (`...`) rule is identical to JavaScript's: arrays must be spread, scalars must not.
+The spread (`...`) rule is identical to JavaScript's: arrays must be spread, scalars must not. `.concat(list)` is the other JavaScript spelling and takes the array itself.
+
+**An array the DATA decides cannot be appended.** `$documents` takes a list the program spells out; MEASURED, the server refuses a field path there ("an array is expected"). So `$$.push(...$.items)` is refused, and the message names what does work — another collection, a written list of documents, or `$$ = <array>` to make the stream FROM that array rather than append to it.
 
 ```js
 // 1. Bare collection — short form.
@@ -906,6 +908,14 @@ $$.push($$$.archive_users.find(u => u._id === "ABC"));
 // 4. Inline document — lowers to a $documents sub-pipeline.
 $$.push({ _id: 1, name: "Alice" });
 // → { $unionWith: { pipeline: [{ $documents: [{ _id: 1, name: "Alice" }] }] } }
+
+// 4b. A written LIST of documents, spread — the same batch.
+$$.push(...[{ a: 1 }, { a: 2 }]);
+// → { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } }
+
+// 4c. `.concat(list)` takes the array itself, as JavaScript's own .concat does.
+$$.concat([{ a: 1 }]);
+// → { $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }
 
 // 5. Mixed args — source order preserved; consecutive inline docs batch.
 $$.push({ a: 1 }, { a: 2 }, ...$$$.archive, { b: 3 });

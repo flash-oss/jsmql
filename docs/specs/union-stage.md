@@ -48,6 +48,17 @@ road (`lookupOf` in `src/compiler/emit/join.ts`, entered over `$unionWith`), so 
 union body and a lookup body read the same rows; `src/compiler/emit/union.ts` owns
 only what differs — the stage's shape and its missing `let`.
 
+### A written list of documents, and only a written one
+
+`$documents` takes a list the program spells out. MEASURED on the server, a field path
+there is refused ("an array is expected"), and `{ coll, pipeline: [{ $documents }] }`
+is refused too ("\$documents can only be run with database or cluster-level
+aggregation"). So the appendable forms are: another collection (`coll`, with or without
+a sub-pipeline), one written document, and a written list of them — `$$.push({ … })`,
+`$$.push(...[{ … }, { … }])` and `$$.concat([{ … }])` all batch into one `$documents`,
+consecutive arguments together, source order kept. An array the data decides has no
+append form at all; `$$ = <array>` makes the stream from it instead.
+
 ### `$unionWith` has no `let`
 
 `$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so a read of the outer document or of an outer binding inside it is refused rather than silently misread: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.length` there ([stream-length.md](stream-length.md)).

@@ -671,7 +671,7 @@ export const objIterateeShape = (name: string, pos: number): CodegenError =>
 /** `$$.push(...$.items)` — only another collection spreads into the stream. */
 export const unionSpreadSource = (pos: number): CodegenError =>
   new CodegenError(
-    "Only another collection spreads into the stream: '...$$$.<coll>' or '...$$$.<coll>.filter(pred)'. A document goes in on its own: '$$.push({ … })'.",
+    "The stream takes another collection ('...$$$.<coll>', '...$$$.<coll>.filter(pred)') or documents the program spells out ('$$.push({ … })', '$$.push(...[{ … }, { … }])'). An array the DATA decides cannot be appended: '$documents' takes a written list, and MEASURED the server refuses a field path there (\"an array is expected\"). To make the stream FROM such an array, write '$$ = <array>;'.",
     pos,
   );
 
@@ -692,7 +692,7 @@ export const unionNeedsSpread = (pos: number): CodegenError =>
 /** `$$.push(5)` — a stream holds documents. */
 export const unionArg = (kind: string, pos: number): CodegenError =>
   new CodegenError(
-    `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)').`,
+    `A stream holds documents, and this is a ${kind}. Push a document ('$$.push({ … })'), a written list of them ('$$.push(...[{ … }])'), or another collection ('$$.push(...$$$.<coll>)').`,
     pos,
   );
 

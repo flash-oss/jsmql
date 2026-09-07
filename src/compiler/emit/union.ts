@@ -5,6 +5,8 @@
 //   $$.push(...$$$.archive.filter(p))      → { $unionWith: { coll: "archive", pipeline: [$match] } }
 //   $$.push($$$.archive.find(p))           → the same with `{ $limit: 1 }` — one document, no spread
 //   $$.push({ a: 1 }, { b: 2 })            → { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { b: 2 }] }] } }
+//   $$.push(...[{ a: 1 }, { b: 2 }])       → the same: a written list spreads into the same batch
+//   $$.concat([{ a: 1 }])                  → the same, and `.concat` takes the array itself, as JavaScript does
 //
 // JavaScript's spread rule holds: an array (a `.filter`, a whole collection) is
 // spread in, one document (`.find`, a literal) is not, and the wrong one is
@@ -23,6 +25,21 @@ import { childEnv } from "./inputs.ts";
 
 type Arg = Extract<Expr, { type: "MethodCall" }>["args"][number];
 
+/**
+ * The documents a WRITTEN list holds, or null. `$documents` takes a list the program
+ * spells out — MEASURED, the server refuses a field path there ("an array is
+ * expected") — so an array is appendable exactly when its elements are written.
+ */
+function writtenDocuments(e: Expr): readonly Expr[] | null {
+  if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
+  const out: Expr[] = [];
+  for (const el of e.elements) {
+    if (el.type === "SpreadElement") return null;
+    out.push(el as Expr);
+  }
+  return out;
+}
+
 /** `$$.push(a, b, …)` / `.concat(a, b, …)` — one `$unionWith` per source, in order. */
 export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinServices): Stage[] {
   if (args.length === 0) throw E.unionNeedsArgument(node.pos);
@@ -38,6 +55,13 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
   };
   for (const a of args) {
     if (a.type === "SpreadElement") {
+      // `$$.push(...[{ … }, { … }])` — JavaScript spreads the list into the arguments,
+      // and each element is a document, so they join the same `$documents` batch.
+      const spread = writtenDocuments(a.argument);
+      if (spread !== null) {
+        docs.push(...spread);
+        continue;
+      }
       flushDocs();
       if (!readsAnotherCollection(a.argument)) throw E.unionSpreadSource(a.pos);
       const l = lookupOf(a.argument, env, S, "$unionWith");
@@ -63,6 +87,14 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
     // A value that is not a document literal: a number, a field, an array …
     if (a.type === "NullLiteral" || a.type === "UndefinedLiteral")
       throw E.unionArg(a.type === "NullLiteral" ? "null" : "undefined", a.pos);
+    // `.concat(list)` takes the ARRAY, as JavaScript's own `.concat` does, and appends
+    // its elements. `.push(list)` would append the array as one element, which is not a
+    // document, so it keeps the refusal that names the spread.
+    const asList = writtenDocuments(a);
+    if (asList !== null && (node as { name?: string }).name === "concat") {
+      docs.push(...asList);
+      continue;
+    }
     const kind = kindOf(a, env);
     if (kind === "object" || kind === "unknown") {
       docs.push(a);

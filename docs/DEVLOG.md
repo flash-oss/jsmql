@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — feat: a written list of documents appends to the stream
+
+`docs/LANGUAGE.md` documented `$$.push({ … })` as `{ $unionWith: { pipeline: [{ $documents: [ … ] }] } }`, and the compiler built it — for arguments written one at a time. Spreading a written LIST of the same documents was refused, and so was `.concat` of one, although both say the same thing in JavaScript and both reach the same batch.
+
+`$$.push(...[{ a: 1 }, { a: 2 }])` and `$$.concat([{ a: 1 }])` batch into one `$documents` now, beside the arguments written singly, consecutive sources together and in source order. `.concat(list)` takes the array itself, as JavaScript's own `.concat` does; `.push(list)` without the spread keeps its refusal, because JavaScript would append the array as one element and an array is not a document.
+
+The line the change does NOT cross is the one the server draws. `$documents` takes a list the program spells out: MEASURED, a field path there is refused ("an array is expected"), and `{ coll, pipeline: [{ $documents }] }` is refused as well ("\$documents can only be run with database or cluster-level aggregation"). So an array the DATA decides has no append form, and the refusal says so and names the three that exist — another collection, a written document, a written list — plus `$$ = <array>`, which makes the stream FROM such an array instead of appending to it.
+
+---
+
+
 ## 2026-09-07 — feat!: an array names the STREAM, not the document root
 
 `$ = <array>` fanned out: one input document became one output document per element. The destination said "document" and the operation said "stream", and the two readings of `$` had to be held in the head at once — the root replacement `$ = { … }` writes ONE document, the same spelling with an array wrote many.
