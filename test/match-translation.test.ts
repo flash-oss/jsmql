@@ -209,9 +209,7 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
   it("array literal as equality target stays in $expr", () => {
     // Translating to `{ tags: [1, 2] }` would silently switch to array-element
     // matching semantics — too surprising. Leave it as $expr.
-    expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([
-      { $match: { tags: { $eq: [1, 2], $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match($.tags === [1, 2])]")).toEqual([{ $match: { $expr: { $eq: ["$tags", [1, 2]] } } }]);
   });
 });
 

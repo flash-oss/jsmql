@@ -7373,7 +7373,11 @@ describe("optional chaining (?.)", () => {
   // either error or null-poison on null input. Wrap the receiver with [].
   it(".map on optional receiver wraps with []", () => {
     expect(jsmql.expr("$.user?.posts.map(p => p.id)")).toEqual({
-      $map: { input: "$user.posts", as: "p", in: "$$p.id" },
+      $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" },
+    });
+    // and one link further the wrap is what keeps `$size` off a null
+    expect(jsmql.expr("$.user?.posts.map(p => p.id).length")).toEqual({
+      $size: { $map: { input: { $ifNull: ["$user.posts", []] }, as: "p", in: "$$p.id" } },
     });
   });
   it(".at on optional receiver wraps with [] then runtime-dispatches", () => {

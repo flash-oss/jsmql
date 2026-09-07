@@ -276,6 +276,12 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
+  // An ARRAY has no own-value query form. The query language reads `{ f: [1, 2] }` as "f
+  // equals [1, 2], OR f is an array holding the ELEMENT [1, 2]", and the own-value guard
+  // that excludes an array would then exclude every document the equality selects — the
+  // clause could never hold. So the comparison takes the expression road, where `$eq`
+  // compares the whole value, as a document-valued comparison already does.
+  if (Array.isArray(pc.value)) return null;
   // A RegExp the call supplied is MongoDB's regex query, as the developer passed it: the
   // query language reads `{ field: /re/ }` as a match, and `$eq` would compare a value.
   if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };

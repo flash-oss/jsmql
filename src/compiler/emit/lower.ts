@@ -33,6 +33,7 @@ import {
   rowForNodeType,
   onlyInsideOf,
   elementsOf,
+  soleFieldFamilyOf,
 } from "../rows.ts";
 import { consult, everyName, familiesFor } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
@@ -605,16 +606,14 @@ function arraysHolder(recv: Expr): string | null {
 
 /**
  * An optional chain's receiver takes the family's empty value, so a missing field
- * reads as empty. The family is the receiver's when proven; otherwise the one the
- * row names, when it names exactly one.
+ * reads as empty. The family is the receiver's when proven; otherwise the one FIELD
+ * family the row names, when it names exactly one — `.map` is spelled on an array and
+ * on the stream, and only the array is a family a field can hold, so `$.a?.map(f)`
+ * reads a missing `a` as `[]` exactly as `$.a?.join(",")` does.
  */
 function withOptional(lowered: unknown, receiver: Receiver, optional: boolean, name: string): unknown {
   if (!optional || (receiver.kind !== "value" && receiver.kind !== "opaque")) return lowered;
-  let family: string | null = receiver.kind === "value" ? receiver.family : null;
-  if (family === null) {
-    const on = familiesFor(name);
-    if (on !== undefined && on !== "any" && on.length === 1) family = on[0];
-  }
+  const family: string | null = receiver.kind === "value" ? receiver.family : soleFieldFamilyOf(name);
   const neutral =
     family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
   return neutral === null ? lowered : { $ifNull: [lowered, neutral] };

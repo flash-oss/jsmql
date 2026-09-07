@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): a clause that can never hold, and a lost optional neutral
+
+Two more answers the acceptance gate measured wrong, and in both the suite's own test title already stated the right one while its assertion pinned the wrong one.
+
+`$.tags === [1, 2]` emitted `{ tags: { $eq: [1, 2], $not: { $type: "array" } } }`. A field that equals `[1, 2]` IS an array, so the own-value guard excluded every document the equality selected: the clause could not hold for any document at all. An array has no own-value query form — the query language reads `{ f: [1, 2] }` as "f equals the array, OR f is an array holding the ELEMENT `[1, 2]`" — so the comparison takes the expression road, where `$eq` compares the whole value. A document-valued comparison already did. Measured over five documents: the equality selects the one whose `tags` is `[1, 2]` and excludes the one whose `tags` is `[[1, 2]]`, which the native clause would have matched.
+
+`$.user?.posts.map(p => p.id)` lost the `?.` neutral and answered null where JavaScript answers `[]`; one link further, `.length` put `$size` on that null and the server stopped the query. The neutral is the empty value of the receiver's family, and where the family is not proven the row's own `on` supplies it — but only when the row named exactly ONE family, and `.map` is spelled on an array and on the stream. A stream is not a family a document field can hold, so the question is the row's one FIELD family, which `soleFieldFamilyOf` already answers. `$.tags?.join(",")` kept its `$ifNull` throughout, on a row spelled for the array alone; the two agree now.
+
+---
+
+
 ## 2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong
 
 The differential gate compares every harvested program through both compilers and runs both MQL documents on a live mongod. Three answers came back wrong, each silently: the query ran and returned the wrong thing.

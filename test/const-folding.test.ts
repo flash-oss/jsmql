@@ -274,8 +274,10 @@ describe("const folding — lodash string methods", () => {
   });
 
   it(".words() folds to an array", () => {
+    // the fold settles the array; comparing a field WITH an array is the expression
+    // road, because the query language would read the array as an element match
     expect(jsmql('const w = "fooBar-baz 9".words(); $.tags === w')).toEqual({
-      tags: { $eq: ["foo", "Bar", "baz", "9"], $not: { $type: "array" } },
+      $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },
     });
     // the index is part of the const RHS, so it folds too
     expect(jsmql('const first = "fooBar-baz 9".words()[0]; $.f === first')).toEqual({
