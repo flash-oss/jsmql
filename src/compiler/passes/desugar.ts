@@ -287,7 +287,8 @@ const mutatorTwin: Rule = {
     if (target === null) return node;
     return writeBack(
       target,
-      { type: "MethodCall", object: target, name: twin, args: n.args, optional: false, pos: n.pos },
+      // `wrote` keeps the source spelling, so a refusal names `.reverse()` and not the twin.
+      { type: "MethodCall", object: target, name: twin, wrote: n.name, args: n.args, optional: false, pos: n.pos },
       n.pos,
     );
   },

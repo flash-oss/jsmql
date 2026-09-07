@@ -75,7 +75,7 @@ export function keySortSpec(arg: Expr, method: string, objects = true): SortSpec
   if (arg.type === "ObjectLiteral") {
     if (!objects) {
       throw new CodegenError(
-        `.${method}({ … }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.`,
+        `.${method}({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.`,
         arg.pos,
       );
     }

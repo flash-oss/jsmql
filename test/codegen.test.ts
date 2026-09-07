@@ -2536,7 +2536,7 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
     expect(() => jsmql.expr("/x/.test()")).toThrow("'.test(str)' requires exactly 1 argument, got 0");
   });
   it("statement-position array mutators use the same formatter", () => {
-    expect(() => jsmql("$.a.reverse(1);")).toThrow("'.toReversed()' takes no arguments, got 1");
+    expect(() => jsmql("$.a.reverse(1);")).toThrow("'.reverse()' takes no arguments, got 1");
     expect(() => jsmql("$.a.copyWithin(1);")).toThrow(
       "'.copyWithin(target, start[, end])' takes 2 to 3 arguments, got 1. at position 3",
     );
@@ -6136,7 +6136,7 @@ describe("lodash sortBy / orderBy value aliases → $sortArray", () => {
   });
   it(".sortBy rejects an object arg (lodash matches-shorthand, not a direction)", () => {
     expect(() => jsmql.expr("$.a.sortBy({ age: -1 })")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
     );
   });
   it(".orderBy zips parallel keys + orders; missing orders default ascending", () => {

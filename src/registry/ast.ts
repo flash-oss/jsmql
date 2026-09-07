@@ -170,7 +170,21 @@ export type Expr =
   // ── access and application ────────────────────────────────────────────────
   | { type: "MemberAccess"; object: Expr; name: string; optional: boolean; pos: number }
   | { type: "IndexAccess"; object: Expr; index: Expr; optional: boolean; pos: number }
-  | { type: "MethodCall"; object: Expr; name: string; args: readonly CallArg[]; optional: boolean; pos: number }
+  /**
+   * `wrote` is the name in the SOURCE, present only when a pass rewrote this call to
+   * another name — `.reverse()` to its immutable twin `.toReversed()`. Every message
+   * names `wrote`, because a developer cannot find `.toReversed(` in a program that
+   * says `.reverse(`.
+   */
+  | {
+      type: "MethodCall";
+      object: Expr;
+      name: string;
+      wrote?: string;
+      args: readonly CallArg[];
+      optional: boolean;
+      pos: number;
+    }
   | { type: "CallExpression"; callee: Expr; args: readonly CallArg[]; pos: number }
   /** `new X(…)`. The callee is an `Ident`; which constructor it is comes later. */
   | { type: "NewExpression"; callee: Expr; args: readonly CallArg[]; pos: number }

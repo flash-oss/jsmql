@@ -1534,7 +1534,7 @@ describe("chained stage calls on the current stream", () => {
 
   it("a removed 'from the end' method is rejected after a stage link too", () => {
     expect(() => jsmql("$$.$sort({ a: 1 }).toReversed();")).toThrow(
-      "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+      "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
     );
   });
 

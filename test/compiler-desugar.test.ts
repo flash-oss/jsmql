@@ -13,8 +13,10 @@ import { mapTreeIn } from "../src/compiler/passes/walk.ts";
 
 /** The tree, with source offsets erased — two spellings sit at different columns. */
 // `mutates` is the emitter's note that a write came from a mutator, not part of what the source means.
+// `pos`, `mutates` and `wrote` are provenance, not meaning: `wrote` records the name the
+// source spelled so a refusal can name it, and a sugar still MEANS the plain form.
 const shape = (src: string): string =>
-  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "mutates" ? undefined : v));
+  JSON.stringify(desugar(parse(src)), (k, v) => (k === "pos" ? 0 : k === "mutates" || k === "wrote" ? undefined : v));
 
 /** Each pair: the sugar, and the source it MEANS. */
 const EQUIVALENT: [string, string][] = [

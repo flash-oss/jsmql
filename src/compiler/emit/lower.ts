@@ -538,6 +538,10 @@ function receiverOf(recv: Expr, env: Env): Receiver {
 const spelledMethod = (name: string, recv: Expr): string =>
   recv.type === "Ident" && NAMESPACES.has(recv.name) ? `${recv.name}.${name}` : `.${name}`;
 
+/** The name the SOURCE spells: the rewritten one only where no pass renamed the call. */
+const wroteName = (node: Expr, name: string): string =>
+  node.type === "MethodCall" && node.wrote !== undefined ? node.wrote : name;
+
 /** Every JavaScript name, for a suggestion over a real closed set. */
 const JS_NAMES = everyName().filter((n) => !n.startsWith("$"));
 
@@ -566,7 +570,7 @@ function dispatchOn(
   }
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
-  const spelled = spelledMethod(name, recvNode);
+  const spelled = spelledMethod(wroteName(node, name), recvNode);
   const container =
     receiver.kind === "stream" ? "'$$'" : receiver.kind === "namespace" ? `'${receiver.name}'` : "this receiver";
   if (sel.kind === "rule") {

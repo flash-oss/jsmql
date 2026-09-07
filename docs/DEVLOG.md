@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): a refusal names the method the source spells, and the way out compiles
+
+`$.a.reverse(1)` answered "'.toReversed()' takes no arguments, got 1". A mutator is rewritten to its immutable twin before it is lowered — `.reverse()` becomes `$.a = $.a.toReversed()` — and the arity refusal then named the twin, a name the developer cannot find anywhere in their program. A rewritten call carries `wrote`, the name the SOURCE spells, and every message reads that. `.sort(1, 2)` names `.sort` now, `.splice` names `.splice`, and a call no pass renamed is unaffected. `wrote` is provenance, not meaning: the desugar suite strips it beside `pos`, because a sugar still MEANS the plain form it becomes.
+
+Two refusals named a way out that does not compile. `.sortBy({ … })` is refused because lodash reads an object as a matcher and sorts by its truth, not as directions — that is lodash's own API, where `sortBy` takes iteratees and sorts ascending and `orderBy` takes the orders. The message offered `.sort({ field: -1 })`, which is refused in a value position and raises an internal error on a stream; it names `.orderBy({ field: -1 })` and `.toSorted({ field: -1 })` now, which take an order in every position. `.toReversed()` on a stream offered `.sort(<key>)`, refused there for the same reason, and names `.orderBy` now.
+
+`.reverse()` and `.toReversed()` answer alike on a stream. Both reverse an order a stream does not have until it is sorted, and `.reverse()` used to say "use its immutable form mid-chain" — a pointer to a method refused for the identical reason. Its bare-statement form fell through to the generic receiver refusal, which named no way out at all; a stream receiver on a row spelled for arrays now gets one.
+
+---
+
+
 ## 2026-09-07 — fix(compiler): groupBy answers an object, a pad target is guarded, and pick answers an object
 
 Three more answers the acceptance gate measured wrong, each on a live mongod against JavaScript's own.

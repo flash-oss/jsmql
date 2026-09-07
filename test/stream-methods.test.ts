@@ -224,7 +224,7 @@ describe("'from the end' array methods are NOT on the stream surface", () => {
       "'.takeRight()' isn't available on '$$' — counts from the END, which needs the whole stream buffered. Sort by the opposite key and use '.take(n)'.",
     );
     expect(() => jsmql("$$ = $$.toReversed();")).toThrow(
-      "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+      "'.toReversed()' isn't available on '$$' — reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
     );
   });
 
@@ -477,7 +477,7 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
     expect(jsmql('$$ = $$.sortBy("age");')).toEqual([{ $sort: { age: 1 } }]);
     expect(jsmql('$$ = $$.sortBy(["age", "name"]);')).toEqual([{ $sort: { age: 1, name: 1 } }]);
     expect(() => jsmql("$$ = $$.sortBy({ age: -1 });")).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
     );
   });
 
@@ -1866,7 +1866,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
       { $lookup: { from: "orders", pipeline: [{ $sort: { cat: -1 } }], as: "o" } },
     ]);
     expect(() => jsmql(`$.o = $$$.orders.sortBy({ cat: 1 });`)).toThrow(
-      ".sortBy({ … }) reads an object as a lodash matcher, not as directions. For directions write '.orderBy({ field: -1 })' or '.sort({ field: -1 })'.",
+      ".sortBy({ … }) reads an object as a lodash matcher, not as directions — lodash's sortBy takes iteratees and sorts ascending. For directions write '.orderBy({ field: -1 })' or '.toSorted({ field: -1 })', which take an order in every position.",
     );
   });
 

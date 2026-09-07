@@ -6843,7 +6843,10 @@ export const NAMES = {
     expr: unsupported(
       ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()' — or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.",
     ),
-    stream: unsupported("'.reverse()' mutates; a chain link must return a stream. Use its immutable form mid-chain."),
+    // The twin is refused here for the same reason, so naming it would be a dead end.
+    stream: because(
+      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
+    ),
     statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.reverse()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'.reverse()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
@@ -6858,7 +6861,7 @@ export const NAMES = {
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => reverseArrayOf(recv) },
     stream: because(
-      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.sort(<key>)' with the direction you want.",
+      "reverses the stream, and a stream has no defined order to reverse until it is sorted. Use '.orderBy({ <field>: -1 })' with the direction you want.",
     ),
     statement: unsupported(
       "'.toReversed()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toReversed();'",
