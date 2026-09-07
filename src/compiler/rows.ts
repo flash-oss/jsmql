@@ -421,8 +421,8 @@ export function unionsOf(name: string): boolean {
 }
 
 /** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
-export function collapsesOf(name: string): true | "withFieldName" | null {
-  return (row(name) as { collapses?: true | "withFieldName" } | undefined)?.collapses ?? null;
+export function collapsesOf(name: string): true | "unlessRawBody" | null {
+  return (row(name) as { collapses?: true | "unlessRawBody" } | undefined)?.collapses ?? null;
 }
 
 /** Does the row's stream cell take a callback whose body must BE a document — `.map`? */

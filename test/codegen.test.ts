@@ -5672,15 +5672,19 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // Number methods on it still compile.
     expect(() => jsmql.expr("$.s.length.clamp(0, 10)")).not.toThrow();
   });
-  it("treats .pick / .omit as object-returning here — reaching value position settles it", () => {
-    // They carry no invariant `returns` because a `$$` stream reads them as a
-    // `$project`; a value-position receiver can only be the object form.
-    expect(jsmql.expr('$.o.pick(["a"]).trim()')).toEqual({
-      $trim: {
-        input: { $let: { vars: { jsmqlObj: "$o" }, in: { a: { $getField: { field: "a", input: "$$jsmqlObj" } } } } },
-      },
-    });
+  it("treats .pick / .omit as object-returning — a non-object method is a compile error", () => {
+    // `returns` is stated PER FAMILY: the stream form is a `$project`, and the value
+    // form builds a document literal, so a value-position receiver IS an object. A
+    // string, number or date method on it would reach the server and stop the query.
+    expect(() => jsmql.expr('$.o.pick(["a"]).trim()')).toThrow(/'\.trim\(\)' is not available on a 'object'/);
+    expect(() => jsmql.expr('$.o.omit(["a"]).padStart(3)')).toThrow(/'\.padStart\(\)' is not available on a 'object'/);
+    expect(() => jsmql.expr("$.o.pickBy(v => v > 1).toISOString()")).toThrow(
+      /'\.toISOString\(\)' is not available on a 'object'/,
+    );
+    // an object method, a field read and a size still compile
     expect(() => jsmql.expr('$.o.pick(["a"]).mapValues(v => v)')).not.toThrow();
+    expect(() => jsmql.expr('$.o.pick(["a"]).a')).not.toThrow();
+    expect(() => jsmql.expr('$.o.pick(["a"]).size()')).not.toThrow();
   });
   it("an HR1 $-string receiver stays uncertain — it IS a field reference", () => {
     // A source `"$items"` is the field ref $items, a runtime value of any type,
@@ -6644,22 +6648,28 @@ describe("string padding methods", () => {
           $let: {
             vars: { jsmqlPad: { $ifNull: ["$$s.code", ""] } },
             in: {
-              $concat: [
-                {
-                  $substrCP: [
+              $cond: {
+                if: { $gt: [{ $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }, 0] },
+                then: {
+                  $concat: [
                     {
-                      $reduce: {
-                        input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
-                        initialValue: "",
-                        in: { $concat: ["$$value", "$$s.pad"] },
-                      },
+                      $substrCP: [
+                        {
+                          $reduce: {
+                            input: { $range: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                            initialValue: "",
+                            in: { $concat: ["$$value", "$$s.pad"] },
+                          },
+                        },
+                        0,
+                        { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                      ],
                     },
-                    0,
-                    { $max: [0, { $subtract: ["$$s.width", { $strLenCP: "$$jsmqlPad" }] }] },
+                    "$$jsmqlPad",
                   ],
                 },
-                "$$jsmqlPad",
-              ],
+                else: "$$jsmqlPad",
+              },
             },
           },
         },

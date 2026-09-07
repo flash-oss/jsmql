@@ -142,7 +142,7 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
     peeledTo = link;
     // A link that folds the stream into one document leaves one document in the array.
     const c = collapsesOf(link.name);
-    const collapsed = c === true || (c === "withFieldName" && link.args[0]?.type === "StringLiteral");
+    const collapsed = c === true || (c === "unlessRawBody" && link.args[0]?.type !== "ObjectLiteral");
     one = collapsed ? "collapse" : false;
     yields = collapsed ? "object" : "array";
   }

@@ -174,12 +174,16 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   /** The stream cell takes a callback whose body must BE a document — `.map` replaces the document. */
   streamBody?: "document";
   /**
-   * The stream cell folds the whole stream into ONE document — `countBy`, `keyBy`,
-   * and `groupBy` when given a field NAME (`"withFieldName"`; its `$group`-body
-   * form keeps a stream). On another collection the joined array then holds that
-   * one document, which IS the value.
+   * The stream cell folds the whole stream into ONE document — `countBy` and `keyBy`
+   * always, `groupBy` unless its argument is a RAW `$group` body
+   * (`"unlessRawBody"`): `$$.groupBy(d => d.cat)` builds lodash's one object, while
+   * `$$.groupBy({ _id: "$cat", n: $sum(1) })` is the stage itself and keeps a stream.
+   * On another collection the joined array then holds that one document, which IS
+   * the value — so the read unwraps it. The question is the argument's SHAPE, not its
+   * spelling: the desugar pass rewrites a field-name string into an arrow long before
+   * emit, so asking for a string literal here asks something that can never be true.
    */
-  collapses?: true | "withFieldName";
+  collapses?: true | "unlessRawBody";
   /** On the stream this method UNIONS documents in — `push` as a statement, `concat` as a link — a `$unionWith` per source. */
   unions?: true;
   params?: CallbackParams;
@@ -620,12 +624,15 @@ function padded(
   const need = { $subtract: [target, { $strLenCP: v.ref }] };
   const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
   const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
-  return {
-    $let: {
-      vars: { [v.as]: coerceStringBinding(recv) },
-      in: { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] },
-    },
-  };
+  const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
+  // A target the DATA decides can be missing or null, and `$range` refuses a
+  // non-numeric end — measured, it stops the whole query. JavaScript pads nothing
+  // there ("7".padStart(null) is "7"), so the receiver stands when nothing is
+  // needed. MEASURED: `$gt: [null, 0]` is false, so one test covers null, missing
+  // and a target already shorter than the string. A number LITERAL needs no test.
+  const bounded =
+    args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
+  return { $let: { vars: { [v.as]: coerceStringBinding(recv) }, in: bounded } };
 }
 
 /** The identity iteratee — `.keyBy()` with no argument keys by the element itself. */
@@ -10174,7 +10181,7 @@ export const NAMES = {
   }),
 
   groupBy: name({
-    collapses: "withFieldName",
+    collapses: "unlessRawBody",
     doc: "'.groupBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream", "Object"],
@@ -10388,7 +10395,8 @@ export const NAMES = {
     doc: "'.pick()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["object", "stream"],
-    returns: { object: "unknown", stream: "stream" },
+    // The value form builds a document literal, so the result IS an object.
+    returns: { object: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10427,7 +10435,8 @@ export const NAMES = {
     doc: "'.omit()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["object", "stream"],
-    returns: { object: "unknown", stream: "stream" },
+    // The value form builds a document literal, so the result IS an object.
+    returns: { object: "object", stream: "stream" },
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {

@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix(compiler): groupBy answers an object, a pad target is guarded, and pick answers an object
+
+Three more answers the acceptance gate measured wrong, each on a live mongod against JavaScript's own.
+
+`$$$.orders.groupBy(d => d.cat)` wrote `[{ a: […], b: […] }]` where `.keyBy` and `.countBy` wrote the object itself, and lodash's `_.groupBy` answers an object. The row states `collapses`, which says whether the stream cell folds the whole stream into one document, and `groupBy` states it conditionally because it has two stream spellings: a key (`"cat"`, `d => d.cat`) builds lodash's object, and a raw `$group` body (`{ _id: "$cat", n: $sum(1) }`) IS the stage and keeps a stream. The condition asked whether the argument was written as a string literal — a question the desugar pass makes unanswerable, because it rewrites a field-name string into an arrow long before emit, so the test could never be true. It asks the argument's SHAPE now, which is what the two spellings actually differ in, and the fact is named `unlessRawBody` after the question it asks.
+
+`$.s.padStart($.w)` stopped the query when the width was missing or null: `$range` refuses a non-numeric end. JavaScript pads nothing there — `"7".padStart(null)` is `"7"` — so the receiver stands when nothing is needed. One test covers null, missing, and a width already shorter than the string, because MEASURED `$gt: [null, 0]` is false. A width written as a number literal is numeric by construction and keeps the unguarded shape.
+
+`$.o.pick(["a"]).trim()` emitted `$trim` over a document and the server stopped the query. The `pick` and `omit` rows answered `"unknown"` for an object receiver, on the reasoning that a stream reads them as a `$project` — but `returns` is stated PER FAMILY, so the stream half says `stream` and the object half can say what it builds, which is a document literal. Every string, number and date method on the result is a compile error now, and `.mapValues`, a field read and `.size()` still compile. `pickBy`, `omitBy`, `mapValues`, `mapKeys` and `invert` already stated it.
+
+---
+
+
 ## 2026-09-07 — feat: a written list of documents appends to the stream
 
 `docs/LANGUAGE.md` documented `$$.push({ … })` as `{ $unionWith: { pipeline: [{ $documents: [ … ] }] } }`, and the compiler built it — for arguments written one at a time. Spreading a written LIST of the same documents was refused, and so was `.concat` of one, although both say the same thing in JavaScript and both reach the same batch.
