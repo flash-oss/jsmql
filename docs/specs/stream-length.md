@@ -44,13 +44,19 @@ The materialiser is hoisted **lazily** and cached:
 - After any stage that is **not** count-and-field preserving, the next use
   **recomputes** (emits a fresh `$setWindowFields`).
 
-**Freshness-preserving stages** (allowlist — `STREAM_LENGTH_PRESERVING`):
-`$set`, `$addFields`, `$sort`, `$lookup`, `$setWindowFields`. Everything else
-(`$match`, `$group`, `$bucket*`, `$unwind`, `$limit`, `$skip`, `$sample`,
-`$project`, `$unset`, `$replaceWith`/`$replaceRoot`, `$unionWith`, `$facet`,
-the sugar forms, …) invalidates. The rule is **conservative**: recomputing is
-always correct, reusing a stale count is a bug — so freshness is kept only
-across provably-safe stages.
+**Freshness-preserving stages** are the ones whose row states `preservesCount`
+(`src/registry/names.ts`): the stage leaves the stream's COUNT and its documents'
+FIELDS both untouched, so a count already stamped into a field is still the
+count afterwards. A stage that states nothing invalidates. The rule is
+**conservative**: recomputing is always correct and reusing a stale count is a
+bug, so freshness is kept only where a row proves it safe.
+
+Inside a callback the count cannot be recomputed, because the stamp is hoisted
+to the FRONT of the body: the callback's third parameter is therefore refused
+altogether in a body that runs any stage without `preservesCount`. Its message
+names the stage. Reading it after a `$match` answered the collection's size
+rather than the filtered stream's, and after a `$group` the field was gone and
+every test on it fired.
 
 Detection is a **complete** AST walk (`someExpr` / `containsStreamLength` in
 `pipeline.ts`, covering every child-bearing `Expr` node), because a missed node

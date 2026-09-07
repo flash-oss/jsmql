@@ -275,44 +275,17 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
   // block (here in an assert). Verified end-to-end on a live mongod: alice
   // (2 orders) → orders:[…], bob (0 orders) → orders:[] (the assert no-ops on
   // an empty sub-stream — no doc flows through the lookup pipeline to reject).
-  it("assert(ordersColl.length > 0) materialises a $setWindowFields before the assert $match", () => {
-    expect(
+  it("refuses <coll>.length in a body that filters — the stamp is taken before the filter", () => {
+    // The count is stamped ahead of the body, so after a `$match` it is the collection's
+    // size and not this user's. The assert the developer wrote is not the one that runs.
+    expect(() =>
       jsmql(`
         $.orders = $$$.orders.aggregate((o, i, ordersColl) => {
           $match(o.userId === $._id);
           assert(ordersColl.length > 0, "User without orders is impossible");
         });
       `),
-    ).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            {
-              $match: {
-                $expr: {
-                  $convert: {
-                    input: true,
-                    to: {
-                      $cond: [
-                        { $gt: ["$__jsmql.length", 0] },
-                        "bool",
-                        "jsmql assertion failed: User without orders is impossible",
-                      ],
-                    },
-                  },
-                },
-              },
-            },
-            { $unset: "__jsmql" },
-          ],
-          as: "orders",
-        },
-      },
-    ]);
+    ).toThrow(/'ordersColl' is the body's own stream, and this body runs '\$match'/);
   });
 
   // Deep cross-level capture: a ROOT read (`$.region`) inside a NESTED block-body
@@ -1436,32 +1409,12 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
     ]);
   });
 
-  it("3rd 'collection' param exposes .length via $setWindowFields", () => {
-    expect(
+  it("refuses <coll>.length in a body that groups — the stamp is dropped with the fields", () => {
+    // `$group` keeps no field the input carried, so the stamped count is gone and the
+    // assertion read a missing value: it fired on every document, empty or not.
+    expect(() =>
       jsmql('$.g = $$$.c.aggregate((o, _i, coll) => { $group({ _id: "$s" }); assert(coll.length > 0, "empty"); });'),
-    ).toEqual([
-      {
-        $lookup: {
-          from: "c",
-          pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            { $group: { _id: "$s" } },
-            {
-              $match: {
-                $expr: {
-                  $convert: {
-                    input: true,
-                    to: { $cond: [{ $gt: ["$__jsmql.length", 0] }, "bool", "jsmql assertion failed: empty"] },
-                  },
-                },
-              },
-            },
-            { $unset: "__jsmql" },
-          ],
-          as: "g",
-        },
-      },
-    ]);
+    ).toThrow(/'coll' is the body's own stream, and this body runs '\$group'/);
   });
 
   it("array form correlates: an outer $. ref inside $expr auto-lets into $lookup.let", () => {
@@ -1804,7 +1757,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("non-.length use of the 3rd 'collection' param is rejected", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o, _i, coll) => { $match(o.n === coll[0]); });")).toThrow(
-      "'coll' is the body's own stream, the callback's third parameter: read its count ('coll.length') or chain on it ('coll.filter(…)'). It is not a document or a value on its own.",
+      "'coll' is the body's own stream, and this body runs '$match', which changes what its count means — 'coll.length' is stamped into a field ahead of the body, and that stage either drops the field or changes how many documents there are. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop 'coll' from the parameter list.",
     );
   });
 

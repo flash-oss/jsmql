@@ -322,20 +322,9 @@ describe("compiler/emit/join — inside the body", () => {
     );
     // `coll.length` counts the body's stream where it stands; `$$.length` counts the ROOT stream,
     // materialised on the root pipeline and carried in through `let`
-    expect(
-      compiled("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });", [
-        {
-          _id: 1,
-          o: [
-            { _id: 101, n: 4 },
-            { _id: 102, n: 4 },
-          ],
-        },
-        { _id: 2, o: [{ _id: 103, n: 4 }] },
-        { _id: 3, o: [] },
-        { _id: 4, o: [] },
-      ]),
-    ).toEqual([
+    expect(() =>
+      pipeline("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });"),
+    ).toThrow(/'coll' is the body's own stream, and this body runs '\$match', which changes what its count means/);.toEqual([
       {
         $lookup: {
           from: "orders",

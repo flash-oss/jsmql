@@ -435,6 +435,11 @@ export function pipelineOverOf(name: string): "foreign" | null {
 }
 
 /** Does the stage drop the input document's fields — always, only for an inclusion body, or never? */
+/** Does the stage leave the stream's COUNT and its documents' FIELDS both untouched? */
+export function preservesCountOf(name: string): boolean {
+  return (row(name) as { preservesCount?: true } | undefined)?.preservesCount === true;
+}
+
 export function replacesDocumentOf(name: string): true | "inclusion" | false {
   return (row(name) as { replacesDocument?: true | "inclusion" } | undefined)?.replacesDocument ?? false;
 }

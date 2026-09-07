@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — fix!: a callback's own stream is refused where its count cannot stay true
+
+`(o, _i, c) => { … }` binds `c` to the body's own stream, and `c.length` is its count. MQL has no inline cardinality operator, so the count is stamped into a field by a `$setWindowFields` — and that stage is HOISTED to the front of the body, wherever the read sits. Any stage between the stamp and the read that changes the count or drops the fields makes the stamp untrue, and nothing recomputed it.
+
+Two suites had the evidence written down. One asserted `n: 4` for every user in a body that filtered by user — the whole collection's count, under a comment claiming it counted "the body's stream where it stands". The other asserted an `assert(<coll>.length > 0)` after a `$match`, under a comment explaining that the assertion no-ops for a user with no orders because no document survives the filter — which is to say the assertion the developer wrote was not the one that ran. And after a `$group` the field is gone entirely, so the test read a missing value and fired on every document.
+
+`c` is refused now in any body that runs a stage whose row does not state `preservesCount`, and the message names the stage. That fact is the freshness rule `docs/specs/stream-length.md` already stated as a hard-coded allowlist in a module that no longer exists: the stage leaves the stream's count and its documents' fields both untouched. Five stages state it. The rule is conservative on purpose — recomputing is always correct and reusing a stale count is a bug — so `$sort` and `$addFields` keep the handle while `$match`, `$limit`, `$unwind` and `$group` refuse it. Read the count in a statement ahead of the chain, or leave the third parameter off.
+
+---
+
+
 ## 2026-09-07 — feat!: one grouping spelling, and a generator says what it is
 
 `Object.groupBy($.items, x => x.k)` and `$.items.groupBy(x => x.k)` emitted the identical MQL. Two spellings of one capability is the friction jsmql rejects, so the `Object` receiver is refused. The name still parses, which is the point: a refused name gets a message that names the form that works, where a deleted one would leave "unknown identifier". Its two internal errors go with it — a non-arrow discriminator and a two-parameter arrow both used to answer "jsmql internal error (please report to the jsmql maintainers)" with `.pos = 0`, which asked the developer to file a bug for their own typo and left tooling with no position.

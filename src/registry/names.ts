@@ -406,6 +406,18 @@ type MongoSpec<
    */
   replacesDocument?: true | "inclusion";
   /**
+   * The stage leaves the stream's COUNT and its documents' FIELDS both untouched, so a
+   * count already stamped into a field is still the count afterwards. Stated on the few
+   * stages where it holds, because the safe answer is "no": reusing a stale count is a
+   * bug and recomputing is always correct. MEASURED against the count each stage leaves:
+   *   $sort   reorders, so the count and the fields both stand
+   *   $unwind keeps every FIELD and emits one document per element, so the count is stale
+   *   $group  drops the fields, so the stamp is gone as well as stale
+   * Read by the body's own stream handle, whose count is a stamped field: a body that
+   * runs any stage without this fact cannot carry one.
+   */
+  preservesCount?: true;
+  /**
    * The stage's sub-pipeline runs over ANOTHER collection's documents. Inside it
    * `$.x` still means the outer document (HR4), which the server can reach only
    * through the stage's `let` — the join road's work — and a field-carried
@@ -4736,6 +4748,7 @@ export const NAMES = {
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement"],
+    preservesCount: true,
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     body: { required: [], optional: [], closed: false },
@@ -5384,6 +5397,7 @@ export const NAMES = {
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
     where: ["stream", "statement"],
+    preservesCount: true,
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -5778,6 +5792,7 @@ export const NAMES = {
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement", "updateDoc"],
+    preservesCount: true,
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     body: { required: [], optional: [], closed: false },
@@ -5808,6 +5823,7 @@ export const NAMES = {
   $setWindowFields: mongo({
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
     where: ["stream", "statement"],
+    preservesCount: true,
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     body: {
@@ -5922,6 +5938,7 @@ export const NAMES = {
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
     where: ["stream", "statement", "updateDoc"],
+    preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     body: {
       required: [],

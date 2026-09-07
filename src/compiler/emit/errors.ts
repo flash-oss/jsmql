@@ -324,6 +324,18 @@ export const arrayOfArrays = (method: string, holder: string, pos: number): Code
     pos,
   );
 
+/**
+ * The callback's third parameter, in a body whose stages make its count untrue. The
+ * count is stamped into a field ahead of the body, so a stage that drops the fields
+ * loses it and a stage that changes the document count makes it stale — and a test on
+ * either silently answers on the wrong number.
+ */
+export const streamHandleAfterReplace = (name: string, stage: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is the body's own stream, and this body runs '${stage}', which changes what its count means — '${name}.length' is stamped into a field ahead of the body, and that stage either drops the field or changes how many documents there are. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name}' from the parameter list.`,
+    pos,
+  );
+
 /** The callback's third parameter — the body's own stream — read as a value. */
 export const streamHandleAsValue = (name: string, pos: number): CodegenError =>
   new CodegenError(

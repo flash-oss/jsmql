@@ -29,7 +29,9 @@ import {
   needsLiteral,
   elementNeedsQuery,
   needsPrecedingSort,
+  streamHandleAfterReplace,
 } from "./errors.ts";
+import { preservesCountOf } from "../rows.ts";
 import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
@@ -308,6 +310,26 @@ export function exprInputs(
   };
 }
 
+/**
+ * The first stage in this callback's block that changes what a stamped count MEANS, or
+ * null. The count is a field, hoisted to the front of the body, so a stage that drops
+ * the fields loses it (`$group`) and a stage that changes how many documents there are
+ * makes it stale (`$unwind`, `$match`, `$limit`). Only the stages whose rows state
+ * `preservesCount` leave it meaning what it said.
+ *
+ * A syntactic question, asked of the source: the answer must not depend on where the
+ * read sits, because the stamp is hoisted whatever the source order.
+ */
+function staleCountStage(cb: Expr): string | null {
+  const stmts = (cb as { stages?: { stmts?: readonly { type: string; name?: string }[] } }).stages?.stmts;
+  if (stmts === undefined) return null;
+  for (const st of stmts) {
+    if (st.type !== "OperatorCall" || typeof st.name !== "string") continue;
+    if (!preservesCountOf(st.name)) return st.name;
+  }
+  return null;
+}
+
 /** Is `recv` the body's OWN stream — a callback's collection parameter — rather than `$$`, the root stream? */
 export function onOwnStream(recv: Expr | null, env: Env): boolean {
   return (
@@ -459,8 +481,19 @@ export function stageInputs(
     if (cb.params.length === 3) {
       // The collection parameter IS the stream the callback runs over — at the top
       // the same as `$$`, inside a body over another collection that body's stream.
+      // A body whose stages change the count or the fields cannot carry one: the stamp
+      // is a FIELD, hoisted ahead of the body's stages. So the handle is refused for the
+      // whole body, wherever the read sits.
+      const replaces = staleCountStage(cb);
       e = e.bind(cb.params[2], {
-        ref: { kind: "streamHandle", source: cb },
+        ref:
+          replaces === null
+            ? { kind: "streamHandle", source: cb }
+            : {
+                kind: "dropped",
+                message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
+                replaced: false,
+              },
         type: "stream",
         elements: "unknown",
         mutable: false,
