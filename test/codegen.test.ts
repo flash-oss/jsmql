@@ -1,7 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { ObjectId } from "../src/objectid.ts";
-import { requiredReceiverFamily, valueMethodNames } from "../src/compiler/rows.ts";
+import { acceptsAnyReceiver, streamMethodNames, valueMethodNames } from "../src/compiler/rows.ts";
 // The `jsTruthy()` mirror used in expected outputs for `&&`, `||`, `!`, `?:`,
 // `Boolean()`, and predicate bodies wherever the operand is not provably boolean.
 import { truthy, truthyAnd, truthyOr } from "./truthy.ts";
@@ -5523,29 +5523,22 @@ describe("lodash array methods (per-doc value vocabulary)", () => {
 });
 
 describe("every method declares the receiver family it needs", () => {
-  // The gate only fires for methods that say which receiver they need, so a
-  // single-type method with no declared family is silently ungated. This asserts
-  // the complement: the never-gated list holds ONLY methods that are genuinely
-  // dual-type, universal, or unreachable in a value chain. A new single-type
-  // method without its family fails here instead of quietly emitting bad MQL.
-  const UNGATED_BY_DESIGN = {
-    clamp: "number OR date — the result follows its arguments",
-    concat: "string OR array",
-    includes: "string OR array",
-    indexOf: "string OR array",
-    lastIndexOf: "string OR array",
-    slice: "string OR array",
-    at: "string OR array — JavaScript has String.prototype.at",
-    nth: "string OR array — lodash's _.nth reads a string too",
-    size: "array OR object",
-    getTime: "universal — $toLong converts strings and numbers too",
+  // A row's `on` is required, so no method can forget its receiver families —
+  // but `on: "any"` opts out of the receiver check altogether. This asserts the
+  // complement: the opted-out list holds ONLY methods that genuinely run on any
+  // receiver. A new method that reaches for `"any"` to dodge a family fails here
+  // instead of quietly emitting MQL the server rejects.
+  const ANY_RECEIVER_BY_DESIGN = {
     toString: "universal",
     toLocaleString: "universal in JS — Number, Date and Array all have it",
-    exec: "regex receiver, intercepted before generateMethodCall",
-    test: "regex receiver, intercepted before generateMethodCall",
-    isSubsetOf: "Set receiver only — a plain one falls through to 'Unknown method'",
-    isSupersetOf: "Set receiver only — a plain one falls through to 'Unknown method'",
+    exec: "regex receiver, matched before the family check",
+    test: "regex receiver, matched before the family check",
+    from: "Array.from / Object.from — a static, so it has no receiver to check",
   };
+  it("only the genuinely universal methods opt out of the receiver check", () => {
+    const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();
+    expect(optedOut).toEqual(Object.keys(ANY_RECEIVER_BY_DESIGN).sort());
+  });
 });
 
 describe("chain type-check — reject a method on a provably-incompatible receiver", () => {
@@ -5693,8 +5686,8 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     expect(() => jsmql.expr('"$t".plus(1, "day")')).not.toThrow();
   });
   it("rejects a wrong-family method on an operator call whose return type is invariant", () => {
-    // Every category in OPERATOR_RETURNS was read off a live mongod with
-    // `{ $type: { <op>: <args> } }` — see the table's own note.
+    // Every `returns` a row states was read off a live mongod with
+    // `{ $type: { <op>: <args> } }` — test/compiler-returns-agrees.test.ts re-measures them.
     expect(() => jsmql.expr("$concat($.a, $.b).map(x => x)")).toThrow(
       "'.map()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
@@ -5709,8 +5702,8 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
   });
   it("leaves an operator whose return type depends on its arguments uncertain", () => {
-    // These are absent from OPERATOR_RETURNS on purpose: $add/$subtract are number
-    // OR date, and the element readers and pass-throughs can return anything.
+    // These rows state no `returns` on purpose: $add/$subtract are number OR date,
+    // and the element readers and pass-throughs can return anything.
     expect(() => jsmql.expr('$add($.a, $.b).plus(1, "day")')).not.toThrow();
     expect(() => jsmql.expr('$subtract($.a, $.b).plus(1, "day")')).not.toThrow();
     expect(() => jsmql.expr("$ifNull($.a, $.b).trim()")).not.toThrow();

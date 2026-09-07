@@ -10,6 +10,17 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — test: three suites assert what this compiler answers
+
+`test/compiler-join.test.ts` did not parse. The change that refuses a callback's own stream after a count-changing stage turned an expectation into a refusal, and the old `.toEqual([…])` block was left standing after the `.toThrow(…)` that replaced it — `);.toEqual([`. Vitest reported it as a transform error, so the file's 40 tests never ran. The stale block is gone.
+
+`test/codegen.test.ts` held a `describe` with a constant and no `it`. Its assertion belonged to the previous compiler's design, where a method row could forget to say which receiver family it needs and would then be silently ungated. A row's `on` is required now, so nothing can forget it — but `on: "any"` still opts a method out of the receiver check. That is what the suite asserts: the opted-out list holds only the genuinely universal methods, so a new method cannot reach for `"any"` to dodge a family.
+
+`test/smoke.test.ts` asserted `{ age: { $gt: 18 } }` from the built bundle. This compiler answers `{ age: { $gt: 18, $not: { $type: "array" } } }` — `$.age > 18` is false in JavaScript when `age` is an array, and MQL's bare `$gt` would match one whose element exceeds 18. The suite reads `dist/`, which `npm test` does not rebuild, so a stale build had been hiding the difference.
+
+---
+
+
 ## 2026-09-07 — fix: a bracketed program is diagnosed as the pipeline it is
 
 `jsmql.pipeline("[{ $macth: … }]")` answered "jsmql.pipeline() expects a Pipeline … Use jsmql.pipeline()" — the entry the developer had just called. The strict-shape entries ask `shapeOf` first, and a bracketed list whose stage name is misspelled does not look like a pipeline, so the shape refusal spoke before the lowering could name the typo. `jsmql()` on the same source named it and suggested `$match`.

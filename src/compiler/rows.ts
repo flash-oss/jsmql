@@ -590,6 +590,11 @@ export function valueMethodReturns(): Record<string, string> {
   return out;
 }
 
+/** Does the method run on ANY receiver — the one way a row escapes the receiver check? */
+export function acceptsAnyReceiver(name: string): boolean {
+  return row(name)?.on === "any";
+}
+
 /** The one receiver family a method needs, or null when it lives on several or on any. */
 export function requiredReceiverFamily(name: string): Family | null {
   const on = families(row(name)?.on);

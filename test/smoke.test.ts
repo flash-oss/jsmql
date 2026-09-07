@@ -66,16 +66,16 @@ describe("smoke: built dist", () => {
     const script = `
         import { jsmql } from ${JSON.stringify(distUrl)};
         const out = jsmql("$.age > 18");
-        if (JSON.stringify(out) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(out) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql(string) output mismatch: " + JSON.stringify(out));
         }
         if (!jsmql.validate("$.age > 18").valid) throw new Error("jsmql.validate() failed");
         const tag = jsmql\`$.x > \${5}\`;
-        if (JSON.stringify(tag) !== '{"x":{"$gt":5}}') {
+        if (JSON.stringify(tag) !== '{"x":{"$gt":5,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
         }
         const fn = jsmql(({ $ }) => $.age > 18);
-        if (JSON.stringify(fn) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(fn) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
       `;
@@ -95,16 +95,16 @@ describe("smoke: built dist", () => {
     const script = `
         const { jsmql } = require(${JSON.stringify(cjsPath)});
         const out = jsmql("$.age > 18");
-        if (JSON.stringify(out) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(out) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql(string) output mismatch: " + JSON.stringify(out));
         }
         if (!jsmql.validate("$.age > 18").valid) throw new Error("jsmql.validate() failed");
         const tag = jsmql\`$.x > \${5}\`;
-        if (JSON.stringify(tag) !== '{"x":{"$gt":5}}') {
+        if (JSON.stringify(tag) !== '{"x":{"$gt":5,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql template-tag mismatch: " + JSON.stringify(tag));
         }
         const fn = jsmql(({ $ }) => $.age > 18);
-        if (JSON.stringify(fn) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(fn) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("jsmql(function) output mismatch: " + JSON.stringify(fn));
         }
       `;
@@ -124,7 +124,7 @@ describe("smoke: built dist", () => {
     // of the file's exec bit.
     const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
     expect(compiled.status, compiled.stderr).toBe(0);
-    expect(JSON.stringify(JSON.parse(compiled.stdout))).toBe('{"age":{"$gt":18}}');
+    expect(JSON.stringify(JSON.parse(compiled.stdout))).toBe('{"age":{"$gt":18,"$not":{"$type":"array"}}}');
 
     const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
     expect(version.status, version.stderr).toBe(0);
@@ -185,7 +185,7 @@ describe("smoke: built dist", () => {
         class Model { static find(filter) { captured = filter; } }
         jsmqlMongoose({ Model });
         Model.find("$.age > 18");
-        if (JSON.stringify(captured) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(captured) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("mongoose patch (ESM) output mismatch: " + JSON.stringify(captured));
         }
       `;
@@ -211,7 +211,7 @@ describe("smoke: built dist", () => {
         Model.find = function(filter) { captured = filter; };
         jsmqlMongoose({ Model });
         Model.find("$.age > 18");
-        if (JSON.stringify(captured) !== '{"age":{"$gt":18}}') {
+        if (JSON.stringify(captured) !== '{"age":{"$gt":18,"$not":{"$type":"array"}}}') {
           throw new Error("mongoose patch (CJS) output mismatch: " + JSON.stringify(captured));
         }
       `;

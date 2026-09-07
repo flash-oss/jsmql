@@ -324,21 +324,7 @@ describe("compiler/emit/join — inside the body", () => {
     // materialised on the root pipeline and carried in through `let`
     expect(() =>
       pipeline("$.o = $$$.orders.aggregate((o, _i, coll) => { $match(o.userId === $._id); o.n = coll.length; });"),
-    ).toThrow(/'coll' is the body's own stream, and this body runs '\$match', which changes what its count means/);.toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: LET,
-          pipeline: [
-            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-            byUser,
-            { $set: { n: "$__jsmql.length" } },
-            { $unset: "__jsmql" },
-          ],
-          as: "o",
-        },
-      },
-    ]);
+    ).toThrow(/'coll' is the body's own stream, and this body runs '\$match', which changes what its count means/);
     expect(
       compiled("$.o = $$$.orders.aggregate(o => { $match(o.userId === $._id); o.n = $$.length; });", [
         {
