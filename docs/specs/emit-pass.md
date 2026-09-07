@@ -568,8 +568,10 @@ month from 0, like `getMonth()`, so the month moves up by one on the way to
 `$dateFromParts` (folded for a literal). `Number.isNaN` reads `$toString`,
 because the server holds NaN equal to itself (`$eq: [NaN, NaN]` is true,
 measured), and `Number.isInteger` excludes NaN and the infinities the same way.
-`Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN), and
-`parseInt` truncates through `$toDouble` so `"12.7"` reads as 12. The Set
+`Math.cbrt` keeps the sign (`$pow` of a negative base to 1/3 is NaN). `Number` is
+the one numeric conversion: `parseInt` and `parseFloat` are parsed and refused,
+because a bare `parseInt` takes the element index as its radix and `$toInt`
+refuses a fractional string. The Set
 relations (`isSubsetOf`, `isSupersetOf`, `isDisjointFrom`,
 `symmetricDifference`, and the three set operations) accept a Set or an array
 receiver: `new Set(x)` folds to `x`, since the server has no set type.

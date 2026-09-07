@@ -12450,42 +12450,59 @@ export const NAMES = {
     window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
+  // Parsed so the name gets an answer, and refused in every position: one numeric
+  // conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
   parseInt: global_({
-    doc: "Converts a value to an integer. The radix argument is refused. Emits $toInt.",
+    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1 },
-      emit: ({ args, value }) => ({ $toInt: { $trunc: { $toDouble: value(args[0]) } } }),
-    },
-    stream: unsupported("'parseInt()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'parseInt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseInt(…);'",
+    where: [],
+    filter: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
     ),
-    group: unsupported("'parseInt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'parseInt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+    expr: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
+    ),
+    stream: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
+    ),
+    statement: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
+    ),
+    group: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
+    ),
+    window: unsupported(
+      "'parseInt()' is not part of jsmql — 'Number(…)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for [\"1\", \"2\", \"3\"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.",
+    ),
   }),
 
   parseFloat: global_({
-    doc: "Converts a value to a double. Emits $toDouble.",
+    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-    stream: unsupported("'parseFloat()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'parseFloat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseFloat(…);'",
+    where: [],
+    filter: unsupported(
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
     ),
-    group: unsupported("'parseFloat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    expr: unsupported(
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
+    ),
+    stream: unsupported(
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
+    ),
+    statement: unsupported(
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
+    ),
+    group: unsupported(
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
+    ),
     window: unsupported(
-      "'parseFloat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
+      "'parseFloat()' is not part of jsmql — 'Number(…)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat(\"12abc\") is 12, Number(\"12abc\") is NaN), and MEASURED on the server '$toDouble' refuses \"12abc\" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.",
     ),
   }),
 

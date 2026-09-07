@@ -1873,7 +1873,9 @@ Each is sugar for the one-parameter arrow it reads as (`x => Number(x)`), and lo
 
 The bare form is for **arrays of values**. A pipeline stream carries documents, so `$$.countBy(String)` would stringify a whole document; the stream methods take a field name or an arrow instead ([Stream methods](#stream-methods-chained-after-the-rhs)). Outside of a callback position the bare form errors at compile time — write `Boolean(x)` / `ObjectId(x)` to convert a single value.
 
-**`parseInt`, `parseFloat` and `Date` are intentionally not allowed bare.** The rule is that a bare built-in must mean what it reads as. In real JS, `['1', '2', '3'].map(parseInt)` returns `[1, NaN, NaN]`, because `parseInt` receives the array index as its second (radix) argument; and `Date` called without `new` ignores its argument entirely and returns the current time as a string. Rather than replicate either footgun, jsmql requires the explicit form: `x => parseInt(x)`, `x => new Date(x)`.
+**`Date` is intentionally not allowed bare.** The rule is that a bare built-in must mean what it reads as, and `Date` called without `new` ignores its argument entirely and returns the current time as a string. Write the explicit form: `x => new Date(x)`.
+
+**`parseInt` and `parseFloat` are not jsmql names.** `Number(…)` is the one numeric conversion. `parseInt` reads a RADIX from its second argument, so `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript — the index arrives as the radix; and MongoDB's `$toInt` refuses a fractional string outright, so `parseInt`'s truncation has no MQL form. `parseFloat` differs from `Number` on a value with trailing text (`parseFloat("12abc")` is `12`, `Number("12abc")` is `NaN`), and `$toDouble` refuses `"12abc"` on the server. Both are refused, and the message names `Number(<value>)` — or `Math.trunc(Number(<value>))` for the whole number `parseInt` would give.
 
 ### Set methods (ES2025)
 
@@ -2132,8 +2134,7 @@ $log($.value, 10)                  // { $log: ["$value", 10] } (log base 10)
 Number($.stringField)              // { $toDouble: "$stringField" }
 String($.numField)                 // { $toString: "$numField" }
 Boolean($.value)                   // JS-truthy check — see "Truthy and falsy"
-parseInt($.stringField)            // { $toInt: "$stringField" }
-parseFloat($.stringField)          // { $toDouble: "$stringField" }
+Math.trunc(Number($.stringField))  // { $trunc: { $toDouble: "$stringField" } } — the whole number
 ```
 
 `Boolean(x)` follows JavaScript's truthy/falsy rules — `Boolean("")` is `false`, `Boolean(0)` is `false`, `Boolean([])` is `true`. To get MongoDB's raw `$toBool` (where `""` is truthy and `null` propagates as `null`), call the operator directly: `$toBool($.x)`.

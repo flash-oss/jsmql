@@ -198,15 +198,13 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
 }
 
 /**
- * A named call: `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")`.
+ * A named call: `String(42)`, `Number("42")`, `ObjectId("<24 hex>")`.
  *
  * Each is a conversion, and each refuses exactly where the SERVER refuses:
  * `$convert` with no `onError` fails on a string it cannot parse, so
- * `Number("nope")` and `parseInt("4.9")` are errors there and quiet answers in
- * JavaScript. Folding either would answer where the program does not run.
+ * `Number("nope")` is an error there and a quiet NaN in JavaScript. Folding it
+ * would answer where the program does not run.
  */
-/** The one numeric spelling `$toDouble` / `$toInt` parse: no padding, no hex, no separators. */
-const PLAIN_DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 
 export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
@@ -223,19 +221,11 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
     case "Boolean":
       return args.length === 1 ? ok(Boolean(a)) : NO;
     case "Number":
-    case "parseFloat":
       // Never folded. `$toDouble("3")` is a DOUBLE on the server and a written `3`
       // is an int — `$type` tells them apart, and so does `$out`. The call stays
       // and converts at run time, where the server also judges a string it cannot
-      // parse (" 12 ", "0x10"), exactly as the shipped compiler left it.
+      // parse (" 12 ", "0x10").
       return NO;
-    case "parseInt": {
-      if (typeof a !== "string" || !PLAIN_DECIMAL.test(a)) return NO;
-      const n = Number(a);
-      // `$toInt` refuses a fractional string outright — it does not truncate the
-      // way JavaScript's `parseInt` does.
-      return Number.isInteger(n) ? ok(n) : NO;
-    }
     case "ObjectId":
       return objectIdFrom(values);
     default:

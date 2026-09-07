@@ -800,6 +800,10 @@ function dateFromParts(parts, timezone) {
 var indexedPairs = (arr) => ({
   $zip: { inputs: [{ $range: [0, sizeOf(arr)] }, arr] }
 });
+var atPrecision = (op, value, precision) => {
+  const scale = { $pow: [10, precision] };
+  return { $divide: [{ [op]: { $multiply: [value, scale] } }, scale] };
+};
 var cbrt = (v) => ({
   $multiply: [{ $cmp: [v, 0] }, { $pow: [{ $abs: v }, { $divide: [1, 3] }] }]
 });
@@ -887,6 +891,11 @@ var logicalList = ({ name: name2, args, query }) => {
   return { [name2]: list.map(query) };
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
+var lodashDifference = ({ recv, args, value, bind }) => {
+  const other = value(args[0]);
+  const item = bind("item");
+  return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
+};
 function groupedByKey(input, it, bind) {
   const key = bind("key");
   const filtered = { $filter: { input, as: it.as, cond: { $eq: [stringKeyExpr(it.in), key.ref] } } };
@@ -6327,7 +6336,7 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}$`) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) }, OWN_VALUE);
       }
     },
     expr: {
@@ -10688,7 +10697,10 @@ var NAMES = {
     expr: {
       // MEASURED: $.n.ceil(2) takes the precision; Math.ceil($.n, 2) is refused.
       perFamily: {
-        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $ceil: recv }) },
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => args.length === 0 ? { $ceil: recv } : atPrecision("$ceil", recv, value(args[0]))
+        },
         Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $ceil: value(args[0]) }) }
       }
     },
@@ -10710,7 +10722,10 @@ var NAMES = {
     expr: {
       // MEASURED: $.n.floor(2) takes the precision; Math.floor($.n, 2) is refused.
       perFamily: {
-        number: { args: { sig: "[precision]", allowed: [0, 1] }, emit: ({ recv }) => ({ $floor: recv }) },
+        number: {
+          args: { sig: "[precision]", allowed: [0, 1] },
+          emit: ({ recv, args, value }) => args.length === 0 ? { $floor: recv } : atPrecision("$floor", recv, value(args[0]))
+        },
         Math: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $floor: value(args[0]) }) }
       }
     },
@@ -10767,12 +10782,19 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "other", exact: 1 },
-      emit: ({ recv, args, value, bind }) => {
-        const other = value(args[0]);
-        const item = bind("item");
-        return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, other] }] } } };
-      }
+      perFamily: {
+        array: { args: { sig: "other", exact: 1 }, emit: lodashDifference },
+        // A Set holds each value once, and so must its difference. MEASURED:
+        // { $setDifference: [[3, 3, 2, 1], [2]] } → [3, 1], the answer a JavaScript Set gives.
+        set: {
+          args: { sig: "other", exact: 1 },
+          emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] })
+        }
+      },
+      // Both families test `$type: "array"`, so no runtime test tells them apart. It
+      // needs none: `new Set(…)` is proven at the source, so an unproven receiver is
+      // an array and takes lodash's reading.
+      uncertain: lodashDifference
     },
     stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
     statement: unsupported(
@@ -12132,41 +12154,58 @@ var NAMES = {
     group: unsupported("'Boolean()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'Boolean()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
+  // Parsed so the name gets an answer, and refused in every position: one numeric
+  // conversion is 'Number', and two spellings of one capability is the friction jsmql rejects.
   parseInt: global_({
-    doc: "Converts a value to an integer. The radix argument is refused. Emits $toInt.",
+    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      args: { sig: "value", exact: 1 },
-      emit: ({ args, value }) => ({ $toInt: { $trunc: { $toDouble: value(args[0]) } } })
-    },
-    stream: unsupported("'parseInt()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'parseInt()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseInt(\u2026);'"
+    where: [],
+    filter: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
     ),
-    group: unsupported("'parseInt()' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'parseInt()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+    expr: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+    ),
+    stream: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+    ),
+    statement: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+    ),
+    group: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+    ),
+    window: unsupported(
+      `'parseInt()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. JavaScript reads a RADIX from parseInt's second argument, so '.map(parseInt)' hands the element index to it and answers [1, NaN, NaN] for ["1", "2", "3"]; and MongoDB's '$toInt' refuses a fractional string outright, so parseInt's truncation has no MQL form either. Write 'Number(<value>)', or 'Math.trunc(Number(<value>))' for the whole number.`
+    )
   }),
   parseFloat: global_({
-    doc: "Converts a value to a double. Emits $toDouble.",
+    doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     returns: "number",
-    where: ["value"],
-    filter: viaFallback,
-    expr: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
-    stream: unsupported("'parseFloat()' produces a value, not a stream of documents."),
-    statement: unsupported(
-      "'parseFloat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = parseFloat(\u2026);'"
+    where: [],
+    filter: unsupported(
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
     ),
-    group: unsupported("'parseFloat()' is not an accumulator. Inside '$group' write the MongoDB operator."),
+    expr: unsupported(
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
+    ),
+    stream: unsupported(
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
+    ),
+    statement: unsupported(
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
+    ),
+    group: unsupported(
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
+    ),
     window: unsupported(
-      "'parseFloat()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
+      `'parseFloat()' is not part of jsmql \u2014 'Number(\u2026)' is its one numeric conversion. The two differ on a value with trailing text (JavaScript's parseFloat("12abc") is 12, Number("12abc") is NaN), and MEASURED on the server '$toDouble' refuses "12abc" outright, so parseFloat's reading has no MQL form. Write 'Number(<value>)'.`
     )
   }),
   // ── the Math namespace's members ──
@@ -13052,6 +13091,7 @@ function strictEqualityQuery(input, negated) {
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
+  if (Array.isArray(pc.value)) return null;
   if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
   return negated ? queryOwnValue(pc.path, { $ne: pc.value }, NOT_OWN_VALUE) : queryOwnValue(pc.path, { $eq: pc.value }, OWN_VALUE);
 }
@@ -15909,7 +15949,6 @@ function foldConstructor(name2, args) {
       return NO2;
   }
 }
-var PLAIN_DECIMAL = /^[+-]?(\d+\.?\d*|\.\d+)(e[+-]?\d+)?$/i;
 function foldNamedCall(name2, args) {
   const values = args.map(valueOf);
   const [a] = values;
@@ -15922,13 +15961,7 @@ function foldNamedCall(name2, args) {
     case "Boolean":
       return args.length === 1 ? ok2(Boolean(a)) : NO2;
     case "Number":
-    case "parseFloat":
       return NO2;
-    case "parseInt": {
-      if (typeof a !== "string" || !PLAIN_DECIMAL.test(a)) return NO2;
-      const n2 = Number(a);
-      return Number.isInteger(n2) ? ok2(n2) : NO2;
-    }
     case "ObjectId":
       return objectIdFrom(values);
     default:
@@ -19987,7 +20020,14 @@ function fromPerFamily(name2, branches, uncertain, receiver, shaped, count) {
     if (branch === void 0) return { kind: "wrongReceiver", name: name2, got: family, accepts: on ?? "any" };
     return settle(name2, branch, shaped, count);
   }
-  const fieldFamilies = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const listed = on === void 0 || on === "any" ? FIELD_FAMILIES2 : on.filter(isFieldFamily);
+  const tests = /* @__PURE__ */ new Set();
+  const fieldFamilies = listed.filter((family) => {
+    const test = TYPES[family].join(",");
+    if (tests.has(test)) return false;
+    tests.add(test);
+    return true;
+  });
   if (fieldFamilies.length === 0) return { kind: "wrongReceiver", name: name2, got: null, accepts: on ?? "any" };
   if (fieldFamilies.length === 1) {
     const branch = branches[fieldFamilies[0]];
@@ -21167,11 +21207,7 @@ function arraysHolder(recv) {
 }
 function withOptional(lowered, receiver, optional, name2) {
   if (!optional || receiver.kind !== "value" && receiver.kind !== "opaque") return lowered;
-  let family = receiver.kind === "value" ? receiver.family : null;
-  if (family === null) {
-    const on = familiesFor(name2);
-    if (on !== void 0 && on !== "any" && on.length === 1) family = on[0];
-  }
+  const family = receiver.kind === "value" ? receiver.family : soleFieldFamilyOf(name2);
   const neutral = family === "string" ? "" : family === "array" || family === "set" ? [] : family === "object" ? {} : null;
   return neutral === null ? lowered : { $ifNull: [lowered, neutral] };
 }

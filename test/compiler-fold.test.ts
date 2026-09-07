@@ -375,11 +375,8 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
   it("converts only where the server converts", () => {
     // never folded: `$toDouble("42")` is a double on the server; a written 42 is an int
     expect(valueOf('Number("42")')).toBe("(not constant)");
-    expect(valueOf('parseInt("42")')).toBe(42);
-    // `$convert` with no `onError` fails on a string it cannot parse, and `$toInt`
-    // refuses a fractional string rather than truncating it the way JavaScript does.
+    // `$convert` with no `onError` fails on a string it cannot parse.
     expect(valueOf('Number("nope")')).toBe("(not constant)");
-    expect(valueOf('parseInt("4.9")')).toBe("(not constant)");
     // `$toString(null)` is null, not the four letters.
     expect(valueOf("String(null)")).toBe(null);
     // A number's spelling differs between `$toString` and JavaScript.
@@ -449,7 +446,7 @@ describe("compiler/passes/fold — the folds the server contradicted", () => {
   it("refuses to fold a numeric string the server refuses to parse", () => {
     // `$toDouble(" 12 ")` → "Failed to parse number"; `$toInt("0x10")` → "Illegal
     // hexadecimal input". JavaScript accepts both, so the fold must not.
-    for (const src of ['Number(" 12 ")', 'Number("0x10")', 'parseInt("0x10")', 'parseFloat("1_000")']) {
+    for (const src of ['Number(" 12 ")', 'Number("0x10")', 'Number("1_000")']) {
       expect(evaluate(parseExpression(src), new Map()).ok, src).toBe(false);
     }
     expect(evaluate(parseExpression('Number("12.5")'), new Map())).toEqual({ ok: false });

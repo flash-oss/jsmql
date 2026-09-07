@@ -3149,14 +3149,12 @@ describe("bare built-in callbacks", () => {
       expect(() => jsmql.expr(src), src).not.toThrow();
     }
   });
-  // `Date` and `parseInt` are excluded on purpose: called without `new`, `Date`
-  // ignores its argument, and `.map(parseInt)` passes the index as the radix. A
-  // point-free spelling would not mean what it reads as, so both must throw.
+  // `Date` is excluded on purpose: called without `new` it ignores its argument, so a
+  // point-free spelling would not mean what it reads as. `parseInt` is refused outright —
+  // `Number` is the one numeric conversion — and the same call proves both.
   it("rejects the built-ins whose point-free form would mislead", () => {
     expect(() => jsmql.expr("$.xs.map(Date)")).toThrow();
-    expect(jsmql.expr("$.xs.map(parseInt)")).toEqual({
-      $map: { input: "$xs", as: "x", in: { $toInt: { $trunc: { $toDouble: "$$x" } } } },
-    });
+    expect(() => jsmql.expr("$.xs.map(parseInt)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
   });
   it("a bare ObjectId outside callback position names the call forms", () => {
     expect(() => jsmql.expr("$.a = ObjectId")).toThrow(
@@ -3295,37 +3293,11 @@ describe("bare built-in callbacks", () => {
       "'.reduce((acc, x[, i]) => …, seed)' takes a two- or three-parameter arrow with an expression body.",
     );
   });
-  it("parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)", () => {
-    expect(jsmql.expr("$.xs.filter(parseInt)")).toEqual({
-      $filter: {
-        input: "$xs",
-        as: "x",
-        cond: {
-          $and: [
-            { $ne: [{ $ifNull: [{ $toInt: { $trunc: { $toDouble: "$$x" } } }, null] }, null] },
-            { $ne: [{ $toInt: { $trunc: { $toDouble: "$$x" } } }, false] },
-            { $ne: [{ $toInt: { $trunc: { $toDouble: "$$x" } } }, ""] },
-            { $ne: [{ $toInt: { $trunc: { $toDouble: "$$x" } } }, 0] },
-          ],
-        },
-      },
-    });
+  it("parseInt is not a jsmql name at all, bare or called", () => {
+    expect(() => jsmql.expr("$.xs.filter(parseInt)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
   });
-  it("parseFloat is intentionally not supported bare", () => {
-    expect(jsmql.expr("$.xs.filter(parseFloat)")).toEqual({
-      $filter: {
-        input: "$xs",
-        as: "x",
-        cond: {
-          $and: [
-            { $ne: [{ $ifNull: [{ $toDouble: "$$x" }, null] }, null] },
-            { $ne: [{ $toDouble: "$$x" }, false] },
-            { $ne: [{ $toDouble: "$$x" }, ""] },
-            { $ne: [{ $toDouble: "$$x" }, 0] },
-          ],
-        },
-      },
-    });
+  it("parseFloat is not a jsmql name at all, bare or called", () => {
+    expect(() => jsmql.expr("$.xs.filter(parseFloat)")).toThrow(/'parseFloat\(\)' is not part of jsmql/);
   });
 });
 
@@ -4043,11 +4015,11 @@ describe("type casts", () => {
   it("$toBool() direct operator escape preserves raw MongoDB semantics", () => {
     expect(jsmql.expr("$toBool($.x)")).toEqual({ $toBool: "$x" });
   });
-  it("parseInt()", () => {
-    expect(jsmql.expr("parseInt($.s)")).toEqual({ $toInt: { $trunc: { $toDouble: "$s" } } });
-  });
-  it("parseFloat()", () => {
-    expect(jsmql.expr("parseFloat($.s)")).toEqual({ $toDouble: "$s" });
+  it("parseInt() and parseFloat() name Number, the one numeric conversion", () => {
+    expect(() => jsmql.expr("parseInt($.s)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
+    expect(() => jsmql.expr("parseFloat($.s)")).toThrow(/'parseFloat\(\)' is not part of jsmql/);
+    expect(jsmql.expr("Number($.s)")).toEqual({ $toDouble: "$s" });
+    expect(jsmql.expr("Math.trunc(Number($.s))")).toEqual({ $trunc: { $toDouble: "$s" } });
   });
 });
 

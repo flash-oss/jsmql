@@ -449,10 +449,7 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
         { $ne: ["$neg", 0] },
       ],
     });
-    expect(compiled("parseInt($.n)", () => parseInt(String(DOC.n)))).toEqual({
-      $toInt: { $trunc: { $toDouble: "$n" } },
-    });
-    expect(compiled("parseFloat($.n)", () => parseFloat(String(DOC.n)))).toEqual({ $toDouble: "$n" });
+    expect(compiled("Number($.n)", () => Number(DOC.n))).toEqual({ $toDouble: "$n" });
     expect(compiled("Number.isInteger($.n)", () => Number.isInteger(DOC.n))).toEqual({
       $and: [
         { $and: [{ $isNumber: "$n" }, { $not: [{ $in: [{ $toString: "$n" }, ["NaN", "Infinity", "-Infinity"]] }] }] },

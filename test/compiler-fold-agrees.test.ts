@@ -222,7 +222,6 @@ const EXPRESSIONS: readonly string[] = [
   'Boolean("")',
   'Boolean("x")',
   "Boolean(null)",
-  'parseInt("42")',
   'ObjectId("507f1f77bcf86cd799439011")',
   'new ObjectId("507f1f77bcf86cd799439011")',
   "Date.UTC(2020, 1, 1)",

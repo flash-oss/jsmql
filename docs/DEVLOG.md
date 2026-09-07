@@ -10,6 +10,21 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-07 — feat!: `Number` is the one numeric conversion; `parseInt` and `parseFloat` are refused
+
+Three spellings converted a value to a number, and two of them cannot mean in MQL what they mean in JavaScript.
+
+`parseInt` reads a RADIX from its second argument. A bare `.map(parseInt)` therefore hands the element index to it, and `['1', '2', '3'].map(parseInt)` answers `[1, NaN, NaN]` in real JavaScript. The compiler rewrote the bare callable anyway, so `$.xs.map(parseInt)` answered `[1, 2, 3]` — the footgun's opposite, which is no better. And the truncation `parseInt("12.7")` performs has no MQL form at all: MEASURED, `$toInt` refuses the string `"12.7"` outright rather than truncating it.
+
+`parseFloat` differs from `Number` on a value with trailing text — `parseFloat("12abc")` is 12 where `Number("12abc")` is NaN — and MEASURED, `$toDouble` refuses `"12abc"` on the server, so the parseFloat reading has no MQL form either.
+
+Both names are parsed and refused in every position, so the developer gets the alternative rather than "unknown identifier": the message names `Number(<value>)`, and `Math.trunc(Number(<value>))` for the whole number `parseInt` would have given. The constant fold no longer settles either name, because a fold that answers first would silence the refusal. `Date` stays refused bare for its own reason, which is unchanged.
+
+Three tests in the restored suite asserted that `parseInt` compiles, under titles that said the opposite — "parseInt is intentionally not supported bare (avoids the JS index-as-radix footgun)" and a comment reading "so both must throw". The titles were right.
+
+---
+
+
 ## 2026-09-07 — fix(compiler): a clause that can never hold, and a lost optional neutral
 
 Two more answers the acceptance gate measured wrong, and in both the suite's own test title already stated the right one while its assertion pinned the wrong one.

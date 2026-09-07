@@ -783,7 +783,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
       }
       // A binding that holds a VALUE is not callable, and shadows the global name.
       if (env.has(callee.name as string)) return NOT_CONSTANT;
-      // `String(42)`, `parseInt("42")`, `ObjectId("<24 hex>")` — a named conversion.
+      // `String(42)`, `Number("42")`, `ObjectId("<24 hex>")` — a named conversion.
       // Gated by the row's count like a method call: `String("a", "b")` must reach
       // the error it deserves rather than fold to "a".
       if (!acceptsArgumentCount(callee.name as string, node.args.length)) return NOT_CONSTANT;
