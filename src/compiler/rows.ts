@@ -435,6 +435,66 @@ export function pipelineOverOf(name: string): "foreign" | null {
 }
 
 /** Does the stage drop the input document's fields — always, only for an inclusion body, or never? */
+/** Every `mongo` row: the names that ARE MongoDB operators and stages, not JavaScript spellings. */
+export function everyMongoName(): readonly string[] {
+  return mongoNames();
+}
+
+function mongoNames(): readonly string[] {
+  return Object.keys(NAMES).filter((n) => (NAMES as Record<string, { kind?: string }>)[n]?.kind === "mongo");
+}
+
+/** Every MongoDB STAGE the registry states — a name legal where a pipeline stage stands. */
+export function everyStageName(): readonly string[] {
+  return mongoNames().filter((n) => {
+    const positions = (row(n) as { where?: readonly string[] } | undefined)?.where ?? [];
+    return positions.includes("stream") || positions.includes("statement");
+  });
+}
+
+/**
+ * Every MongoDB OPERATOR the registry states — a name callable at the top level of a
+ * position that evaluates one. A name `onlyInside` confines to another operator's body
+ * in EVERY position it is legal in (`$box`, `$case`, `$each`) is not one: it cannot
+ * stand alone, so nothing should offer it as though it could.
+ */
+export function everyOperatorName(): readonly string[] {
+  return mongoNames().filter((n) => {
+    const r = row(n) as { where?: readonly string[]; onlyInside?: Record<string, unknown> } | undefined;
+    if (r === undefined) return false;
+    const positions = r.where ?? [];
+    const evaluates = positions.some((p) => p === "value" || p === "group" || p === "window" || p === "filter");
+    return evaluates && positions.some((p) => (r.onlyInside ?? {})[p] === undefined);
+  });
+}
+
+/** The category an operator row states, or undefined for a row that states none. */
+export function categoryOf(name: string): string | undefined {
+  return (row(name) as { category?: string } | undefined)?.category;
+}
+
+/**
+ * The row's one-sentence description. `$count` is a stage AND an accumulator and states
+ * one per meaning, so the caller says which half it is describing.
+ */
+export function describes(name: string, half: "operator" | "stage"): string {
+  const doc = (row(name) as { doc?: string | Record<string, string> } | undefined)?.doc;
+  if (typeof doc === "string") return doc;
+  return doc?.[half] ?? "";
+}
+
+/**
+ * The stage's diagnostic tier — the sigil scope its sugar spelling is reached
+ * through, and whether it takes an options document — or undefined for an
+ * ordinary stage that reads the stream.
+ */
+export function diagnosticOf(
+  name: string,
+): { scope: "collection" | "database" | "cluster"; options: boolean } | undefined {
+  return (row(name) as { diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean } } | undefined)
+    ?.diagnostic;
+}
+
 /** Does the stage leave the stream's COUNT and its documents' FIELDS both untouched? */
 export function preservesCountOf(name: string): boolean {
   return (row(name) as { preservesCount?: true } | undefined)?.preservesCount === true;

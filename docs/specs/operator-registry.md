@@ -1,11 +1,10 @@
 # Operator Registry
 
-Two files carry what jsmql knows about MongoDB's expression, accumulator and query operators, and each owns a different fact.
+One file carries what jsmql knows about MongoDB's expression, accumulator and query operators.
 
-- [`src/registry/names.ts`](../../src/registry/names.ts) — **how an operator lowers.** Every `$op` is a `$op: mongo({ … })` row: where it may stand (`where`), one cell per position (`expr`, `filter`, `group`, `window`, `stream`, `statement`, `updateDoc`, `body`), its argument rule (`args`: a signature and the counts it takes, or `byArgs` for a call whose shape follows its arguments), the keys of an object-form operator, and `returns` — the kind of its result, measured on a running `mongod`. A cell either states a lowering or refuses with the alternative. The compiler reads nothing else to lower a call; [emit-pass.md](emit-pass.md) is the spec of that reading.
-- [`src/operators.ts`](../../src/operators.ts) — **the catalog.** Every operator's `category` (from `OPERATOR_CATEGORIES`), one-sentence `description` lifted from the vendored spec, and the flags the generated types need (`accumulatorOnly`, `matchOnly`). Its readers are the globals generator (`scripts/generate-globals.mjs`, see [globals-generation.md](globals-generation.md)), the playground sync and the drift tests. Nothing in `src/compiler/` reads it.
+- [`src/registry/names.ts`](../../src/registry/names.ts) — **how an operator lowers, and what it is.** Every `$op` is a `$op: mongo({ … })` row: where it may stand (`where`), one cell per position (`expr`, `filter`, `group`, `window`, `stream`, `statement`, `updateDoc`, `body`), its argument rule (`args`: a signature and the counts it takes, or `byArgs` for a call whose shape follows its arguments), the keys of an object-form operator, and `returns` — the kind of its result, measured on a running `mongod`. A cell either states a lowering or refuses with the alternative. The row also states what the operator IS — its `category` (from `OPERATOR_CATEGORIES` in [`src/registry/vocabulary.ts`](../../src/registry/vocabulary.ts)) and the one-sentence `doc` lifted from the vendored spec — which is what the globals generator and the playground sync read, through the accessors in [`src/compiler/rows.ts`](../../src/compiler/rows.ts). The compiler reads nothing else to lower a call; [emit-pass.md](emit-pass.md) is the spec of that reading.
 
-The two agree by test: `test/registry-agrees.test.ts` checks every row against the catalog and the vendored spec, and `test/operator-spec-coverage.test.ts` checks the catalog against `mongodb/mql-specifications`.
+The rows and the vendored spec agree by test: `test/registry-agrees.test.ts` checks the cross-references inside the registry, and `test/operator-spec-coverage.test.ts` checks the rows against `mongodb/mql-specifications`.
 
 ## Call shapes
 
@@ -64,18 +63,19 @@ A row's `returns` states the kind of the operator's result — `string`, `number
 
 ## Adding an operator
 
-The recipe lives in [CLAUDE.md § Adding a new MongoDB operator](../../CLAUDE.md): a row in `names.ts`, an entry in the catalog, a test on `mongod`, the reference.
+The recipe lives in [CLAUDE.md § Adding a new MongoDB operator](../../CLAUDE.md): a row in `names.ts`, a test on `mongod`, the reference.
 
 ## Spec drift protection
 
-`test/operator-spec-coverage.test.ts` runs on every `npm test` and asserts that the catalog stays in sync with `mongodb/mql-specifications`:
+`test/operator-spec-coverage.test.ts` runs on every `npm test` and asserts that the rows stay in sync with `mongodb/mql-specifications`:
 
-- Every operator in `definitions/expression/` and `definitions/accumulator/` exists in `OPERATORS`.
-- Every `OPERATORS` entry exists in the spec, except those documented in `REGISTRY_ONLY` (e.g. `$encStr*` Queryable Encryption ops, `$sampleRate` query predicate, `$toUUID/$toObject/$toArray` post-spec converters).
-- Every entry has a non-empty `description` and a known `category`.
+- Every operator in `definitions/expression/`, `definitions/accumulator/` and `definitions/query/` has a row. A name jsmql does not support still needs one — an empty `where` and a refusal that names the alternative is a row.
+- Every operator row is a name the spec defines, except those documented in `REGISTRY_ONLY` (e.g. the update-document operators, which the pinned spec commit has no folder for).
+- Every stage row is a name `definitions/stage/` defines, and every one of those has a stage row.
+- Every callable operator states a non-empty description and a known `category`.
 
 When the test fails, the message names the specific operator and the specific drift; act on it before merging.
 
 ## Generated user-facing types (`src/globals.ts`)
 
-The catalog, `STAGES` in [`src/stages.ts`](../../src/stages.ts), the rows' method facts and the vendored spec are the input to the build-time generator that emits the ambient-globals module shipped at `@koresar/jsmql/globals`. See [globals-generation.md](globals-generation.md).
+The operator rows, the stage rows, the rows' method facts and the vendored spec are the input to the build-time generator that emits the ambient-globals module shipped at `@koresar/jsmql/globals`. See [globals-generation.md](globals-generation.md).

@@ -88,10 +88,10 @@ const SHIM_URL = pathToFileURL(
 // ── Stage detection (for the kind label) ──────────────────────────────────────
 // Stage names from the registry — used by the AST-based kind detector to
 // distinguish pipelines (any `$stage(...)` call or `{ $stage: ... }` key)
-// from filters / expressions. Imported live so the heuristic never drifts
-// from the language definition.
-const { STAGES } = await import(pathToFileURL(path.join(ROOT, "src/stages.ts")).href);
-const STAGE_NAMES = new Set(Object.keys(STAGES));
+// from filters / expressions. Read off the registry rows the compiler reads, so
+// the heuristic cannot drift from the language definition.
+const { everyStageName } = await import(pathToFileURL(path.join(ROOT, "src/compiler/rows.ts")).href);
+const STAGE_NAMES = new Set(everyStageName());
 
 const EXAMPLES_START = "<!-- jsmql-examples:start";
 const EXAMPLES_END = "<!-- jsmql-examples:end -->";

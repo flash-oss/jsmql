@@ -406,6 +406,15 @@ type MongoSpec<
    */
   replacesDocument?: true | "inclusion";
   /**
+   * A DIAGNOSTIC source stage — it reports on the deployment rather than on the
+   * documents, so it takes no input stream and stands first. `scope` is the sigil
+   * the sugar spelling is reached through (`$$.indexStats()` on a collection,
+   * `$$$$.currentOp()` on the cluster), and `options` says whether it takes an
+   * options document. Read by the globals generator, which types the sugar members
+   * per scope; see docs/specs/system-stages.md.
+   */
+  diagnostic?: { scope: "collection" | "database" | "cluster"; options: boolean };
+  /**
    * The stage leaves the stream's COUNT and its documents' FIELDS both untouched, so a
    * count already stamped into a field is still the count afterwards. Stated on the few
    * stages where it holds, because the safe answer is "no": reusing a stale count is a
@@ -4911,6 +4920,7 @@ export const NAMES = {
   $collStats: mongo({
     doc: "Returns statistics regarding a collection or view.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -4943,6 +4953,7 @@ export const NAMES = {
   $currentOp: mongo({
     doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5226,6 +5237,7 @@ export const NAMES = {
   $indexStats: mongo({
     doc: "Returns statistics regarding the use of each index for the collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
@@ -5290,6 +5302,7 @@ export const NAMES = {
   $listLocalSessions: mongo({
     doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5322,6 +5335,7 @@ export const NAMES = {
   $listSampledQueries: mongo({
     doc: "Lists sampled queries for all collections or a specific collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
@@ -5343,6 +5357,7 @@ export const NAMES = {
   $listSearchIndexes: mongo({
     doc: "Returns information about existing Atlas Search indexes on a specified collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
@@ -5364,6 +5379,7 @@ export const NAMES = {
   $listSessions: mongo({
     doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5523,6 +5539,7 @@ export const NAMES = {
   $planCacheStats: mongo({
     doc: "Returns plan cache information for a collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5877,6 +5894,7 @@ export const NAMES = {
   $shardedDataDistribution: mongo({
     doc: "Provides data and size distribution information on sharded collections.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: false },
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
     body: { required: [], optional: [], closed: true },
@@ -11658,6 +11676,7 @@ export const NAMES = {
   // $case: they are only ever valid INSIDE another operator's body.
   $all: mongo({
     doc: "Matches arrays that contain all elements specified in the query.",
+    category: "array",
     where: ["filter"],
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11672,6 +11691,7 @@ export const NAMES = {
 
   $bitsAllClear: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11686,6 +11706,7 @@ export const NAMES = {
 
   $bitsAllSet: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11700,6 +11721,7 @@ export const NAMES = {
 
   $bitsAnyClear: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11714,6 +11736,7 @@ export const NAMES = {
 
   $bitsAnySet: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11728,6 +11751,7 @@ export const NAMES = {
 
   $comment: mongo({
     doc: "Adds a comment to a query predicate.",
+    category: "miscellaneous",
     where: ["filter"],
     filter: {
       args: { sig: "text", exact: 1, constant: [0] },
@@ -11745,6 +11769,7 @@ export const NAMES = {
 
   $elemMatch: mongo({
     doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
+    category: "array",
     where: ["filter"],
     filter: {
       args: { sig: "field, query", exact: 2 },
@@ -11765,6 +11790,7 @@ export const NAMES = {
 
   $exists: mongo({
     doc: "Matches documents that have the specified field.",
+    category: "type",
     where: ["filter"],
     filter: {
       args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
@@ -11784,6 +11810,7 @@ export const NAMES = {
 
   $expr: mongo({
     doc: "Allows use of aggregation expressions within the query language.",
+    category: "miscellaneous",
     where: ["filter"],
     operandPosition: "value",
     filter: { args: { sig: "expression", exact: 1 }, emit: ({ args, value }) => ({ $expr: value(args[0]) }) },
@@ -11799,6 +11826,7 @@ export const NAMES = {
 
   $geoIntersects: mongo({
     doc: "Selects geometries that intersect with a GeoJSON geometry. The 2dsphere index supports $geoIntersects.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11816,6 +11844,7 @@ export const NAMES = {
 
   $geoWithin: mongo({
     doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11833,6 +11862,7 @@ export const NAMES = {
 
   $jsonSchema: mongo({
     doc: "Validate documents against the given JSON Schema.",
+    category: "miscellaneous",
     where: ["filter"],
     filter: {
       args: { sig: "schema", exact: 1, constant: [0] },
@@ -11850,6 +11880,7 @@ export const NAMES = {
 
   $near: mongo({
     doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11867,6 +11898,7 @@ export const NAMES = {
 
   $nearSphere: mongo({
     doc: "Returns geospatial objects in proximity to a point on a sphere. Requires a geospatial index. The 2dsphere and 2d indexes support $nearSphere.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11884,6 +11916,7 @@ export const NAMES = {
 
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
+    category: "comparison",
     where: ["filter"],
     liftsTo: { op: "$in", negated: true },
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
@@ -11899,6 +11932,7 @@ export const NAMES = {
 
   $nor: mongo({
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
+    category: "boolean",
     where: ["filter"],
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
     expr: unsupported(
@@ -11913,6 +11947,7 @@ export const NAMES = {
 
   $regex: mongo({
     doc: "Selects documents where values match a specified regular expression.",
+    category: "string",
     where: ["filter"],
     filter: {
       args: { sig: "field, pattern[, options]", allowed: [2, 3] },
@@ -11936,6 +11971,7 @@ export const NAMES = {
 
   $text: mongo({
     doc: "Performs text search.",
+    category: "text",
     where: ["filter"],
     filter: {
       args: { sig: "search", exact: 1, constant: [0] },

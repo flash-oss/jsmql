@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — refactor!: the rows are the only table
+
+`src/operators.ts` and `src/stages.ts` were the previous compiler's catalogs: a name, its operand shape, its category and its one-sentence description, kept by hand beside the rows that already state the same facts. Nothing in `src/compiler/` read either file. Both are deleted. The globals generator, the playground sync and the drift suites read the rows instead, through accessors in [src/compiler/rows.ts](../../src/compiler/rows.ts) — `everyStageName`, `everyOperatorName`, `describes`, `categoryOf`, `diagnosticOf`, `operandShapeOf`, `positionalKeysOf` — so a name exists in the generated types because a row says so.
+
+The rows had to state two facts the catalogs held alone. A diagnostic stage now carries `diagnostic: { scope, options }`, which is the sigil its sugar spelling is reached through (`$$.indexStats()` on a collection, `$$$$.currentOp()` on the cluster) and whether it takes an options document. `OPERATOR_CATEGORIES` moved into [src/registry/vocabulary.ts](../../src/registry/vocabulary.ts) as a value the type is read off, and gained `geospatial`.
+
+Deriving the list changed it. Eighteen query predicates — `$exists`, `$nin`, `$text`, `$elemMatch`, the four `$bits*`, the geo four, and the rest — compile today and had no ambient declaration, because the hand-written catalog never listed them; they have one now, and each states its category. Two fields the generator wrote and never read (`category`, `accumulatorOnly`) are gone, along with its `$case` skip-list, which the accessor already excludes: a name the rows confine to another operator's body is not a callable operator.
+
+The coverage suite asks a different question now. It reads `definitions/query/` as well as `definitions/expression/` and `definitions/accumulator/`, and it asks whether a spec name has a ROW rather than whether it is callable — so `$where`, which every position refuses, and `$box`, which only `$geoWithin` accepts, count as covered instead of needing a hand-kept exception list. `definitions/stage/` is checked in both directions too, which is what DEF-017 asked for: the rows and the spec agree on 45 stages.
+
+---
+
+
 ## 2026-09-08 — test: three suites assert what this compiler answers
 
 `test/compiler-join.test.ts` did not parse. The change that refuses a callback's own stream after a count-changing stage turned an expectation into a refusal, and the old `.toEqual([…])` block was left standing after the `.toThrow(…)` that replaced it — `);.toEqual([`. Vitest reported it as a transform error, so the file's 40 tests never ran. The stale block is gone.

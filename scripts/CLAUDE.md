@@ -6,7 +6,7 @@ Node scripts that run outside the published library. Each is invoked by an npm s
 
 ### `generate-globals.mjs`
 
-Generates [`src/globals.ts`](../src/globals.ts) — the ambient-global types shipped at the `@koresar/jsmql/globals` subpath — from [`src/operators.ts`](../src/operators.ts), [`src/stages.ts`](../src/stages.ts), and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
+Generates [`src/globals.ts`](../src/globals.ts) — the ambient-global types shipped at the `@koresar/jsmql/globals` subpath — from the registry rows in [`src/registry/names.ts`](../src/registry/names.ts) (read through the accessors in [`src/compiler/rows.ts`](../src/compiler/rows.ts)) and the vendored MongoDB MQL spec in [`vendor/mql-specifications/`](../vendor/fetch-mql-specs.mjs).
 
 Runs as `prebuild` and `pretest`, so the committed `src/globals.ts` is always rebuilt before any tsc or vitest invocation. Also exposed as `npm run generate:globals` for ad-hoc regeneration after editing the registries.
 

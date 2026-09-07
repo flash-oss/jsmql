@@ -133,32 +133,38 @@ export function queryOwnValue(path: string, test: Readonly<Record<string, unknow
   return { ...one, ...Object.fromEntries(prefixes.map((p) => [p, { ...NOT_AN_ARRAY }])) };
 }
 export type Stage = Record<string, unknown>;
-/** OPERATOR_CATEGORIES from src/operators.ts, verbatim. */
-export type OperatorCategory =
-  | "arithmetic"
-  | "array"
-  | "bitwise"
-  | "boolean"
-  | "comparison"
-  | "conditional"
-  | "custom-aggregation"
-  | "data-size"
-  | "date"
-  | "encrypted-string"
-  | "literal"
-  | "miscellaneous"
-  | "object"
-  | "set"
-  | "string"
-  | "text"
-  | "timestamp"
-  | "trigonometry"
-  | "type"
-  | "variable"
-  | "window";
 /**
- * A checkable argument type. Verbatim from what src/operators.ts enforces —
- * `int-or-long` and `number-or-date` are single checks there, not unions of two,
+ * The categories an operator row states. A value, not a hand-written union: the
+ * type is read off it, so a new category is one edit.
+ */
+export const OPERATOR_CATEGORIES = [
+  "arithmetic",
+  "array",
+  "bitwise",
+  "boolean",
+  "comparison",
+  "conditional",
+  "custom-aggregation",
+  "data-size",
+  "date",
+  "encrypted-string",
+  "geospatial",
+  "literal",
+  "miscellaneous",
+  "object",
+  "set",
+  "string",
+  "text",
+  "timestamp",
+  "trigonometry",
+  "type",
+  "variable",
+  "window",
+] as const;
+export type OperatorCategory = (typeof OPERATOR_CATEGORIES)[number];
+/**
+ * A checkable argument type. `int-or-long` and `number-or-date` are single checks,
+ * not unions of two,
  * and collapsing them would state a narrower rule than the compiler applies.
  */
 export type ArgType =

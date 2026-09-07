@@ -5,7 +5,7 @@
 //
 // Spec is used by:
 //   - test/operator-spec-coverage.test.ts (drift detection)
-//   - manual reference when adding operators to src/operators.ts
+//   - manual reference when adding an operator row to src/registry/names.ts
 //
 // Idempotent: if the target directory exists at the pinned SHA, exits quickly.
 // The vendored directory is gitignored; this script repopulates it on demand.

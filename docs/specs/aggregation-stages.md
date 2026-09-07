@@ -8,7 +8,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 - **MongoDB docs:** https://www.mongodb.com/docs/manual/reference/mql/aggregation-stages/
 - **Spec YAML:** `vendor/mql-specifications/definitions/stage/`
-- **Registry:** every stage is a `$name: mongo({ … })` row in [src/registry/names.ts](../../src/registry/names.ts) with a `statement` cell, a `body` rule, and a `position` / `pipelineOver` fact; [src/stages.ts](../../src/stages.ts) carries the descriptions and sub-pipeline fields the globals generator reads.
+- **Registry:** every stage is a `$name: mongo({ … })` row in [src/registry/names.ts](../../src/registry/names.ts) with a `statement` cell, a `body` rule, a `position` / `pipelineOver` fact, and the description the globals generator reads.
 - **Detection + lowering:** [src/compiler/emit/statement.ts](../../src/compiler/emit/statement.ts).
 
 ## Two pipeline forms
@@ -149,6 +149,5 @@ A realistic, multi-stage example using the canonical `;`-separated form lives in
 
 ## Out of scope (future work)
 
-- **Drift-protection test for the stage rows** against `vendor/mql-specifications/definitions/stage/`, parallel to `test/operator-spec-coverage.test.ts`. New stages added to MongoDB would be silently missed today.
 - **Query-predicate operators inside `$match` object-literal bodies.** Today the body is passed through verbatim; we don't validate `$gt`, `$in`, etc. at the query layer. Will get its own spec when work begins; see the "future work areas" note in [docs/CLAUDE.md](../CLAUDE.md#docsspecs).
 - **Stage-call typo detection.** `$abs(1)` as the first array element triggers pipeline mode and fails strictly, but typos like `$prject({...})` are caught for the same reason — a mistyped stage name still produces a clear error. Object-form typos are caught with did-you-mean.

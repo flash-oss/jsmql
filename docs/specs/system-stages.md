@@ -2,7 +2,7 @@
 
 Scope-encoding method-call sugar for MongoDB's *diagnostic / system* source
 stages. Implementation: [`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts);
-scope metadata: the `diagnostic` field on entries in [`src/stages.ts`](../../src/stages.ts);
+scope metadata: the `diagnostic` fact on the stage's row in [`src/registry/names.ts`](../../src/registry/names.ts);
 wiring: [`src/compiler/emit/statement.ts`](../../src/compiler/emit/statement.ts) and the dispatch auto-wrap in
 [`src/index.ts`](../../src/index.ts). User-facing reference:
 [LANGUAGE.md → System / diagnostic stages](../LANGUAGE.md#system--diagnostic-stages-indexstats-currentop-).

@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 /**
  * Generate `src/globals.ts` from the canonical jsmql operator/stage registries
- * (`src/operators.ts`, `src/stages.ts`) and the vendored MongoDB MQL
+ * (the rows of `src/registry/names.ts`) and the vendored MongoDB MQL
  * specification YAMLs (`vendor/mql-specifications/definitions/{expression,
  * accumulator,stage}/`).
  *
@@ -31,8 +31,6 @@ import { dirname, resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import yaml from "js-yaml";
 
-import { OPERATORS } from "../src/operators.ts";
-import { STAGES } from "../src/stages.ts";
 import {
   argCountOf,
   nativeDateMethodNames,
@@ -41,8 +39,35 @@ import {
   valueMethodNames,
   valueMethodReturns,
   valueTerminalMethodNames,
+  describes,
+  diagnosticOf,
+  everyOperatorName,
+  everyStageName,
+  operandShapeOf,
+  positionalKeysOf,
 } from "../src/compiler/rows.ts";
 import { TIME_UNIT } from "../src/registry/names.ts";
+
+// The stages and the operators, read off the rows the COMPILER reads. There is no
+// second table: a name is here because a row says so, and its shape and description
+// are that row's own. `$count` is a stage AND an accumulator, so it states a
+// description per meaning and appears in both maps.
+const STAGES = Object.fromEntries(
+  everyStageName().map((name) => [name, { description: describes(name, "stage"), diagnostic: diagnosticOf(name) }]),
+);
+
+const OPERATORS = Object.fromEntries(
+  everyOperatorName().map((name) => {
+    const kind = operandShapeOf(name);
+    return [
+      name,
+      {
+        description: describes(name, "operator"),
+        shape: kind === "object" ? { kind, keys: positionalKeysOf(name) } : { kind },
+      },
+    ];
+  }),
+);
 
 const VALUE_TERMINAL_METHODS = valueTerminalMethodNames();
 const NATIVE_DATE_METHODS = nativeDateMethodNames();
@@ -52,11 +77,6 @@ const ROOT = resolve(HERE, "..");
 const SPEC_ROOT = resolve(ROOT, "vendor", "mql-specifications", "definitions");
 const OUT_PATH = resolve(ROOT, "src", "globals.ts");
 
-// Sub-constructs that appear in the spec as standalone files but are not
-// top-level callable operators (e.g. `$case` is part of `$switch.branches[]`).
-// Kept in sync with test/operator-spec-coverage.test.ts.
-const SUB_CONSTRUCTS = new Set(["$case"]);
-
 // MQL `timeUnit` enum — used by date operators like $dateAdd, $dateDiff,
 // $dateTrunc, and by every date method that takes a `unit`. Narrowed to a
 // literal union for autocomplete and typo-check. Derived from the same `TIME_UNIT`
@@ -65,7 +85,7 @@ const TIME_UNIT_LITERAL = TIME_UNIT.map((u) => `"${u}"`).join(" | ");
 
 // Options-object shapes for the diagnostic / system source stages reached via
 // the context-ref prefixes (`$$.collStats({...})`, `$$$$.currentOp({...})`, …).
-// These field shapes aren't carried by the STAGES registry or the vendored YAML
+// These field shapes aren't carried by the stage rows or the vendored YAML
 // in a usable form, and matter only to TS completion, so they live here — keyed
 // by stage name. The no-option stages ($indexStats, $planCacheStats,
 // $shardedDataDistribution) are absent: they take zero arguments. Field sets
@@ -876,7 +896,7 @@ function jsdocFor(name, spec, registryDef) {
 //   the spec's `encode` field — object stages get a typed args record,
 //   single-arg stages get a typed positional, etc.
 //
-// Expression ops: jsmql's `OperatorShape` from src/operators.ts is the
+// Expression ops: the operand shape the row states is the
 //   authoritative call shape (that's what the parser accepts). The spec
 //   supplies arg names, optionality, and types.
 // ---------------------------------------------------------------------------
@@ -991,6 +1011,12 @@ function expressionOpCallableType(spec, opDef) {
     case "none": {
       return ["(): any"];
     }
+    case "verbatim": {
+      // The operand is handed to the server untouched — one of it, whatever it is.
+      const argName = firstArg?.name ?? "value";
+      const argType = mapType(firstArg?.type);
+      return [`(${argName}: ${argType}): any`];
+    }
     case "flex": {
       // Two call shapes — single expression OR N positional args.
       const argName = firstArg?.name ?? "expression";
@@ -998,7 +1024,7 @@ function expressionOpCallableType(spec, opDef) {
       return [`(${argName}: ${argType}): any`, `(...${argName}s: ${argType}[]): any`];
     }
     default: {
-      // Defensive — should be unreachable; OperatorShape is a closed union.
+      // Defensive — should be unreachable; the operand shapes are a closed set.
       return ["(...args: any[]): any"];
     }
   }
@@ -1022,9 +1048,9 @@ function emitBlock(name, jsdoc, callableSigs) {
 // Emit the `$$` / `$$$` / `$$$$` ambient declarations (`$$` is `var` — it is
 // reassigned by `$$ = …`; the other two are `const`, only their members are
 // written). Diagnostic methods are
-// derived from the STAGES `diagnostic` field (the single source of truth for the
-// scope tiers; the sugar's own lowering is stated on the rows in
-// src/registry/names.ts); each method reuses the same JSDoc the stage's own block
+// derived from each stage row's `diagnostic` fact (the scope tier and whether it
+// takes options; the sugar's own lowering is stated on the same row); each method
+// reuses the same JSDoc the stage's own block
 // gets, so descriptions stay consistent.
 function contextRefBlock(spec) {
   const methodsByScope = { collection: [], database: [], cluster: [] };
@@ -1170,9 +1196,9 @@ function statementFormsBlock() {
 export function generateGlobalsSource() {
   const spec = loadSpec();
 
-  // Categorise every name by which registries it appears in. `$count` is the
-  // only name today that lives in both `STAGES` and `OPERATORS`; we emit it
-  // once with overloaded call signatures spanning both meanings.
+  // Categorise every name by which map it appears in. `$count` is the only name
+  // today that is both a stage and an accumulator; we emit it once with overloaded
+  // call signatures spanning both meanings.
   const allNames = new Set([...Object.keys(STAGES), ...Object.keys(OPERATORS)]);
 
   // For section ordering: a name appears in the Stages section if it's in
@@ -1182,7 +1208,6 @@ export function generateGlobalsSource() {
   const opOnlyNames = [...allNames].filter((n) => !(n in STAGES) && n in OPERATORS).sort();
 
   function blockFor(name) {
-    if (SUB_CONSTRUCTS.has(name)) return null;
     const stageDef = STAGES[name];
     const opDef = OPERATORS[name];
     const stageSpec = spec.stage.get(name);
@@ -1210,8 +1235,8 @@ export function generateGlobalsSource() {
   const opBlocks = opOnlyNames.map(blockFor).filter((s) => s !== null);
 
   const header = [
-    "// AUTO-GENERATED by scripts/generate-globals.mjs from src/operators.ts,",
-    "// src/stages.ts, and vendor/mql-specifications. DO NOT EDIT — re-run",
+    "// AUTO-GENERATED by scripts/generate-globals.mjs from src/registry/names.ts",
+    "// and vendor/mql-specifications. DO NOT EDIT — re-run",
     "// `npm run generate:globals` (or `npm run build`) after pulling new specs.",
     "//",
     "// User-facing import shape:",

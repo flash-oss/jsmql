@@ -4763,6 +4763,7 @@ var NAMES = {
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement"],
+    preservesCount: true,
     only: ["update"],
     // MEASURED: { $addFields: "a" } → $addFields specification stage must be an object, got string
     body: { required: [], optional: [], closed: false },
@@ -4920,6 +4921,7 @@ var NAMES = {
   $collStats: mongo({
     doc: "Returns statistics regarding a collection or view.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -4951,6 +4953,7 @@ var NAMES = {
   $currentOp: mongo({
     doc: "Returns information on active and/or dormant operations for the MongoDB deployment.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5226,6 +5229,7 @@ var NAMES = {
   $indexStats: mongo({
     doc: "Returns statistics regarding the use of each index for the collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     body: { required: [], optional: [], closed: true },
     bodyPositions: { "": "value" },
@@ -5288,6 +5292,7 @@ var NAMES = {
   $listLocalSessions: mongo({
     doc: "Lists all active sessions recently in use on the currently connected mongos or mongod instance.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5319,6 +5324,7 @@ var NAMES = {
   $listSampledQueries: mongo({
     doc: "Lists sampled queries for all collections or a specific collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     // MEASURED: not supported on a standalone mongod; the key set is the manual's
     body: { required: [], optional: ["namespace"], closed: true, keyTypes: { namespace: "string" } },
@@ -5339,6 +5345,7 @@ var NAMES = {
   $listSearchIndexes: mongo({
     doc: "Returns information about existing Atlas Search indexes on a specified collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: true },
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
     body: { required: [], optional: ["id", "name"], closed: true, keyTypes: { id: "string", name: "string" } },
@@ -5359,6 +5366,7 @@ var NAMES = {
   $listSessions: mongo({
     doc: "Lists all sessions that have been active long enough to propagate to the system.sessions collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: true },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5391,6 +5399,7 @@ var NAMES = {
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
     where: ["stream", "statement"],
+    preservesCount: true,
     body: {
       required: ["as"],
       optional: ["from", "localField", "foreignField", "let", "pipeline"],
@@ -5512,6 +5521,7 @@ var NAMES = {
   $planCacheStats: mongo({
     doc: "Returns plan cache information for a collection.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "collection", options: false },
     only: ["stageFirst"],
     body: {
       required: [],
@@ -5771,6 +5781,7 @@ var NAMES = {
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
     where: ["stream", "statement", "updateDoc"],
+    preservesCount: true,
     only: ["update"],
     // MEASURED: { $set: {} } → accepted, the stage is a no-op
     body: { required: [], optional: [], closed: false },
@@ -5800,6 +5811,7 @@ var NAMES = {
   $setWindowFields: mongo({
     doc: "Groups documents into windows and applies one or more operators to the documents in each window.",
     where: ["stream", "statement"],
+    preservesCount: true,
     // MEASURED: { $setWindowFields: { output: {…}, zzz: 1 } } → BSON field '$setWindowFields.zzz' is an unknown field
     // MEASURED: { $setWindowFields: { partitionBy: "$k" } } → BSON field '$setWindowFields.output' is missing but a required field
     body: {
@@ -5852,6 +5864,7 @@ var NAMES = {
   $shardedDataDistribution: mongo({
     doc: "Provides data and size distribution information on sharded collections.",
     where: ["stream", "statement"],
+    diagnostic: { scope: "cluster", options: false },
     only: ["stageFirst"],
     // MEASURED: sharded clusters only; the manual takes an empty document
     body: { required: [], optional: [], closed: true },
@@ -5911,6 +5924,7 @@ var NAMES = {
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
     where: ["stream", "statement", "updateDoc"],
+    preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
     body: {
       required: [],
@@ -11384,6 +11398,7 @@ var NAMES = {
   // $case: they are only ever valid INSIDE another operator's body.
   $all: mongo({
     doc: "Matches arrays that contain all elements specified in the query.",
+    category: "array",
     where: ["filter"],
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11397,6 +11412,7 @@ var NAMES = {
   }),
   $bitsAllClear: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 0.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11410,6 +11426,7 @@ var NAMES = {
   }),
   $bitsAllSet: mongo({
     doc: "Matches numeric or binary values in which a set of bit positions all have a value of 1.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11423,6 +11440,7 @@ var NAMES = {
   }),
   $bitsAnyClear: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 0.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11436,6 +11454,7 @@ var NAMES = {
   }),
   $bitsAnySet: mongo({
     doc: "Matches numeric or binary values in which any bit from a set of bit positions has a value of 1.",
+    category: "bitwise",
     where: ["filter"],
     filter: { args: { sig: "field, mask", exact: 2, constant: [1] }, emit: queryOnlyClause },
     expr: unsupported(
@@ -11449,6 +11468,7 @@ var NAMES = {
   }),
   $comment: mongo({
     doc: "Adds a comment to a query predicate.",
+    category: "miscellaneous",
     where: ["filter"],
     filter: {
       args: { sig: "text", exact: 1, constant: [0] },
@@ -11465,6 +11485,7 @@ var NAMES = {
   }),
   $elemMatch: mongo({
     doc: "The $elemMatch operator matches documents that contain an array field with at least one element that matches all the specified query criteria.",
+    category: "array",
     where: ["filter"],
     filter: {
       args: { sig: "field, query", exact: 2 },
@@ -11484,6 +11505,7 @@ var NAMES = {
   }),
   $exists: mongo({
     doc: "Matches documents that have the specified field.",
+    category: "type",
     where: ["filter"],
     filter: {
       args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
@@ -11502,6 +11524,7 @@ var NAMES = {
   }),
   $expr: mongo({
     doc: "Allows use of aggregation expressions within the query language.",
+    category: "miscellaneous",
     where: ["filter"],
     operandPosition: "value",
     filter: { args: { sig: "expression", exact: 1 }, emit: ({ args, value }) => ({ $expr: value(args[0]) }) },
@@ -11516,6 +11539,7 @@ var NAMES = {
   }),
   $geoIntersects: mongo({
     doc: "Selects geometries that intersect with a GeoJSON geometry. The 2dsphere index supports $geoIntersects.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11532,6 +11556,7 @@ var NAMES = {
   }),
   $geoWithin: mongo({
     doc: "Selects geometries within a bounding GeoJSON geometry. The 2dsphere and 2d indexes support $geoWithin.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11548,6 +11573,7 @@ var NAMES = {
   }),
   $jsonSchema: mongo({
     doc: "Validate documents against the given JSON Schema.",
+    category: "miscellaneous",
     where: ["filter"],
     filter: {
       args: { sig: "schema", exact: 1, constant: [0] },
@@ -11564,6 +11590,7 @@ var NAMES = {
   }),
   $near: mongo({
     doc: "Returns geospatial objects in proximity to a point. Requires a geospatial index. The 2dsphere and 2d indexes support $near.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11580,6 +11607,7 @@ var NAMES = {
   }),
   $nearSphere: mongo({
     doc: "Returns geospatial objects in proximity to a point on a sphere. Requires a geospatial index. The 2dsphere and 2d indexes support $nearSphere.",
+    category: "geospatial",
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
@@ -11596,6 +11624,7 @@ var NAMES = {
   }),
   $nin: mongo({
     doc: "Matches none of the values specified in an array.",
+    category: "comparison",
     where: ["filter"],
     liftsTo: { op: "$in", negated: true },
     filter: { args: { sig: "field, values", exact: 2, constant: [1] }, emit: queryOnlyClause },
@@ -11610,6 +11639,7 @@ var NAMES = {
   }),
   $nor: mongo({
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
+    category: "boolean",
     where: ["filter"],
     filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
     expr: unsupported(
@@ -11623,6 +11653,7 @@ var NAMES = {
   }),
   $regex: mongo({
     doc: "Selects documents where values match a specified regular expression.",
+    category: "string",
     where: ["filter"],
     filter: {
       args: { sig: "field, pattern[, options]", allowed: [2, 3] },
@@ -11645,6 +11676,7 @@ var NAMES = {
   }),
   $text: mongo({
     doc: "Performs text search.",
+    category: "text",
     where: ["filter"],
     filter: {
       args: { sig: "search", exact: 1, constant: [0] },
@@ -14454,6 +14486,9 @@ function streamBodyOf(name2) {
 }
 function pipelineOverOf(name2) {
   return row(name2)?.pipelineOver ?? null;
+}
+function preservesCountOf(name2) {
+  return row(name2)?.preservesCount === true;
 }
 function replacesDocumentOf(name2) {
   return row(name2)?.replacesDocument ?? false;
@@ -18465,6 +18500,10 @@ var arrayOfArrays = (method, holder, pos) => new CodegenError(
   `.${method}() can't stringify an array of arrays \u2014 ${holder} holds arrays, and the server refuses to stringify an array element. Flatten first ('.flat().join()'), or map each inner array to a string ('.map(a => a.join(",")).join()').`,
   pos
 );
+var streamHandleAfterReplace = (name2, stage, pos) => new CodegenError(
+  `'${name2}' is the body's own stream, and this body runs '${stage}', which changes what its count means \u2014 '${name2}.length' is stamped into a field ahead of the body, and that stage either drops the field or changes how many documents there are. Only a stage that leaves both alone keeps the count true. Take the count in a statement ahead of this chain, or drop '${name2}' from the parameter list.`,
+  pos
+);
 var streamHandleAsValue = (name2, pos) => new CodegenError(
   `'${name2}' is the body's own stream, the callback's third parameter: read its count ('${name2}.length') or chain on it ('${name2}.filter(\u2026)'). It is not a document or a value on its own.`,
   pos
@@ -20657,6 +20696,15 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     slot: () => env.chain.slot().path
   };
 }
+function staleCountStage(cb) {
+  const stmts = cb.stages?.stmts;
+  if (stmts === void 0) return null;
+  for (const st of stmts) {
+    if (st.type !== "OperatorCall" || typeof st.name !== "string") continue;
+    if (!preservesCountOf(st.name)) return st.name;
+  }
+  return null;
+}
 function onOwnStream(recv, env) {
   return recv !== null && recv.type === "Ident" && env.scope.has(recv.name) && env.lookup(recv.name, recv.pos).ref.kind === "streamHandle";
 }
@@ -20741,8 +20789,13 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
       });
     }
     if (cb.params.length === 3) {
+      const replaces = staleCountStage(cb);
       e = e.bind(cb.params[2], {
-        ref: { kind: "streamHandle", source: cb },
+        ref: replaces === null ? { kind: "streamHandle", source: cb } : {
+          kind: "dropped",
+          message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
+          replaced: false
+        },
         type: "stream",
         elements: "unknown",
         mutable: false,
@@ -22756,7 +22809,7 @@ function lowerMode(mode, api, parsed, values) {
       return resolved === "expr" ? lowerValue(program, Env.root(program, "value")) : lowerFilter(program, Env.root(program, "filter"));
     }
     case "pipeline": {
-      if (shapeOf(injected) !== "pipeline") {
+      if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
         throw wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);

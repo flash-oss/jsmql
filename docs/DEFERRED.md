@@ -105,18 +105,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only
 - **Effort.** M
 
-### DEF-017 — Drift-protection test for `STAGES` vs vendor MQL spec
-
-- **What's blocked.** `OPERATORS` has a drift-protection test (`test/operator-spec-coverage.test.ts`) against `vendor/mql-specifications/`. `STAGES` has none — new MongoDB stages would be silently missed.
-- **Target lowering.** No MQL change. New `test/stage-spec-coverage.test.ts` mirroring the existing operator one.
-- **Why blocked.** Just hasn't been built. Copy-paste of the operator test with a path change.
-- **Attempted approaches.** None.
-- **Success criteria.** Test passes today; fails when a new stage is added to the vendor spec without a `STAGES` entry.
-- **Rejection site(s).** `docs/specs/aggregation-stages.md:100` (allowlisted as a categorical "Out of scope (future work)" header).
-- **Spec.** `docs/specs/aggregation-stages.md` § Out of scope bullet 1.
-- **Status.** design-only — small win
-- **Effort.** S
-
 ### DEF-019 — `.toSorted(comparator)` two-param arrow recognition
 
 - **What's blocked.** `.toSorted()` accepts a key-function arrow today (`e => e.distance`) but rejects a comparator-style two-param arrow (`(a, b) => a - b`).
@@ -202,7 +190,7 @@ Was DEF-007. The idea was to make `.slice()` / `.some()` lower to *projection-fo
 - `{ $slice: N }` (single-arg) → `Expression $slice takes at least 2 arguments, … but 1 were passed` — in aggregation `$project`, `$slice` is always the expression operator.
 - `{ $elemMatch: { … } }` → `Cannot use $elemMatch in this context` — `$elemMatch` is not an aggregation operator at all. Even where it is valid (`find()` projection), it returns the *matched element*, not a boolean — which would break `.some()`'s JS semantics.
 
-The expression forms jsmql already emits run correctly in `$project`: `$.items.slice(0, 3)` → `{ $slice: ["$items", 3] }` and `$.items.some(i => i.x > 5)` → `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships in `src/operators.ts` as a normal aggregation expression reachable via `$op($meta("textScore"))`. So there was nothing valid left to build — implementing it would have made jsmql knowingly emit invalid MQL, an HR3 violation.
+The expression forms jsmql already emits run correctly in `$project`: `$.items.slice(0, 3)` → `{ $slice: ["$items", 3] }` and `$.items.some(i => i.x > 5)` → `{ $anyElementTrue: { $map: … } }`. The third proposed switch, `$meta`, already ships as a row in `src/registry/names.ts` — a normal aggregation expression reachable via `$op($meta("textScore"))`. So there was nothing valid left to build — implementing it would have made jsmql knowingly emit invalid MQL, an HR3 violation.
 
 ### "From the end" array methods on a document STREAM (`.takeRight` / `.dropRight` / `.initial` / `.toReversed`)
 

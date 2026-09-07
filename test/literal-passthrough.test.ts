@@ -1,7 +1,14 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { OPERATORS, type OperatorDef } from "../src/operators.ts";
-import { STAGES } from "../src/stages.ts";
+import {
+  argCountOf,
+  bodyRuleOf,
+  everyOperatorName,
+  everyStageName,
+  operandShapeOf,
+  positionalKeysOf,
+  positionsOf,
+} from "../src/compiler/rows.ts";
 import { truthy } from "./truthy.ts";
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -27,10 +34,14 @@ const SENTINEL = "$f"; // a `$`-prefixed string that MUST survive verbatim in a 
 /** The operand count a synthetic array-shape call must supply to satisfy any
  *  declared arity rule (exact, the low end of an allowed range, or a min); 2
  *  otherwise. Keeps the pass-through probe arity-valid so it reaches codegen. */
-function arrayArgCount(def: OperatorDef): number {
-  const a = def.args?.arity;
+function arrayArgCount(name: string): number {
+  const a = argCountOf(name);
   if (a === undefined) return 2;
-  return a.exact ?? a.allowed?.[0] ?? a.atLeast ?? 2;
+  if (a.none === true) return 0;
+  // A variadic list operator states `atLeast: 1` — one operand is legal only as a
+  // single array literal, and this probe writes the positional form, so it needs two.
+  if (a.atLeast !== undefined) return Math.max(a.atLeast, 2);
+  return a.exact ?? a.allowed?.[0] ?? 2;
 }
 
 // A valid sample value for an enum'd slot, so the pass-through probe stays
@@ -42,33 +53,35 @@ const ENUM_SAMPLE: Record<string, string> = {
   bsonTypeName: "string",
   regexFlags: "i",
 };
-function slotLiteral(def: OperatorDef, key: string): string {
-  const ref = def.args?.enums?.[key];
+function slotLiteral(name: string, key: string): string {
+  const ref = bodyRuleOf(name)?.enums?.[key];
   if (ref !== undefined) return JSON.stringify(Array.isArray(ref) ? ref[0] : ENUM_SAMPLE[ref]);
   return JSON.stringify(SENTINEL);
 }
 
 /** Build a minimal `$op(...)` call source from the operator's registry shape. */
-function callSource(name: string, def: OperatorDef): string {
+function callSource(name: string): string {
   const q = JSON.stringify(SENTINEL);
-  switch (def.shape.kind) {
+  switch (operandShapeOf(name)) {
     case "none":
       return `${name}()`;
     case "array":
-      return `${name}(${Array(arrayArgCount(def)).fill(q).join(", ")})`;
+      return `${name}(${Array(arrayArgCount(name)).fill(q).join(", ")})`;
     case "object":
       // Fill every positional slot (each maps to a named key); enum'd slots get a
       // valid sample value, the rest the `$`-string sentinel under test.
-      return `${name}(${def.shape.keys.map((k) => slotLiteral(def, k)).join(", ")})`;
-    case "single":
-      return `${name}(${q})`;
+      return `${name}(${positionalKeysOf(name)
+        .map((k) => slotLiteral(name, k))
+        .join(", ")})`;
     case "flex":
       // flex defaults to the single-value form (1 arg); but an arity rule
       // dictates the count — the comparison ops ($eq/$gt/…) need exactly 2 in
       // the aggregation position this probe builds.
-      return `${name}(${Array(def.args?.arity ? arrayArgCount(def) : 1)
+      return `${name}(${Array(argCountOf(name) ? arrayArgCount(name) : 1)
         .fill(q)
         .join(", ")})`;
+    default:
+      return `${name}(${q})`;
   }
 }
 
@@ -80,17 +93,20 @@ function callSource(name: string, def: OperatorDef): string {
 // supply a `sortBy` for the window branch so the common ranking
 // operators stay runnable; the loop's contract is strictly "no spurious
 // `$literal`", asserted on the emitted shape — see test/CLAUDE.md.
-function stageSourceFor(name: string, def: OperatorDef, call: string): string {
-  if (def.accumulatorOnly) return `$group({ _id: 1, v: ${call} });`;
-  if (def.category === "window") return `$setWindowFields({ sortBy: { s: 1 }, output: { v: ${call} } });`;
+function stageSourceFor(name: string, call: string): string {
+  const positions = positionsOf(name) ?? [];
+  if (!positions.includes("value")) {
+    if (positions.includes("group")) return `$group({ _id: 1, v: ${call} });`;
+    if (positions.includes("window")) return `$setWindowFields({ sortBy: { s: 1 }, output: { v: ${call} } });`;
+  }
   return `$addFields({ v: ${call} });`;
 }
 
 /** Can an `$op(...)` call legally sit in bare `jsmql.expr` position with a `$`-string arg? */
-function exprCanTakeStringArg(def: OperatorDef): boolean {
-  // Accumulator-/window-only operators are illegal in bare expression position;
-  // `none`-shape operators take no `$`-string arg.
-  return !def.accumulatorOnly && def.category !== "window" && def.shape.kind !== "none";
+function exprCanTakeStringArg(name: string): boolean {
+  // Only an operator the row states in `value` position evaluates outside a stage;
+  // a `none`-shape operator takes no `$`-string arg to pass through.
+  return (positionsOf(name) ?? []).includes("value") && operandShapeOf(name) !== "none";
 }
 
 describe("literal pass-through — the reported $unwind bug and siblings", () => {
@@ -124,24 +140,25 @@ describe("literal pass-through — the reported $unwind bug and siblings", () =>
 });
 
 describe("literal pass-through — every operator in the registry", () => {
-  for (const [name, def] of Object.entries(OPERATORS)) {
+  for (const name of everyOperatorName()) {
     if (name === "$literal") continue; // legitimately emits a $literal envelope
     // A query-position-only operator has no expression form on the server, so it cannot
     // appear in the expression contexts this loop builds. Its own pass-through case lives
     // with the $match query-form tests instead.
-    if (def.matchOnly === true) continue;
+    const positions = positionsOf(name) ?? [];
+    if (!positions.some((p) => p === "value" || p === "group" || p === "window")) continue;
     // the accumulator `$count` takes no operand, and `$expMovingAvg` needs N or alpha: the synthetic call is not a call the server takes
     if (name === "$count" || name === "$expMovingAvg") continue;
 
-    const call = callSource(name, def);
-    const stageSrc = stageSourceFor(name, def, call);
+    const call = callSource(name);
+    const stageSrc = stageSourceFor(name, call);
 
     it(`${name}: $-string passes through in pipeline context`, () => {
       const out = JSON.stringify(jsmql.pipeline(stageSrc));
       expect(out).not.toContain("$literal");
     });
 
-    if (exprCanTakeStringArg(def)) {
+    if (exprCanTakeStringArg(name)) {
       it(`${name}: same source $-string ALSO passes through in jsmql.expr (HR1)`, () => {
         const out = JSON.stringify(jsmql.expr(call));
         expect(out).not.toContain("$literal");
@@ -222,10 +239,11 @@ describe("literal pass-through — every stage in the registry", () => {
 
   it("every registered stage is either pass-through-tested or explicitly skipped", () => {
     const accounted = new Set([...Object.keys(STAGE_CASES), ...Object.keys(STAGE_SKIP)]);
-    const uncovered = Object.keys(STAGES).filter((s) => !accounted.has(s));
+    const stages = new Set(everyStageName());
+    const uncovered = [...stages].filter((s) => !accounted.has(s));
     expect(uncovered).toEqual([]);
     // No stale skip entries that no longer name a real stage.
-    const staleSkips = Object.keys(STAGE_SKIP).filter((s) => !(s in STAGES));
+    const staleSkips = Object.keys(STAGE_SKIP).filter((s) => !stages.has(s));
     expect(staleSkips).toEqual([]);
   });
 });

@@ -2210,7 +2210,7 @@ describe("chained stage calls on $$$.<coll>", () => {
     ]);
   });
 
-  // Placement rules are the declarative `forbiddenIn` set from stages.ts —
+  // Placement rules are the declarative `forbiddenIn` fact on the stage's row —
   // the same source the statement path reads.
   it("rejects a stage forbidden inside a $lookup sub-pipeline", () => {
     expect(() => jsmql("$.t = $$$.orders.$out('archive');")).toThrow(

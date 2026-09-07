@@ -9,7 +9,6 @@ import { consult, everyName, listedIn, positionOf, refusalSentence } from "../sr
 import type { Arity, Position } from "../src/registry/vocabulary.ts";
 import { NAMES } from "../src/registry/names.ts";
 import { accumulated } from "../src/registry/vocabulary.ts";
-import { OPERATOR_RETURNS } from "../src/operators.ts";
 import { PRODUCTIONS } from "../src/registry/productions.ts";
 
 const POSITIONS: readonly Position[] = ["value", "filter", "stream", "statement", "group", "window", "updateDoc"];
@@ -373,19 +372,5 @@ describe("registry — exactly the value-producing rows state a return type", ()
       }
     }
     expect(wrong).toEqual([]);
-  });
-
-  it("agrees with the shipped table wherever both state one", () => {
-    // The shipped `OPERATOR_RETURNS` holds 127 entries, each measured on a
-    // mongod when it was written. An independent re-measurement agreed with all
-    // 127, so a disagreement here is a regression in one of the two, not a
-    // difference of opinion.
-    const differ: string[] = [];
-    for (const [name, shipped] of Object.entries(OPERATOR_RETURNS)) {
-      const row = (NAMES as Record<string, Row>)[name];
-      if (row?.returns === undefined || row.returns === "unknown") continue;
-      if (row.returns !== shipped) differ.push(`${name}: registry=${String(row.returns)} shipped=${shipped}`);
-    }
-    expect(differ).toEqual([]);
   });
 });

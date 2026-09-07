@@ -12,7 +12,7 @@ string  →  compiler/lex  →  compiler/parse  →  compiler/passes (fold, desu
 - `index.ts` is the public API (the `jsmql` callable and its properties). It turns the caller's input — a string, an arrow, a template tag — into source and injected values, picks the root position (a Filter, a Pipeline, an expression, an update document — see docs/specs/position-pass.md), and maps the compiler's errors to `validate()` results. It lowers nothing itself.
 - `cli.ts` and `mongoose.ts` call `jsmql` and nothing below it.
 - `errors.ts`, `namespace.ts`, `objectid.ts`, `levenshtein.ts` are leaves both the registry and the compiler share.
-- `operators.ts` and `stages.ts` hold the operator and stage shapes the globals generator reads; `globals.ts` is GENERATED from them and from the registry (`scripts/generate-globals.mjs`) — never edit it by hand.
+- `globals.ts` is GENERATED from the registry rows and the vendored MQL spec (`scripts/generate-globals.mjs`) — never edit it by hand.
 
 ## Invariants
 
