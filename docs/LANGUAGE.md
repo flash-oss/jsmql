@@ -2175,10 +2175,13 @@ Math.trunc(Number($.stringField))  // { $trunc: { $toDouble: "$stringField" } } 
 
 ```js
 typeof $.field                     // { $type: "$field" }
-typeof $.age === "number"          // { $eq: [{ $type: "$age" }, "number"] }
+typeof $.age === "string"          // { $eq: [{ $type: "$age" }, "string"] }
+typeof $.age === "number"          // { $in: [{ $type: "$age" }, ["double", "int", "long", "decimal"]] }
 ```
 
-Returns the BSON type name as a string (e.g. `"double"`, `"string"`, `"bool"`, `"objectId"`, `"date"`, `"null"`, `"array"`, `"object"`).
+Returns the BSON type name as a string (e.g. `"string"`, `"bool"`, `"objectId"`, `"date"`). An **umbrella** name — `"number"` — is a membership test over the concrete types it covers, because `$type` answers one concrete type.
+
+**A `typeof` comparison names a BSON type, not a JavaScript one.** MongoDB's vocabulary is the whole vocabulary here: `"bool"`, not JavaScript's `"boolean"`; `"long"`, not `"bigint"`; `"javascript"`, not `"function"`. Each of those three is refused with the MongoDB name pointed at, rather than lowered to a test that quietly matches nothing. `"undefined"` IS a MongoDB type — the deprecated BSON one — so it means that and nothing else; absence has its own spelling, `x === undefined`.
 
 ### Number static predicates
 
@@ -3554,15 +3557,17 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 ```js
 // Array-element / set-membership tests
 jsmql(`[{ $match: $.tags.includes("vip") }]`);
-// → [{ $match: { tags: "vip" } }]                          // implicit array-element match
+// → [{ $match: { $or: [{ tags: { $eq: "vip", $type: "array" } },
+//                     { tags: { $regex: "vip" } }] } }]     // an array holds it, or a string contains it
 jsmql(`[{ $match: ["active", "trial"].includes($.status) }]`);
 // → [{ $match: { status: { $in: ["active", "trial"] } } }]
 jsmql(`[{ $match: $.tags.includes("a") && $.tags.includes("b") }]`);
-// → [{ $match: { tags: { $all: ["a", "b"] } } }]           // folded $all
+// → [{ $match: { $or: [{ tags: { $all: ["a", "b"], $type: "array" } },
+//                     { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] }] } }]  // folded $all
 
 // Regex match — receiver field, regex-literal arg
 jsmql(`[{ $match: $.name.match(/^a/i) }]`);
-// → [{ $match: { name: /^a/i } }]
+// → [{ $match: { name: { $regex: /^a/i } } }]
 
 // Nested-array predicate
 jsmql(`[{ $match: $.items.some(it => it.qty > 5 && it.tag === "vip") }]`);
@@ -3573,8 +3578,9 @@ jsmql(`[{ $match: $.deletedAt === undefined }]`);
 // → [{ $match: { deletedAt: { $exists: false } } }]
 jsmql.expr(`$.deletedAt === undefined`);
 // → { $eq: [{ $type: "$deletedAt" }, "missing"] }         // the same test, outside $match
-jsmql(`[{ $match: typeof $.x === "boolean" }]`);
-// → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
+jsmql(`[{ $match: typeof $.x === "bool" }]`);
+// → [{ $match: { x: { $type: "bool" } } }]                 // a 'typeof' comparison names a BSON type
+// → "boolean" is refused, with 'bool' named — see "typeof" under Operators
 jsmql(`[{ $match: $.items.length === 3 }]`);
 // → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
 //       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
