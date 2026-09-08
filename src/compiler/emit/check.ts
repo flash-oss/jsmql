@@ -332,7 +332,8 @@ export function checkBody(
     // closed set applies to it there — measured, `{ $bucketAuto: { granularity:
     // "$g" } }` answers "granularity must be one of: R5, R10, …".
     if (v !== undefined) {
-      checkEnum(name, k, v, allowed, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+      const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
+      checkEnum(name, k, v, allowed, caseInsensitive.has(k), readAsWritten);
     }
   }
   for (const [k, set] of Object.entries(rule.charSets ?? {})) {

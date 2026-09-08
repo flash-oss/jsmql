@@ -286,6 +286,8 @@ the server enforces it and no renderer implies it:
 | `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, and refuses a statement after it | "$out can only be the final stage" |
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
+| `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
+| `literalKeys` | judges a `$`-led string against the closed set, because the server reads the key as a word | `{ $merge: { whenMatched: "$g" } }` → "Enumeration value '$g' for field 'whenMatched' is not a valid value" |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
 recorded as a boundary. Without the chain a stage filed as LAST is filed on the

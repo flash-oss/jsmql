@@ -86,6 +86,7 @@ import type {
   OperatorCategory,
   Only,
   Position,
+  SlotPosition,
   QueryDoc,
   Refusal,
   Returns,
@@ -327,7 +328,7 @@ type MongoSpec<
    * own subtree. A flat key list could not reach $rankFusion's pipelines, which
    * sit two levels down and are user-named:
    *   $lookup           → { "": "value", pipeline: "statement" }
-   *   $merge            → { "": "value", whenMatched: "statement" }
+   *   $merge            → { "": "value", whenMatched: { list: "statement", otherwise: "value" } }
    *   $rankFusion       → { "": "value", "input.pipelines.*": "statement" }
    *   $facet            → { "": "value", "*": "statement" }
    *   $setWindowFields  → { "": "value", "output.*": "window" }
@@ -343,8 +344,15 @@ type MongoSpec<
    * `$group` output (above), `$geoNear.query` and
    * `$graphLookup.restrictSearchWithMatch` (both → "unknown top level operator:
    * $eq", because a query slot is not an expression slot).
+   *
+   * A slot that holds TWO shapes states both. `$merge.whenMatched` takes one of
+   * four WORDS or an update pipeline, and the two are read differently:
+   *   { $merge: { into: "x", whenMatched: "replace" } }        accepted
+   *   { $merge: { into: "x", whenMatched: [{ $set: … }] } }    accepted
+   * `list` is what a bracketed list means there, `otherwise` what anything else
+   * means. A bare position is the same rule with one answer for every shape.
    */
-  bodyPositions?: Readonly<Record<string, Position>> & { readonly "": Position };
+  bodyPositions?: Readonly<Record<string, SlotPosition>> & { readonly "": SlotPosition };
   /**
    * The lowest server version that accepts this name. Stated only where it was
    * MEASURED to matter — the binary may hold a name the running FCV refuses:
@@ -5477,12 +5485,15 @@ export const NAMES = {
       optional: ["on", "let", "whenMatched", "whenNotMatched"],
       closed: true,
       keyTypes: { let: "object" },
+      // MEASURED: whenMatched: "pipeline" → Enumeration value 'pipeline' for field
+      // 'whenMatched' is not a valid value. The pipeline form is the ARRAY, not a word.
       enums: {
-        whenMatched: ["replace", "keepExisting", "merge", "fail", "pipeline"],
+        whenMatched: ["replace", "keepExisting", "merge", "fail"],
         whenNotMatched: ["insert", "discard", "fail"],
       },
+      literalKeys: ["whenMatched", "whenNotMatched"],
     },
-    bodyPositions: { "": "value", whenMatched: "statement" },
+    bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
       "'$merge' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write it as a statement ('$merge(…);') or a chain link ('$$.$merge(…)').",

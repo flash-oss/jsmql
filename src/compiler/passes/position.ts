@@ -58,8 +58,11 @@ const stageMayStand = (here: Where): boolean => here.at === "statement" || here.
  * it has no keys for a deeper rule to reach.
  */
 function reached(stage: string, path: BodyPath, slot: BodySlot, child: unknown): Where {
-  const isObject = typeof child === "object" && child !== null && (child as Any).type === "ObjectLiteral";
-  return slot.deeper && isObject ? { at: "stageBody", stage, path } : { at: slot.at };
+  const type = typeof child === "object" && child !== null ? (child as Any).type : undefined;
+  if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
+  // A slot that reads a bracketed list one way and everything else another:
+  // `whenMatched: [$set(…)]` is a pipeline, `whenMatched: "replace"` is a word.
+  return { at: type === "ArrayLiteral" ? slot.at : slot.otherwise };
 }
 
 /**

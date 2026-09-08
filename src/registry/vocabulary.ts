@@ -404,6 +404,13 @@ export type Kind =
 export type Position = "value" | "filter" | "stream" | "statement" | "group" | "window" | "updateDoc";
 
 /**
+ * What a slot of a stage's body holds. One position where every shape reads the
+ * same way; a pair where a BRACKETED LIST means one thing and anything else
+ * another — `$merge.whenMatched` takes an update pipeline or one of four words.
+ */
+export type SlotPosition = Position | { readonly list: Position; readonly otherwise: Position };
+
+/**
  * An extra rule no renderer implies, so it must be said.
  *
  *   "stageFirst"  must be the pipeline's first stage
@@ -663,6 +670,15 @@ export type BodyRule = {
   keyTypes?: Readonly<Record<string, ArgType>>;
   /** Keys whose value must be a compile-time constant. */
   constantKeys?: readonly string[];
+  /**
+   * Keys whose string the server reads as ITSELF, never as a field path — so the
+   * closed set judges a `$`-led string there too. MEASURED on `$merge`:
+   * `{ whenMatched: "$g" }` → "Enumeration value '$g' for field 'whenMatched' is
+   * not a valid value". `constantKeys` implies this and states more: those keys
+   * also refuse an expression. A key that may hold a sub-pipeline states this one
+   * alone, because the pipeline is not a constant.
+   */
+  literalKeys?: readonly string[];
   /**
    * Every literal 0/1/false/true value of the body must agree — a projection is all
    * inclusions or all exclusions, `_id` aside. Measured: `{ $project: { a: 1, b: 0 } }` →

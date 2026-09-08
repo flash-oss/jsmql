@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix!: `$merge` takes the four words again, and the word list is the server's
+
+`$merge({ into: "x", whenMatched: "replace" });` — the commonest `$merge` there is — did not compile:
+
+```
+→ This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.
+```
+
+All four words answered that. Only the update-pipeline form got through. The cause was one fact: the row filed `whenMatched` as a statement slot, so a string reached the stage-list reader. The slot takes BOTH shapes, and it states both now:
+
+```
+$merge({ into: "x", whenMatched: "replace" });        → [{ "$merge": { "into": "x", "whenMatched": "replace" } }]
+$merge({ into: "x", whenMatched: [$set({ a: 1 })] }); → [{ "$merge": { "into": "x", "whenMatched": [{ "$set": { "a": 1 } }] } }]
+```
+
+A body slot's position may be a pair — what a bracketed list means there, and what anything else means. `$merge.whenMatched` is the only slot in MongoDB with two readings; every other stage slot states one position and reads every shape that way.
+
+Two more defects went with it. The word list offered `pipeline`, which the server refuses — MEASURED, `{ whenMatched: "pipeline" }` → "Enumeration value 'pipeline' for field 'whenMatched' is not a valid value". The pipeline form is the ARRAY, so the word is gone from the list.
+
+And a `$`-led string slipped past the closed set: `{ whenMatched: "$g" }` compiled, and the server refused the emitted document. A key the server reads as a WORD rather than as a field path now says so — `literalKeys` — and the set judges the string as written. An operator's enum slot is untouched, because there the server does evaluate a path: `$dateTrunc({ date: $.t, unit: "$u" })` still emits `{ $dateTrunc: { date: "$t", unit: "$u" } }`.
+
+Two suites stated the right behaviour in their titles and pinned the wrong answer: `test/codegen.test.ts`'s "a stage's enum slot rejects one" asserted the sub-pipeline sentence, and the body-layout audits knew only a single position per slot.
+
+---
+
+
 ## 2026-09-08 — feat: the lodash reading of an object is a method too
 
 `Object.keys(o)` compiled and `o.keys()` did not. jsmql already carries nine lodash readers of an object as methods — `.mapValues()`, `.pickBy()`, `.toPairs()` and the rest — so the three JavaScript statics were the odd ones out:

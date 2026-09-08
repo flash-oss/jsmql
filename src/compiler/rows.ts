@@ -7,7 +7,16 @@
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 
-import type { Family, FieldFamily, IterateeSlots, On, Position, MutatorForm, Kind } from "../registry/vocabulary.ts";
+import type {
+  Family,
+  FieldFamily,
+  IterateeSlots,
+  On,
+  Position,
+  SlotPosition,
+  MutatorForm,
+  Kind,
+} from "../registry/vocabulary.ts";
 import { FIELD_FAMILY_TYPES } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
@@ -52,8 +61,8 @@ export function isFieldProperty(name: string): boolean {
 }
 
 /** A stage's stated body layout, or undefined when the name is not a stage. */
-function bodyLayoutOf(name: string): Readonly<Record<string, Position>> | undefined {
-  return (row(name) as { bodyPositions?: Readonly<Record<string, Position>> } | undefined)?.bodyPositions;
+function bodyLayoutOf(name: string): Readonly<Record<string, SlotPosition>> | undefined {
+  return (row(name) as { bodyPositions?: Readonly<Record<string, SlotPosition>> } | undefined)?.bodyPositions;
 }
 
 /** Is `name` a stage — a name whose argument is a BODY with a stated layout? */
@@ -72,7 +81,7 @@ export function isStageName(name: string): boolean {
  * window position; without the first, `$merge("out")` — a body with no keys to
  * descend into — would never reach any position at all.
  */
-export type BodySlot = { at: Position; deeper: boolean };
+export type BodySlot = { at: Position; otherwise: Position; deeper: boolean };
 
 /** A body path, one segment per key. `null` is a COMPUTED key — `{ [k]: … }`. */
 export type BodyPath = readonly (string | null)[];
@@ -112,7 +121,11 @@ export function bodySlotAt(stage: string, path: BodyPath): BodySlot | undefined 
     else if (cand.seg.length === best.seg.length && wildcards(cand.seg) < wildcards(best.seg)) best = cand;
   }
   // Every stage row states the `""` key, so a covering key always exists.
-  return best === undefined ? undefined : { at: layout[best.key], deeper };
+  if (best === undefined) return undefined;
+  const stated = layout[best.key];
+  return typeof stated === "string"
+    ? { at: stated, otherwise: stated, deeper }
+    : { at: stated.list, otherwise: stated.otherwise, deeper };
 }
 
 /**

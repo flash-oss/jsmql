@@ -202,19 +202,30 @@ describe("compiler/rows — the body-layout resolver", () => {
     // object here must keep descending. `$merge("out")` needs the first with the
     // second true — a string body under a layout that names `whenMatched` has no
     // keys to descend into, and used to stay unpositioned.
-    expect(bodySlotAt("$setWindowFields", [])).toEqual({ at: "value", deeper: true });
-    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ at: "value", deeper: true });
-    expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({ at: "window", deeper: false });
-    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({ at: "value", deeper: false });
+    expect(bodySlotAt("$setWindowFields", [])).toEqual({ at: "value", otherwise: "value", deeper: true });
+    expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ at: "value", otherwise: "value", deeper: true });
+    expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({
+      at: "window",
+      otherwise: "window",
+      deeper: false,
+    });
+    expect(bodySlotAt("$setWindowFields", ["sortBy"])).toEqual({ at: "value", otherwise: "value", deeper: false });
     // $match names no key, so its body is a leaf at once and everything in the
     // query document below it is query too.
-    expect(bodySlotAt("$match", [])).toEqual({ at: "filter", deeper: false });
+    expect(bodySlotAt("$match", [])).toEqual({ at: "filter", otherwise: "filter", deeper: false });
+  });
+
+  it("answers a two-shape slot with a position per shape", () => {
+    // '$merge.whenMatched' takes an update pipeline or one of four words, and the
+    // two read differently — a bracketed list is stages, a word is a value.
+    expect(bodySlotAt("$merge", ["whenMatched"])).toEqual({ at: "statement", otherwise: "value", deeper: false });
+    expect(bodySlotAt("$merge", ["whenNotMatched"])).toEqual({ at: "value", otherwise: "value", deeper: false });
   });
 
   it("prefers a literal key over a `*` of the same depth", () => {
-    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value", deeper: false });
-    expect(bodySlotAt("$group", ["total"])).toEqual({ at: "group", deeper: false });
-    expect(bodySlotAt("$group", [null])).toEqual({ at: "group", deeper: false });
+    expect(bodySlotAt("$group", ["_id"])).toEqual({ at: "value", otherwise: "value", deeper: false });
+    expect(bodySlotAt("$group", ["total"])).toEqual({ at: "group", otherwise: "group", deeper: false });
+    expect(bodySlotAt("$group", [null])).toEqual({ at: "group", otherwise: "group", deeper: false });
   });
 
   it("answers nothing for a name that is not a stage", () => {
@@ -225,7 +236,11 @@ describe("compiler/rows — the body-layout resolver", () => {
 });
 
 describe("registry — exactly the stages state a body layout", () => {
-  type Row = { kind?: string; where?: readonly Position[]; bodyPositions?: Readonly<Record<string, Position>> };
+  type SlotPosition = Position | { list: Position; otherwise: Position };
+  type Row = { kind?: string; where?: readonly Position[]; bodyPositions?: Readonly<Record<string, SlotPosition>> };
+  /** Every position a slot can resolve to: one, or the pair a two-shape slot states. */
+  const positionsIn = (at: SlotPosition): readonly Position[] =>
+    typeof at === "string" ? [at] : [at.list, at.otherwise];
 
   /**
    * A stage's ARGUMENT is a body. A row that is not a stage has no body to lay
@@ -248,7 +263,7 @@ describe("registry — exactly the stages state a body layout", () => {
     const wrong: string[] = [];
     for (const [name, row] of Object.entries(NAMES) as [string, Row][]) {
       for (const [path, at] of Object.entries(row.bodyPositions ?? {})) {
-        if (!POSITIONS.includes(at)) wrong.push(`${name}.${path} = ${at}`);
+        for (const one of positionsIn(at)) if (!POSITIONS.includes(one)) wrong.push(`${name}.${path} = ${one}`);
       }
     }
     expect(wrong).toEqual([]);
@@ -259,7 +274,7 @@ describe("registry — exactly the stages state a body layout", () => {
     // path, so the count is the finding, not a statistic.
     const reached = new Set<string>(["filter", "value", "updateDoc"]); // by seed
     for (const row of Object.values(NAMES) as Row[]) {
-      for (const at of Object.values(row.bodyPositions ?? {})) reached.add(at);
+      for (const at of Object.values(row.bodyPositions ?? {})) for (const one of positionsIn(at)) reached.add(one);
     }
     reached.add("stream"); // `$$ = $$.…`, an edge on the assignment, not a body path
     expect([...reached].sort()).toEqual(["filter", "group", "statement", "stream", "updateDoc", "value", "window"]);

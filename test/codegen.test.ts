@@ -2414,8 +2414,18 @@ describe("enum slots: an operator's is an expression slot, a stage's is not", ()
       /granularity must be one of/,
     );
     expect(() => jsmql('$merge({ into: "x", whenMatched: "$g" });')).toThrow(
-      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+      "'$merge' whenMatched must be one of: replace, keepExisting, merge, fail — got '$g'.",
     );
+    expect(() => jsmql('$merge({ into: "x", whenNotMatched: "$g" });')).toThrow(
+      "'$merge' whenNotMatched must be one of: insert, discard, fail — got '$g'.",
+    );
+    // The same slot takes an update pipeline, and a bracketed list there is stages.
+    expect(jsmql('$merge({ into: "x", whenMatched: [$set({ a: 1 })] });')).toEqual([
+      { $merge: { into: "x", whenMatched: [{ $set: { a: 1 } }] } },
+    ]);
+    expect(jsmql('$merge({ into: "x", whenMatched: "replace" });')).toEqual([
+      { $merge: { into: "x", whenMatched: "replace" } },
+    ]);
   });
 });
 
