@@ -186,7 +186,7 @@ describe("pipeline — sub-pipelines", () => {
     // The server rejects `{ $lookup: { pipeline: "$someVar" } }` ("A pipeline must
     // be an array of objects"), so a non-array pipeline slot throws at compile time.
     expect(() => jsmql('[{ $lookup: { from: "x", pipeline: $.someVar, as: "y" } }]')).toThrow(
-      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+      "'$lookup' pipeline is a sub-pipeline: write it as a bracketed list of stages, 'pipeline: [$match(…), $sort(…)]'.",
     );
   });
 

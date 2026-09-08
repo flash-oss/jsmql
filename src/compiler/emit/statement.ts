@@ -108,8 +108,8 @@ function stageBody(node: Expr, env: Env): unknown {
 }
 
 /** A `[ … ]` of statements as a list of stages, under the chain `env` already carries. */
-function subPipeline(node: Expr, env: Env): Stage[] {
-  if (node.type !== "ArrayLiteral") throw E.needsStageList(node.pos);
+function subPipeline(node: Expr, env: Env, slot: { stage: string; key: string } | null = null): Stage[] {
+  if (node.type !== "ArrayLiteral") throw E.needsStageList(slot, node.pos);
   const out: Stage[] = [];
   let scope = childEnv(env, node, "elements").block();
   for (const el of node.elements) {
@@ -140,7 +140,8 @@ function pipelineBody(node: Expr, env: Env, stage: string, path: BodyPath, captu
   const capture = pipelineOverOf(stage) === "foreign" ? (hasLet(stage) ? new Capture(env.level) : null) : undefined;
   if (capture) captures.push(capture);
   const body = env.enter({ stage, path, capture }, new Chain());
-  body.chain.emitted.push(...subPipeline(node, body));
+  const key = path[path.length - 1];
+  body.chain.emitted.push(...subPipeline(node, body, stage !== "" && typeof key === "string" ? { stage, key } : null));
   return body.chain.close();
 }
 

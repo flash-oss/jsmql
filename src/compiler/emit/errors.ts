@@ -11,7 +11,7 @@ import type { Arity, Position, SlotForm } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
-import { callbackParamsOf, diagnosticOf, isFieldProperty, spreadAlternativeOf } from "../rows.ts";
+import { callbackParamsOf, diagnosticOf, isFieldProperty, spreadAlternativeOf, stageBodyRuleOf } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
 
@@ -426,12 +426,22 @@ export const notAWriteTarget = (pos: number): CodegenError =>
     pos,
   );
 
-/** A stage body that must be a bracketed list of stages. */
-export const needsStageList = (pos: number): CodegenError =>
-  new CodegenError(
-    "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+/** A stage body, or one key of it, that must be a bracketed list of stages. */
+export const needsStageList = (slot: { stage: string; key: string } | null, pos: number): CodegenError => {
+  if (slot === null) {
+    return new CodegenError(
+      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.",
+      pos,
+    );
+  }
+  const words = stageBodyRuleOf(slot.stage)?.enums?.[slot.key];
+  return new CodegenError(
+    words === undefined
+      ? `'${slot.stage}' ${slot.key} is a sub-pipeline: write it as a bracketed list of stages, '${slot.key}: [$match(…), $sort(…)]'.`
+      : `'${slot.stage}' ${slot.key} is a bracketed list of stages, '${slot.key}: [$set({ … })]', or one of: ${words.join(", ")}.`,
     pos,
   );
+};
 
 /** A spread inside a stage list: the pipeline is written out, stage by stage. */
 export const spreadInStageList = (pos: number): CodegenError =>

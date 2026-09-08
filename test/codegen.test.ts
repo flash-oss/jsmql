@@ -2414,7 +2414,7 @@ describe("enum slots: an operator's is an expression slot, a stage's is not", ()
       /granularity must be one of/,
     );
     expect(() => jsmql('$merge({ into: "x", whenMatched: "$g" });')).toThrow(
-      "'$merge' whenMatched must be one of: replace, keepExisting, merge, fail — got '$g'.",
+      "'$merge' whenMatched is one of: replace, keepExisting, merge, fail — or a bracketed list of stages, 'whenMatched: [$set({ … })]'. Got '$g'.",
     );
     expect(() => jsmql('$merge({ into: "x", whenNotMatched: "$g" });')).toThrow(
       "'$merge' whenNotMatched must be one of: insert, discard, fail — got '$g'.",

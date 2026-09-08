@@ -810,6 +810,11 @@ var cbrt = (v) => ({
 var isFiniteNumber = (v) => ({
   $and: [{ $isNumber: v }, { $not: [{ $in: [{ $toString: v }, ["NaN", "Infinity", "-Infinity"]] }] }]
 });
+var pairsToObject = (pairs, p) => ({
+  $arrayToObject: {
+    $map: { input: pairs, as: p.as, in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }] }
+  }
+});
 
 // src/registry/names.ts
 var root = (e) => ({ ...e, kind: "root" });
@@ -4762,6 +4767,7 @@ var NAMES = {
   }),
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    bodyExample: "$addFields({ total: $.price })",
     where: ["stream", "statement"],
     preservesCount: true,
     only: ["update"],
@@ -5203,6 +5209,7 @@ var NAMES = {
   }),
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
+    bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: ["_id"], optional: [], closed: false },
@@ -5461,12 +5468,15 @@ var NAMES = {
       optional: ["on", "let", "whenMatched", "whenNotMatched"],
       closed: true,
       keyTypes: { let: "object" },
+      // MEASURED: whenMatched: "pipeline" → Enumeration value 'pipeline' for field
+      // 'whenMatched' is not a valid value. The pipeline form is the ARRAY, not a word.
       enums: {
-        whenMatched: ["replace", "keepExisting", "merge", "fail", "pipeline"],
+        whenMatched: ["replace", "keepExisting", "merge", "fail"],
         whenNotMatched: ["insert", "discard", "fail"]
-      }
+      },
+      literalKeys: ["whenMatched", "whenNotMatched"]
     },
-    bodyPositions: { "": "value", whenMatched: "statement" },
+    bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
       "'$merge' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$merge(\u2026);') or a chain link ('$$.$merge(\u2026)')."
@@ -5552,6 +5562,7 @@ var NAMES = {
   }),
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    bodyExample: "$project({ name: 1 })",
     replacesDocument: "inclusion",
     where: ["stream", "statement"],
     only: ["update"],
@@ -5684,6 +5695,7 @@ var NAMES = {
   }),
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
+    bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     body: {
       required: ["size"],
@@ -5780,6 +5792,7 @@ var NAMES = {
   }),
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    bodyExample: "$set({ total: $.price })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     only: ["update"],
@@ -5923,6 +5936,7 @@ var NAMES = {
   }),
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
+    bodyExample: "$sort({ createdAt: -1 })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },
@@ -6026,11 +6040,23 @@ var NAMES = {
     group: unsupported("'$unset' is not valid in a $group output position \u2014 see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position \u2014 see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: ["string", "array"] },
+        nonEmpty: { 0: { noun: "field name", instead: `Name the fields to remove: '$unset(["a", "b"])'.` } }
+      },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
     },
     statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: ["string", "array"] },
+        nonEmpty: { 0: { noun: "field name", instead: `Name the fields to remove: '$unset(["a", "b"])'.` } }
+      },
       emit: ({ name: name2, args, value }) => [{ [name2]: value(args[0]) }]
     },
     updateDoc: {
@@ -7449,7 +7475,7 @@ var NAMES = {
       }
     },
     stream: unsupported(
-      "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form."
+      "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'. To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'."
     ),
     statement: unsupported(
       "'.reduce()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.reduce();'"
@@ -7735,9 +7761,9 @@ var NAMES = {
     )
   }),
   entries: name({
-    doc: "'Object.entries(obj)' \u2014 the object as [key, value] pairs. The array form is refused.",
+    doc: "'Object.entries(obj)' / '.entries()' \u2014 the object as [key, value] pairs. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7746,6 +7772,13 @@ var NAMES = {
         array: unsupported(
           ".entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array."
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+          }
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7755,6 +7788,10 @@ var NAMES = {
             };
           }
         }
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
       }
     },
     stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
@@ -7765,9 +7802,9 @@ var NAMES = {
     window: unsupported("'.entries()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   keys: name({
-    doc: "'Object.keys(obj)' \u2014 an array of the object's keys. The array form is refused.",
+    doc: "'Object.keys(obj)' / '.keys()' \u2014 an array of the object's keys. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7776,6 +7813,13 @@ var NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array."
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
+          }
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7783,6 +7827,10 @@ var NAMES = {
             return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.k` } };
           }
         }
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
       }
     },
     stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
@@ -7793,9 +7841,9 @@ var NAMES = {
     window: unsupported("'.keys()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   values: name({
-    doc: "'Object.values(obj)' \u2014 an array of the object's values. The array form is refused.",
+    doc: "'Object.values(obj)' / '.values()' \u2014 an array of the object's values. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7804,6 +7852,13 @@ var NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence \u2014 use it directly."
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
+          }
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7811,6 +7866,10 @@ var NAMES = {
             return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.v` } };
           }
         }
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
       }
     },
     stream: unsupported("'Object.values()' produces a value, not a stream of documents."),
@@ -9764,7 +9823,13 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "", none: true },
+      args: {
+        sig: "",
+        none: true,
+        reject: {
+          1: "'.sample()' takes no arguments. It returns one random element. For n elements write '.sampleSize(n)'."
+        }
+      },
       emit: ({ recv, bind }) => {
         const arr = bind("arr");
         return {
@@ -9775,7 +9840,16 @@ var NAMES = {
         };
       }
     },
-    stream: { args: { sig: "", none: true }, emit: () => [{ $sample: { size: 1 } }] },
+    stream: {
+      args: {
+        sig: "",
+        none: true,
+        reject: {
+          1: "'.sample()' takes no arguments. It keeps one random document. For n documents write '.sampleSize(n)'."
+        }
+      },
+      emit: () => [{ $sample: { size: 1 } }]
+    },
     statement: unsupported(
       "'.sample()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sample();'"
     ),
@@ -10384,21 +10458,7 @@ var NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
-        const p = bind("p");
-        return {
-          $arrayToObject: {
-            $map: {
-              input: recv,
-              as: p.as,
-              in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }]
-            }
-          }
-        };
-      }
-    },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
     stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'"
@@ -11922,7 +11982,16 @@ var NAMES = {
     filter: unsupported("'.aggregate()' splices stages; it is not a filter predicate."),
     expr: unsupported("'.aggregate()' produces pipeline stages, not a value."),
     stream: {
-      args: { sig: "stages | (o) => { \u2026stages }", exact: 1 },
+      args: {
+        sig: "stages | (o) => { \u2026stages }",
+        exact: 1,
+        nonEmpty: {
+          0: {
+            noun: "stage",
+            instead: "List the stages \u2014 '.aggregate([$match(\u2026), $sort(\u2026)])' \u2014 or drop the '.aggregate()' link."
+          }
+        }
+      },
       // The block's statements ARE the chain's stages; a bracketed list is the same list.
       emit: ({ args, value, block }) => args[0].type === "Lambda" ? block(args[0]) : value(args[0])
     },
@@ -11956,34 +12025,55 @@ var NAMES = {
   }),
   // ── the other namespaces, their members, and the bare callables ──
   assign: name({
-    doc: "'Object.assign(target, ...sources)' \u2014 emits $mergeObjects. At statement position it writes the target.",
+    doc: "'Object.assign(target, ...sources)' / '.assign(...sources)' \u2014 emits $mergeObjects. At statement position the static form writes the target.",
     call: true,
-    on: "Object",
+    on: ["object", "Object"],
     mutatesArgumentAt: 0,
     returns: "object",
-    where: ["value", "statement"],
+    // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
+    // before any statement cell is consulted — so the row states only the value.
+    where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...sources", atLeast: 1, spread: true },
-      emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) })
+      perFamily: {
+        // The method form answers a NEW object, as '.pick()' and '.omit()' do —
+        // the receiver is the first source and nothing is written in place.
+        object: {
+          args: { sig: "...sources", atLeast: 1, spread: true },
+          emit: ({ recv, args, value }) => ({ $mergeObjects: [recv, ...args.map(value)] })
+        },
+        Object: {
+          args: { sig: "...sources", atLeast: 1, spread: true },
+          emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) })
+        }
+      }
     },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    statement: inCode("src/compiler/passes/desugar.ts"),
+    // 'Object.assign(t, …);' is rewritten to the write it means before this cell is
+    // reached; the method form answers a value, so a bare statement of it writes nothing.
+    statement: unsupported(
+      "'.assign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.assign(\u2026);'"
+    ),
     group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator."
     )
   }),
   fromEntries: name({
-    doc: "'Object.fromEntries(entries)' \u2014 emits $arrayToObject.",
+    doc: "'Object.fromEntries(entries)' / '.fromEntries()' \u2014 emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
-    on: "Object",
+    on: ["array", "Object"],
     returns: "object",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "entries", exact: 1 },
-      emit: ({ args, value }) => ({ $arrayToObject: singleArrayArg(value(args[0])) })
+      perFamily: {
+        array: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
+        Object: {
+          args: { sig: "entries", exact: 1 },
+          emit: ({ args, value, bind }) => pairsToObject(singleArrayArg(value(args[0])), bind("p"))
+        }
+      }
     },
     stream: unsupported("'Object.fromEntries()' produces a value, not a stream of documents."),
     statement: unsupported(
@@ -14323,7 +14413,9 @@ function bodySlotAt(stage, path) {
     if (best === void 0 || cand.seg.length > best.seg.length) best = cand;
     else if (cand.seg.length === best.seg.length && wildcards(cand.seg) < wildcards(best.seg)) best = cand;
   }
-  return best === void 0 ? void 0 : { at: layout[best.key], deeper };
+  if (best === void 0) return void 0;
+  const stated = layout[best.key];
+  return typeof stated === "string" ? { at: stated, otherwise: stated, deeper } : { at: stated.list, otherwise: stated.otherwise, deeper };
 }
 function blockBodyOf(name2) {
   return row(name2)?.blockBody ?? "javascript";
@@ -14338,7 +14430,8 @@ function namespaceNames() {
   }
   return out;
 }
-function mutatedArgumentOf(name2) {
+function mutatedArgumentOf(name2, receiver) {
+  if (receiver !== void 0 && (receiver === null || !namespaceNames().has(receiver))) return void 0;
   return row(name2)?.mutatesArgumentAt;
 }
 function immutableTwinOf(name2) {
@@ -14350,6 +14443,13 @@ function arrayLiteralOrderOf(name2) {
 function iterateeSlotsOf(name2, family) {
   const decl = row(name2)?.iterateeSlots;
   return decl?.[family];
+}
+function slotFormsOf(name2, family, slot) {
+  const runsAs = picksOneOf(name2);
+  const layout = iterateeSlotsOf(name2, family) ?? (runsAs === null ? void 0 : iterateeSlotsOf(runsAs, family)) ?? (family === "stream" ? iterateeSlotsOf(name2, "array") : void 0);
+  if (layout === void 0 || !isSlotLayout(layout)) return [];
+  const byIndex = layout;
+  return byIndex[slot] ?? [];
 }
 function receiverFamily(receiverName, onStream, name2) {
   if (onStream) return "stream";
@@ -14452,6 +14552,9 @@ function liftsToOf(name2) {
 function stageBodyRuleOf(name2) {
   return row(name2)?.body;
 }
+function bodyExampleOf(name2) {
+  return row(name2)?.bodyExample;
+}
 function operandShapeOf(name2) {
   const shape = emitRow(name2)?.shape;
   if (shape === void 0) return void 0;
@@ -14486,6 +14589,9 @@ function streamBodyOf(name2) {
 }
 function pipelineOverOf(name2) {
   return row(name2)?.pipelineOver ?? null;
+}
+function diagnosticOf(name2) {
+  return row(name2)?.diagnostic;
 }
 function preservesCountOf(name2) {
   return row(name2)?.preservesCount === true;
@@ -14751,7 +14857,7 @@ function statementSpelling(stmt) {
     case "OperatorCall":
       return `${s.name}(...)`;
     case "FuncDecl":
-      return `function ${s.name}(\u2026) { \u2026 }`;
+      return s.form === "function" ? `function ${s.name}(\u2026) { \u2026 }` : `${s.kind} ${s.name} = (\u2026) => \u2026`;
     case "UpdateFilter": {
       const op = s.ops?.[0];
       const target = op?.target === void 0 ? "$.x" : targetSpelling(op.target);
@@ -14762,6 +14868,16 @@ function statementSpelling(stmt) {
     default:
       return "\u2026";
   }
+}
+function notPartOfACallback(stmt, retPos) {
+  const wrote = statementSpelling(stmt);
+  if (stmt.type === "FuncDecl") {
+    return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(\u2026)' inside the callback.`;
+  }
+  if (retPos !== null) {
+    return `\`${wrote}\` at position ${stmt.pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages \u2014 that is what '.aggregate((o) => { \u2026 })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.`;
+  }
+  return `\`${wrote}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`;
 }
 function targetSpelling(target) {
   if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
@@ -14795,10 +14911,7 @@ var Parser = class _Parser {
     const [lambda, endPos] = first.value;
     const stmt = lambda.stages?.stmts.find((st) => st.type !== "LetDecl");
     if (stmt !== void 0 && isStageStmt(stmt)) {
-      throw new ParseError(
-        `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`,
-        stmt.pos
-      );
+      throw new ParseError(notPartOfACallback(stmt, null), stmt.pos);
     }
     throw new ParseError(needsReturn(endPos, "'}'"), endPos);
   }
@@ -15207,6 +15320,13 @@ var Parser = class _Parser {
     const t = target.expr.type;
     const isPlace = t === "FieldRef" || t === "Ident" || t === "MemberAccess" || t === "IndexAccess" || t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
     if (isPlace) return;
+    if (target.expr.type === "MethodCall") {
+      const call = `.${target.expr.wrote ?? target.expr.name}()`;
+      throw new ParseError(
+        `Cannot apply '${op}' to the result of '${call}' at position ${pos} \u2014 only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>${call};'.`,
+        pos
+      );
+    }
     const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
       `Cannot apply '${op}' to ${what} \u2014 only a field, a binding, '$', '$$' or a collection can be written`,
@@ -15565,10 +15685,7 @@ var Parser = class _Parser {
             stmt.pos
           );
         }
-        throw new ParseError(
-          `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`,
-          stmt.pos
-        );
+        throw new ParseError(notPartOfACallback(stmt, retPos), stmt.pos);
       }
       return { type: "Lambda", params, body: { type: "ExprBlock", decls, ret, pos: retPos }, pos };
     }
@@ -16617,7 +16734,7 @@ function inject(root2, values) {
 }
 function replaceIdents(root2, nodes) {
   if (nodes.size === 0) return root2;
-  const spell3 = (name2, pos) => {
+  const spell4 = (name2, pos) => {
     const n2 = nodes.get(name2);
     return n2.type === "Injected" ? { ...n2, pos } : n2;
   };
@@ -16627,7 +16744,7 @@ function replaceIdents(root2, nodes) {
     if (node === null || typeof node !== "object") return node;
     const n2 = node;
     if (n2.type === "Ident" && typeof n2.name === "string" && values.has(n2.name) && !shadow.has(n2.name)) {
-      return spell3(n2.name, n2.pos ?? 0);
+      return spell4(n2.name, n2.pos ?? 0);
     }
     let inner = shadow;
     if (n2.type === "Lambda" && Array.isArray(n2.params)) {
@@ -17180,8 +17297,9 @@ var UPDATE_DOC = { at: "updateDoc" };
 var TARGET = { at: "target" };
 var stageMayStand = (here) => here.at === "statement" || here.at === "stream";
 function reached(stage, path, slot, child) {
-  const isObject = typeof child === "object" && child !== null && child.type === "ObjectLiteral";
-  return slot.deeper && isObject ? { at: "stageBody", stage, path } : { at: slot.at };
+  const type = typeof child === "object" && child !== null ? child.type : void 0;
+  if (slot.deeper && type === "ObjectLiteral") return { at: "stageBody", stage, path };
+  return { at: type === "ArrayLiteral" ? slot.at : slot.otherwise };
 }
 function edge(node, key, here) {
   const n2 = node;
@@ -17368,7 +17486,8 @@ function unfoldable(stmts) {
         if (receiver !== null) excluded.add(receiver);
       }
       if (typeof node.name === "string") {
-        const index = mutatedArgumentOf(node.name);
+        const on = node.object;
+        const index = mutatedArgumentOf(node.name, on?.type === "Ident" ? on.name ?? null : null);
         if (index !== void 0) {
           const name2 = rootName(node.args?.[index]);
           if (name2 !== null) excluded.add(name2);
@@ -17577,6 +17696,25 @@ function nonFiniteIn(value) {
 // src/registry/ast.ts
 var ASSIGN_OPS = ["=", "+=", "-=", "*=", "/=", "++", "--"];
 
+// src/errors.ts
+var CodegenError = class extends Error {
+  constructor(message, pos = 0) {
+    super(message);
+    this.name = "CodegenError";
+    this.pos = pos;
+  }
+};
+var UnknownIdentifierError = class extends CodegenError {
+  constructor(identifier2, pos = 0) {
+    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
+    this.name = "UnknownIdentifierError";
+    this.identifier = identifier2;
+  }
+};
+function internalError(detail, pos = 0) {
+  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
+}
+
 // src/compiler/passes/fresh.ts
 var isObj = (v) => typeof v === "object" && v !== null;
 function namesIn(node, out = /* @__PURE__ */ new Set()) {
@@ -17772,7 +17910,8 @@ var mutatedArgument = {
     if (where.at !== "statement") return node;
     const n2 = node;
     if (n2.type !== "MethodCall" || typeof n2.name !== "string") return node;
-    const at2 = mutatedArgumentOf(n2.name);
+    const on = n2.object;
+    const at2 = mutatedArgumentOf(n2.name, on?.type === "Ident" ? on.name ?? null : null);
     if (at2 === void 0) return node;
     const args = n2.args;
     const target = args[at2];
@@ -17919,7 +18058,13 @@ var groupBodyLink = {
     const args = n2.args;
     if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
     const hasId = args[0].entries.some((e) => writtenKey(e) === "_id");
-    return hasId ? { ...n2, name: "$group" } : node;
+    if (!hasId) {
+      throw new CodegenError(
+        `'$$.groupBy({ \u2026 })' on the stream is the '$group' stage, and its body needs an '_id' \u2014 the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy("status")'.`,
+        args[0].pos
+      );
+    }
+    return { ...n2, name: "$group" };
   }
 };
 var iterateeShorthand = {
@@ -18031,25 +18176,6 @@ function shapeOf(program) {
   return "filter";
 }
 
-// src/errors.ts
-var CodegenError = class extends Error {
-  constructor(message, pos = 0) {
-    super(message);
-    this.name = "CodegenError";
-    this.pos = pos;
-  }
-};
-var UnknownIdentifierError = class extends CodegenError {
-  constructor(identifier2, pos = 0) {
-    super(`Unknown identifier '${identifier2}'. Did you mean '$.${identifier2}'?`, pos);
-    this.name = "UnknownIdentifierError";
-    this.identifier = identifier2;
-  }
-};
-function internalError(detail, pos = 0) {
-  throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
 // src/namespace.ts
 var JSMQL_NS = "__jsmql";
 function bindingSlot(name2) {
@@ -18158,6 +18284,10 @@ var Scope = class _Scope {
   /** Is this JavaScript name bound here? */
   has(js) {
     return this.bound.has(js);
+  }
+  /** Every name bound to a declared function — the candidates when a call names none of them. */
+  functionNames() {
+    return [...this.bound].filter(([, b]) => b.ref.kind === "function").map(([js]) => js);
   }
   /**
    * What a JavaScript name means here — the ONLY way a read learns it. An
@@ -18325,6 +18455,13 @@ function everyName() {
 
 // src/compiler/emit/errors.ts
 var signature = (spelled3, args) => `${spelled3}(${args.sig})`;
+var RUNS_ON = {
+  stream: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  collection: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" }
+};
+var sugarOf = (name2) => name2.startsWith("$") ? name2.slice(1) : name2;
+var runsOnFor = (name2) => RUNS_ON[(diagnosticOf(name2) ?? diagnosticOf(`$${name2}`))?.scope ?? ""];
 var countList = (ns) => ns.length === 2 ? `${ns[0]} or ${ns[1]}` : `${ns.slice(0, -1).join(", ")}, or ${ns[ns.length - 1]}`;
 var countWord = (args) => {
   if (args.none === true) return "takes no arguments";
@@ -18354,7 +18491,8 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
       const accepts = sel.accepts === "any" ? "any receiver" : sel.accepts.map((f) => `'${f}'`).join(", ");
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
-      const hint2 = sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array: chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
+      const oneRef = position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1 ? RUNS_ON[sel.accepts[0]] : void 0;
+      const hint2 = oneRef !== void 0 ? ` Write '${oneRef.sigil}${bare}()' \u2014 ${oneRef.place}.` : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array") ? ` Map over the array first \u2014 '.map(x => x${bare}(\u2026))' \u2014 or take one element ('[0]').` : sel.got === "date" && takesString ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.` : sel.got === "number" && takesString ? ` Render the number as a string first: '.toString()'.` : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream") ? ` A stream is not an array: chain a method the stream has ('$$.filter(\u2026)', '$$.orderBy(\u2026)'), or call this one on an array the document carries ('$.<field>.<method>()').` : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array") ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.` : sel.got === "bool" ? ` A boolean has no methods; use it as a condition ('cond ? a : b').` : "";
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} \u2014 it is defined on ${accepts}.${hint2}`, pos);
     }
@@ -18536,10 +18674,19 @@ var notAWriteTarget = (pos) => new CodegenError(
   "A write names a field: '$.total = \u2026', '$.a.b = \u2026', or the document itself, '$ = { \u2026 }'. A computed destination ('$[expr] = \u2026') has no field name at compile time \u2014 use '$setField({ field: <expr>, input: $, value: \u2026 })' when the name is a value.",
   pos
 );
-var needsStageList = (pos) => new CodegenError(
-  "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
-  pos
-);
+var needsStageList = (slot, pos) => {
+  if (slot === null) {
+    return new CodegenError(
+      "This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(\u2026), $sort(\u2026)]'.",
+      pos
+    );
+  }
+  const words = stageBodyRuleOf(slot.stage)?.enums?.[slot.key];
+  return new CodegenError(
+    words === void 0 ? `'${slot.stage}' ${slot.key} is a sub-pipeline: write it as a bracketed list of stages, '${slot.key}: [$match(\u2026), $sort(\u2026)]'.` : `'${slot.stage}' ${slot.key} is a bracketed list of stages, '${slot.key}: [$set({ \u2026 })]', or one of: ${words.join(", ")}.`,
+    pos
+  );
+};
 var spreadInStageList = (pos) => new CodegenError(
   "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
   pos
@@ -18576,13 +18723,46 @@ var notAStreamChain = (pos) => new CodegenError(
   "'$$ = \u2026' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
   pos
 );
-var notAStreamLink = (name2, candidates, pos) => new CodegenError(
-  `'.${name2}()' is not a method of the stream '$$'.${didYouMean(name2, candidates, (s) => `.${s}()`)} A stage is a link too: '$$.$match(\u2026)'.`,
+var notAStreamLink = (name2, candidates, pos) => {
+  const spell4 = (s) => {
+    const runsOn = runsOnFor(s);
+    return runsOn === void 0 ? `.${s}()` : `${runsOn.sigil}.${sugarOf(s)}()`;
+  };
+  return new CodegenError(
+    `'.${name2}()' is not a method of the stream '$$'.${didYouMean(name2, candidates, spell4)} A stage is a link too: '$$.$match(\u2026)'.`,
+    pos
+  );
+};
+var SPELLING2 = {
+  propertyPath: `a field name ('"status"')`,
+  matchesObject: `a matcher object ('{ status: "paid" }')`,
+  matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
+  bareCallable: "a callable ('Boolean')",
+  omitted: "no argument at all"
+};
+var spellings = (forms) => {
+  const all2 = ["an arrow ('d => \u2026')", ...forms.map((f) => SPELLING2[f])];
+  return all2.length === 1 ? all2[0] : `${all2.slice(0, -1).join(", ")}, or ${all2[all2.length - 1]}`;
+};
+var ARG_NOUN = {
+  NumberLiteral: "a number",
+  StringLiteral: "a string",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ObjectLiteral: "an object",
+  ArrayLiteral: "an array"
+};
+var notAnArrow = (name2, what, forms, got) => new CodegenError(
+  `'.${name2}()' takes ${what} here \u2014 ${spellings(forms)}. Got ${got.type === "Ident" ? `the name '${got.name}'` : ARG_NOUN[got.type] ?? "something else"}.`,
+  got.pos
+);
+var emptyMatcherObject = (name2, pos) => new CodegenError(
+  `'.${name2}({ \u2026 })' matches a document by its fields, and '{}' names none. Write the field to match \u2014 '.${name2}({ status: "paid" })' \u2014 or an arrow \u2014 '.${name2}(d => d.status === "paid")'.`,
   pos
 );
-var notAnArrow = (name2, what, got) => new CodegenError(
-  `'.${name2}()' takes ${what} as a one-parameter arrow here \u2014 'd => \u2026' \u2014 and got ${got.type === "Ident" ? `the name '${got.name}'` : "something else"}.`,
-  got.pos
+var badMatchesPropertyPair = (name2, pos) => new CodegenError(
+  `'.${name2}([field, value])' matches one field against one value. It takes exactly two elements, and the first is a field-name string: '.${name2}(["status", "paid"])'. An arrow says the same thing: '.${name2}(d => d.status === "paid")'.`,
+  pos
 );
 var blockWhereValueExpected = (name2, pos) => new CodegenError(
   `'.${name2}()' takes an arrow that returns a value \u2014 'd => d.x', or 'd => { \u2026; return d.x; }'. A body of pipeline stages belongs to '.aggregate(o => { \u2026 })'.`,
@@ -18649,10 +18829,14 @@ var facetSpread = (pos) => new CodegenError(
   pos
 );
 var facetComputedKey = (pos) => new CodegenError("A '$facet' branch is named when the pipeline is written: a plain key, not a computed one.", pos);
-var noStageOnDatabase = (name2, pos) => new CodegenError(
-  `'$$$' is the database, and no stage runs on it alone: '.${name2}()' runs on the collection ('$$.${name2}()') or the cluster ('$$$$.${name2}()') \u2014 its row says which.`,
-  pos
-);
+var noStageOnDatabase = (name2, pos) => {
+  const sugar = sugarOf(name2);
+  const runsOn = runsOnFor(name2);
+  return new CodegenError(
+    runsOn === void 0 ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the collection, or '$$$$.${sugar}()' on the cluster.` : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`,
+    pos
+  );
+};
 var reduceWrapArity = (got, pos) => new CodegenError(
   `'$$.reduce(reducer, init)' takes the reducer and its initial value \u2014 2 arguments, got ${got}.`,
   pos
@@ -19052,7 +19236,12 @@ var EXPECTS = {
   date: "expects a date",
   timestamp: "expects a timestamp"
 };
-var hint = (expected) => expected === "date" || expected === "number-or-date" ? " Use a field path or new Date(\u2026)." : expected === "timestamp" ? " Use a field path (a timestamp has no literal form)." : "";
+var hint = (name2, expected) => {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(\u2026).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  const example = expected === "object" ? bodyExampleOf(name2) : void 0;
+  return example === void 0 ? "" : ` Write the body as a document, e.g. '${example}'.`;
+};
 function checkType(name2, slot, e, expected) {
   if (expected === "fieldPath") {
     if (e.type !== "StringLiteral") return;
@@ -19084,17 +19273,17 @@ function checkType(name2, slot, e, expected) {
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
   throw new CodegenError(
-    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    `'${name2}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(name2, expected)}`,
     e.pos
   );
 }
-function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false) {
+function checkEnum(name2, key, e, allowed, caseInsensitive, isConstantSlot = false, alsoStages = false) {
   if (e.type !== "StringLiteral" || e.value.startsWith("$") && !isConstantSlot) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
-  const near = closestNameTo(v, allowed);
+  const near = didYouMean(v, allowed, (s) => s);
   throw new CodegenError(
-    `'${name2}' ${key} must be one of: ${allowed.join(", ")} \u2014 got '${e.value}'.${near !== null ? ` Did you mean '${near}'?` : ""}`,
+    alsoStages ? `'${name2}' ${key} is one of: ${allowed.join(", ")} \u2014 or a bracketed list of stages, '${key}: [$set({ \u2026 })]'. Got '${e.value}'.${near}` : `'${name2}' ${key} must be one of: ${allowed.join(", ")} \u2014 got '${e.value}'.${near}`,
     e.pos
   );
 }
@@ -19221,7 +19410,10 @@ function checkBody(name2, rule, args, keys, pos) {
   for (const [k, allowed2] of Object.entries(rule.enums ?? {})) {
     const v = valueOf2(k);
     if (v !== void 0) {
-      checkEnum(name2, k, v, allowed2, caseInsensitive.has(k), (rule.constantKeys ?? []).includes(k));
+      const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
+      const slot = bodySlotAt(name2, [k]);
+      const alsoStages = slot !== void 0 && slot.at !== slot.otherwise;
+      checkEnum(name2, k, v, allowed2, caseInsensitive.has(k), readAsWritten, alsoStages);
     }
   }
   for (const [k, set] of Object.entries(rule.charSets ?? {})) {
@@ -19328,6 +19520,7 @@ function walkBody(node, path) {
   }
   return out;
 }
+var spell2 = (name2) => name2.startsWith("$") ? name2 : `.${name2}()`;
 function checkSlots(name2, args, operands, hasObjectForm = true) {
   for (const i of args.nullRefused ?? []) {
     const e = operands[i];
@@ -19359,12 +19552,12 @@ function checkSlots(name2, args, operands, hasObjectForm = true) {
     const e = operands[Number(i)];
     if (e !== void 0 && e.type === "ObjectLiteral") checkBody(name2, rule, [e], rule.positional ?? [], e.pos);
   }
-  for (const i of args.nonEmpty ?? []) {
-    const e = operands[i];
+  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
+    const e = operands[Number(i)];
     if (e === void 0) continue;
     if (e.type === "StringLiteral" && e.value === "" || e.type === "ArrayLiteral" && e.elements.length === 0) {
       throw new CodegenError(
-        `'${name2}' takes at least one field name \u2014 an empty ${e.type === "StringLiteral" ? "string" : "list"} names none, and the server refuses it.`,
+        `'${spell2(name2)}' needs at least one ${noun} \u2014 an empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
         e.pos
       );
     }
@@ -19964,7 +20157,11 @@ function orderBySpec(keys, orders, method) {
 var cond2 = (test, then, otherwise) => ({
   $cond: { if: test, then, else: otherwise }
 });
-var switchOn = (branches, fallback) => ({ $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } });
+var switchOn = (branches, fallback) => {
+  const one = JSON.stringify(fallback);
+  if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
+  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
+};
 var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
@@ -20470,14 +20667,14 @@ function mergeAnd(a, b) {
   return out;
 }
 var isObj4 = (v) => typeof v === "object" && v !== null;
-function spell2(v) {
+function spell3(v) {
   if (v instanceof RegExp) return `re:${v.source}/${v.flags}`;
   if (v instanceof Date) return `date:${v.getTime()}`;
-  if (Array.isArray(v)) return `[${v.map(spell2).join(",")}]`;
+  if (Array.isArray(v)) return `[${v.map(spell3).join(",")}]`;
   if (isObj4(v)) {
     const proto = Object.getPrototypeOf(v);
     if (proto !== Object.prototype && proto !== null) return `bson:${String(v)}`;
-    return `{${Object.keys(v).sort().map((k) => `${k}:${spell2(v[k])}`).join(",")}}`;
+    return `{${Object.keys(v).sort().map((k) => `${k}:${spell3(v[k])}`).join(",")}}`;
   }
   return `${typeof v}:${String(v)}`;
 }
@@ -20491,7 +20688,7 @@ function mergedOperators(a, b) {
   const r = operatorDoc(b);
   if (l === null || r === null) return null;
   for (const k of Object.keys(r)) {
-    if (k in l && spell2(l[k]) !== spell2(r[k])) return null;
+    if (k in l && spell3(l[k]) !== spell3(r[k])) return null;
   }
   return { ...l, ...r };
 }
@@ -20760,7 +20957,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
     }
   };
 }
-function stageInputs(name2, args, keys, env, node, read, soFar = []) {
+function stageInputs(name2, args, keys, env, node, read, soFar = [], written = name2) {
   const argEnv = childEnv(env, node, "args");
   const before = [...env.chain.emitted, ...soFar];
   const bound = (cb) => {
@@ -20804,11 +21001,23 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
     }
     return e;
   };
+  const callbackRefusal = (cb, what) => {
+    if (cb.type === "Lambda") return tooManyCallbackParams(written, cb.params.length, cb.pos);
+    const forms = slotFormsOf(written, "stream", args.indexOf(cb));
+    if (cb.type === "ObjectLiteral" && forms.includes("matchesObject")) {
+      const entries = cb.entries;
+      if (entries !== void 0 && entries.length === 0) return emptyMatcherObject(written, cb.pos);
+    }
+    if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
+      return badMatchesPropertyPair(written, cb.pos);
+    }
+    return notAnArrow(written, what, forms, cb);
+  };
   const body = (cb, what) => {
     const e = bound(cb);
-    if (e === null) throw notAnArrow(name2, what, cb);
+    if (e === null) throw callbackRefusal(cb, what);
     const b = cb.body;
-    if (b === void 0) throw blockWhereValueExpected(name2, cb.pos);
+    if (b === void 0) throw blockWhereValueExpected(written, cb.pos);
     return { body: b, env: childEnv(e, cb, "body") };
   };
   return {
@@ -20822,7 +21031,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
       return read.predicate(b.body, b.env);
     },
     reshape: (cb) => {
-      const b = body(cb, "a reshape");
+      const b = body(cb, "a key");
       return read.reshape(b.body, b.env);
     },
     condition: (cb) => {
@@ -20850,9 +21059,11 @@ function stageInputs(name2, args, keys, env, node, read, soFar = []) {
     },
     block: (cb) => {
       const e = bound(cb);
-      if (e === null) throw notAnArrow(name2, "a block of stages", cb);
+      if (e === null) {
+        throw cb.type === "Lambda" ? tooManyCallbackParams(written, cb.params.length, cb.pos) : valueWhereBlockExpected(written, cb.pos);
+      }
       const stages = cb.stages;
-      if (stages === void 0) throw valueWhereBlockExpected(name2, cb.pos);
+      if (stages === void 0) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
     sortSpec: (e, objects = true) => sortSpecOf(e, name2, objects),
@@ -21335,7 +21546,7 @@ function callExpression(node, env) {
       if (newKeywordOf(callee.name) === "required") throw unknownFunction(callee.name, [], node.pos);
       return dispatchBare(node, callee.name, node.args, env);
     }
-    throw unknownFunction(callee.name, [], node.pos);
+    throw unknownFunction(callee.name, env.scope.functionNames(), node.pos);
   }
   if (callee.type === "Lambda") return applyLambda2(callee, node.args, env, node.pos, "IIFE", null);
   throw notCallable(node.pos);
@@ -21937,8 +22148,8 @@ function stageBody(node, env) {
   }
   return out;
 }
-function subPipeline(node, env) {
-  if (node.type !== "ArrayLiteral") throw needsStageList(node.pos);
+function subPipeline(node, env, slot = null) {
+  if (node.type !== "ArrayLiteral") throw needsStageList(slot, node.pos);
   const out = [];
   let scope = childEnv(env, node, "elements").block();
   for (const el of node.elements) {
@@ -21954,7 +22165,8 @@ function pipelineBody(node, env, stage, path, captures = []) {
   const capture = pipelineOverOf(stage) === "foreign" ? hasLet(stage) ? new Capture(env.level) : null : void 0;
   if (capture) captures.push(capture);
   const body = env.enter({ stage, path, capture }, new Chain());
-  body.chain.emitted.push(...subPipeline(node, body));
+  const key = path[path.length - 1];
+  body.chain.emitted.push(...subPipeline(node, body, stage !== "" && typeof key === "string" ? { stage, key } : null));
   return body.chain.close();
 }
 function hasLet(stage) {
@@ -22363,7 +22575,9 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   }
   const args = link.args;
   checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name2) !== void 0);
-  const stages = sel.rule.emit(stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar));
+  const stages = sel.rule.emit(
+    stageInputs(name2, args, positionalKeysOf(name2), env, link, READ2, soFar, link.name)
+  );
   const out = [];
   for (const stage of stages) out.push(...place(name2, stage, env, first && out.length === 0, link.pos));
   return out;

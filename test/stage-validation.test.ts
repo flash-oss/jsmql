@@ -250,7 +250,7 @@ describe("stage body validation — required keys & enums", () => {
   });
   it("rejects a $merge whenMatched typo with a suggestion", () => {
     expect(() => jsmql("[ $merge({ into: 'c', whenMatched: 'replce' }) ]")).toThrow(
-      /whenMatched must be one of.*Did you mean 'replace'/,
+      /whenMatched is one of.*Did you mean 'replace'/,
     );
   });
   it("rejects a $graphLookup negative maxDepth", () => {

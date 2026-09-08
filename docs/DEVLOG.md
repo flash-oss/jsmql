@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: a body-key refusal names the key, and every form that key takes
+
+Two refusals about a stage's body said "this stage's body" without saying which part of it:
+
+```
+$lookup({ from: "c", pipeline: $.stages, as: "x" });
+before: This stage's body is a sub-pipeline: write it as a bracketed list of stages, '[$match(…), $sort(…)]'.
+now:    '$lookup' pipeline is a sub-pipeline: write it as a bracketed list of stages,
+        'pipeline: [$match(…), $sort(…)]'.
+
+$facet({ a: $.stages });
+now:    '$facet' a is a sub-pipeline: write it as a bracketed list of stages, 'a: [$match(…), $sort(…)]'.
+```
+
+A key whose row states two shapes says both, so a reader given the closed set is not left thinking the words are all there is:
+
+```
+$merge({ into: "x", whenMatched: "replce" });
+before: '$merge' whenMatched must be one of: replace, keepExisting, merge, fail — got 'replce'. Did you mean 'replace'?
+now:    '$merge' whenMatched is one of: replace, keepExisting, merge, fail — or a bracketed list of
+        stages, 'whenMatched: [$set({ … })]'. Got 'replce'. Did you mean 'replace'?
+```
+
+The key with one shape keeps the sentence it had: `whenNotMatched` takes no pipeline, and its message offers none.
+
+The suggestion tail is `didYouMean` from `src/levenshtein.ts` now, as every other closed-set refusal already uses.
+
+Not changed: a program whose SHAPE is wrong for the entry it was handed to still answers with the shape, even when it also holds a defect inside. Lowering it first to find that defect was tried, and it replaced the sentence that names the right entry with one about a position the reader never asked for — `jsmql.expr("$$.x")` answered with a rule about pipeline statements. The masking is real and is still open.
+
+---
+
+
 ## 2026-09-08 — fix: a callback refusal names the method the source wrote, and the forms that work
 
 One sentence answered four different mistakes, and it was wrong about three things at once:

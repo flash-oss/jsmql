@@ -9,9 +9,9 @@
 
 import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
-import { didYouMean, closestNameTo } from "../../levenshtein.ts";
+import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
-import { bodyExampleOf } from "../rows.ts";
+import { bodyExampleOf, bodySlotAt } from "../rows.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
 
@@ -173,13 +173,17 @@ function checkEnum(
   allowed: readonly string[],
   caseInsensitive: boolean,
   isConstantSlot = false,
+  /** The key ALSO takes a sub-pipeline, so the refusal names both forms. */
+  alsoStages = false,
 ): void {
   if (e.type !== "StringLiteral" || (e.value.startsWith("$") && !isConstantSlot)) return;
   const v = caseInsensitive ? e.value.toLowerCase() : e.value;
   if (allowed.includes(v)) return;
-  const near = closestNameTo(v, allowed);
+  const near = didYouMean(v, allowed, (s) => s);
   throw new CodegenError(
-    `'${name}' ${key} must be one of: ${allowed.join(", ")} — got '${e.value}'.${near !== null ? ` Did you mean '${near}'?` : ""}`,
+    alsoStages
+      ? `'${name}' ${key} is one of: ${allowed.join(", ")} — or a bracketed list of stages, '${key}: [$set({ … })]'. Got '${e.value}'.${near}`
+      : `'${name}' ${key} must be one of: ${allowed.join(", ")} — got '${e.value}'.${near}`,
     e.pos,
   );
 }
@@ -335,7 +339,11 @@ export function checkBody(
     // "$g" } }` answers "granularity must be one of: R5, R10, …".
     if (v !== undefined) {
       const readAsWritten = (rule.constantKeys ?? []).includes(k) || (rule.literalKeys ?? []).includes(k);
-      checkEnum(name, k, v, allowed, caseInsensitive.has(k), readAsWritten);
+      // A key that reads a bracketed list one way and every other shape another
+      // takes a sub-pipeline as well as a word, and the refusal names both.
+      const slot = bodySlotAt(name, [k]);
+      const alsoStages = slot !== undefined && slot.at !== slot.otherwise;
+      checkEnum(name, k, v, allowed, caseInsensitive.has(k), readAsWritten, alsoStages);
     }
   }
   for (const [k, set] of Object.entries(rule.charSets ?? {})) {

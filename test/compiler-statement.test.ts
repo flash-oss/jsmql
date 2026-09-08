@@ -548,7 +548,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
       ),
     ).toThrow(/takes 'partitionBy' or 'partitionByFields', not both/);
     expect(() => pipeline('$setWindowFields({ partitionBy: "$k" });')).toThrow(/requires the 'output' field/);
-    expect(() => pipeline('$merge({ into: "c", whenMatched: "zzz" });')).toThrow(/must be one of: replace/);
+    expect(() => pipeline('$merge({ into: "c", whenMatched: "zzz" });')).toThrow(/whenMatched is one of: replace/);
     expect(() => pipeline("$changeStreamSplitLargeEvent({ zzz: 1 });")).toThrow(/has no parameter 'zzz'/);
     expect(() => pipeline('{ $out: { db: "d", coll: "c", zzz: 1 } };')).toThrow(/has no parameter 'zzz'/);
     expect(() => pipeline('$geoNear({ near: [0, 0], distanceField: "d", zzz: 1 });')).toThrow(/has no parameter 'zzz'/);
