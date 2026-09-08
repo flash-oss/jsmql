@@ -8,8 +8,8 @@ import { jsmql } from "@koresar/jsmql";
 // Filter — for db.coll.find(filter). No `;` at top level.
 const age = 18;
 let filter = jsmql`$.age > ${age} && $.status === "active"`
-// → { age: { $gt: 18, $not: { $type: "array" } }, status: { $eq: "active", $not: { $type: "array" } } }
-//   ← an index-friendly query doc that reads the field's OWN value, as JavaScript does
+// → { age: { $gt: 18 }, status: "active" }
+//   ← the plain, index-friendly query doc every MongoDB developer reads and writes
 
 // Pipeline — for db.coll.aggregate(pipeline). Any `;` flips to stage mode.
 // Narrow to one user, assert it's the only match, then pivot to their 5 newest orders.
@@ -22,7 +22,7 @@ let pipeline = jsmql`
     .take(5);
 `;
 // → [
-//   { $match: { email: { $eq: "me@example.com", $not: { $type: "array" } } } },
+//   { $match: { email: "me@example.com" } },
 //   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
 //   { $match: { $expr: { $convert: { input: true, to: { $cond: [
 //       { $eq: ["$__jsmql.length", 1] }, "bool",
@@ -70,7 +70,7 @@ jsmql(({ $ }) => {
   $group({ _id: $.shopId, total: { $sum: $.amount } });
   $sort({ total: -1 });
 });
-// → [{ "$match": { "age": { "$gte": 18, "$not": { "$type": "array" } }, "region": { "$eq": "AU", "$not": { "$type": "array" } } } },
+// → [{ "$match": { "age": { "$gte": 18 }, "region": "AU" } },
 //    { "$group": { "_id": "$shopId", "total": { "$sum": "$amount" } } }, { "$sort": { "total": -1 } }]
 
 // Use `?.` where a field might be null — you get `$ifNull` guards exactly there:
@@ -79,17 +79,17 @@ jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
 
 // `new Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
-// → { method: { $eq: "postalDelivery", $not: { $type: "array" } }, createdAt: { $gte: <Date 2026-01-01>, $not: { $type: "array" } } }
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 // `new Date()` and `new Date($.field)` still need server-time evaluation and ride in $expr.
 
 // `ObjectId("…")` / `new ObjectId("…")` mints a live BSON ObjectId — query by _id the obvious way:
 jsmql(`$._id === ObjectId("507f1f77bcf86cd799439011")`)
-// → { _id: { $eq: <ObjectId 507f1f77bcf86cd799439011>, $not: { $type: "array" } } }
+// → { _id: <ObjectId 507f1f77bcf86cd799439011> }
 
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
 jsmql`$.status === "open" && $.id in ${ids}`
-// → { "status": { "$eq": "open", "$not": { "$type": "array" } }, "$expr": { "$in": ["$id", [1, 2, 3]] } }
+// → { "status": "open", "$expr": { "$in": ["$id", [1, 2, 3]] } }
 
 // jsmql.compile — parse once, bind many. Output stays index-friendly.
 const eligible = jsmql.compile(({ minAge, region }, { $ }) => {
@@ -97,7 +97,7 @@ const eligible = jsmql.compile(({ minAge, region }, { $ }) => {
   $project({ age: 1, email: 1, address: 1 });
 });
 eligible({ minAge: 21, region: "AU" });
-// → [{ "$match": { "age": { "$gte": 21, "$not": { "$type": "array" } }, "region": { "$eq": "AU", "$not": { "$type": "array" } } } },
+// → [{ "$match": { "age": { "$gte": 21 }, "region": "AU" } },
 //    { "$project": { "age": 1, "email": 1, "address": 1 } }]
 
 // JS-natural `=`, `+=`, `delete` compile to coalesced $set / $unset
@@ -124,7 +124,7 @@ jsmql(`$ = {
 }`);
 // → [{ "$facet": {
 //       "topByScore": [{ "$sort": { "score": -1 } }, { "$limit": 10 }],
-//       "recent":     [{ "$match": { "createdAt": { "$gte": "2026-01-01", "$not": { "$type": "array" } } } }],
+//       "recent":     [{ "$match": { "createdAt": { "$gte": "2026-01-01" } } }],
 //       "byStatus":   [{ "$group": { "_id": "$status", "n": { "$sum": 1 } } }]
 //   } }]
 
@@ -227,7 +227,7 @@ require("@koresar/jsmql/mongoose")(mongoose);
 
 const User = mongoose.model("User", new mongoose.Schema({ name: String, age: Number, score: Number }));
 
-User.find("$.age > 18");                            // → find({ age: { $gt: 18, $not: { $type: "array" } } })
+User.find("$.age > 18");                            // → find({ age: { $gt: 18 } })
 User.find(({ $ }) => $.age > 18 && $.region === "AU"); // → find({ age: { $gt: 18, … }, region: { $eq: "AU", … } })
 
 User.updateMany({}, ({ $ }) => $.score += 1);

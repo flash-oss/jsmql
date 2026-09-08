@@ -32,9 +32,9 @@ The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream;
 |---|---|
 | `$$ = []` (drop all documents) | `[{ $match: { $expr: false } }]` |
 | `$$ = [{ a: 1 }, { a: 2 }]` (as the first statement) | `[{ $documents: [{ a: 1 }, { a: 2 }] }]` |
-| `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }]` — the same as the bare chain `$$.filter(t => t.x > 5);` |
+| `$$ = $$.filter(t => t.x > 5)` | `[{ $match: { x: { $gt: 5 } } }]` — the same as the bare chain `$$.filter(t => t.x > 5);` |
 | `$$ = $$.filter(t => true)` (vacuous) | `[{ $match: { $expr: true } }]` |
-| `$$ = $$$.t.filter(t => t.x > 5)` (uncorrelated) | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }] } }]` |
+| `$$ = $$$.t.filter(t => t.x > 5)` (uncorrelated) | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: { x: { $gt: 5 } } }] } }]` |
 | `$$ = $$$.t.aggregate(t => { $match(t.x > 5); $sort({ x: -1 }); $limit(3); })` | `[{ $match: { $expr: false } }, { $unionWith: { coll: "t", pipeline: [{ $match: … }, { $sort: { x: -1 } }, { $limit: 3 }] } }]` |
 | `$$ = $$$.users.filter(u => u._id === $.userId)` (correlated — the body reads the outer document) | `[{ $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" }, pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }], as: "__jsmql.tmp.0" } }, { $unwind: "$__jsmql.tmp.0" }, { $replaceWith: "$__jsmql.tmp.0" }]` |
 | `$$ = $$$$.db.coll.filter(p)` | **refused** — a cross-database source would need a `{ db, coll }` namespace, which a MongoDB server refuses; the message says to drop the `$$$$.<db>.` prefix ([lookup-stage.md](lookup-stage.md)) |
@@ -89,7 +89,7 @@ The update buffer flushes before `$$ = …`, so
 `$.a = 1; $$ = $$.filter(t => t.x > 0); $.b = 2;` emits
 
 ```
-[{ $set: { a: 1 } }, { $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $set: { b: 2 } }]
+[{ $set: { a: 1 } }, { $match: { x: { $gt: 0 } } }, { $set: { b: 2 } }]
 ```
 
 — never one merged `$set` straddling the assignment.

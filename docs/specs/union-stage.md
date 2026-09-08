@@ -37,10 +37,10 @@ An expression-body predicate lowers through the filter road ([filter-mode.md § 
 
 | Predicate body | Inner stage |
 |---|---|
-| `o._id === "X"` | `{ $match: { _id: { $eq: "X", $not: { $type: "array" } } } }` |
-| `o.tier === "gold"` | `{ $match: { tier: { $eq: "gold", $not: { $type: "array" } } } }` |
+| `o._id === "X"` | `{ $match: { _id: "X" } }` |
+| `o.tier === "gold"` | `{ $match: { tier: "gold" } }` |
 | `o.active` (truthiness) | `{ $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] }, { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } }` — the JavaScript truthiness test |
-| `o.active && o.tier === "gold"` | `{ $match: { tier: { $eq: "gold", $not: … }, $expr: { … } } }` |
+| `o.active && o.tier === "gold"` | `{ $match: { tier: "gold", $expr: { … } } }` |
 
 Block-body predicates pass through verbatim — each statement is lowered to a
 stage exactly as it would be at the top level. The body is lowered by the join
