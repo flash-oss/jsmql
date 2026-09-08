@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: the CLI writes a live BSON value as the JavaScript that makes it
+
+`JSON.stringify` was the CLI's whole renderer, and JSON has no spelling for the
+three live values a compiled filter can hold. Stringifying one is wrong, not
+merely lossy:
+
+```
+$.name.match(/^a/i)                              printed {"name":{"$regex":{}}}
+$.d >= new Date("2026-01-01")                    printed {"d":{"$gte":"2026-01-01T00:00:00.000Z"}}
+$._id === ObjectId("507f1f77bcf86cd799439011")   printed {"_id":"507f1f77bcf86cd799439011"}
+```
+
+Each of those is a filter the server accepts and answers nothing to: it compares
+a date against a string, an ObjectId against a string, and a regular expression
+against the empty document. The library was always right — `jsmql(…)` returns
+the live `RegExp`, `Date` and `ObjectId` — so only the bin's output was broken,
+which is the one place a developer copies from.
+
+Each now prints as the JavaScript that MAKES it, so the output pastes into a
+driver script or mongosh:
+
+```
+$.name.match(/^a/i) && $.d >= new Date("2026-01-01")
+→ {"name":{"$regex":/^a/i},"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}
+```
+
+Everything else is byte for byte what `JSON.stringify` writes, at every indent
+setting, so output with no live value in it is still JSON and still pipes into
+`jq` — a parity case in `test/cli.test.ts` holds that.
+
+---
+
 ## 2026-09-08 — feat!: the join a developer writes, and a list of documents that runs
 
 Three shapes changed, all measured on mongod.

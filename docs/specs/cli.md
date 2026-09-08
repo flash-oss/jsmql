@@ -43,10 +43,21 @@ message the JS `jsmql.pipeline()` throws) — the CLI invents no new wording.
 
 ## Formatting
 
-Output is `JSON.stringify(result, null, indent)`. Default `indent` is `2`
-(pretty, multiline — matching `jq`). `-c`/`--compact` sets `indent` to `0`
-(single line); `--tab` sets it to `"\t"`; `--indent N` sets it to `N` (an
-integer 0–10, validated). `--validate` output is formatted the same way.
+Output is what `JSON.stringify(result, null, indent)` writes, byte for byte —
+with one exception. A compiled filter can hold a **live BSON value**: a `Date`
+(`new Date("2026-01-01")` folded in a query slot), an `ObjectId`, a `RegExp`
+(`.match(/^a/i)`). JSON has no spelling for any of the three, and stringifying
+them is wrong, not merely lossy — a date becomes a string the server compares as
+a string, an ObjectId the same, and a regular expression the empty document
+`{}`. Each is written as the JavaScript that MAKES it (`new Date("…")`,
+`ObjectId("…")`, `/^a/i`), so the output pastes into a driver script or mongosh
+and means what the source meant. Output with no live value in it is unchanged,
+so it is still JSON and still pipes into `jq`.
+
+Default `indent` is `2` (pretty, multiline — matching `jq`). `-c`/`--compact`
+sets `indent` to `0` (single line); `--tab` sets it to `"\t"`; `--indent N` sets
+it to `N` (an integer 0–10, validated). `--validate` output holds no BSON value,
+and is `JSON.stringify` formatted the same way.
 
 ## Parameters (`--arg` / `--argjson`)
 

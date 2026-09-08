@@ -214,7 +214,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Pre-flight validation** — jsmql rejects the pipeline mistakes the MongoDB server would otherwise reject, at compile time: stage placement (`$out`/`$merge` must be last, `$collStats`/`$geoNear`/`$changeStream` and friends must be first, stages forbidden inside `$facet`/`$lookup`/`$unionWith`), stage-body shape (literal type/range/enum/required-key/mutual-exclusivity rules — `$limit(-5)`, `$count('')`, `$group("externalId")`, `$project` mixing include/exclude, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo), `$match` query placement (`$text` must be first; `$near`/`$where` aren't allowed), operator arguments (operand count — `$divide(6, 2, 1)`; required & unknown object keys — `$dateAdd({ startdate })` → "Did you mean 'startDate'?"; enum slots — `unit`/`$convert.to`/regex flags; literal types — `$year("2020")`, `$abs("x")`), and **method chains that can't type-check** (`.every(p).map(f)` — a boolean has no methods; `s.toUpperCase().map(f)` — a string isn't an array; `a.countBy("t").take(3)` — an object isn't an array; `$$$.orders.find(p).take(5)` — `.find` returns one document). Only 100%-certain violations throw — a value jsmql can't evaluate (`$limit($.n)`, `$year($.d)`), a receiver whose type is uncertain (`arr.find(p).map(f)` — the element could be an array), or a deployment-dependent rule (sharding, memory limits, Atlas availability) still emits MQL. See [docs/LANGUAGE.md → Mistakes caught at compile time](docs/LANGUAGE.md#mistakes-caught-at-compile-time).
 - **Actionable errors** — every error names the construct, suggests the nearest valid name (`Did you mean '…'?`), and carries a real `.pos` so editors can underline the offending region.
 - **Strict TS, strippable source** — runs as-is on Node 22.18+ / 24.3+, Deno, and Bun (no flags, no transpile).
-- **`jsmql` on the command line** — a `jq`-style bin: JSMQL on stdin, MQL JSON on stdout. `echo '$.age > 18' | jsmql`. Opt-in `--filter` / `--pipeline` / `--expr` / `--update` / `--validate`, `--compact`, and jq-style `--arg` / `--argjson` for parameterised arrows. See [Command line](#command-line-jsmql).
+- **`jsmql` on the command line** — a `jq`-style bin: JSMQL on stdin, MQL on stdout (JSON, and for a live `Date` / `ObjectId` / regex the JavaScript that makes it). `echo '$.age > 18' | jsmql`. Opt-in `--filter` / `--pipeline` / `--expr` / `--update` / `--validate`, `--compact`, and jq-style `--arg` / `--argjson` for parameterised arrows. See [Command line](#command-line-jsmql).
 
 ## Using jsmql with mongoose
 
@@ -252,7 +252,7 @@ See [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md) for the full 
 
 ## Command line (`jsmql`)
 
-Installing the package puts a `jsmql` command on your `PATH`. It works like `jq`: **JSMQL source on stdin, MQL JSON on stdout** (a positional argument or `--file <path>` also work as the source).
+Installing the package puts a `jsmql` command on your `PATH`. It works like `jq`: **JSMQL source on stdin, MQL on stdout** (a positional argument or `--file <path>` also work as the source).
 
 ```sh
 echo '$.age > 18' | jsmql
@@ -278,7 +278,14 @@ With no flag the output shape is picked the same way `jsmql()` picks it (a top-l
 | `--update` | update pipeline | `jsmql.update()` |
 | `--validate` (`--check`) | `{ valid, errors }`; exit 1 if invalid | `jsmql.validate()` |
 
-Formatting is pretty 2-space by default (like `jq`); use `-c`/`--compact`, `--tab`, or `--indent N`. Parameterise a query with jq's own flags — the source must then be a parameterised arrow:
+Formatting is pretty 2-space by default (like `jq`); use `-c`/`--compact`, `--tab`, or `--indent N`. A **live BSON value** — a `Date`, an `ObjectId`, a regular expression — prints as the JavaScript that makes it, because JSON has no spelling for one and a stringified date is a string the server compares as a string:
+
+```sh
+echo '$.name.match(/^a/i) && $.d >= new Date("2026-01-01")' | jsmql -c
+# {"name":{"$regex":/^a/i},"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}
+```
+
+Output with no such value in it is plain JSON, so it still pipes into `jq`. Parameterise a query with jq's own flags — the source must then be a parameterised arrow:
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18

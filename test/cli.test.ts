@@ -96,6 +96,34 @@ describe("cli: formatting", () => {
     const r = run(["--indent", "4", "$.age > 18"]);
     expect(r.stdout).toContain('\n    "age"');
   });
+
+  it("prints a live BSON value as the JavaScript that makes it", () => {
+    // JSON has no spelling for a Date, an ObjectId or a RegExp, and stringifying
+    // one is WRONG rather than lossy: the server compares a stringified date as a
+    // string, and a stringified regular expression is the empty document. Each
+    // prints as the JavaScript that makes it, so the output pastes into a driver
+    // script and asks what the source asked.
+    expect(run(["-c", '$.d >= new Date("2026-01-01")']).stdout).toBe(
+      '{"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}\n',
+    );
+    expect(run(["-c", '$._id === ObjectId("507f1f77bcf86cd799439011")']).stdout).toBe(
+      '{"_id":ObjectId("507f1f77bcf86cd799439011")}\n',
+    );
+    expect(run(["-c", "$.name.match(/^a/i)"]).stdout).toBe('{"name":{"$regex":/^a/i}}\n');
+    // pretty prints it in place, too
+    expect(run(["$.name.match(/^a/i)"]).stdout).toBe('{\n  "name": {\n    "$regex": /^a/i\n  }\n}\n');
+  });
+
+  it("output with no live value is byte for byte what JSON.stringify writes", () => {
+    const cases = ["$.a === 1 && $.b > 2", "$match($.a === 1); $sort({ a: 1 });", "$.n = $.items.map((x) => x * 2);"];
+    for (const src of cases) {
+      const value = JSON.parse(run(["-c", src]).stdout);
+      expect(run(["-c", src]).stdout).toBe(`${JSON.stringify(value)}\n`);
+      expect(run([src]).stdout).toBe(`${JSON.stringify(value, null, 2)}\n`);
+      expect(run(["--tab", src]).stdout).toBe(`${JSON.stringify(value, null, "\t")}\n`);
+      expect(run(["--indent", "4", src]).stdout).toBe(`${JSON.stringify(value, null, 4)}\n`);
+    }
+  });
 });
 
 describe("cli: validate", () => {

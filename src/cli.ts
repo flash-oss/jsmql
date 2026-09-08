@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 // The `jsmql` command — a `jq`-style transpiler: JSMQL source in (positional
-// arg / --file / stdin), MQL JSON out (stdout). A thin wrapper over the public
+// arg / --file / stdin), MQL out (stdout) — JSON, but for a live BSON value the
+// JavaScript that makes it (see `render`). A thin wrapper over the public
 // API in ./index.ts — every shape it can emit already exists there as an
 // entry point, so there is no compilation logic here, only argument routing,
 // output formatting, and compiler-style error rendering.
@@ -29,7 +30,9 @@ Usage:
   jsmql [options] [source]
 
 Reads JSMQL from the positional [source], --file, or stdin (in that order) and
-writes MQL JSON to stdout. With no mode flag the output shape is dispatched the
+writes MQL to stdout — JSON, and for a live BSON value (a Date, an ObjectId, a
+regular expression) the JavaScript that makes it, so the output pastes into a
+driver script. With no mode flag the output shape is dispatched the
 same way the jsmql() library call does (a top-level ';' makes it a Pipeline).
 
 Output shape (default: polymorphic):
@@ -192,6 +195,45 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
 // error (LexError / ParseError / CodegenError / UnknownIdentifierError /
 // FunctionInputError) carries `pos: number`; when it is absent we print the
 // message alone.
+/**
+ * The compiled MQL, written out.
+ *
+ * `JSON.stringify` alone is not enough: a filter can hold a LIVE BSON value — a
+ * `Date`, an `ObjectId`, a `RegExp` — and JSON has no spelling for any of them.
+ * Stringified, a date becomes a string the server compares as a string, an
+ * ObjectId the same, and a regular expression the empty document `{}`. Each is
+ * written as the JavaScript that MAKES it, so the output pastes into a driver
+ * script or mongosh and means what the source meant. Everything else is byte for
+ * byte what `JSON.stringify` writes, so output with no live value in it is still
+ * JSON, and still pipes into `jq`.
+ */
+function render(value: unknown, indent: number | string, depth: number = 0): string {
+  const pad = typeof indent === "string" ? indent : " ".repeat(indent);
+  const nl = pad === "" ? "" : "\n";
+  const at = (d: number): string => pad.repeat(d);
+  const gap = pad === "" ? "" : " ";
+  if (value instanceof Date) return `new Date(${JSON.stringify(value.toISOString())})`;
+  if (value instanceof RegExp) return String(value);
+  if (isObjectId(value)) return `ObjectId(${JSON.stringify(value.toHexString())})`;
+  if (Array.isArray(value)) {
+    if (value.length === 0) return "[]";
+    const items = value.map((v) => at(depth + 1) + render(v, indent, depth + 1));
+    return `[${nl}${items.join(`,${nl}`)}${nl}${at(depth)}]`;
+  }
+  if (value !== null && typeof value === "object") {
+    const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined);
+    if (entries.length === 0) return "{}";
+    const items = entries.map(([k, v]) => `${at(depth + 1)}${JSON.stringify(k)}:${gap}${render(v, indent, depth + 1)}`);
+    return `{${nl}${items.join(`,${nl}`)}${nl}${at(depth)}}`;
+  }
+  return JSON.stringify(value) ?? "null";
+}
+
+/** jsmql's own ObjectId, recognised without importing it into the bin's bundle. */
+function isObjectId(v: unknown): v is { toHexString: () => string } {
+  return typeof v === "object" && v !== null && typeof (v as { toHexString?: unknown }).toHexString === "function";
+}
+
 function renderError(err: unknown, source: string): string {
   const e = err as { message?: string; pos?: number };
   const message = typeof e.message === "string" ? e.message : String(err);
@@ -252,7 +294,7 @@ function main(): number {
       return result.valid ? 0 : 1;
     }
     const result = compile(opts.mode, source, opts.hasParams ? opts.params : undefined);
-    process.stdout.write(JSON.stringify(result, null, opts.indent) + "\n");
+    process.stdout.write(render(result, opts.indent) + "\n");
     return 0;
   } catch (err) {
     process.stderr.write(renderError(err, source));
