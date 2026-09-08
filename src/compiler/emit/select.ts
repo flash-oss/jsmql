@@ -287,6 +287,13 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
       return { kind: "composedOnly", name, owners: verdict.owners };
     case "noCell":
       return { kind: "noCell", name };
+    case "inCode": {
+      // A pass owns this cell, so there is no rule to read. The RECEIVER still
+      // answers: '$$.pop()' is a stream where the row states an array, and that is
+      // what the reader has to hear — not that a pass declined the node.
+      const gate = receiverGate(name, receiver);
+      return gate ?? { kind: "noCell", name };
+    }
     case "perFamily":
       return fromPerFamily(name, verdict.branches, verdict.uncertain, receiver, shaped, count);
     case "lower": {

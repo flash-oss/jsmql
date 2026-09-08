@@ -842,7 +842,13 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
         return unionStages(node.args, env, node, JOIN);
       }
       const says = isContextRef(node.object) ? consult(row, "statement") : null;
-      const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown";
+      // A statement cell a PASS owns is the FIELD form — the desugar rewrites
+      // '$.a.sort("k");' — and a stream receiver never reaches it. Where the row also
+      // states a chain rule, the bare '$$.sort("k");' is that chain link, the way
+      // '$$.toSorted("k");' is; without one, the statement road words the refusal.
+      const ownedByAPass = says !== null && says.kind === "inCode" && peels(node);
+      const asStatement =
+        says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown" && !ownedByAPass;
       if (!asStatement) {
         if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
         // `$$$$.currentOpp();` — the reference's OWN spelling, so the name is a

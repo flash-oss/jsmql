@@ -106,7 +106,13 @@ export type Verdict =
    * whether the program lowers to `{$inc:…}` or to `{$set:…}` is a property of
    * the whole program, not of that node.
    */
-  | { kind: "noCell"; name: string; position: Position };
+  | { kind: "noCell"; name: string; position: Position }
+  /**
+   * A cell the row hands to a PASS — `inCode(<file>)`. There is nothing here to
+   * lower: the pass either rewrote the node already or left it, and a caller that
+   * meets this verdict must read the node the way its other cells describe.
+   */
+  | { kind: "inCode"; name: string; position: Position; file: string };
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === "object" && v !== null;
 
@@ -129,6 +135,7 @@ function readCell(name: string, position: Position, cell: unknown): Verdict {
       needsSubject: cell.subjectFromCaller === true,
     };
   }
+  if (typeof cell.inCode === "string") return { kind: "inCode", name, position, file: cell.inCode };
   if (cell.fallback === "expr") return { kind: "fallback", name, position };
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name, position, owners: cell.composedInto as readonly string[] };

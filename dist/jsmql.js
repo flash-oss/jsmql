@@ -13108,7 +13108,7 @@ var NAMES = {
         },
         // With a mapper: `(_, i) => …` over the range, the element parameter bound to null.
         multiple: {
-          args: { sig: "{ length: n }, (_, i) => \u2026", exact: 2 },
+          args: { sig: "{ length: n }, (_, i) => \u2026", exact: 2, constant: [0] },
           emit: ({ args, value, elements }) => {
             const cb = elements(args[1], 2, (element2, k) => k === 0 ? null : element2);
             return {
@@ -14590,6 +14590,15 @@ function streamBodyOf(name2) {
 function pipelineOverOf(name2) {
   return row(name2)?.pipelineOver ?? null;
 }
+function mongoNames() {
+  return Object.keys(NAMES).filter((n2) => NAMES[n2]?.kind === "mongo");
+}
+function everyStageName() {
+  return mongoNames().filter((n2) => {
+    const positions = row(n2)?.where ?? [];
+    return positions.includes("stream") || positions.includes("statement");
+  });
+}
 function diagnosticOf(name2) {
   return row(name2)?.diagnostic;
 }
@@ -14874,10 +14883,13 @@ function notPartOfACallback(stmt, retPos) {
   if (stmt.type === "FuncDecl") {
     return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(\u2026)' inside the callback.`;
   }
+  const stages = `'.aggregate((o) => { ${wrote}; \u2026 })'`;
+  const link = stmt.type === "OperatorCall" ? `'$$.$${stmt.name.replace(/^\$/, "")}(\u2026)'` : null;
+  const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${stmt.pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages \u2014 that is what '.aggregate((o) => { \u2026 })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.`;
+    return `\`${wrote}\` at position ${stmt.pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}, which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { \u2026 })' on it; over the stream, chain the stage: '$$.$match(\u2026)'.`;
+  return `\`${wrote}\` is a pipeline stage, not part of a callback \u2014 a callback's block holds declarations and a 'return'. Move the stages to ${stages}, the one method whose block is a list of stages.${chain}`;
 }
 function targetSpelling(target) {
   if (target.type === "FieldRef") return target.path === "" ? "$" : `$.${target.path}`;
@@ -18419,6 +18431,7 @@ function readCell(name2, position, cell) {
       needsSubject: cell.subjectFromCaller === true
     };
   }
+  if (typeof cell.inCode === "string") return { kind: "inCode", name: name2, position, file: cell.inCode };
   if (cell.fallback === "expr") return { kind: "fallback", name: name2, position };
   if (Array.isArray(cell.composedInto)) {
     return { kind: "composedOnly", name: name2, position, owners: cell.composedInto };
@@ -18919,6 +18932,20 @@ var notAJoinChain = (pos) => new CodegenError(
   "A read of another collection is a chain on '$$$.<coll>': '.find(pred)', '.filter(pred)', '.aggregate(o => { \u2026 })', a stream method or a stage link.",
   pos
 );
+var diagnosticIsNotALink = (name2, pos) => {
+  const runsOn = runsOnFor(name2);
+  const sugar = sugarOf(name2);
+  return new CodegenError(
+    `'${name2}' reports on the deployment, so it is a source stage and not a chain link.${runsOn === void 0 ? "" : ` Write '${runsOn.sigil}.${sugar}()' \u2014 ${runsOn.place}.`}`,
+    pos
+  );
+};
+var notAStageOnRef = (name2, sigil, candidates, pos) => {
+  const where = sigil === "$$$$" ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it" : "'$$$' is the database, and no stage runs on it alone";
+  const tail = sigil === "$$$$" ? didYouMean(name2, candidates, (s) => `$$$$.${s}()`) : " A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()').";
+  const read = ` To read a collection called '${name2}', write '$.<field> = ${sigil}.${name2}.find(\u2026)'.`;
+  return new CodegenError(`${where}. '.${name2}()' is not one of them.${tail}${read}`, pos);
+};
 var noDestination = (pos) => new CodegenError(
   "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.\u2026'), bind it ('let x = $$$.<coll>.\u2026'), or make it the stream ('$$ = $$$.<coll>.\u2026').",
   pos
@@ -20324,6 +20351,10 @@ function select(verdict, receiver, shaped, count) {
       return { kind: "composedOnly", name: name2, owners: verdict.owners };
     case "noCell":
       return { kind: "noCell", name: name2 };
+    case "inCode": {
+      const gate = receiverGate(name2, receiver);
+      return gate ?? { kind: "noCell", name: name2 };
+    }
     case "perFamily":
       return fromPerFamily(name2, verdict.branches, verdict.uncertain, receiver, shaped, count);
     case "lower": {
@@ -21464,10 +21495,11 @@ function methodCall2(node, env) {
 function dispatchOn(node, name2, recvNode, args, env, optional) {
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
+  const chainOnStream = recvNode.type === "MethodCall" && chainBase(recvNode).type === "CollectionRef";
+  const inAValue = position !== "stream" && position !== "statement";
+  if (chainOnStream && inAValue) throw streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  if (node.type === "MethodCall" && receiver.kind === "stream" && position !== "stream" && position !== "statement") {
-    throw streamAsValue(node.pos);
-  }
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw streamAsValue(node.pos);
   const exprArgs = args.filter(isExpr2);
   const sel = select(consult(name2, position), receiver, shapeOf2(args), args.length);
   const spelled3 = spelledMethod(wroteName(node, name2), recvNode);
@@ -22546,6 +22578,9 @@ function streamStages(chain, env, first) {
 }
 function refStatement(node, ref, env, first) {
   const name2 = namedRow(node) ?? node.name;
+  if (node.name.startsWith("$") && diagnosticOf(name2) !== void 0) {
+    throw diagnosticIsNotALink(name2, node.pos);
+  }
   if (ref === "DatabaseRef") throw noStageOnDatabase(node.name, node.pos);
   const receiver = ref === "CollectionRef" ? { kind: "stream" } : ref === "ClusterRef" ? { kind: "namespace", name: "cluster" } : { kind: "none" };
   const sel = select(consult(name2, "statement"), receiver, { kind: "multiple" }, node.args.length);
@@ -22565,6 +22600,7 @@ function refStatement(node, ref, env, first) {
 function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar = []) {
   if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
   const name2 = row2;
+  if (diagnosticOf(name2) !== void 0) throw diagnosticIsNotALink(name2, link.pos);
   if (unionsOf(name2)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name2, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
@@ -22603,9 +22639,16 @@ function stageStatement(node, env, first) {
         return unionStages(node.args, env, node, JOIN);
       }
       const says = isContextRef(node.object) ? consult(row2, "statement") : null;
-      const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown";
+      const ownedByAPass = says !== null && says.kind === "inCode" && peels(node);
+      const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown" && !ownedByAPass;
       if (!asStatement) {
         if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
+        if (isContextRef(node.object) && base.type !== "CollectionRef") {
+          const sigil = base.type === "ClusterRef" ? "$$$$" : "$$$";
+          const scope = base.type === "ClusterRef" ? "cluster" : "database";
+          const spelledOnIt = everyStageName().filter((s) => diagnosticOf(s)?.scope === scope).map((s) => s.slice(1));
+          throw notAStageOnRef(node.name, sigil, spelledOnIt, node.pos);
+        }
         throw noDestination(node.pos);
       }
       return refStatement(node, base.type, env, first);
@@ -22942,8 +22985,14 @@ var DRIVER = {
   update: "an update document (the object `db.coll.updateOne(filter, update)` takes)"
 };
 function received(program) {
-  if (program.type === "Pipeline") {
+  if (program.type === "Pipeline" && shapeOf(program) === "pipeline") {
     return { what: "a `;`-separated Pipeline", hint: "jsmql.pipeline() (or jsmql(), which decides from the shape)" };
+  }
+  if (program.type === "Pipeline") {
+    return {
+      what: "a binding and one expression, which is a Filter (`const cutoff = 18; $.age > cutoff`)",
+      hint: "jsmql.filter() for a Filter, or wrap the predicate as `$match(\u2026)` for a Pipeline"
+    };
   }
   if (program.type === "UpdateFilter") {
     const target = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
@@ -22973,6 +23022,15 @@ function received(program) {
     what: "a bare expression that would lower to a Filter (`$.age > 18`)",
     hint: "jsmql.filter() for a Filter, or wrap the predicate as `$match(\u2026)` for a Pipeline"
   };
+}
+function defectAsFilter(injected) {
+  try {
+    const program = expressionOf(desugar(fold(injected), FILTER));
+    lowerFilter(program, Env.root(program, "filter"));
+    return null;
+  } catch (e) {
+    return e instanceof CodegenError ? e : null;
+  }
 }
 function wrongShape(api, wanted, program) {
   const got = received(program);
@@ -23024,7 +23082,7 @@ function lowerMode(mode, api, parsed, values) {
     }
     case "pipeline": {
       if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
-        throw wrongShape(api, "pipeline", injected);
+        throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));

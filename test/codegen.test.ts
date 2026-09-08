@@ -4475,7 +4475,7 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
 
     it("a key-function method gets the same lead and no suggestion", () => {
       expect(() => jsmql("$.r = $$$.orders.sortBy((o) => { $limit(2); });")).toThrow(
-        "`$limit(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 33",
+        "`$limit(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $limit(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$limit(…)'. at position 33",
       );
     });
 

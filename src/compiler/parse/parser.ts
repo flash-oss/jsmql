@@ -158,10 +158,16 @@ function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
   if (stmt.type === "FuncDecl") {
     return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(…)' inside the callback.`;
   }
+  // '.aggregate' is the one method whose block IS a list of stages, so every way
+  // out names it. Deleting the 'return' alone leaves the same block on the same
+  // method, which is refused again — the stages have to MOVE.
+  const stages = `'.aggregate((o) => { ${wrote}; … })'`;
+  const link = stmt.type === "OperatorCall" ? `'$$.$${(stmt as { name: string }).name.replace(/^\$/, "")}(…)'` : null;
+  const chain = link === null ? "" : ` Over the stream a stage is also a chain link: ${link}.`;
   if (retPos !== null) {
-    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.`;
+    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Move the stages to ${stages}, which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'.${chain}`;
   }
-  return `\`${wrote}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`;
+  return `\`${wrote}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to ${stages}, the one method whose block is a list of stages.${chain}`;
 }
 
 /** `$.a.b` for a field target; the bare name otherwise. */

@@ -1277,10 +1277,10 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // position-accurate: consumed as a value, the chain lowers to an array operator
     // with nowhere to run stages at all. Both named rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
+      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
+      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
     // Rewrite 1: stay a sub-pipeline and reshape with a stage — `$` inside the body is the OUTER document, which the body reads and never writes.
     expect(() =>
@@ -1294,7 +1294,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
 
   it("the same rejection on a chained `.find` doesn't offer the `.map`-only rewrite", () => {
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).toThrow(
-      "`$match(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 58",
+      "`$match(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $match(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$match(…)'. at position 58",
     );
     expect(() => jsmql("$.x = $$$.orders.filter(o => o.uid === $._id).find(o => { $match(o.c); });")).not.toThrow(
       /`return` a document/,
@@ -1846,7 +1846,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("a trailing `return` inside an aggregate block is rejected (it's not a per-doc reshape)", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });")).toThrow(
-      "`$sort(...)` at position 31 is a pipeline stage, and the 'return' at position 48 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
+      "`$sort(...)` at position 31 is a pipeline stage, and the 'return' at position 48 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $sort(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$sort(…)'.",
     );
   });
 

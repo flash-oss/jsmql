@@ -16,7 +16,7 @@ import { didYouMean } from "../../levenshtein.ts";
 import { ObjectId } from "../../objectid.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
-import { namedRow, staticKey } from "../passes/naming.ts";
+import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
 import {
   bindsOf,
@@ -560,14 +560,18 @@ function dispatchOn(
 ): unknown {
   const position = positionIn(env);
   const recvEnv = childEnv(env, node, "object");
+  // A chain on the stream where a VALUE belongs — `$ = { k: $$.filter(…) }`, or the
+  // property read `$match($$.filter(p).length > 0)` — is the `$facet` road, not built
+  // yet. The receiver's own spelling settles it, BEFORE the receiver is lowered: a
+  // stream cell run on a value record has none of the readings it asks for, and the
+  // JavaScript error that follows would reach the developer as the whole message.
+  // A property of the stream itself (`$$.length`) is a value of its own and passes.
+  const chainOnStream =
+    recvNode.type === "MethodCall" && (chainBase(recvNode) as { type?: string }).type === "CollectionRef";
+  const inAValue = position !== "stream" && position !== "statement";
+  if (chainOnStream && inAValue) throw E.streamAsValue(node.pos);
   const receiver = receiverOf(recvNode, recvEnv);
-  // A METHOD on the stream where a value belongs — `$ = { k: $$.filter(…) }` — is
-  // the `$facet` road, not built yet. A stream cell must never run on a value
-  // record, which has none of the readings a stream cell asks for; a property of
-  // the stream (`$$.length`) is a value of its own and passes.
-  if (node.type === "MethodCall" && receiver.kind === "stream" && position !== "stream" && position !== "statement") {
-    throw E.streamAsValue(node.pos);
-  }
+  if (node.type === "MethodCall" && receiver.kind === "stream" && inAValue) throw E.streamAsValue(node.pos);
   const exprArgs = args.filter(isExpr);
   const sel = select(consult(name, position), receiver, shapeOf(args as readonly Expr[]), args.length);
   const spelled = spelledMethod(wroteName(node, name), recvNode);

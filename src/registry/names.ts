@@ -13490,7 +13490,7 @@ export const NAMES = {
         },
         // With a mapper: `(_, i) => …` over the range, the element parameter bound to null.
         multiple: {
-          args: { sig: "{ length: n }, (_, i) => …", exact: 2 },
+          args: { sig: "{ length: n }, (_, i) => …", exact: 2, constant: [0] },
           emit: ({ args, value, elements }) => {
             const cb = elements(args[1], 2, (element, k) => (k === 0 ? null : element));
             return {

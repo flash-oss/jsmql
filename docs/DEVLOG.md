@@ -10,6 +10,30 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: three roads that answered with a JavaScript error, and one that answered about nothing
+
+A sweep of 254 sources — every callback-taking name in the registry, on every receiver, in every container — found no way to run a pipeline stage inside a JavaScript or lodash callback body. `.aggregate` is the one exception and it is one row wide. Four other defects turned up beside it.
+
+**A chain on the stream, read as a value.** A property read lowered its RECEIVER at stream position, so the chain's stages came back and went in where a value belongs:
+
+```
+$match($$.filter(p).length > 0);
+before: [{"$match":{"$expr":{"$gt":[{"$let":{"vars":{"jsmqlRecv":[{"$match":{…}}]}, …
+        mongod → Unrecognized expression '$match'
+now:    A chain on '$$' is a stream of documents, not a value. To branch the stream write
+        '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep
+        the documents, chain them as a statement: '$$.filter(…);'.
+```
+
+Five other spellings of the same shape — `.map`, `.groupBy`, `.flatMap`, `.countBy`, `.keyBy`, `.uniqBy` — never got that far: the stream cell ran on a value record and the JavaScript error reached the developer as their whole message ("document is not a function", "reshape is not a function", "fieldPath is not a function"). The guard runs before the receiver is lowered now, so the cell is never reached. `$$.length` is a value of its own and still compiles.
+
+**`$$.sort("k");`** answered "jsmql internal error (please report to the jsmql maintainers)" — for a spelling `docs/LANGUAGE.md` calls the default, and one whose own row advertises the comparator. Its statement cell is the FIELD form, which a pass owns and a stream receiver never reaches; left as a statement it landed on a cell that is not a rule. A cell a pass owns is its own verdict now, and where the row also states a chain rule the bare statement is that chain link, as `$$.toSorted("k");` already was. `$$.pop();` keeps the receiver message it had.
+
+**`Array.from($.items, (v, i) => v.a)`** compiled to `{ $range: [0, 6] }`. The row takes `{ length: n }` and read `.length` off whatever the first argument lowered to — here the string `"$items"`, which is six characters long. The slot must be written out now, so a field path is refused; `Array.from({ length: $.n }, (_, i) => i)` still compiles, because the object literal is written out even when its length is not.
+
+---
+
+
 ## 2026-09-08 — fix: a program is judged for its shape only once it is correct
 
 `jsmql.pipeline()` handed a Filter answered with the entry the developer had just called:

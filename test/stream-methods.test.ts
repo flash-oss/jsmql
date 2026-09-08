@@ -932,7 +932,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
     it("current stream: the stage is a statement and the reshape is `$ = <expr>`", () => {
       expect(() => jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toThrow(
-        "`$match(...)` at position 19 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
+        "`$match(...)` at position 19 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $match(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$match(…)'.",
       );
       expect(jsmql(`$match($.active === true); $ = { id: $._id };`)).toEqual([
         { $match: { active: { $eq: true, $not: { $type: "array" } } } },

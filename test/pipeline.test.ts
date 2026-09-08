@@ -539,7 +539,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("a `.filter` branch takes a JavaScript predicate — a stage in its block is rejected", () => {
     expect(() => jsmql(`$ = { topByScore: $$.filter(o => { $sort({ score: -1 }); $limit(10); }) };`)).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 35",
+      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. Move the stages to '.aggregate((o) => { $sort(...); … })', the one method whose block is a list of stages. Over the stream a stage is also a chain link: '$$.$sort(…)'. at position 35",
     );
   });
 
