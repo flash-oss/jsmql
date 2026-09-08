@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix!: two shapes the server refuses, refused at compile time instead
+
+Both were HR3 holes — jsmql emitted MQL a `mongod` rejects — and both are now
+worded refusals that name a spelling that works.
+
+**A written list of documents inside a `$facet` branch.** `$$.push({ a: 1 })` and
+`.concat([{ a: 1 }])` make `{ $unionWith: { pipeline: [{ $documents: […] }] } }`,
+and MEASURED that shape reaches through a `$lookup` and through another
+`$unionWith` — both run — but a facet branch refuses it at any depth:
+"$documents inside of $unionWith is not allowed to be used within a $facet stage".
+A `$unionWith` that NAMES a collection is fine there, so the ban is the
+literal-documents form alone. `$facet`'s row states it as `bansNested`, the
+transitive twin of `forbiddenIn`:
+
+```
+$ = { a: $$.push({ x: 1 }), b: $$.filter(d => d.n > 1) };
+→ '.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere
+  inside a '$facet' — however deeply it is nested. Append another collection instead
+  ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.
+
+$ = { a: $$.push(...$$$.archive), b: $$.take(1) };
+→ [{ $facet: { a: [{ $unionWith: "archive" }], b: [{ $limit: 1 }] } }]
+```
+
+**A fan-out whose elements are not documents.** `$$ = <array>` makes the stream
+from the array's elements, one document each, and MEASURED `$replaceWith` of
+anything else answers "'replacement document' must evaluate to an object". A row
+can now state the kind of ONE element of what it returns — `elementKind`, set where
+the row's own lowering fixes it: `.split()` and `Object.keys()` give strings,
+`Object.entries()` / `.chunk()` / `.zip()` give arrays, `$objectToArray` and
+`$regexFindAll` give documents — and the stream road reads it:
+
+```
+$$ = Object.entries($.scores);
+→ '$$ = …' makes the stream from the array's ELEMENTS, one document each, and these
+  elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));'
+  — or write to a field of the document you have ('$.<field> = <array>;').
+
+$$ = $objectToArray($.scores);   → fans out as it stands, to { k, v } documents
+```
+
+A row that states nothing leaves the elements unproven, and so does a field path
+by construction — `$$ = $.items` still fans out whatever is there.
+
+---
+
 ## 2026-09-09 — feat!: a query document is read through an index, so `.includes` is the indexable one
 
 `.includes` means two things in JavaScript — containment in an array, substring in

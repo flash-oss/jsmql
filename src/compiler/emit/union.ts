@@ -22,6 +22,10 @@ import { lookupOf, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { lowerValue } from "./lower.ts";
 import { kindOf } from "./types.ts";
 import { childEnv } from "./inputs.ts";
+import { bansNestedOf } from "../rows.ts";
+
+/** The stage a written list of documents makes — the one a container may ban at any depth. */
+const DOCUMENTS = "$documents";
 
 type Arg = Extract<Expr, { type: "MethodCall" }>["args"][number];
 
@@ -47,6 +51,19 @@ export function unionStages(args: readonly Arg[], env: Env, node: Expr, S: JoinS
   let docs: Expr[] = [];
   const flushDocs = (): void => {
     if (docs.length === 0) return;
+    // A container whose row bans this stage at ANY depth bans it here too: the
+    // `$unionWith` wrapper is what makes `$documents` legal inside a `$lookup` and
+    // inside another `$unionWith`, and it does not save it inside a `$facet`.
+    for (const boundary of env.site.boundaries) {
+      if (!bansNestedOf(boundary.stage).includes(DOCUMENTS)) continue;
+      throw E.bannedNested(
+        `.${node.type === "MethodCall" ? node.name : "push"}(<document>)`,
+        DOCUMENTS,
+        boundary.stage,
+        "Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
+        node.pos,
+      );
+    }
     // The documents are evaluated with NO input document: a `$unionWith` body, over nothing.
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));

@@ -2979,9 +2979,16 @@ The root takes ONE document and the stream takes an array, so the destination sa
 jsmql("$$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku }));")
 // → $set the $map into a slot, then $unwind + $replaceWith
 
-// Turn a sub-document into one [k, v] document per key
-jsmql("$$ = Object.entries($.scores);")
+// Turn a sub-document into one { k, v } document per key
+jsmql("$$ = $objectToArray($.scores);")
 // → $set the $objectToArray into a slot, then $unwind + $replaceWith
+
+// A stream holds DOCUMENTS, and where a row states what ONE element is, an element
+// that is not one is refused. JavaScript's Object.entries gives [key, value] PAIRS:
+jsmql("$$ = Object.entries($.scores);")
+// → '$$ = …' makes the stream from the array's ELEMENTS, one document each, and these
+//   elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));'
+//   — or write to a field of the document you have ('$.<field> = <array>;').
 
 // The root is one document, so an array there is refused
 jsmql("$ = $.lineItems;")
@@ -2990,6 +2997,8 @@ jsmql("$ = $.lineItems;")
 ```
 
 A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
+
+A **field path proves nothing about its elements either**, so `$$ = $.items` fans out whatever is there and the server decides. The refusal above fires only where a row *states* the element kind — `.split()` gives strings, `Object.keys()` gives strings, `Object.entries()` and `.chunk()` give arrays, `$objectToArray` gives documents. Where nothing is stated, the fan-out stands.
 
 An array LITERAL of documents on the stream is a different operation: `$$ = [{ … }, { … }]` names the stream's documents outright — every document dropped, the new ones unioned in — wherever in the program it stands. The fan-out reading belongs to an array the data decides, one answer per input document.
 

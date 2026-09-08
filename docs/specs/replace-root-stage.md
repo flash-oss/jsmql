@@ -161,6 +161,15 @@ own rule, applied under the name the source wrote. A list holding a `...` spread
 not this reading — its elements are not the documents — and neither is an array the
 data decides, which has one answer per input document.
 
+**A stream holds DOCUMENTS.** Where a row states the kind of ONE element of what it
+returns (`elementKind` — `.split()` gives strings, `Object.entries()` gives
+`[key, value]` arrays, `$objectToArray` gives `{ k, v }` documents), an element that
+is not a document is refused here rather than by the server. MEASURED,
+`[{ $set: { s: <the array> } }, { $unwind: "$s" }, { $replaceWith: "$s" }]` answers
+"'replacement document' must evaluate to an object". A row that states nothing — and
+a field path, which states nothing by construction — leaves the elements unproven, and
+the fan-out stands.
+
 **Per-document drop is emergent, not a special case.** Default `$unwind` emits no
 document for an empty or missing array, so fanning out a possibly-empty array drops
 exactly the documents whose array came out empty and fans out the rest:

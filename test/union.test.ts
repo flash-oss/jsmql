@@ -270,9 +270,13 @@ describe("chain errors only ever name syntax that works here", () => {
   // be offered there — but it must still be offered where it does work.
   it("offers the statement form only where a statement position exists", () => {
     expect(jsmql("$$ = $$.push({ a: 1 });")).toEqual([{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }]);
-    expect(jsmql("$ = { k: $$.push({ a: 1 }) };")).toEqual([
-      { $facet: { k: [{ $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } }] } },
-    ]);
+    // A facet branch is the one container that bans the stage a written list makes,
+    // at any depth — MEASURED: "$documents inside of $unionWith is not allowed to be
+    // used within a $facet stage". A branch that appends a COLLECTION is fine.
+    expect(() => jsmql("$ = { k: $$.push({ a: 1 }) };")).toThrow(
+      "'.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere inside a '$facet' — however deeply it is nested. Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
+    );
+    expect(jsmql("$ = { k: $$.push(...$$$.archive) };")).toEqual([{ $facet: { k: [{ $unionWith: "archive" }] } }]);
   });
 
   // `.pop` used to be answered with `.push`, which isn't a chain method either.

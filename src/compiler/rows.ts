@@ -246,6 +246,11 @@ export function elementsOf(name: string): "scalar" | undefined {
   return (row(name) as { elements?: "scalar" } | undefined)?.elements;
 }
 
+/** The kind of ONE element of the array a name returns, where its own lowering fixes it. */
+export function elementKindOf(name: string): Kind | undefined {
+  return (row(name) as { elementKind?: Kind } | undefined)?.elementKind;
+}
+
 export function argCountOf(name: string, family?: Family): ArgCount | undefined {
   const cell = (row(name) as { expr?: unknown } | undefined)?.expr;
   if (cell === null || typeof cell !== "object") return undefined;
@@ -447,6 +452,11 @@ export function productionForNode(nodeType: string): string | undefined {
 /** The containers a row states its stage may not stand inside. */
 export function forbiddenInOf(name: string): readonly string[] {
   return (row(name) as { forbiddenIn?: readonly string[] } | undefined)?.forbiddenIn ?? [];
+}
+
+/** Stages this container refuses at ANY depth inside its bodies, not only as a direct step. */
+export function bansNestedOf(name: string): readonly string[] {
+  return (row(name) as { bansNested?: readonly string[] } | undefined)?.bansNested ?? [];
 }
 
 /** The way out a container refusal names, when the outer pipeline is not it. */

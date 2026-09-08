@@ -17,6 +17,7 @@ import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import {
   arrayLiteralOrderOf,
+  bansNestedOf,
   diagnosticOf,
   everyStageName,
   forbiddenInOf,
@@ -40,7 +41,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { kindOf } from "./types.ts";
+import { elementKindOf, kindOf } from "./types.ts";
 import { positionalKeysOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
@@ -354,7 +355,7 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
 function place(name: string, stage: Stage, env: Env, first: boolean, pos: number): Stage[] {
   const only = onlyOf(name);
   for (const boundary of env.site.boundaries) {
-    if (forbiddenInOf(name).includes(boundary.stage)) {
+    if (forbiddenInOf(name).includes(boundary.stage) || bansNestedOf(boundary.stage).includes(name)) {
       throw E.forbiddenInContainer(name, boundary.stage, pos, insteadOfContainerOf(name));
     }
   }
@@ -521,6 +522,17 @@ const replacesWhole = (v: unknown): boolean =>
   Object.getPrototypeOf(v) === Object.prototype &&
   Object.keys(v).every((k) => !k.startsWith("$"));
 
+/** A provable ELEMENT kind as the plural noun a message uses for it. */
+const ELEMENT_NOUN: Readonly<Record<string, string>> = {
+  number: "numbers",
+  string: "strings",
+  bool: "booleans",
+  array: "arrays",
+  date: "dates",
+  objectId: "ObjectIds",
+  binData: "binary data",
+};
+
 /** A provable kind as the noun a message uses for it. */
 const KIND_NOUN: Readonly<Record<string, string>> = {
   number: "a number",
@@ -620,6 +632,14 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (kind !== "stream" && kind !== "array" && kind !== "unknown")
         throw E.notAStreamChain(op.value.pos, KIND_NOUN[kind] ?? `a ${kind}`);
       if (kind !== "stream") {
+        // A stream holds DOCUMENTS. Where the registry shows what ONE element is,
+        // an element that is not a document is refused here rather than by the
+        // server: MEASURED, `$replaceWith` of a string answers "'replacement
+        // document' must evaluate to an object".
+        const element = elementKindOf(op.value, inner);
+        if (element !== "unknown" && element !== "object") {
+          throw E.streamElementsNotDocuments(ELEMENT_NOUN[element] ?? `${element}s`, op.value.pos);
+        }
         const slot = inner.chain.slot();
         // The position pass marks this edge STREAM, because `$$ = <chain>` is the usual
         // spelling here; an array is a VALUE, and is read as one.

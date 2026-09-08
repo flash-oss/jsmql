@@ -435,15 +435,35 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     ]);
   });
 
-  it("fans out `Object.entries(...)` into {k, v} documents", () => {
-    expect(jsmql("[ $$ = Object.entries($.scores) ]")).toEqual([
+  it("refuses a fan-out whose elements the registry proves are not documents", () => {
+    // JavaScript's `Object.entries` gives `[key, value]` PAIRS, and a stream holds
+    // documents — MEASURED, `$replaceWith` of an array answers "'replacement document'
+    // must evaluate to an object". The row states the element kind, so the refusal is
+    // at compile time and names the two spellings that do work.
+    expect(() => jsmql("[ $$ = Object.entries($.scores) ]")).toThrow(
+      /makes the stream from the array's ELEMENTS, one document each, and these elements are arrays/,
+    );
+    // The way out the message names, taken:
+    expect(jsmql("[ $$ = Object.entries($.scores).map((v) => ({ value: v })) ]")).toEqual([
       {
         $set: {
           "__jsmql.tmp.0": {
-            $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+            $map: {
+              input: {
+                $map: { input: { $objectToArray: "$scores" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+              },
+              as: "v",
+              in: { value: "$$v" },
+            },
           },
         },
       },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
+    // `$objectToArray` gives `{ k, v }` documents outright, so it fans out as it stands.
+    expect(jsmql("[ $$ = $objectToArray($.scores) ]")).toEqual([
+      { $set: { "__jsmql.tmp.0": { $objectToArray: "$scores" } } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);

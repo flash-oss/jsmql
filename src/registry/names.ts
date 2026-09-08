@@ -153,6 +153,20 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    */
   elements?: "scalar";
   /**
+   * The kind of ONE ELEMENT of the array this name returns — stated only where the
+   * row's own lowering fixes it. `.split(",")` gives strings whatever it ran on,
+   * `Object.entries(o)` gives two-element arrays, `$objectToArray` gives `{ k, v }`
+   * documents. A row that states nothing leaves the elements unproven, which is
+   * what a field path is: `$.items` could hold anything.
+   *
+   * Read where a position needs DOCUMENTS and nothing else. `$$ = <array>` makes
+   * the stream from the elements, and MEASURED the server refuses an element that
+   * is not a document: `[{ $set: { s: <the array> } }, { $unwind: "$s" },
+   * { $replaceWith: "$s" }]` answers "'replacement document' must evaluate to an
+   * object".
+   */
+  elementKind?: Kind;
+  /**
    * Can it be handed to a higher-order name WITHOUT being applied?
    *   $.items.map(Math.floor)  → accepted
    *   $.items.map(Math.asinh)  → "Only the unary Math methods … can be passed as
@@ -298,6 +312,8 @@ type MongoSpec<
   category?: OperatorCategory;
   where: W;
   only?: readonly Only[];
+  /** The kind of ONE element of the array this name returns — see `elementKind` on `NameSpec`. */
+  elementKind?: Kind;
   /**
    * How the operand list is written, for the expression positions. Omitted for
    * a name that is only ever a stage: its `body` is its shape.
@@ -475,6 +491,14 @@ type MongoSpec<
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
+   * Stages the server refuses ANYWHERE inside this container's bodies, however
+   * deeply they are wrapped. `forbiddenIn` is the DIRECT reading — the stage
+   * written as a step of that body — and this is the transitive one, for a
+   * container whose ban reaches through a nested sub-pipeline the server would
+   * otherwise allow the stage in.
+   */
+  bansNested?: readonly string[];
+  /**
    * The way out the container refusal names. A stage that belongs to the OUTER
    * pipeline needs none — the refusal says so already. A stage that has no place
    * in a collection's pipeline at all states the spelling that does the same job,
@@ -533,6 +557,8 @@ type GlobalSpec<W extends readonly Position[]> = {
   returns: Returns;
   where: W;
   only?: readonly Only[];
+  /** The kind of ONE element of the array this name returns — see `elementKind` on `NameSpec`. */
+  elementKind?: Kind;
   filter: Cell<Lists<W, "filter">, Family, FilterIn, FilterOut<Lists<W, "value">>>;
   expr: Cell<Lists<W, "value">, Family, ExprIn, OutOf["value"]>;
   // `assert(cond);` is receiver-less AND statement-only. With only the two cells
@@ -1922,6 +1948,7 @@ export const NAMES = {
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
     returns: "array",
+    elementKind: "object",
     where: ["value"],
     shape: {
       object: {
@@ -2028,6 +2055,7 @@ export const NAMES = {
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2576,6 +2604,7 @@ export const NAMES = {
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
     returns: "array",
+    elementKind: "object",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2595,6 +2624,7 @@ export const NAMES = {
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
     category: "array",
     returns: "array",
+    elementKind: "number",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2728,6 +2758,7 @@ export const NAMES = {
     doc: "Merges two or more arrays element-wise into a single array of arrays.",
     category: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     shape: {
       object: {
@@ -5109,6 +5140,12 @@ export const NAMES = {
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
+    // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
+    // `$unionWith` accepts — both run — and a facet branch refuses it at any depth:
+    // "$documents inside of $unionWith is not allowed to be used within a $facet stage".
+    // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
+    // literal-documents form alone.
+    bansNested: ["$documents"],
     filter: unsupported(
       "'$facet' is a pipeline stage, not a filter predicate — a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$facet(…);') or as a chain link ('$$.$facet(…)').",
     ),
@@ -6409,6 +6446,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7945,6 +7983,7 @@ export const NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7987,6 +8026,7 @@ export const NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9626,6 +9666,7 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10199,6 +10240,7 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10222,6 +10264,7 @@ export const NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10262,6 +10305,7 @@ export const NAMES = {
     },
     paramsRepeat: true,
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10427,6 +10471,7 @@ export const NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10713,6 +10758,7 @@ export const NAMES = {
     call: true,
     on: "object",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10807,6 +10853,7 @@ export const NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => wordsExpr(recv, bind) },

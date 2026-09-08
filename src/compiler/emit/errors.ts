@@ -492,6 +492,17 @@ export const forbiddenInContainer = (name: string, container: string, pos: numbe
     pos,
   );
 
+/**
+ * A sugar whose stage the container bans at any depth. `forbiddenInContainer` is the
+ * DIRECT reading, for a stage the source wrote; this one is for a stage the source
+ * never named, so the message leads with what WAS written.
+ */
+export const bannedNested = (spelled: string, stage: string, container: string, instead: string, pos: number) =>
+  new CodegenError(
+    `'${spelled}' makes a '${stage}' stage, and the server refuses that anywhere inside a '${container}' — however deeply it is nested. ${instead}`,
+    pos,
+  );
+
 /** `typeof x === "boolean"` — a spelling that is not one of MongoDB's type names. */
 export const notAMongoType = (spelling: string, aliases: readonly string[], pos: number): CodegenError => {
   const hint = TYPEOF_HINTS[spelling];
@@ -503,6 +514,13 @@ export const notAMongoType = (spelling: string, aliases: readonly string[], pos:
 };
 
 // ── the stream road ──────────────────────────────────────────────────────────
+
+/** `$$ = <array whose elements the registry proves are not documents>`. */
+export const streamElementsNotDocuments = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$ = …' makes the stream from the array's ELEMENTS, one document each, and these elements are ${noun}. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));' — or write to a field of the document you have ('$.<field> = <array>;').`,
+    pos,
+  );
 
 /** `$$ = <something that is neither a chain on the stream nor a list of documents>`. */
 export const notAStreamChain = (pos: number, noun?: string): CodegenError =>

@@ -22,6 +22,7 @@ import {
   productionForOperator,
   returnsOf,
   soleFieldFamilyOf,
+  elementKindOf as rowElementKind,
 } from "../rows.ts";
 import { ObjectId } from "../../objectid.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -64,6 +65,38 @@ function resolveReturns(
   if (byFamily === undefined) return "unknown";
   if (byFamily === "element") return elements;
   return byFamily;
+}
+
+/**
+ * The kind of ONE ELEMENT of the array `node` reads, or "unknown".
+ *
+ * A written list proves its elements when they agree; a call proves them when the
+ * row's own lowering fixes them (`elementKind`); a binding carries what it was made
+ * with. Everything else — a field path above all — proves nothing and stays open, so
+ * a position that needs one KIND of element refuses only what the registry can show.
+ */
+export function elementKindOf(node: Expr, env: Env): Known {
+  if (node.type === "ArrayLiteral") {
+    let one: Known | null = null;
+    for (const el of node.elements) {
+      if (el.type === "SpreadElement") return "unknown";
+      const k = kindOf(el as Expr, env);
+      if (k === "unknown" || (one !== null && k !== one)) return "unknown";
+      one = k;
+    }
+    return one ?? "unknown";
+  }
+  const named =
+    node.type === "MethodCall" || node.type === "OperatorCall"
+      ? (namedRow(node) ?? node.name)
+      : node.type === "MemberAccess" && isCallable(node.name)
+        ? node.name
+        : null;
+  if (named !== null) {
+    const stated = rowElementKind(named);
+    if (stated !== undefined) return stated;
+  }
+  return elementsRead(node, env);
 }
 
 /**
