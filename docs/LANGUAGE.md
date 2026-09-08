@@ -538,8 +538,10 @@ $.scores[$.key.toLowerCase()] // → { $getField: { field: { $toLower: "$key" },
 
 // `party` iterates a string array → typed `string`, so `$.cre.result[party]` is a getter:
 ["sender", "recipient"].map(party => $.cre.result[party])
-// → { $map: { input: ["sender","recipient"], as: "party",
-//             in: { $getField: { field: "$$party", input: "$cre.result" } } } }
+// → { $map: { input: ["sender","recipient"], as: "party", in: { $cond: {
+//       if: { $isArray: "$cre.result" },
+//       then: { $arrayElemAt: ["$cre.result", "$$party"] },
+//       else: { $getField: { field: { $toString: { $ifNull: ["$$party", ""] } }, input: "$cre.result" } } } } } }
 ```
 
 When the key is **not** provably a string, jsmql coerces it — `{ $toString: { $ifNull: [k, ""] } }`
@@ -832,24 +834,24 @@ $.productIds = $$$.orders.filter(o => o.userId === $._id).map("productIds").flat
 
 The existing `.length` / `.reduce` / member-access terminals continue to take precedence — `.filter(p).map(...).length` still emits `$size` against the materialised (and transformed) slot. An **object-literal-body** `.map(x => ({ … }))` yields a document, so it stays in the sub-pipeline as a `$replaceWith` (a following `.take` etc. lowers to `$limit` there); a `.map(x => { … ; return ({ … }) })` block returning one does the same. Non-registered chain methods (`.toLowerCase`, `.padStart`, …) fall through to the existing expression-form path unchanged.
 
-**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript; a stage inside it is rejected. To run stages *and* reshape, use `.aggregate` and write the reshape as the root-replace statement `$ = <expr>` (which is the same `$replaceWith` a `.map` emits). The block then has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups:
+**Validate or reshape with intermediate stages — `.aggregate`.** `.map` is a per-document reshape, so its callback is JavaScript; a stage inside it is rejected. To run stages *and* reshape, use `.aggregate` and write the reshape as `<param> = <expr>` — the body's own document replaced, which is the same `$replaceWith` a `.map` emits. `$` is the OUTER document at every depth, so `$ = …` inside a body is refused with the parameter named. The block has the full `;`-separated statement vocabulary — `assert(...)`, `$match(...)`, `let`, `<coll>.length`, nested `$$$.<coll>` lookups:
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
   assert(o.total > 0, "order total must be positive");
-  $ = { id: o._id, total: o.total };
+  o = { id: o._id, total: o.total };
 });
 // → the orders $lookup.pipeline gains, after the filter's $match:
 //     { $match: { $expr: { $convert: { input: true, to: { $cond: [{ $gt: ["$total", 0] }, "bool", "jsmql assertion failed: order total must be positive"] } } } } },
 //     { $replaceWith: { id: "$_id", total: "$total" } }
 ```
 
-As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference reads the *outer* document (auto-hoisted into `let`).
+As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$total`), and a `$.<field>` reference *reads* the outer document (auto-hoisted into `let`).
 
 **Why JS-faithful cardinality for `.find()`?** MongoDB's `$lookup` always returns an array; jsmql adds a `$set { <as>: { $first: "$<as>" } }` so `.find()` matches JS's scalar-or-null contract. The trade-off: one extra in-place `$set` stage. Even when the predicate matches multiple foreign docs, the row count stays stable (vs the `$unwind preserveNullAndEmptyArrays` alternative, which fans rows out).
 
 **Caveats:**
-- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); $.orders = $$$.orders.filter(o => o.userId === u._id); })`.
+- **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
   - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via--expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema/driver — also planned (see `$$$` schema-threading work).
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. For deterministic single-doc selection use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
@@ -901,8 +903,9 @@ $$.push(...$$$.archive_users);
 // → { $unionWith: "archive_users" }
 
 // 2. .filter(pred) spread — pipeline-form $unionWith.
-$$.push(...$$$.archive_users.filter(u => u.active));
+$$.push(...$$$.archive_users.filter(u => u.active === true));
 // → { $unionWith: { coll: "archive_users", pipeline: [{ $match: { active: true } }] } }
+//   (a bare `u.active` is the JavaScript truthiness test, and rides in `$expr`)
 
 // 3. .find(pred) without spread — single-doc append.
 $$.push($$$.archive_users.find(u => u._id === "ABC"));
@@ -1584,15 +1587,14 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 
 - **Statically known array** (array literal, `.split()`, `.map()`, `.filter()`, `Object.values()`, etc.) → emits the array form (`$in`, `$indexOfArray`, `$concatArrays`).
 - **Statically known string** (`.toLowerCase()`, `String(x)`, `+` in string context, template literal, etc.) → emits the string form (`$indexOfCP` / `$concat`).
-- **Unknown receiver** (a bare `$.field`, a ternary, etc.) → emits a runtime `$cond` on `$isArray` so the right form runs at query time. The output is more verbose, but works whether the field is a string or an array.
+- **Unknown receiver** (a bare `$.field`, a ternary, etc.) → emits a runtime `$switch` on the value's own `$type`, so the right form runs at query time and a value that is neither answers nothing (`$$REMOVE`), as reading a method off it in JavaScript would. The output is more verbose, but works whether the field is a string or an array.
 
 ```js
 $.tags.includes("active")
-// → { $cond: {
-//       if: { $isArray: "$tags" },
-//       then: { $in: ["active", "$tags"] },
-//       else: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] }
-//     } }
+// → { $switch: { branches: [
+//       { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["active", "$tags"] } },
+//       { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] } }
+//     ], default: "$$REMOVE" } }
 ```
 
 If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
@@ -1660,7 +1662,7 @@ $.items.findIndex(x => x.active)
 
 // findLast — last matching element (ES2023)
 $.items.findLast(x => x.active)
-// → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: "$$x.active" } }, -1] }
+// → { $arrayElemAt: [{ $filter: { input: "$items", as: "x", cond: <x.active is truthy> } }, -1] }
 
 // findLastIndex — index of last matching element, or -1 (ES2023)
 $.items.findLastIndex(x => x.active)
@@ -1668,11 +1670,11 @@ $.items.findLastIndex(x => x.active)
 
 // some — true if any element matches
 $.scores.some(x => x >= 90)
-// → { $anyElementTrue: { $map: { input: "$scores", as: "x", in: { $gte: ["$$x", 90] } } } }
+// → { $anyElementTrue: { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $gte: ["$$x", 90] } } } }
 
 // every — true if all elements match
 $.scores.every(x => x >= 60)
-// → { $allElementsTrue: { $map: { input: "$scores", as: "x", in: { $gte: ["$$x", 60] } } } }
+// → { $allElementsTrue: { $map: { input: { $ifNull: ["$scores", []] }, as: "x", in: { $gte: ["$$x", 60] } } } }
 
 // reduce — fold to a single value (2- or 3-param lambda required)
 $.numbers.reduce((acc, x) => acc + x, 0)
@@ -1714,7 +1716,8 @@ $.events.push($.newEvent);
 // → { $set: { events: { $concatArrays: ["$events", ["$newEvent"]] } } }
 
 $.events.pop();
-// → { $set: { events: { $slice: ["$events", { $max: [0, { $subtract: [{ $size: "$events" }, 1] }] }] } } }
+// → { $set: { events: { $let: { vars: { jsmqlArr: "$events" }, in:
+//       { $slice: ["$$jsmqlArr", { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] }] } } } }
 
 $.events.reverse();
 // → { $set: { events: { $reverseArray: "$events" } } }
@@ -1868,7 +1871,7 @@ $.items.filter(Boolean)         // drop JS-falsy values (null, "", 0, false, mis
 // (see "Truthy and falsy" above)
 
 $.scores.map(Number)            // coerce strings to numbers
-// → { $map: { input: "$scores", as: "v", in: { $toDouble: "$$v" } } }
+// → { $map: { input: "$scores", as: "x", in: { $toDouble: "$$x" } } }
 
 Object.keys($.counts).map(ObjectId)   // object keys are strings — cast them back
 // → { $map: { input: { … }, as: "v", in: { $toObjectId: "$$v" } } }
@@ -1987,7 +1990,7 @@ $.legs.map(leg => {
 })
 // → { $map: { input: "$legs", as: "leg", in:
 //      { $let: { vars: { score: "$$leg.riskScore" }, in:
-//        { $let: { vars: { band: { $cond: [{ $gt: ["$$score", 50] }, "high", "low"] } }, in:
+//        { $let: { vars: { band: { $cond: { if: { $gt: ["$$score", 50] }, then: "high", else: "low" } } }, in:
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
@@ -3215,8 +3218,8 @@ $$.countBy({ active: true });             // count matching vs not (lodash _.mat
 
 ```js
 $$.sortBy(d => d.category.toLowerCase());
-// → [{ $addFields: { "__jsmql.tmp.1": { $toLower: "$category" } } },
-//    { $sort: { "__jsmql.tmp.1": 1 } },
+// → [{ $addFields: { "__jsmql.tmp.0": { $toLower: "$category" } } },
+//    { $sort: { "__jsmql.tmp.0": 1 } },
 //    { $unset: "__jsmql" }]
 ```
 
@@ -3378,7 +3381,7 @@ jsmql(`
   $sort({ score: -1 })
 `);
 // → [
-//     { $match: { $expr: "$active" } },
+//     { $match: { $expr: <$.active is the JavaScript truthiness test> } },
 //     { $set: { score: { $add: ["$score", 1] } } },
 //     { $sort: { score: -1 } }
 //   ]
@@ -3573,7 +3576,10 @@ jsmql.expr(`$.deletedAt === undefined`);
 jsmql(`[{ $match: typeof $.x === "boolean" }]`);
 // → [{ $match: { x: { $type: "bool" } } }]                 // JS "boolean" → BSON "bool"
 jsmql(`[{ $match: $.items.length === 3 }]`);
-// → [{ $match: { $expr: { $eq: [{ $cond: { if: { $isArray: "$items" }, then: { $size: "$items" }, else: { $strLenCP: { $ifNull: ["$items", ""] } } } }, 3] } } }]
+// → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
+//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+//       { case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] }, then: { $strLenCP: { $ifNull: ["$items", ""] } } }
+//     ], default: "$$REMOVE" } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
 //   Compared against a non-natural value (=== 3.5, === "x"), `.length` reads as a literal field
 //   path instead → { "items.length": 3.5 }. To read a field literally named `length` against a
@@ -4379,7 +4385,7 @@ jsmql("$.price > 10 && $.price <= 100")
 
 // Score calculation
 jsmql("($.correct + $.partial * 0.5) / $.total * 100")
-// → { $divide: [{ $multiply: [{ $add: ["$correct", { $multiply: ["$partial", 0.5] }] }, 100] }, "$total"] }
+// → { $multiply: [{ $divide: [{ $add: ["$correct", { $multiply: ["$partial", 0.5] }] }, "$total"] }, 100] }
 ```
 
 ### String Operations

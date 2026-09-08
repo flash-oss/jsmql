@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — docs: every documented MQL claim re-derived from the compiler
+
+A doc example is a promise about what jsmql emits, and prose had no test to keep
+it honest. `scripts/check-doc-claims.mjs` now reads every fenced `js` block in
+`README.md` and `docs/`, pairs each `// →` comment run with the source above it,
+compiles that source, and prints the pairs that disagree. It is an audit tool,
+read the way `diff-compilers.mjs` output is read: it parses markdown, so a human
+classifies each row.
+
+The first run found the promises the compiler had stopped keeping, and each is
+now what the compiler answers:
+
+- a `$lookup` shown as `let` + `pipeline` where one correlated equality now
+  makes the pair;
+- `$.tags.includes(…)`, `$.items.length`, `.some` / `.every` / `.findLast`
+  shown without the `$switch` on the receiver's own type, or without the
+  `$ifNull` that makes a missing array an empty one;
+- `.aggregate((o) => { … })` reshaping with `$ = { … }`, which is refused: `$`
+  is the OUTER document at every depth, so the body's own document is replaced
+  through the parameter, `o = { … }`;
+- `.pop()`, `.map(Number)`, a `$let` chain and a `.sortBy` slot shown with the
+  wrong variable names or slot numbers;
+- `($.correct + $.partial * 0.5) / $.total * 100` shown with `$divide` and
+  `$multiply` the wrong way round.
+
+---
+
 ## 2026-09-08 — fix: the CLI writes a live BSON value as the JavaScript that makes it
 
 `JSON.stringify` was the CLI's whole renderer, and JSON has no spelling for the

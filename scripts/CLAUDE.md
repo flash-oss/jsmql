@@ -48,6 +48,10 @@ PostToolUse hook dispatcher. Wired up in `.claude/settings.json` to call `sync-p
 
 Two reviewers' tools for the suites, run by hand and never on a hook. `regen-expectations.mjs test/<suite>.test.ts` rewrites every `expect(<call>).toEqual(<literal>)` (and `toStrictEqual` / `toBe` / `toThrow(<matcher>)`) with the answer the working-tree compiler gives for the same call, through the TypeScript AST — for a deliberate change of emitted shape that would otherwise be a hundred identical hand edits. A call whose polarity changed (a throw where a value was asserted, or a value where a throw was) is listed and left alone. `convert-expectations.mjs test/<suite>.test.ts ['<keep regex>' …]` is the mechanical half of that judgement: it flips the polarity of every listed case except those whose source matches a KEEP pattern — the refusals the suite must keep asserting. Both outputs are reviewed as a diff before they are committed: a wrong answer regenerates as well as a right one, so the script proves consistency with the compiler, never correctness (a running `mongod` proves that — see [test/CLAUDE.md](../test/CLAUDE.md)).
 
+### `check-doc-claims.mjs`
+
+`node scripts/check-doc-claims.mjs [file …]` (default: `README.md` + everything under `docs/`) re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler and prints the pairs that disagree. A doc example is a promise about what jsmql emits, and prose has no test to keep it honest — this is what catches the promise the compiler stopped keeping. An AUDIT tool, not a gate, and it is read the way `diff-compilers.mjs` output is read: it parses markdown, so it reports false positives — a template-tag source it cannot run, a claim showing one stage of a longer pipeline, host code around a `jsmql(…)` call — and a human classifies each. It skips a claim that elides anything (`…`, `/* … */`, `<…>`), which is illustrative by construction.
+
 ## Conventions
 
 - Scripts are `.mjs` (ESM) and may import directly from `src/*.ts` files; Node 22.18+ / 24.3+'s native type-stripping handles the TS syntax without a flag (unflagged in 22.18.0 LTS and 24.3.0; stable in 25.2.0).
