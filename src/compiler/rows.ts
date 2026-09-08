@@ -16,8 +16,9 @@ import type {
   SlotPosition,
   MutatorForm,
   Kind,
+  SlotForm,
 } from "../registry/vocabulary.ts";
-import { FIELD_FAMILY_TYPES } from "../registry/vocabulary.ts";
+import { FIELD_FAMILY_TYPES, isSlotLayout } from "../registry/vocabulary.ts";
 import { NAMES } from "../registry/names.ts";
 
 /** Every row, by name. Null-prototype: `toString` and `valueOf` are real rows. */
@@ -195,6 +196,23 @@ export function iterateeSlotsOf(name: string, family: Family): IterateeSlots | u
   const decl = (row(name) as { iterateeSlots?: Readonly<Partial<Record<Family, IterateeSlots>>> } | undefined)
     ?.iterateeSlots;
   return decl?.[family];
+}
+
+/**
+ * The short spellings that may stand in place of the arrow at one argument slot,
+ * resolved exactly as the rewrite resolves them: the name's own layout, then the
+ * row it runs as on a stream, then the array layout a stream borrows. Empty when
+ * the slot takes the arrow alone — which is what a refusal must then say.
+ */
+export function slotFormsOf(name: string, family: Family, slot: number): readonly SlotForm[] {
+  const runsAs = picksOneOf(name);
+  const layout =
+    iterateeSlotsOf(name, family) ??
+    (runsAs === null ? undefined : iterateeSlotsOf(runsAs, family)) ??
+    (family === "stream" ? iterateeSlotsOf(name, "array") : undefined);
+  if (layout === undefined || !isSlotLayout(layout)) return [];
+  const byIndex: Readonly<Record<number, readonly SlotForm[]>> = layout;
+  return byIndex[slot] ?? [];
 }
 
 /**

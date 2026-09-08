@@ -444,7 +444,7 @@ describe("$$$.coll.find/filter — error cases", () => {
 
   it("non-arrow predicate is rejected with an actionable message", () => {
     expect(() => jsmql("$.x = $$$.users.find(123);")).toThrow(
-      "'.filter()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.find()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
   });
 
@@ -456,7 +456,7 @@ describe("$$$.coll.find/filter — error cases", () => {
       "`i` has no value inside `.filter()` — a stream has no per-document index; leave the parameter unused.",
     );
     expect(() => jsmql("$.x = $$$.users.find((u, i, c, d) => u.a);")).toThrow(
-      "'.filter()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.find()' callbacks take at most 3 parameters (element, index, array); got 4.",
     );
   });
 
@@ -1237,10 +1237,10 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // `filterArgToLambda` returns null rather than throwing, so `validateLookupShape`
     // (which runs the throwing `shorthandToLambda`) stays the owner of the message.
     expect(() => jsmql("$.x = $$$.orders.filter({});")).toThrow(
-      "'.filter()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.filter({ … })' matches a document by its fields, and '{}' names none. Write the field to match — '.filter({ status: \"paid\" })' — or an arrow — '.filter(d => d.status === \"paid\")'.",
     );
     expect(() => jsmql("$.x = $$$.orders.filter([1, 2]);")).toThrow(
-      "'.filter()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.filter([field, value])' matches one field against one value. It takes exactly two elements, and the first is a field-name string: '.filter([\"status\", \"paid\"])'. An arrow says the same thing: '.filter(d => d.status === \"paid\")'.",
     );
   });
 
@@ -1720,7 +1720,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
     const pairs: [string, string, RegExp][] = [
       ["expression body", "(o) => o.total", /takes an arrow whose body is a block of stages/],
       ["trailing return", "(o) => { $limit(2); return o.total; }", /is a pipeline stage/],
-      ["4 params", "(a, b, c, d) => { $limit(1); }", /takes a block of stages as a one-parameter arrow/],
+      ["4 params", "(a, b, c, d) => { $limit(1); }", /callbacks take at most 3 parameters/],
       ["index param used", "(o, i) => { $addFields({ k: i }); }", /has no value inside `\.aggregate\(\)`/],
       ["coll param beyond .length", "(o, _i, c) => { $addFields({ k: c.total }); }", /the body's own stream|only 'c/],
     ];

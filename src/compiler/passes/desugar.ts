@@ -22,6 +22,7 @@
 // See docs/specs/desugar-pass.md for the form-by-form rules and the full order.
 
 import { type AssignOp, type BinaryOp, type Expr, type Program, ASSIGN_OPS } from "../../registry/ast.ts";
+import { CodegenError } from "../../errors.ts";
 import { ParseError } from "../parse/cursor.ts";
 import { parseExpression } from "../parse/parser.ts";
 import {
@@ -592,7 +593,15 @@ const groupBodyLink: Rule = {
     const args = n.args as readonly Node[];
     if (args.length !== 1 || args[0].type !== "ObjectLiteral" || !Array.isArray(args[0].entries)) return node;
     const hasId = (args[0].entries as readonly object[]).some((e) => writtenKey(e) === "_id");
-    return hasId ? ({ ...n, name: "$group" } as object) : node;
+    // No `_id`: the object cannot be a matcher here (the stream slot takes none) and
+    // cannot be the stage either. Say so where the rule is known, not four phases on.
+    if (!hasId) {
+      throw new CodegenError(
+        `'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy("status")'.`,
+        (args[0] as { pos: number }).pos,
+      );
+    }
+    return { ...n, name: "$group" } as object;
   },
 };
 

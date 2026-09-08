@@ -13,7 +13,10 @@ import { orderBySpec, sortSpecOf } from "./sort-spec.ts";
 import { constantIn, literalIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
 import {
+  badMatchesPropertyPair,
   blockWhereValueExpected,
+  CodegenError,
+  emptyMatcherObject,
   mapMustReturnDocument,
   needsPipeline,
   notAnArrowCallback,
@@ -31,7 +34,7 @@ import {
   needsPrecedingSort,
   streamHandleAfterReplace,
 } from "./errors.ts";
-import { preservesCountOf } from "../rows.ts";
+import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
@@ -443,6 +446,12 @@ export function stageInputs(
   read: StageReader,
   /** The stages the current chain has produced before this link — not yet emitted, but before it in the pipeline. */
   soFar: readonly Stage[] = [],
+  /**
+   * The method the SOURCE wrote, which is `name` unless the link runs as another
+   * row: `$$$.users.find(p)` runs `filter` and must still be refused as `.find()`.
+   * Messages use this one; everything else uses the row.
+   */
+  written: string = name,
 ): StageIn & { keys: readonly string[] } {
   const argEnv = childEnv(env, node, "args");
   const before: readonly Stage[] = [...env.chain.emitted, ...soFar];
@@ -503,6 +512,25 @@ export function stageInputs(
     return e;
   };
   /**
+   * Why this argument is not the callback the slot wanted, worded as the mistake
+   * it is: too many parameters, a matcher naming no field, a pair that is not one,
+   * or a shape the slot never takes. Four fixes, so four sentences.
+   */
+  const callbackRefusal = (cb: Expr, what: string): CodegenError => {
+    if (cb.type === "Lambda") return tooManyCallbackParams(written, cb.params.length, cb.pos);
+    const forms = slotFormsOf(written, "stream", args.indexOf(cb));
+    if (cb.type === "ObjectLiteral" && forms.includes("matchesObject")) {
+      const entries = (cb as { entries?: readonly unknown[] }).entries;
+      if (entries !== undefined && entries.length === 0) return emptyMatcherObject(written, cb.pos);
+    }
+    // A well-formed pair was rewritten to an arrow long before here, so one that
+    // arrives is malformed: not two elements, or a first that is not a name.
+    if (cb.type === "ArrayLiteral" && forms.includes("matchesPropertyPair")) {
+      return badMatchesPropertyPair(written, cb.pos);
+    }
+    return notAnArrow(written, what, forms, cb);
+  };
+  /**
    * A callback's body and the env it is lowered under — the parameter IS the
    * document. Not an arrow at all — `.countBy(String)` — is the developer's
    * mistake, worded; the shorthands a row accepts have been rewritten to arrows
@@ -510,9 +538,9 @@ export function stageInputs(
    */
   const body = (cb: Expr, what: string): { body: Expr; env: Env } => {
     const e = bound(cb);
-    if (e === null) throw notAnArrow(name, what, cb);
+    if (e === null) throw callbackRefusal(cb, what);
     const b = (cb as { body?: Expr }).body;
-    if (b === undefined) throw blockWhereValueExpected(name, cb.pos);
+    if (b === undefined) throw blockWhereValueExpected(written, cb.pos);
     return { body: b, env: childEnv(e, cb, "body") };
   };
   return {
@@ -526,7 +554,7 @@ export function stageInputs(
       return read.predicate(b.body, b.env);
     },
     reshape: (cb) => {
-      const b = body(cb, "a reshape");
+      const b = body(cb, "a key");
       return read.reshape(b.body, b.env);
     },
     condition: (cb) => {
@@ -554,9 +582,15 @@ export function stageInputs(
     },
     block: (cb) => {
       const e = bound(cb);
-      if (e === null) throw notAnArrow(name, "a block of stages", cb);
+      // Not an arrow at all: the block form is the only spelling, so the sentence
+      // that shows it is the same one an arrow with a value body already gets.
+      if (e === null) {
+        throw cb.type === "Lambda"
+          ? tooManyCallbackParams(written, cb.params.length, cb.pos)
+          : valueWhereBlockExpected(written, cb.pos);
+      }
       const stages = (cb as { stages?: Pipeline }).stages;
-      if (stages === undefined) throw valueWhereBlockExpected(name, cb.pos);
+      if (stages === undefined) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
     sortSpec: (e, objects = true) => sortSpecOf(e, name, objects),

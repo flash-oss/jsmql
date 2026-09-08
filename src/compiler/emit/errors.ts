@@ -7,7 +7,7 @@
 
 import { CodegenError, UnknownIdentifierError, internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
-import type { Arity, Position } from "../../registry/vocabulary.ts";
+import type { Arity, Position, SlotForm } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
@@ -515,11 +515,60 @@ export const notAStreamLink = (name: string, candidates: readonly string[], pos:
   );
 };
 
-/** A stage cell asked for a callback and the argument is not an arrow. */
-export const notAnArrow = (name: string, what: string, got: { type: string; pos: number }): CodegenError =>
+/** One accepted spelling, with the shortest example of it. */
+const SPELLING: Readonly<Record<SlotForm, string>> = {
+  propertyPath: `a field name ('"status"')`,
+  matchesObject: `a matcher object ('{ status: "paid" }')`,
+  matchesPropertyPair: `a '[field, value]' pair ('["status", "paid"]')`,
+  bareCallable: "a callable ('Boolean')",
+  omitted: "no argument at all",
+};
+
+/** Every spelling the slot takes, the arrow first, as one English list. */
+const spellings = (forms: readonly SlotForm[]): string => {
+  const all = ["an arrow ('d => …')", ...forms.map((f) => SPELLING[f])];
+  return all.length === 1 ? all[0] : `${all.slice(0, -1).join(", ")}, or ${all[all.length - 1]}`;
+};
+
+/** What the developer wrote instead, named as they would name it. */
+const ARG_NOUN: Readonly<Record<string, string>> = {
+  NumberLiteral: "a number",
+  StringLiteral: "a string",
+  BooleanLiteral: "a boolean",
+  NullLiteral: "null",
+  ObjectLiteral: "an object",
+  ArrayLiteral: "an array",
+};
+
+/**
+ * A stage cell asked for a callback and got a shape this slot never takes. The
+ * spellings come from the row, so the way out is the one the compiler accepts.
+ */
+export const notAnArrow = (
+  name: string,
+  what: string,
+  forms: readonly SlotForm[],
+  got: { type: string; pos: number },
+): CodegenError =>
   new CodegenError(
-    `'.${name}()' takes ${what} as a one-parameter arrow here — 'd => …' — and got ${got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : "something else"}.`,
+    `'.${name}()' takes ${what} here — ${spellings(forms)}. Got ${
+      got.type === "Ident" ? `the name '${(got as { name?: string }).name}'` : (ARG_NOUN[got.type] ?? "something else")
+    }.`,
     got.pos,
+  );
+
+/** `.filter({})` — a matcher object that names no field to match. */
+export const emptyMatcherObject = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}({ … })' matches a document by its fields, and '{}' names none. Write the field to match — '.${name}({ status: "paid" })' — or an arrow — '.${name}(d => d.status === "paid")'.`,
+    pos,
+  );
+
+/** `.filter([1, 2])` — the `[field, value]` pair, malformed. */
+export const badMatchesPropertyPair = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'.${name}([field, value])' matches one field against one value. It takes exactly two elements, and the first is a field-name string: '.${name}(["status", "paid"])'. An arrow says the same thing: '.${name}(d => d.status === "paid")'.`,
+    pos,
   );
 
 /** An arrow with a `{ … }` body of stages where a VALUE body was wanted. */

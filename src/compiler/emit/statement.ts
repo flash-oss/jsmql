@@ -771,7 +771,11 @@ function streamLink(
   }
   const args = link.args as readonly Expr[];
   checkSlots(link.name, sel.rule.args, args, stageBodyRuleOf(name) !== undefined);
-  const stages = sel.rule.emit(stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar)) as Stage[];
+  // `name` is the row that runs; `link.name` is what the developer typed. A message
+  // that swaps them tells the reader about a method they did not write.
+  const stages = sel.rule.emit(
+    stageInputs(name, args, positionalKeysOf(name), env, link, READ, soFar, link.name),
+  ) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
   return out;

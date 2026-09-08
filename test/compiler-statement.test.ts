@@ -449,7 +449,7 @@ describe("compiler/emit/statement — the stream road", () => {
     // a projection lists field names
     expect(() => pipeline("$$.omit([1, 2]);")).toThrow(/names a field to WRITE/);
     // an argument that is neither an arrow nor a shorthand
-    expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/one-parameter arrow/);
+    expect(() => pipeline("$$ = $$.countBy(String);")).toThrow(/takes a key here/);
     // an unknown link, with the nearest one in the chain's own spelling
     expect(() => pipeline("$$.$prject({ a: 1 });")).toThrow(/Did you mean '\.\$project\(\)'/);
     // a read of the index or collection parameter says what to write instead

@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: a callback refusal names the method the source wrote, and the forms that work
+
+One sentence answered four different mistakes, and it was wrong about three things at once:
+
+```
+$.x = $$$.users.find(123);
+before: '.filter()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.
+now:    '.find()' takes a predicate here — an arrow ('d => …'), a field name ('"status"'),
+        a matcher object ('{ status: "paid" }'), or a '[field, value]' pair ('["status", "paid"]'). Got a number.
+```
+
+It named `.filter` for a source that wrote `.find` — one row answers for both spellings, and the refusal read the row rather than the call. It said one parameter, and three compile: `$$$.users.find((u, i, c) => u.a)` is accepted. And it implied the arrow was the only form, while the field name, the matcher object and the `[field, value]` pair all compile — each one is proved in the suite beside the refusal that names it.
+
+The four mistakes now answer separately, each about itself:
+
+```
+$.x = $$$.users.find((u, i, c, d) => u.a);
+→ '.find()' callbacks take at most 3 parameters (element, index, array); got 4.
+
+$.x = $$$.orders.filter({});
+→ '.filter({ … })' matches a document by its fields, and '{}' names none. Write the field to match —
+  '.filter({ status: "paid" })' — or an arrow — '.filter(d => d.status === "paid")'.
+
+$.x = $$$.orders.filter([1, 2]);
+→ '.filter([field, value])' matches one field against one value. It takes exactly two elements, and the
+  first is a field-name string: '.filter(["status", "paid"])'. An arrow says the same thing: …
+
+$$ = $$.groupBy({ n: $sum(1) });
+→ '$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key:
+  '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy("status")'.
+```
+
+The list of forms each slot accepts is read off the same layout the rewrite reads, resolved the same way — the name's own, then the row it runs as on a stream, then the array layout a stream borrows. A message and a rewrite that disagreed would name a spelling the compiler refuses, which is the defect this removes.
+
+---
+
+
 ## 2026-09-08 — fix: six refusals name a way out, and each way out compiles
 
 Each of these said what was wrong and stopped, or named a form that does not work.

@@ -541,7 +541,7 @@ describe(".reject(pred) → $match (filter negated)", () => {
       "'.reject(predicate)' requires exactly 1 argument, got 2 — JavaScript's trailing 'thisArg' has no meaning in MQL; drop it",
     );
     expect(() => jsmql("$$.reject(...preds);")).toThrow(
-      "'.reject()' takes a predicate as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.reject()' takes a predicate here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got something else.",
     );
   });
 });
@@ -608,10 +608,10 @@ describe(".groupBy(spec | key) → object collapse / $group", () => {
 
   it("rejects a body without _id and a non-string/non-object arg", () => {
     expect(() => jsmql("$$ = $$.groupBy({ n: $sum(1) });")).toThrow(
-      "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy(\"status\")'.",
     );
     expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(
-      "'.groupBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
   });
 });
@@ -1854,7 +1854,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
     // `$unwind` returns each element to a NAMED field, so the name is part of what the
     // user means — auto-materialising into a scratch slot would discard the elements.
     expect(() => jsmql(`$.o = $$$.orders.flatMap({ cat: 1 });`)).toThrow(
-      "'.flatMap()' takes a field as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.flatMap()' takes a field here — an arrow ('d => …'), or a field name ('\"status\"'). Got an object.",
     );
     expect(() => jsmql(`$.o = $$$.orders.flatMap(d => d.a.concat(d.b));`)).toThrow(
       "'.flatMap(d => …)' names the ARRAY FIELD to flatten: 'd => d.items'. It lowers to '$unwind', which takes a field path and nothing else.",
@@ -1903,10 +1903,10 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   it("each key-slot error names the method it was called on, not a sibling", () => {
     // `.keyBy`/`.uniqBy` used to demonstrate `.countBy("status")` in their own errors.
     expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(
-      "'.keyBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
     expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(
-      "'.uniqBy()' takes a reshape as a one-parameter arrow here — 'd => …' — and got something else.",
+      "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );
     expect(() => jsmql(`$.o = $$$.orders.sortBy([5]);`)).toThrow(
       ".sortBy() sorts by a field NAME — a plain string like \"age\", with no leading '$'.",
