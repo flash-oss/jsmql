@@ -132,17 +132,35 @@ describe("system stages — error messages", () => {
 
   it("$$$ (database) has no diagnostics of its own — unknown method points elsewhere", () => {
     expect(() => jsmql("$$$.fooBar()")).toThrow(
-      "Reading another collection produces a value, and this statement gives it no destination. Assign it to a field ('$.<field> = $$$.<coll>.…'), bind it ('let x = $$$.<coll>.…'), or make it the stream ('$$ = $$$.<coll>.…').",
+      "'$$$' is the database, and no stage runs on it alone. '.fooBar()' is not one of them. A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()'). To read a collection called 'fooBar', write '$.<field> = $$$.fooBar.find(…)'.",
     );
+    // A misspelling on the CLUSTER names the nearest stage of that scope.
+    expect(() => jsmql("$$$$.currentOpp()")).toThrow("Did you mean '$$$$.currentOp()'?");
+    // And a read of a collection is still a read, whatever it is called.
+    expect(jsmql("$.x = $$$.fooBar.find(d => d.a === 1);")).toEqual([
+      {
+        $lookup: {
+          from: "fooBar",
+          pipeline: [{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
+          as: "x",
+        },
+      },
+      { $set: { x: { $first: "$x" } } },
+    ]);
   });
 
   it("unknown method suggests the nearest diagnostic with its correct prefix", () => {
     expect(() => jsmql("$$.indexStat()")).toThrow(
       "'.indexStat()' is not a method of the stream '$$'. Did you mean '$$.indexStats()'? A stage is a link too: '$$.$match(…)'.",
     );
-    // The link form the old message named takes a body it does not need, so the
-    // spelling it suggested — '$$.$indexStats()' — is a dead end on its own.
-    expect(() => jsmql("$$.$indexStats()")).toThrow("'.$indexStats(body)' requires exactly 1 argument, got 0");
+    // The '$' spelling of a diagnostic stage is refused outright: it is a source
+    // stage, and it reached the row without meeting the scope its sugar states.
+    expect(() => jsmql("$$.$indexStats()")).toThrow(
+      "'$indexStats' reports on the deployment, so it is a source stage and not a chain link. Write '$$.indexStats()' — the collection reference, run on 'db.coll.aggregate()'.",
+    );
+    expect(() => jsmql("$$.$currentOp({})")).toThrow(
+      "'$currentOp' reports on the deployment, so it is a source stage and not a chain link. Write '$$$$.currentOp()' — the cluster reference, run on the admin database.",
+    );
     // The sugar the new message names needs nothing.
     expect(jsmql("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });

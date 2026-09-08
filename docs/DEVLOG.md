@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix!: the `$` spelling of a diagnostic stage meets the scope its row states
+
+A diagnostic stage has two spellings, and only one of them was checked.
+
+```
+$$.currentOp();       → '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
+                        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+$$.$currentOp({});    → [{ "$currentOp": {} }]        a CLUSTER stage on a collection's chain
+```
+
+The sugar goes through the row that states the scope; the `$` name reaches the stage row directly, and that row states none. So the check never ran. `$$.$indexStats({})`, `$$$$.$indexStats({})` and a mid-chain `$$.filter(…).$indexStats({})` all compiled the same way.
+
+A diagnostic stage reports on the deployment, so it is a SOURCE stage: it stands first, takes no body, and is spelled on the reference its scope names. The `$` form is refused, wherever it stands:
+
+```
+$$.$currentOp({});
+→ '$currentOp' reports on the deployment, so it is a source stage and not a chain link.
+  Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+```
+
+`docs/specs/globals-generation.md` already stated this as fact — "jsmql rejects `$$.$indexStats({})` outright" — and the compiler did not. An ordinary stage keeps its link form: `$$.$match({ a: 1 })` and `$$.filter(d => d.a > 1).$sort({ b: 1 })` are unchanged.
+
+A misspelling on the database or the cluster was routed as a collection read, so it answered about a destination the reader had not asked for:
+
+```
+$$$$.currentOpp();
+before: Reading another collection produces a value, and this statement gives it no destination. …
+now:    '$$$$' is the cluster, and only the stages that report on the deployment are spelled on it.
+        '.currentOpp()' is not one of them. Did you mean '$$$$.currentOp()'? To read a collection
+        called 'currentOpp', write '$.<field> = $$$$.currentOpp.find(…)'.
+```
+
+Both readings are named, because `$$$.fooBar()` really is ambiguous — a stage that does not exist, or a collection called `fooBar`. The collection read still compiles: `$.x = $$$.fooBar.find(d => d.a === 1);`.
+
+---
+
+
 ## 2026-09-08 — fix: a body-key refusal names the key, and every form that key takes
 
 Two refusals about a stage's body said "this stage's body" without saying which part of it:

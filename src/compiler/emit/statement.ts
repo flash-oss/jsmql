@@ -17,6 +17,8 @@ import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import {
   arrayLiteralOrderOf,
+  diagnosticOf,
+  everyStageName,
   forbiddenInOf,
   immutableTwinOf,
   mutatorFormOf,
@@ -723,6 +725,12 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
  */
 function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, env: Env, first: boolean): Stage[] {
   const name = namedRow(node) ?? node.name;
+  // A diagnostic stage is reached through its own sugar, never through the '$' name:
+  // the sugar's row states the scope and the '$' row does not, so '$$.$currentOp({})'
+  // used to put a cluster stage on a collection.
+  if (node.name.startsWith("$") && diagnosticOf(name) !== undefined) {
+    throw E.diagnosticIsNotALink(name, node.pos);
+  }
   if (ref === "DatabaseRef") throw E.noStageOnDatabase(node.name, node.pos);
   // No row is spelled on the database alone, so `$$$.<name>()` meets every row's gate as a bare call and is refused by it.
   const receiver: Receiver =
@@ -761,6 +769,10 @@ function streamLink(
 ): Stage[] | null {
   if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
   const name = row;
+  // A diagnostic stage reports on the deployment, so it is a SOURCE stage and has
+  // no link form: `$$.$indexStats({})` used to compile, and `$$.$currentOp({})`
+  // put a CLUSTER stage on a collection's chain, which the scope gate never saw.
+  if (diagnosticOf(name) !== undefined) throw E.diagnosticIsNotALink(name, link.pos);
   // `.concat(…)` — documents unioned into this stream, wherever the chain stands.
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name, "stream", "stream");
@@ -833,6 +845,16 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
       const asStatement = says !== null && says.kind !== "refused" && says.kind !== "noCell" && says.kind !== "unknown";
       if (!asStatement) {
         if (base.type === "CollectionRef" || ownStream) return streamStages(node, env, first);
+        // `$$$$.currentOpp();` — the reference's OWN spelling, so the name is a
+        // diagnostic stage that does not exist at that scope, not a collection read.
+        if (isContextRef(node.object) && base.type !== "CollectionRef") {
+          const sigil = base.type === "ClusterRef" ? "$$$$" : "$$$";
+          const scope = base.type === "ClusterRef" ? "cluster" : "database";
+          const spelledOnIt = everyStageName()
+            .filter((s) => diagnosticOf(s)?.scope === scope)
+            .map((s) => s.slice(1));
+          throw E.notAStageOnRef(node.name, sigil, spelledOnIt, node.pos);
+        }
         throw E.noDestination(node.pos);
       }
       // A statement spelled on a context reference — a source stage: the row's cell,

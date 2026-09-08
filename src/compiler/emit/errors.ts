@@ -853,6 +853,45 @@ export const notAJoinChain = (pos: number): CodegenError =>
     pos,
   );
 
+/**
+ * A DIAGNOSTIC stage written as a chain link — `$$.$indexStats({})`. It reports on
+ * the deployment, so it is a SOURCE stage: it stands first and is spelled on the
+ * reference its scope names, with no body.
+ */
+export const diagnosticIsNotALink = (name: string, pos: number): CodegenError => {
+  const runsOn = runsOnFor(name);
+  const sugar = sugarOf(name);
+  return new CodegenError(
+    `'${name}' reports on the deployment, so it is a source stage and not a chain link.${
+      runsOn === undefined ? "" : ` Write '${runsOn.sigil}.${sugar}()' — ${runsOn.place}.`
+    }`,
+    pos,
+  );
+};
+
+/**
+ * `$$$$.currentOpp();` — a name called straight on the database or the cluster.
+ * Only a diagnostic stage of that scope is spelled there, so an unknown one is a
+ * misspelling; on the database, where none is, the message names both scopes.
+ */
+export const notAStageOnRef = (
+  name: string,
+  sigil: "$$$" | "$$$$",
+  candidates: readonly string[],
+  pos: number,
+): CodegenError => {
+  const where =
+    sigil === "$$$$"
+      ? "'$$$$' is the cluster, and only the stages that report on the deployment are spelled on it"
+      : "'$$$' is the database, and no stage runs on it alone";
+  const tail =
+    sigil === "$$$$"
+      ? didYouMean(name, candidates, (s) => `$$$$.${s}()`)
+      : " A stage runs on the collection ('$$.<stage>()') or the cluster ('$$$$.<stage>()').";
+  const read = ` To read a collection called '${name}', write '$.<field> = ${sigil}.${name}.find(…)'.`;
+  return new CodegenError(`${where}. '.${name}()' is not one of them.${tail}${read}`, pos);
+};
+
 /** `$$$.c.filter(p);` — the documents read have nowhere to go. */
 export const noDestination = (pos: number): CodegenError =>
   new CodegenError(
