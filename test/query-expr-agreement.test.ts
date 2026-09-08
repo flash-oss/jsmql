@@ -47,7 +47,6 @@ const DOCS = [
 
 /** A predicate whose two lowerings must select the same documents. */
 const AGREE: readonly string[] = [
-  '$.s.includes("ell")',
   // Cmp — equality, ordered, and the two null modes.
   "$.a === 5",
   "$.a !== 5",
@@ -125,6 +124,14 @@ const DIVERGE: readonly { src: string; why: string }[] = [
       "number in BSON order, so `missing < 0` is true. Documented in emit-pass.md § The filter target.",
   },
   { src: "$.a <= 0", why: "Same as `<` — ordered comparison against a missing field." },
+  {
+    src: '$.s.includes("ell")',
+    why:
+      "A query document is what an INDEX is read through, so the query form is the indexable one: " +
+      '`{ s: "ell" }`, MongoDB\'s "equals, or is an array containing". The expression form has no index ' +
+      "at stake, so it keeps both readings a JavaScript `.includes` has and answers true for a string " +
+      "that merely CONTAINS the needle. `.match(/ell/)` is the query spelling that asks for the substring.",
+  },
 ];
 
 let client: MongoClient | null = null;

@@ -1599,6 +1599,8 @@ $.tags.includes("active")
 
 If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` for string, `$.tags.slice().includes(...)` for array), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.
 
+**A query document takes the indexable reading instead.** The `$switch` above is the *expression* road, where no index is at stake. A query document is what an index is read through, so in a filter or a `$match` the unproven receiver takes MongoDB's own reading and nothing else — `$.tags.includes("vip")` is `{ tags: "vip" }`, "equals, or is an array containing", which is what `.includes` asks of an array. A string that merely *contains* the needle is not selected there; `$.name.match(/vip/)` is the query spelling that asks for the substring, and `jsmql.expr` gives the two-reading form.
+
 **A `const` carries its type.** A `const` whose initialiser is statically an array or a string counts as "statically known" wherever the binding is read — including inside a `$lookup` predicate, where the binding is threaded in as a correlation variable:
 
 ```js
@@ -3557,13 +3559,11 @@ jsmql("[{ $match: { age: { $gt: 18 } } }]");
 ```js
 // Array-element / set-membership tests
 jsmql(`[{ $match: $.tags.includes("vip") }]`);
-// → [{ $match: { $or: [{ tags: { $eq: "vip", $type: "array" } },
-//                     { tags: { $regex: "vip" } }] } }]     // an array holds it, or a string contains it
+// → [{ $match: { tags: "vip" } }]                          // implicit array-element match
 jsmql(`[{ $match: ["active", "trial"].includes($.status) }]`);
 // → [{ $match: { status: { $in: ["active", "trial"] } } }]
 jsmql(`[{ $match: $.tags.includes("a") && $.tags.includes("b") }]`);
-// → [{ $match: { $or: [{ tags: { $all: ["a", "b"], $type: "array" } },
-//                     { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] }] } }]  // folded $all
+// → [{ $match: { tags: { $all: ["a", "b"] } } }]           // folded $all
 
 // Regex match — receiver field, regex-literal arg
 jsmql(`[{ $match: $.name.match(/^a/i) }]`);

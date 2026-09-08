@@ -10,6 +10,70 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — feat!: a query document is read through an index, so `.includes` is the indexable one
+
+`.includes` means two things in JavaScript — containment in an array, substring in
+a string — and a bare field path proves neither, so the compiler emitted both
+readings gated on the value's own type. In a query document that produced a shape
+no index plan can use, and no MongoDB developer would write:
+
+```
+$.tags.includes("vip")
+before: { $or: [{ tags: { $eq: "vip", $type: "array" } }, { tags: { $regex: "vip" } }] }
+after:  { tags: "vip" }
+
+$.tags.includes("a") && $.tags.includes("b")
+before: { $or: [{ tags: { $all: ["a","b"], $type: "array" } },
+                { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] }] }
+after:  { tags: { $all: ["a", "b"] } }
+```
+
+The developer's ruling: a query document is what an INDEX is read through, so the
+query road takes MongoDB's own reading and nothing else — "equals, or is an array
+containing", which is exactly what `.includes` asks of an array. The expression
+road keeps both readings, because no index is at stake there:
+
+```
+jsmql.expr('$.tags.includes("vip")')
+→ { $switch: { branches: [
+      { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["vip", "$tags"] } },
+      { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "vip"] }, 0] } }
+    ], default: "$$REMOVE" } }
+```
+
+MEASURED over `[{tags:["vip","a"]}, {tags:"vip"}, {tags:"a vip b"}]`, the query
+selects the first two and the expression all three. The substring test keeps its
+own query spelling, `.match(/vip/)`. Two agreement suites now contract the
+difference rather than assert it away: `$.tags.includes(…)` moved to the DIVERGE
+table in `compiler-js-agreement`, and `$.s.includes("ell")` to the one in
+`query-expr-agreement`.
+
+## 2026-09-09 — docs: the regex query form is the operator one, and here is why
+
+`.match(/re/)` emits `{ s: { $regex: /re/ } }` rather than the shorter `{ s: /re/ }`.
+MEASURED on mongod 8.3.7, the two select the same documents at every query site —
+`find`, `$match`, `$not`, `$nor`, `$elemMatch`, a `$lookup` / `$unionWith` /
+`$facet` sub-pipeline, `$graphLookup`'s `restrictSearchWithMatch`, an update
+filter, `distinct`, a view — and both are refused alike in a partial index.
+
+They differ in four places, and the operator form wins the two jsmql emits into:
+
+| | bare `{ s: /re/ }` | `{ s: { $regex: /re/ } }` |
+|---|---|---|
+| a sibling operator on the field | no room for one | `{ s: { $regex: /^a/, $ne: "zzz" } }` |
+| inside `$elemMatch` | "$elemMatch needs an Object" | works |
+| an element of `$in` / `$all` | works | "cannot nest $ under $in" |
+| beside `$options` | n/a | "options set in both" |
+
+jsmql merges clauses on one field (`$.s.match(/^a/i) && $.s !== "zzz"` is one
+document) and lowers `.some(e => e.s.match(/^a/))` to `$elemMatch`, so it needs
+the operator form in both. It never puts a regex inside `$in` or `$all` — a regex
+literal is only ever an argument to `.match` and its siblings, never an element of
+a written list — so that asymmetry cannot bite. The measurement is on the `match`
+row and pinned by two cases in `test/compiler-filter.test.ts`.
+
+---
+
 ## 2026-09-08 — docs: every documented MQL claim re-derived from the compiler
 
 A doc example is a promise about what jsmql emits, and prose had no test to keep

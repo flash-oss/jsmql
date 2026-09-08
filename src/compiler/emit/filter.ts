@@ -17,7 +17,7 @@
 // where `{ tags: "red" }` does — the left leaf's answer changed with its sibling.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
-import { escapeForRegex, queryOwnValue } from "../../registry/vocabulary.ts";
+import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -354,21 +354,11 @@ function chainOf(node: Expr, op: string): Expr[] {
 /**
  * `$.tags.includes("a") && $.tags.includes("b")` — every leaf an `.includes` of a
  * constant on the SAME path — is `{ tags: { $all: ["a", "b"] } }`: the same documents
- * as the `$and` of two clauses, in the shorter shape the developer meant. Both
- * readings of `.includes` survive the fold, each on one side of the `$or` (see
- * the `includes` row): `$all` is the ARRAY reading, and a string that holds every
- * needle is the STRING one.
+ * as the `$and` of two clauses, in the shorter indexable shape the developer meant,
+ * and the fold of what one `.includes` already answers (see the `includes` row).
  */
 function includesChain(path: string, values: readonly unknown[]): QueryDoc {
-  const contains = { [path]: { $all: values, $type: "array" } };
-  const needles = values.filter((v) => typeof v === "string" || typeof v === "number");
-  if (needles.length !== values.length) return contains;
-  const [first, ...rest] = needles.map((v) => escapeForRegex(String(v)));
-  const substrings =
-    rest.length === 0
-      ? queryOwnValue(path, { $regex: first })
-      : { $and: [queryOwnValue(path, { $regex: first }), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
-  return { $or: [contains, substrings] };
+  return { [path]: { $all: values } };
 }
 
 /** The path and the needles of an `&&` chain whose every leaf is `.includes(<constant>)` on ONE path, or null. */

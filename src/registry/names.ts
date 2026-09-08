@@ -6555,6 +6555,18 @@ export const NAMES = {
     where: ["value", "filter"],
     // A field against a regex LITERAL → a live RegExp the driver sends as a BSON regex, which
     // is what an index reads. A string pattern or a computed regex keeps the expression fallback.
+    //
+    // `{ s: { $regex: /re/ } }`, not the shorter `{ s: /re/ }`. Both select the same
+    // documents at every query site, MEASURED on mongod 8.3.7 — find, $match, $not,
+    // $nor, a $lookup / $unionWith / $facet sub-pipeline, $graphLookup's
+    // restrictSearchWithMatch, an update filter, distinct, a view. The operator form
+    // is the one that survives where they differ, and both differences are positions
+    // jsmql emits into: a SIBLING operator on the same field
+    // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
+    // and `$elemMatch`, which needs an object ("$elemMatch needs an Object"). The two
+    // places the bare form is required instead — an element of `$in` or `$all`
+    // ("cannot nest $ under $in") — no regex reaches: a regex literal is only an
+    // argument to `.match` and its siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
       emit: ({ recv, args, pathOf }) => {
@@ -6728,11 +6740,13 @@ export const NAMES = {
     on: ["array", "string"],
     returns: "bool",
     where: ["value", "filter"],
-    // Two query forms. `$.tags.includes("x")` → { tags: "x" }: MongoDB's "equals, or is an
-    // array containing" — what `.includes` means on an array, and indexed. On a STRING field
-    // the query form is equality where the expression form is a substring test; a receiver
-    // jsmql can prove is a string never reaches this cell. `["a","b"].includes($.s)` →
-    // { s: { $in: […] } }. Anything else keeps the expression fallback.
+    // A query document is what an INDEX is read through, so the query form is the
+    // indexable one: `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
+    // an array containing" — exactly what `.includes` means on an array, and a plain
+    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
+    // The substring reading a STRING receiver has belongs to the expression form below,
+    // where no index is at stake; `.match(/x/)` is the query spelling that asks for it.
+    // Anything else keeps the expression fallback.
     filter: {
       args: { sig: "searchElement", exact: 1 },
       emit: ({ recv, args, pathOf, constant }) => {
@@ -6741,18 +6755,7 @@ export const NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
-          // `.includes` reads two ways in JavaScript: CONTAINMENT in an array,
-          // SUBSTRING in a string. A bare field path is the one receiver whose
-          // type the compiler cannot prove (a provable one never reaches this
-          // cell), so both readings are emitted, each gated on the value's own
-          // type. The narrower spellings stay small: `.some(e => e === x)` is
-          // the array reading alone, `.match(/x/)` the string reading alone.
-          const contains = { [path]: { $eq: c.value, $type: "array" } };
-          const v = c.value;
-          // A needle no string could hold — a date, an ObjectId — has the array reading only.
-          if (typeof v !== "string" && typeof v !== "number") return contains;
-          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) });
-          return { $or: [contains, substring] };
+          return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
         const target = pathOf(args[0]);

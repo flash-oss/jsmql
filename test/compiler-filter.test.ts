@@ -99,21 +99,10 @@ describe("compiler/emit/filter — && and ||", () => {
     expect(filter("$.a === 1 || $.b === 2 || $.c === 3")).toEqual({ $or: [{ a: 1 }, { b: 2 }, { c: 3 }] });
   });
 
-  // `.includes` reads two ways — containment in an array, substring in a string —
-  // and the fold keeps both, one on each side of the `$or`.
+  // Two clauses on one field fold to the one MongoDB reads off the index.
   it("folds a chain of .includes on one field into $all", () => {
-    expect(filter('$.tags.includes("a") && $.tags.includes("b")')).toEqual({
-      $or: [
-        { tags: { $all: ["a", "b"], $type: "array" } },
-        { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] },
-      ],
-    });
-    expect(filter('$.tags.includes("a") && $.other.includes("b")')).toEqual({
-      $and: [
-        { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }] },
-        { $or: [{ other: { $eq: "b", $type: "array" } }, { other: { $regex: "b" } }] },
-      ],
-    });
+    expect(filter('$.tags.includes("a") && $.tags.includes("b")')).toEqual({ tags: { $all: ["a", "b"] } });
+    expect(filter('$.tags.includes("a") && $.other.includes("b")')).toEqual({ tags: "a", other: "b" });
   });
 });
 
@@ -205,17 +194,22 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
 
 describe("compiler/emit/filter — methods and operators", () => {
   it("lowers the boolean methods to their indexable forms", () => {
-    // Containment for an array value, substring for a string one — JavaScript reads
-    // `.includes` both ways, and a bare field path proves neither.
-    expect(filter('$.tags.includes("x")')).toEqual({
-      $or: [{ tags: { $eq: "x", $type: "array" } }, { tags: { $regex: "x" } }],
-    });
+    // A query document is read through an INDEX, so `.includes` is MongoDB's own
+    // "equals, or is an array containing". The substring reading a string receiver
+    // has is the expression road's, and `.match(/x/)` the query spelling for it.
+    expect(filter('$.tags.includes("x")')).toEqual({ tags: "x" });
     expect(filter('["a", "b"].includes($.s)')).toEqual({ s: { $in: ["a", "b"] } });
     expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/ } });
     // `\z` is the end of the SUBJECT. PCRE's `$` also matches before a final newline,
     // so it accepted "z.\n" where JavaScript's endsWith does not.
     expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/ } });
     expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i } });
+    // The operator form, not the shorter `{ s: /^a/i }`. MEASURED, the two select the
+    // same documents at every query site, and the operator form is the one that
+    // survives where they differ — both of which jsmql emits into: a sibling on the
+    // same field, and `$elemMatch`, which needs an object.
+    expect(filter('$.s.match(/^a/i) && $.s !== "zzz"')).toEqual({ s: { $regex: /^a/i, $ne: "zzz" } });
+    expect(filter("$.items.some(i => i.s.match(/^a/))")).toEqual({ items: { $elemMatch: { s: { $regex: /^a/ } } } });
     // `.some` IS the element test, so `$elemMatch` is its own reading; the element's
     // own fields take the rule again.
     expect(filter("$.items.some(i => i.q > 2)")).toEqual({ items: { $elemMatch: { q: { $gt: 2 } } } });

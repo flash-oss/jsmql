@@ -49,8 +49,6 @@ const AGREE: readonly string[] = [
   'typeof $.a === "string"',
   "$.n.v > 1",
   "$.n.v === null",
-  '$.tags.includes("vip")',
-  '$.tags.includes("a") && $.tags.includes("b")',
   // a path INSIDE an element body takes the rule again, prefix and all
   // a `.some` receiver is a path too: an array at its PREFIX is absent, where `.some` throws
   // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
@@ -64,8 +62,19 @@ const AGREE: readonly string[] = [
 const ARRAY_RULE =
   "MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. jsmql emits the query a MongoDB developer writes by hand — `{ a: { $gt: 18 } }` — so the server's own rules apply and the array documents are selected where JavaScript reads one value. Containment has its own spelling (`.includes(x)`), an element test has `.some(e => …)`.";
 
+/**
+ * A query document is read through an INDEX, so `.includes` emits the indexable
+ * form and MongoDB's own reading of it applies. The substring reading a string
+ * receiver has belongs to the expression road, where no index is at stake, and to
+ * `.match(/x/)`, the query spelling that asks for it.
+ */
+const INDEXABLE_INCLUDES =
+  "A query document is what an index is read through, so `.includes(x)` emits `{ f: x }` \u2014 MongoDB's \"equals, or is an array containing\" \u2014 which selects an array holding the needle and a field equal to it, and not a string that merely CONTAINS it. The substring reading is the expression road's (`jsmql.expr`), and `.match(/x/)` is the query spelling for it.";
+
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
+  { src: '$.tags.includes("vip")', why: INDEXABLE_INCLUDES },
+  { src: '$.tags.includes("a") && $.tags.includes("b")', why: INDEXABLE_INCLUDES },
   { src: "$.a === 1", why: ARRAY_RULE },
   { src: "$.a !== 1", why: ARRAY_RULE },
   { src: "$.a === null", why: ARRAY_RULE },

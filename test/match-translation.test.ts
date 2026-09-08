@@ -307,14 +307,14 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
 });
 
 describe("$match translation — .includes() → $in / array-element", () => {
-  // Two query-position forms; both index-friendly. The first leans on
-  // MongoDB's "field value or array containing value" semantics; the second
-  // is straightforward set-membership.
+  // Two query-position forms; both index-friendly. The first IS MongoDB's
+  // "field value, or array containing value" — which is what `.includes` asks
+  // on an array; the second is straightforward set-membership. A string that
+  // merely CONTAINS the needle is the expression road's reading, and `.match`
+  // is the query spelling for it.
 
   it("translates `field.includes(<literal>)` to an implicit array-element match", () => {
-    expect(jsmql('[$match($.tags.includes("vip"))]')).toEqual([
-      { $match: { $or: [{ tags: { $eq: "vip", $type: "array" } }, { tags: { $regex: "vip" } }] } },
-    ]);
+    expect(jsmql('[$match($.tags.includes("vip"))]')).toEqual([{ $match: { tags: "vip" } }]);
   });
 
   it("translates `[lit,lit,…].includes(field)` to `$in`", () => {
@@ -324,9 +324,7 @@ describe("$match translation — .includes() → $in / array-element", () => {
   });
 
   it("uses dotted paths for nested receivers", () => {
-    expect(jsmql('[$match($.user.roles.includes("admin"))]')).toEqual([
-      { $match: { $or: [{ "user.roles": { $eq: "admin", $type: "array" } }, { "user.roles": { $regex: "admin" } }] } },
-    ]);
+    expect(jsmql('[$match($.user.roles.includes("admin"))]')).toEqual([{ $match: { "user.roles": "admin" } }]);
   });
 
   it("falls through to $expr when both sides are field paths", () => {
@@ -831,40 +829,19 @@ describe("$match translation — % N === M → $mod", () => {
 describe("$match translation — $all folding from .includes && .includes", () => {
   it("folds two `.includes` on the same field into `$all`", () => {
     expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b"))]')).toEqual([
-      {
-        $match: {
-          $or: [
-            { tags: { $all: ["a", "b"], $type: "array" } },
-            { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] },
-          ],
-        },
-      },
+      { $match: { tags: { $all: ["a", "b"] } } },
     ]);
   });
 
   it("folds three-or-more includes", () => {
     expect(jsmql('[$match($.tags.includes("a") && $.tags.includes("b") && $.tags.includes("c"))]')).toEqual([
-      {
-        $match: {
-          $or: [
-            { tags: { $all: ["a", "b", "c"], $type: "array" } },
-            { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }, { tags: { $regex: "c" } }] },
-          ],
-        },
-      },
+      { $match: { tags: { $all: ["a", "b", "c"] } } },
     ]);
   });
 
   it("does NOT fold when fields differ — each .includes lands as its own clause", () => {
     expect(jsmql('[$match($.tags.includes("a") && $.colors.includes("red"))]')).toEqual([
-      {
-        $match: {
-          $and: [
-            { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }] },
-            { $or: [{ colors: { $eq: "red", $type: "array" } }, { colors: { $regex: "red" } }] },
-          ],
-        },
-      },
+      { $match: { tags: "a", colors: "red" } },
     ]);
   });
 
@@ -872,7 +849,7 @@ describe("$match translation — $all folding from .includes && .includes", () =
     // The user can reorder to enable the fold; the un-folded form has
     // identical semantics on array-valued fields, so this isn't a footgun.
     expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
-      { $match: { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }], age: { $gt: 18 } } },
+      { $match: { tags: "a", age: { $gt: 18 } } },
     ]);
   });
 });
