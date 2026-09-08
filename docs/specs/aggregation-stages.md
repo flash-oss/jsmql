@@ -69,8 +69,8 @@ and a `$match` whose body is an **object literal** is read through the filter ro
 
 ```js
 $.t = $$$.orders.$match({ userId: $._id });
-// → { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "t" } }
+// → { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }
+//   — one correlated equality and nothing else is the pair, whichever way it is spelled
 
 $.t = $$$.orders.$match({ qty: { $gte: $.min } });
 // → { $lookup: { from: "orders", let: { jsmql_f0_min: "$min" },

@@ -161,9 +161,47 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
   };
 }
 
-/** The stage, keys in reading order: from, let, pipeline, as. */
+/**
+ * One correlated equality and nothing else IS the `localField`/`foreignField` pair.
+ *
+ * `{ let: { v: "$_id" }, pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v"] } } }] }`
+ * and `{ localField: "_id", foreignField: "uid" }` select the same documents, and the
+ * second is the join MongoDB's own documentation is written in: it is the form the
+ * planner answers straight from the foreign index, and the form a reader recognises.
+ * Anything more than the one equality — a second clause, another link, a body that
+ * reads more than one outer field — keeps the pipeline, because only the pipeline
+ * can express it.
+ */
+function compactPair(l: Lookup): { localField: string; foreignField: string } | null {
+  if (l.let === null || l.pipeline.length !== 1) return null;
+  const vars = Object.entries(l.let);
+  if (vars.length !== 1) return null;
+  const [name, read] = vars[0];
+  if (typeof read !== "string" || !read.startsWith("$") || read.startsWith("$$")) return null;
+  const match = (l.pipeline[0] as { $match?: Record<string, unknown> }).$match;
+  if (match === undefined || Object.keys(match).length !== 1) return null;
+  const eq = (match.$expr as { $eq?: unknown } | undefined)?.$eq;
+  if (!Array.isArray(eq) || eq.length !== 2) return null;
+  const variable = `$$${name}`;
+  const foreign = eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null;
+  if (typeof foreign !== "string" || !foreign.startsWith("$") || foreign.startsWith("$$")) return null;
+  return { localField: read.slice(1), foreignField: foreign.slice(1) };
+}
+
+/** The stage, keys in reading order: from, localField/foreignField or let/pipeline, as. */
 export function lookupStage(l: Lookup, as: string): Stage {
   const body: Record<string, unknown> = { from: l.from };
+  // A `.find` keeps the pipeline for its `{ $limit: 1 }`: the compact form has nowhere
+  // to put it, and without it the server materialises EVERY match before the first is
+  // taken — MEASURED, 110 matching documents of 1 MB each answer Location4568,
+  // "Total size of documents in <coll> matching pipeline's $lookup exceeds 104857600 bytes".
+  const pair = l.one === "find" ? null : compactPair(l);
+  if (pair !== null) {
+    body.localField = pair.localField;
+    body.foreignField = pair.foreignField;
+    body.as = as;
+    return { $lookup: body };
+  }
   if (l.let !== null) body.let = l.let;
   body.pipeline = l.pipeline;
   body.as = as;

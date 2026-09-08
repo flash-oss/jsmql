@@ -98,8 +98,7 @@ jsmql("$.age > 18 && $.status === 'active'");
 
 // `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
-// → { method: { $eq: "postalDelivery", $not: { $type: "array" } },
-//     createdAt: { $gte: <Date 2026-01-01>, $not: { $type: "array" } } }
+// → { method: "postalDelivery", createdAt: { $gte: <Date 2026-01-01> } }
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
@@ -657,13 +656,21 @@ The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documente
 
 **Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**One route: `let` + `pipeline` + `$expr`.** Every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. jsmql never emits `localField` / `foreignField`: that form matches *any element* of an array field on either side, where the JavaScript `===` compares the two values themselves — and the pipeline form still uses the foreign collection's index (measured).
+**One correlated equality is the pair.** A predicate that says exactly one thing — this field equals that one — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has).
+
+Anything more is `let` + `pipeline` + `$expr`: every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. The pipeline form uses the foreign collection's index too (measured).
 
 ```js
-// An equality predicate
+// One equality — the compact join, in either spelling
 $.orders = $$$.orders.filter(o => o.userId === $._id);
+$.orders = $$$.orders.filter({ userId: $._id });
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
+
+// A second condition needs the sub-pipeline
+$.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 // → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "orders" } }]
+//                 pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+//                 as: "paid" } }]
 
 // .find stops at the first match ($limit 1) and unwraps it, so the slot holds one document or nothing
 $.user = $$$.users.find(u => u._id === $.userId);
@@ -754,8 +761,7 @@ Only `coll.length` is available (a stream has no array to index/iterate), and th
 let nOrders = $$$.orders.filter(o => o.userId === $._id).length;
 $.n = nOrders;
 // → [
-//     { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "__jsmql.tmp.0" } },
+//     { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
 //     { $set: { "__jsmql.var.nOrders": { $size: "$__jsmql.tmp.0" } } },
 //     { $set: { n: "$__jsmql.var.nOrders" } },
 //     { $unset: "__jsmql" }
@@ -1046,16 +1052,16 @@ changes the count or drops the field (`$match`, `$group`, `$unwind`, `$project`,
 **`$$` is always the ROOT stream — at any nesting depth.** Mirroring `$` (the
 root document), `$$` is the top-level stream even when you read `$$.length`
 *inside* a `$lookup` sub-pipeline. There jsmql materialises the root count at the
-top and passes it into the lookup automatically via `$lookup.let` (as `jsmql_s0_length`),
-so it reads back correctly:
+top and passes it into the lookup automatically — as the `localField` when the
+predicate is one equality, and as a `$lookup.let` correlation variable
+(`jsmql_s0_length`) otherwise — so it reads back correctly:
 
 ```js
 // "this user's recent-order count vs the total recent-user count"
 jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
 // → [
 //     { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-//     { $lookup: { from: "users", let: { jsmql_s0_length: "$__jsmql.length" },
-//         pipeline: [{ $match: { $expr: { $eq: ["$orderCount", "$$jsmql_s0_length"] } } }], as: "peers" } },
+//     { $lookup: { from: "users", localField: "__jsmql.length", foreignField: "orderCount", as: "peers" } },
 //     { $unset: "__jsmql" }
 //   ]
 ```
@@ -2975,9 +2981,9 @@ jsmql("$ = $.lineItems;")
 //   that takes an array: '$$ = <array>;' …
 ```
 
-A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan a field out, name the stream and spread it: `$$ = [...$.items]`.
+A **bare field ref is not** provably an array (field paths carry no compile-time type), so `$ = $.items` stays a single-doc `$replaceWith`. To fan a field out, name the stream: `$$ = $.items` and `$$ = [...$.items]` are the same three stages.
 
-An array LITERAL on the stream is a different operation: `$$ = [{ … }, { … }]` is `$documents`, a source stage that replaces the whole stream with those documents and must stand first. The fan-out reading belongs to an array the data decides, one answer per input document.
+An array LITERAL of documents on the stream is a different operation: `$$ = [{ … }, { … }]` names the stream's documents outright — every document dropped, the new ones unioned in — wherever in the program it stands. The fan-out reading belongs to an array the data decides, one answer per input document.
 
 **Conditional drop falls out for free.** `$unwind` emits nothing for an empty array, so fanning out a possibly-empty array drops exactly the documents whose array came out empty and fans out the rest.
 
@@ -3191,8 +3197,7 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 
 ```js
 $.n = $$$.orders.filter({ userId: $._id }).length;   // ≡ .filter(o => o.userId === $._id)
-// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                 pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "__jsmql.tmp.0" } },
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
 //    { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }]  — the same $lookup either way
 ```
 

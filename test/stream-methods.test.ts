@@ -1001,14 +1001,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
   it("array-valued .filter lookup inside .map body uses the pipeline-form $lookup (no $first wrap)", () => {
     expect(jsmql("$$ = $$.map(d => ({ id: d._id, items: $$$.archive.filter(x => x.userId === d._id) }));")).toEqual([
-      {
-        $lookup: {
-          from: "archive",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "archive", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $replaceWith: { id: "$_id", items: "$__jsmql.tmp.0" } },
     ]);
   });
@@ -1572,17 +1565,25 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
   });
 
   it("single-doc ArrayLiteral at stage 0 lowers to `$documents` (seeder sugar)", () => {
-    expect(jsmql("$$ = [{ x: 1 }];")).toEqual([{ $documents: [{ x: 1 }] }]);
+    expect(jsmql("$$ = [{ x: 1 }];")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ x: 1 }] }] } },
+    ]);
   });
 
   it("multi-element ArrayLiteral at stage 0 lowers to `$documents`", () => {
-    expect(jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toEqual([{ $documents: [{ a: 1 }, { b: 2 }] }]);
+    expect(jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { b: 2 }] }] } },
+    ]);
   });
 
-  it("multi-element ArrayLiteral mid-pipeline points at `$$.push` as the seeder alternative", () => {
-    expect(() => jsmql("$match($.active === true); $$ = [{ a: 1 }, { b: 2 }];")).toThrow(
-      "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
-    );
+  it("multi-element ArrayLiteral mid-pipeline drops what came before and starts again", () => {
+    expect(jsmql("$match($.active === true); $$ = [{ a: 1 }, { b: 2 }];")).toEqual([
+      { $match: { active: true } },
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { b: 2 }] }] } },
+    ]);
   });
 });
 

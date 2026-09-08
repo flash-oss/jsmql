@@ -475,6 +475,13 @@ type MongoSpec<
   /** Containers this may not appear inside — by registry KEY, dollar included. */
   forbiddenIn?: F;
   /**
+   * The way out the container refusal names. A stage that belongs to the OUTER
+   * pipeline needs none — the refusal says so already. A stage that has no place
+   * in a collection's pipeline at all states the spelling that does the same job,
+   * so the refusal never sends the reader somewhere the server also refuses.
+   */
+  insteadOfContainer?: string;
+  /**
    * The operators whose BODY accepts this name, PER POSITION. A name listed here
    * is never valid on its own in that position — measured both ways:
    *   { loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }   accepted
@@ -5070,6 +5077,12 @@ export const NAMES = {
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
+    // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
+    // collection, and refuses it in every other body. jsmql writes that one shape
+    // from `$$.push(…)`, so the refusal names the sugar rather than a stage
+    // position the server would refuse in its turn.
+    insteadOfContainer:
+      "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
     filter: unsupported(
       "'$documents' is a pipeline stage, not a filter predicate — a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$documents(…);') or as a chain link ('$$.$documents(…)').",
     ),

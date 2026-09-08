@@ -9,14 +9,7 @@ import { truthy } from "./truthy.ts";
 describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   it(".filter assigns the array directly to the LHS slot", () => {
     expect(jsmql("$.orders = $$$.orders.filter(o => o.userId === $._id);")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "orders",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
     ]);
   });
 
@@ -36,14 +29,7 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
 
   it("bracket-form collection name: $$$['orders']", () => {
     expect(jsmql(`$.orders = $$$["my-orders"].filter(o => o.userId === $._id);`)).toEqual([
-      {
-        $lookup: {
-          from: "my-orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "orders",
-        },
-      },
+      { $lookup: { from: "my-orders", localField: "_id", foreignField: "userId", as: "orders" } },
     ]);
   });
 
@@ -53,14 +39,7 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
     // localField comes out as `.ext-code` (leading dot), which mongod rejects
     // (Location15998). Verified against a live mongod.
     expect(jsmql(`$.x = $$$.orders.filter(o => o.ref === $["ext-code"]);`)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0_ext_code: "$ext-code" },
-          pipeline: [{ $match: { $expr: { $eq: ["$ref", "$$jsmql_f0_ext_code"] } } }],
-          as: "x",
-        },
-      },
+      { $lookup: { from: "orders", localField: "ext-code", foreignField: "ref", as: "x" } },
     ]);
   });
 
@@ -334,14 +313,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .length on .filter produces $size + slot writeback", () => {
     const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).length;");
     expect(out).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.var.n": { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
@@ -350,14 +322,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
   it("chained .reduce on .filter folds with the user's lambda", () => {
     const out = jsmql("let total = $$$.tx.filter(t => t.userId === $._id).reduce((acc, t) => acc + t.amount, 0);");
     expect(out).toEqual([
-      {
-        $lookup: {
-          from: "tx",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "tx", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       {
         $set: {
           "__jsmql.var.total": {
@@ -583,14 +548,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         $lookup: {
           from: "a",
           pipeline: [
-            {
-              $lookup: {
-                from: "b",
-                let: { jsmql_f1_x: "$x" },
-                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$jsmql_f1_x"] } } }],
-                as: "__jsmql.tmp.0",
-              },
-            },
+            { $lookup: { from: "b", localField: "x", foreignField: "x", as: "__jsmql.tmp.0" } },
             { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
             { $unset: "__jsmql" },
           ],
@@ -652,14 +610,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
           from: "posts",
           let: { jsmql_f0__id: "$_id" },
           pipeline: [
-            {
-              $lookup: {
-                from: "tags",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$postId", "$$jsmql_f1__id"] } } }],
-                as: "__jsmql.tmp.0",
-              },
-            },
+            { $lookup: { from: "tags", localField: "_id", foreignField: "postId", as: "__jsmql.tmp.0" } },
             {
               $match: {
                 $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] },
@@ -684,7 +635,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     expect(middle.pipeline[0].$lookup).toBeDefined();
     const innermost = middle.pipeline[0].$lookup as { from: string; let: Record<string, string>; pipeline: object[] };
     expect(innermost.from).toBe("c");
-    expect(innermost.let).toEqual({ jsmql_f2_x: "$x" });
+    expect(innermost.let).toEqual(undefined);
   });
 
   it("inner lookup with a non-trivial predicate (compound &&) still extracts let-vars correctly", () => {
@@ -756,14 +707,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
         $lookup: {
           from: "users",
           pipeline: [
-            {
-              $lookup: {
-                from: "orders",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$jsmql_f1__id"] } } }],
-                as: "__jsmql.tmp.0",
-              },
-            },
+            { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "__jsmql.tmp.0" } },
             { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
             { $sort: { name: 1 } },
             { $unset: "__jsmql" },
@@ -784,14 +728,7 @@ describe("$$$.coll.find/filter — interactions with other features", () => {
     `);
     expect(out).toEqual([
       { $set: { a: 1 } },
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "orders",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
       { $set: { b: 2 } },
     ]);
   });
@@ -860,14 +797,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
 
   it('a terminal .map("field") string shorthand extracts a scalar array (was invalid $replaceWith)', () => {
     expect(jsmql('$.userIds = $$$.orders.filter(o => o.uid === $.id).map("userId");')).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0_id: "$id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$jsmql_f0_id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "id", foreignField: "uid", as: "__jsmql.tmp.0" } },
       { $set: { userIds: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.userId" } } } },
       { $unset: "__jsmql" },
     ]);
@@ -880,14 +810,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     // whole chain instead routes to the expression form: the sub-pipeline is just
     // the `.filter`'s `$match`, and map+slice run value-mode over the result array.
     expect(jsmql('$.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").slice(0, 3);')).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $set: { r: { $slice: [{ $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.productIds" } }, 3] } } },
       { $unset: "__jsmql" },
     ]);
@@ -895,14 +818,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
 
   it("a mid-chain .map('field') feeding value methods (.flatten().uniq()) collapses to a value-mode expression", () => {
     expect(jsmql('$.r = $$$.orders.filter(o => o.userId === $._id).map("productIds").flatten().uniq();')).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       {
         $set: {
           r: {
@@ -2050,26 +1966,8 @@ describe("chained stage calls on $$$.<coll>", () => {
     // predicate, so it normalises to `filter` in `detectLookupCall` and earns the
     // same indexed basic form, not a correlated sub-pipeline.
     const stageLink = jsmql("$.t = $$$.orders.$match({ userId: $._id });");
-    expect(stageLink).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "t",
-        },
-      },
-    ]);
-    expect(stageLink).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "t",
-        },
-      },
-    ]);
+    expect(stageLink).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }]);
+    expect(stageLink).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } }]);
   });
 
   // Uncorrelated terms stay in index-friendly query form; only the correlated
@@ -2141,14 +2039,7 @@ describe("chained stage calls on $$$.<coll>", () => {
   // `$$vars` DO resolve inside it — the guard must not fire there.
   it("allows an outer-document read inside the $expr escape hatch", () => {
     expect(jsmql('$.t = $$$.orders.$match({ $expr: { $eq: ["$userId", $._id] } });')).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "t",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "t" } },
     ]);
   });
 
@@ -2156,14 +2047,7 @@ describe("chained stage calls on $$$.<coll>", () => {
   // had emitted the silently-empty raw query form since it shipped.
   it("correlates a query-document $match inside an .aggregate(...) block", () => {
     expect(jsmql("$.orders = $$$.orders.aggregate((o) => { $match({ userId: $._id }); });")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "orders",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } },
     ]);
   });
 
@@ -2203,7 +2087,7 @@ describe("chained stage calls on $$$.<coll>", () => {
 
   it("rejects a must-be-first stage that isn't first in the chain", () => {
     expect(() => jsmql("$.t = $$$.orders.$match({ a: 1 }).$documents([{ x: 1 }]);")).toThrow(
-      "'$documents' cannot stand inside '$lookup' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$documents' cannot stand inside '$lookup' — the server refuses this stage in that body. Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
     );
   });
 

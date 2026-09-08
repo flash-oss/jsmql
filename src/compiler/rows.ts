@@ -449,6 +449,11 @@ export function forbiddenInOf(name: string): readonly string[] {
   return (row(name) as { forbiddenIn?: readonly string[] } | undefined)?.forbiddenIn ?? [];
 }
 
+/** The way out a container refusal names, when the outer pipeline is not it. */
+export function insteadOfContainerOf(name: string): string | undefined {
+  return (row(name) as { insteadOfContainer?: string } | undefined)?.insteadOfContainer;
+}
+
 /** The extra rules a row states that no renderer implies — where a stage may stand. */
 /** Does the stage's sub-pipeline run over another collection's documents? */
 /** On a stream of documents, does this method pick ONE — `.find`? The stream row it runs as, or null. */

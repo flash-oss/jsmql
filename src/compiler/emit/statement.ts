@@ -21,6 +21,7 @@ import {
   everyStageName,
   forbiddenInOf,
   immutableTwinOf,
+  insteadOfContainerOf,
   mutatorFormOf,
   isStageName,
   onlyOf,
@@ -309,19 +310,37 @@ function isInclusion(body: unknown): boolean {
   return entries.length > 0 && entries.every(([, v]) => v === 1 || v === true);
 }
 
+/** The stage that makes documents out of literal values — the row `$$ = […]` is sugar for. */
+const DOCUMENTS = "$documents";
+
+/** Does the bracketed list hold a `...` spread? Then its elements are not the documents. */
+const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
+  list.elements.some((e) => e.type === "SpreadElement");
+
 /**
- * `$$ = [{ … }, { … }]` — the stream starts from a literal list of documents:
- * `$documents`, a source stage that must stand first. The empty list is a
- * stream of nothing, which needs no source stage. A list holding a `$$.reduce`
- * is the reducer WRAP, a different road.
+ * `$$ = [{ … }, { … }]` — the stream starts from a literal list of documents.
+ *
+ * `$documents` is the stage that makes them, and MEASURED it runs only on a
+ * database-level aggregation: `db.coll.aggregate([{ $documents: […] }])` answers
+ * "'$documents' can only be run with database or cluster-level aggregation".
+ * jsmql's pipelines go to `db.coll.aggregate`, so the list arrives the way the
+ * source switch already arrives — every document dropped, then the new ones
+ * unioned in. The empty list is that first half on its own. A list holding a
+ * `$$.reduce` is the reducer WRAP, a different road.
  */
-function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, first: boolean): Stage[] {
+function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env): Stage[] {
   // `$$ = [{ k: $$.reduce(…) }]` — the stream folded to one document.
   if (isReduceWrap(list)) return reduceWrapStages(list);
   if (holdsStreamReduce(list)) throw E.reduceWrapMisplaced(list.pos);
-  if (list.elements.length === 0) return [{ $match: { $expr: false } }];
-  const call = { type: "OperatorCall", name: "$documents", args: [list], pos: list.pos } as unknown as Expr;
-  return stageStatement(call, env, first);
+  const dropAll: Stage = { $match: { $expr: false } };
+  if (list.elements.length === 0) return [dropAll];
+  // The sugar IS the stage call, so the row judges the list: `$$ = [{ a: 1 }, 5]`
+  // meets the same element rule `$documents([{ a: 1 }, 5])` meets.
+  const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
+  checkSlots("$$ = [ … ]", sel.rule.args, [list], false);
+  const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
+  return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS]: documents }] } }];
 }
 
 /**
@@ -335,7 +354,9 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
 function place(name: string, stage: Stage, env: Env, first: boolean, pos: number): Stage[] {
   const only = onlyOf(name);
   for (const boundary of env.site.boundaries) {
-    if (forbiddenInOf(name).includes(boundary.stage)) throw E.forbiddenInContainer(name, boundary.stage, pos);
+    if (forbiddenInOf(name).includes(boundary.stage)) {
+      throw E.forbiddenInContainer(name, boundary.stage, pos, insteadOfContainerOf(name));
+    }
   }
   if (only.includes("stageFirst") && !first) throw E.mustBeFirstStage(name, pos);
   if (only.includes("stageLast")) {
@@ -506,7 +527,10 @@ const KIND_NOUN: Readonly<Record<string, string>> = {
   string: "a string",
   bool: "a boolean",
   array: "an array",
+  object: "a document",
   date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
   null: "null",
 };
 
@@ -570,8 +594,11 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw E.cannotDeleteRoot(op.pos);
       flush();
-      if (op.value.type === "ArrayLiteral") {
-        out.push(...documentsStages(op.value, inner, first && out.length === 0));
+      // A bracketed list of literal DOCUMENTS names the stream's documents. A list
+      // holding anything else — a spread, a value — is an array like any other, and
+      // its ELEMENTS become the documents, the same as `$$ = $.items;`.
+      if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
+        out.push(...documentsStages(op.value, inner));
         continue;
       }
       // `$$ = <array>` starts the stream from the array's elements, one document
@@ -583,7 +610,16 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       const chainOn = chainBase(op.value) as { type: string };
       const streamRoad =
         chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn as Expr, inner);
-      if (!streamRoad && kindOf(op.value, inner) === "array") {
+      // Any value that is not a chain is read as the ARRAY it must be: `$$ = $.items;`,
+      // `$$ = [...$.items];` and `$$ = Object.entries($.scores);` are one road, because
+      // they say one thing — the stream is these elements, one document each. A kind
+      // the registry PROVES is not a list says something else, and MEASURED the server
+      // refuses it: `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
+      // answers "'replacement document' must evaluate to an object".
+      const kind = !streamRoad ? kindOf(op.value, inner) : "stream";
+      if (kind !== "stream" && kind !== "array" && kind !== "unknown")
+        throw E.notAStreamChain(op.value.pos, KIND_NOUN[kind] ?? `a ${kind}`);
+      if (kind !== "stream") {
         const slot = inner.chain.slot();
         // The position pass marks this edge STREAM, because `$$ = <chain>` is the usual
         // spelling here; an array is a VALUE, and is read as one.

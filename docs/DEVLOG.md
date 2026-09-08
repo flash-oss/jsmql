@@ -10,6 +10,57 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — feat!: the join a developer writes, and a list of documents that runs
+
+Three shapes changed, all measured on mongod.
+
+**The compact join is back.** One correlated equality and nothing else is now
+`localField` / `foreignField` — the join every MongoDB developer reads and writes,
+and the one the planner reads straight off the foreign index. A second condition, a
+comparison that is not an equality, or a `.find` (whose `{ $limit: 1 }` needs a
+pipeline) keeps `let` + `pipeline` + `$expr`. Both spellings of the one equality
+reach the same stage:
+
+```
+$.o = $$$.orders.filter(o => o.uid === $._id);   → { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "o" } }
+$.o = $$$.orders.filter({ uid: $._id });         → the same stage
+```
+
+The two forms select different documents where a field is missing or holds an
+array, MEASURED: the pair reads a missing field as null and matches an array
+element-wise, where `$expr` compares the two values themselves. That is the same
+boundary a query document has, so the two now say one thing (see the entry below).
+
+**`$$ = [{ … }, { … }]` runs.** It emitted `[{ $documents: […] }]`, and MEASURED
+`db.coll.aggregate([{ $documents: […] }])` answers "'$documents' can only be run
+with database or cluster-level aggregation". jsmql's pipelines go to a collection,
+so the list now arrives the way a source switch already arrives — every document
+dropped, the new ones unioned in:
+
+```
+$$ = [{ a: 1 }, { a: 2 }];   → [{ $match: { $expr: false } },
+                                { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } }]   → [{a:1},{a:2}]
+```
+
+Nothing in that pair is placed, so the list reads the same anywhere in the program:
+written after other statements it drops what they produced and starts again, and
+the refusal that said it "has to be the FIRST stage" is gone. The `$documents` row's
+element rule still judges the list, under the name the source wrote
+(`'$$ = [ … ]' element 2 expects a document, but got a number`).
+
+**A spread list of one array is that array.** `$$ = [...$.items]` says what
+`$$ = $.items` says, and now emits it — a scratch slot, `$unwind`, `$replaceWith`.
+The value road that carries it refuses a kind the registry proves is one value:
+`$$ = 5` emitted `$unwind` over a number, which the server refuses
+("'replacement document' must evaluate to an object"), and now names every right
+side the stream takes instead.
+
+`$documents` also gained an `insteadOfContainer` row fact. The container refusal
+used to send the reader to "the outer pipeline", where the server refuses it in its
+turn; it now names `$$.push({ … })` and `$$ = [{ … }]`, which work.
+
+---
+
 ## 2026-09-08 — fix!: a query document is the plain one
 
 Every field comparison carried an array exclusion:

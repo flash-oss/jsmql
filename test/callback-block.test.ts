@@ -106,27 +106,9 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
 describe("a stage-free callback block is the JavaScript value form", () => {
   it("`{ return <pred> }` is the predicate — same MQL as the expression body", () => {
     const block = jsmql(`$.r = $$$.orders.filter(o => { return o.userId === $._id; });`);
-    expect(block).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "r",
-        },
-      },
-    ]);
+    expect(block).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "r" } }]);
     // …and it really is the indexed basic form, not a dropped predicate.
-    expect(block).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "r",
-        },
-      },
-    ]);
+    expect(block).toEqual([{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "r" } }]);
   });
 
   it("`{ return <pred> }` on `.find` keeps the scalar-or-null unwrap", () => {
@@ -237,14 +219,7 @@ describe("the `$$ =` source switch folds a callback block before it classifies",
   // pass an equality check against another broken form but match every document.
   it("keeps the predicate in the emitted sub-pipeline", () => {
     expect(jsmql("$$ = $$$.orders.filter(o => { return o.uid === $._id; });")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);

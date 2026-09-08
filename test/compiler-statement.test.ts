@@ -342,13 +342,24 @@ describe("compiler/emit/statement — bindings between stages", () => {
   });
 
   it("starts the stream from a literal list of documents", () => {
-    // `$documents` is a source stage: first, and its elements are documents
-    expect(compiled("$$ = [{ a: 1 }, { a: 2 }];")).toEqual([{ $documents: [{ a: 1 }, { a: 2 }] }]);
-    expect(compiled("$$ = [{ a: 1 }]; $.b = 2;")).toEqual([{ $documents: [{ a: 1 }] }, { $set: { b: 2 } }]);
-    // an empty list is a stream of nothing, which needs no source stage
+    // MEASURED: `db.coll.aggregate([{ $documents: […] }])` answers "'$documents' can
+    // only be run with database or cluster-level aggregation", and jsmql's pipelines
+    // go to a collection. So the list arrives the way a source switch arrives — every
+    // document dropped, the new ones unioned in — and it reads the same anywhere in
+    // the program, not only first.
+    const fanOut = (docs: unknown[]) => [
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: docs }] } },
+    ];
+    expect(compiled("$$ = [{ a: 1 }, { a: 2 }];")).toEqual(fanOut([{ a: 1 }, { a: 2 }]));
+    expect(compiled("$$ = [{ a: 1 }]; $.b = 2;")).toEqual([...fanOut([{ a: 1 }]), { $set: { b: 2 } }]);
+    // an empty list is a stream of nothing, which needs no source at all
     expect(compiled("$$ = [];")).toEqual([{ $match: { $expr: false } }]);
-    expect(() => pipeline("$.b = 1; $$ = [{ a: 1 }];")).toThrow(/has to be the FIRST stage/);
-    expect(() => pipeline("$$ = [{ a: 1 }, 5];")).toThrow(/expects a document, but got a number/);
+    expect(compiled("$.b = 1; $$ = [{ a: 1 }];")).toEqual([{ $set: { b: 1 } }, ...fanOut([{ a: 1 }])]);
+    // the row's element rule judges the sugar, under the name the source wrote
+    expect(() => pipeline("$$ = [{ a: 1 }, 5];")).toThrow(
+      /'\$\$ = \[ … \]' element 2 expects a document, but got a number/,
+    );
     // the reducer wrap is a different road, not built yet
     // a list holding a fold of the stream is the reducer wrap: one `$group`
     expect(compiled("$$ = [{ n: $$.reduce((acc, d) => acc + 1, 0) }];")).toEqual([

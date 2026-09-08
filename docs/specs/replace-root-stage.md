@@ -142,9 +142,23 @@ STREAM road whatever kind its last link returns — a `$lookup` yields an array,
 `$$ = $$$.orders.filter(p)` is still a source switch. The array road is taken only
 when none of those holds.
 
-An array LITERAL is a third reading: `$$ = [{ … }, { … }]` is `$documents`, a source
-stage that replaces the whole stream and must stand first, and its element check is
-the `$documents` row's own body rule. The fan-out reading belongs to an array the
+An array LITERAL of documents is a third reading: `$$ = [{ … }, { … }]` names the
+stream's documents outright. `$documents` is the stage that makes them and MEASURED
+it runs only on a database-level aggregation, so the pair a collection's pipeline
+takes is the one a source switch already takes — every document dropped, the new
+ones unioned in:
+
+```
+$$ = [{ a: 1 }, { a: 2 }];
+→ [{ $match: { $expr: false } },
+   { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { a: 2 }] }] } }]
+```
+
+Nothing in that pair is placed, so the list reads the same anywhere in the program:
+written after other statements it drops what they produced and starts again. The
+empty list is the first half on its own. The element check is the `$documents` row's
+own rule, applied under the name the source wrote. A list holding a `...` spread is
+not this reading — its elements are not the documents — and neither is an array the
 data decides, which has one answer per input document.
 
 **Per-document drop is emergent, not a special case.** Default `$unwind` emits no

@@ -486,9 +486,9 @@ export const afterTerminalStage = (already: string, pos: number): CodegenError =
   );
 
 /** A stage written inside a container its row forbids. */
-export const forbiddenInContainer = (name: string, container: string, pos: number): CodegenError =>
+export const forbiddenInContainer = (name: string, container: string, pos: number, instead?: string): CodegenError =>
   new CodegenError(
-    `'${name}' cannot stand inside '${container}' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.`,
+    `'${name}' cannot stand inside '${container}' — the server refuses this stage in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
     pos,
   );
 
@@ -504,10 +504,10 @@ export const notAMongoType = (spelling: string, aliases: readonly string[], pos:
 
 // ── the stream road ──────────────────────────────────────────────────────────
 
-/** `$$ = <something that is not a chain on the stream>`. */
-export const notAStreamChain = (pos: number): CodegenError =>
+/** `$$ = <something that is neither a chain on the stream nor a list of documents>`. */
+export const notAStreamChain = (pos: number, noun?: string): CodegenError =>
   new CodegenError(
-    "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+    `'$$ = …' replaces the STREAM, so the right side has to be MANY documents${noun === undefined ? "" : ` — ${noun} is one value`}. Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').`,
     pos,
   );
 

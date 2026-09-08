@@ -209,7 +209,7 @@ inside keeps the truth road, whose own `$not` over one expression is already
 JavaScript's answer.
 
 Two measured facts hold the shape in place. The exclusion costs no index: `{ a: {
-$eq: 1, $not: { $type: "array" } } }` plans an IXSCAN over the bounds `[1, 1]`,
+$eq: 1 } }` plans an IXSCAN over the bounds `[1, 1]`,
 exactly as `{ a: 1 }` does — while a `$not` wrapped around the whole positive
 clause drops to a collection scan, which is why a negation is an `$or`. And the
 answer is compared with JavaScript's own, by evaluating the source in node over
@@ -331,7 +331,7 @@ placement its row states — a link after `$out` is refused exactly as a stateme
 after it is.
 
 ```js
-$$.filter(d => d.x > 1);          // → [{"$match":{"x":{"$gt":1,"$not":{"$type":"array"}}}}]
+$$.filter(d => d.x > 1);          // → [{"$match":{"x":{"$gt":1}}}]
 $$.map(d => ({ a: d.x }));        // → [{"$replaceWith":{"a":"$x"}}]
 $$.sortBy("x").take(2);           // → [{"$sort":{"x":1}},{"$limit":2}]
 $$.toSorted((a, b) => b.x - a.x); // → [{"$sort":{"x":-1}}]
@@ -384,26 +384,34 @@ index or collection parameter the stream cannot fill, a function inside its own
 body — is one `dropped` marker carrying the wording its read throws, so the
 reason is worded where the name was taken away and not guessed where it is
 read. `$$ = [ … ]` starts the
-stream from a literal list of documents (`$documents`, a source stage that must
-stand first); the empty list is a stream of nothing.
+stream from a literal list of documents — see docs/specs/replace-root-stage.md for
+the pair it emits and why; the empty list is a stream of nothing.
 
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
-(`emit/join.ts`). One route: `let` + `pipeline` + `$expr`, never `localField` /
-`foreignField`. The pipeline form compares the two fields' OWN values as
-JavaScript does — `1 === [1, 2]` is false, `undefined === undefined` is true,
-`undefined === null` is false — where the basic form reads null as missing and
-matches an array element-wise; and the pipeline form uses the foreign index too
-(measured on mongod 8.3.7: `indexesUsed`, keys examined = rows matched, `$limit: 1`
-examines one key per document). One route also means one meaning: the shipped
-compiler switched routes on a syntactic accident, and adding `&& o.status === "paid"`
-changed which documents matched.
+(`emit/join.ts`). **One correlated equality and nothing else** is the
+`localField` / `foreignField` pair — the join every MongoDB developer reads and
+writes, and the one the planner reads straight off the foreign index. The server's
+own rules then apply to it: a missing field counts as null, and an array matches
+element-wise. That is the same boundary a query document has (see
+docs/LANG_RULES.md), so the two say one thing.
+
+Everything else keeps `let` + `pipeline` + `$expr`: a second condition, a
+comparison that is not an equality, a correlated read the pair cannot name, and
+`.find` — whose `{ $limit: 1 }` needs a pipeline of its own (measured on mongod
+8.3.7 the pipeline form uses the foreign index too: `indexesUsed`, keys examined =
+rows matched, `$limit: 1` examines one key per document).
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id);
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
+$.orders = $$$.orders.filter({ userId: $._id });
+// → the same stage: the query spelling of one equality is the same join
+$.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 // → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//       pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }], as: "orders" } }]
+//       pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+//       as: "paid" } }]
 $.first = $$$.orders.find(o => o.userId === $._id);
 // → the same with `{ $limit: 1 }`, then { $set: { first: { $first: "$first" } } } — absent when nothing matched
 $.n = $$$.orders.filter(o => o.userId === $._id).length;

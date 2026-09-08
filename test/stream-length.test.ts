@@ -163,14 +163,7 @@ describe("$$.length — rejections", () => {
     // Verified end-to-end on a live mongod.
     expect(jsmql("$.peers = $$$.users.filter(u => u.n === $$.length);")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-      {
-        $lookup: {
-          from: "users",
-          let: { jsmql_s0_length: "$__jsmql.length" },
-          pipeline: [{ $match: { $expr: { $eq: ["$n", "$$jsmql_s0_length"] } } }],
-          as: "peers",
-        },
-      },
+      { $lookup: { from: "users", localField: "__jsmql.length", foreignField: "n", as: "peers" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -231,14 +224,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
           let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
           pipeline: [
             { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
-            {
-              $lookup: {
-                from: "shipments",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } }],
-                as: "__jsmql.tmp.0",
-              },
-            },
+            { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {

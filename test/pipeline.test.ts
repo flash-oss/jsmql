@@ -2,6 +2,12 @@ import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 import { truthy } from "./truthy.ts";
 
+/** `$$ = …` takes many documents; the refusal names every right side that gives them. */
+const WAYS =
+  "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').";
+const CHAIN = `'$$ = …' replaces the STREAM, so the right side has to be MANY documents. ${WAYS}`;
+const MSG = `'$$ = …' replaces the STREAM, so the right side has to be MANY documents — a number is one value. ${WAYS}`;
+
 describe("pipeline detection", () => {
   it("compiles a single-stage pipeline as an array", () => {
     expect(jsmql("[ { $limit: 10 } ]")).toEqual([{ $limit: 10 }]);
@@ -407,11 +413,18 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
   });
 
   it("fans out an array-literal of documents (one output doc per element)", () => {
-    expect(jsmql("[ $$ = [{ a: 1 }, { b: 2 }] ]")).toEqual([{ $documents: [{ a: 1 }, { b: 2 }] }]);
+    expect(jsmql("[ $$ = [{ a: 1 }, { b: 2 }] ]")).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ a: 1 }, { b: 2 }] }] } },
+    ]);
   });
 
   it("fans out a spread field (`$$ = [...$.items]`)", () => {
-    expect(jsmql("[ $$ = [...$.items] ]")).toEqual([{ $documents: "$items" }]);
+    expect(jsmql("[ $$ = [...$.items] ]")).toEqual([
+      { $set: { "__jsmql.tmp.0": "$items" } },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
   });
 
   it("fans out a provably-array expression (`.map`)", () => {
@@ -784,19 +797,22 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   it("`$$ = [{...}, {...}]` at stage 0 lowers to `$documents`", () => {
-    expect(jsmql(`$$ = [{ _id: 1 }, { _id: 2 }];`)).toEqual([{ $documents: [{ _id: 1 }, { _id: 2 }] }]);
+    expect(jsmql(`$$ = [{ _id: 1 }, { _id: 2 }];`)).toEqual([
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ _id: 1 }, { _id: 2 }] }] } },
+    ]);
   });
 
-  it("rejects `$$ = [docs]` mid-pipeline — `$documents` must be at stage 0", () => {
-    expect(() => jsmql(`$match($.active === true); $$ = [{ _id: 1 }];`)).toThrow(
-      "'$documents' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.",
-    );
+  it("`$$ = [docs]` mid-pipeline drops what came before and starts again", () => {
+    expect(jsmql(`$match($.active === true); $$ = [{ _id: 1 }];`)).toEqual([
+      { $match: { active: true } },
+      { $match: { $expr: false } },
+      { $unionWith: { pipeline: [{ $documents: [{ _id: 1 }] }] } },
+    ]);
   });
 
   it("rejects `$$ = <ternary>` (conditional stream branching is not a supported form)", () => {
-    expect(() => jsmql(`$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);`)).toThrow(
-      "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
-    );
+    expect(() => jsmql(`$$ = true ? $$.filter(o => o.x) : $$.filter(o => o.y);`)).toThrow(CHAIN);
   });
 
   it("rejects `$$ = $$$.<coll>.find(...)` and points at the `.slice(0, 1)` / `$ = $$$.<coll>.find` alternatives", () => {
@@ -845,14 +861,7 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
 
   it("`$$ = $$$.<coll>.filter(<correlatedPred>)` lowers to the `$lookup` pivot", () => {
     expect(jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id)`)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -871,18 +880,9 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
     // something to underline. Both spellings land on the same message and offset.
     const noSemi = jsmql.validate(`$$ = 5`);
     expect(noSemi.valid).toBe(false);
-    expect(noSemi.errors[0].message).toMatch(
-      "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
-    );
+    expect(noSemi.errors[0].message).toMatch(MSG);
     expect(noSemi.errors[0].pos).toBe(5);
-    expect(noSemi.errors).toEqual([
-      {
-        message:
-          "'$$ = …' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
-        pos: 5,
-        code: "CODEGEN_ERROR",
-      },
-    ]);
+    expect(noSemi.errors).toEqual([{ message: MSG, pos: 5, code: "CODEGEN_ERROR" }]);
   });
 
   it("never reaches the internal-error path", () => {
@@ -901,14 +901,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // `foreignField`). `$unwind` + `$replaceWith` turn the per-outer-doc
     // array of matches into the new stream.
     expect(jsmql(`$$ = $$$.users.filter(u => u._id === $.userId);`)).toEqual([
-      {
-        $lookup: {
-          from: "users",
-          let: { jsmql_f0_userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -1141,14 +1134,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // uses the materialised `__jsmql.var.uid` path directly. Index-friendly.
     expect(jsmql(`let uid = $.userId; $$ = $$$.users.filter(u => u._id === uid);`)).toEqual([
       { $set: { "__jsmql.var.uid": "$userId" } },
-      {
-        $lookup: {
-          from: "users",
-          let: { jsmql_v0_uid: "$__jsmql.var.uid" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_v0_uid"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -1157,14 +1143,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
   it("outer `let` binding works in expression-position lookup too", () => {
     expect(jsmql(`let uid = $.userId; $.matched = $$$.users.filter(u => u._id === uid);`)).toEqual([
       { $set: { "__jsmql.var.uid": "$userId" } },
-      {
-        $lookup: {
-          from: "users",
-          let: { jsmql_v0_uid: "$__jsmql.var.uid" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_v0_uid"] } } }],
-          as: "matched",
-        },
-      },
+      { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "matched" } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1175,14 +1154,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // basic form fires.
     expect(jsmql(`let user = $.user; $$ = $$$.events.filter(e => e.userId === user._id);`)).toEqual([
       { $set: { "__jsmql.var.user": "$user" } },
-      {
-        $lookup: {
-          from: "events",
-          let: { jsmql_v0__id: "$__jsmql.var.user._id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_v0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "events", localField: "__jsmql.var.user._id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -1296,14 +1268,7 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
     // and correlated via `let`, never emitted as `$match: { userId: "$_id" }` (which in a
     // query document matches the literal string "$_id"). Verified on a live mongod.
     expect(jsmql("$$ = $$$.orders.filter({ userId: $._id });")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);

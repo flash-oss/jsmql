@@ -1,10 +1,11 @@
 // Phase 5 of src/compiler/ — the join road: `$$$.<coll>.<chain>` as `$lookup`.
 //
-// One route: `let` + `pipeline` + `$expr`, never `localField`/`foreignField`,
-// because the pipeline form compares the two fields' OWN values as JavaScript
-// does and still uses the foreign index (measured — see docs/specs/emit-pass.md
-// § The join road). `$.` is the OUTER document at every depth (HR4) and reaches
-// the body through the stage's `let`; the body's own document is its parameter.
+// Two shapes, one road. One correlated equality and nothing else is the
+// `localField`/`foreignField` pair — the join a MongoDB developer writes, which
+// the planner reads from the foreign index. Everything else keeps `let` +
+// `pipeline` + `$expr` (see docs/specs/emit-pass.md § The join road). `$.` is the
+// OUTER document at every depth (HR4) and reaches the body through the stage's
+// `let`; the body's own document is its parameter.
 //
 // The second half runs every pipeline this file asserts on a live mongod AND
 // compares the documents that come back with what JavaScript would give over
@@ -46,11 +47,14 @@ const compiled = (src: string, expected?: unknown[]): unknown[] => {
 const E = (id: unknown) => ({ $expr: { $eq: ["$userId", id] } });
 const LET = { jsmql_f0__id: "$_id" };
 const byUser = { $match: E("$$jsmql_f0__id") };
+/** One correlated equality and nothing else is the pair the planner reads from the index. */
+const COMPACT = { localField: "_id", foreignField: "userId" };
 
 describe("compiler/emit/join — one route, the pipeline form", () => {
-  it("joins on the fields' OWN values, through `let` and `$expr`", () => {
-    // 1 === [1, 2] is false and undefined === undefined is true, as in JavaScript;
-    // the basic form (`localField`) reads null as missing and matches array elements.
+  it("joins on one correlated equality with the pair MongoDB reads from the index", () => {
+    // `localField`/`foreignField` is the join a MongoDB developer writes, and the
+    // server's own rules apply to it: a missing field counts as null, and an array
+    // matches element-wise. The same boundary a query document has.
     expect(
       compiled("$.orders = $$$.orders.filter(o => o.userId === $._id);", [
         { _id: 1, orders: [101, 102] },
@@ -58,29 +62,21 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
         { _id: 3, orders: [] },
         { _id: 4, orders: [] },
       ]),
-    ).toEqual([{ $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "orders" } }]);
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, as: "orders" } }]);
     // the lodash shorthand is the same predicate
     expect(compiled("$.orders = $$$.orders.filter({ userId: $._id });")).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "orders" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "orders" } },
     ]);
-    // a null on both sides is a match, a missing on both sides is a match, null and missing are not
+    // MEASURED on mongod: the pair reads a MISSING field as null, so a document with
+    // no `nul` and a document whose `nul` IS null join the same foreign documents.
     expect(
       compiled("$.same = $$$.orders.filter(o => o.nul === $.nul);", [
-        { _id: 1, same: [101, 102, 103] },
-        { _id: 2, same: [101, 102, 103] },
-        { _id: 3, same: [101, 102, 103] },
-        { _id: 4, same: [104] },
+        { _id: 1, same: [101, 102, 103, 104] },
+        { _id: 2, same: [101, 102, 103, 104] },
+        { _id: 3, same: [101, 102, 103, 104] },
+        { _id: 4, same: [101, 102, 103, 104] },
       ]),
-    ).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0_nul: "$nul" },
-          pipeline: [{ $match: { $expr: { $eq: ["$nul", "$$jsmql_f0_nul"] } } }],
-          as: "same",
-        },
-      },
-    ]);
+    ).toEqual([{ $lookup: { from: "orders", localField: "nul", foreignField: "nul", as: "same" } }]);
   });
 
   it("keeps a constant clause native beside the correlation", () => {
@@ -189,7 +185,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
         { _id: 4, n: 0 },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $set: { n: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
@@ -201,7 +197,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
         { _id: 4 },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $set: { o: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } } },
       { $unset: "__jsmql" },
     ]);
@@ -221,7 +217,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
     ]);
     // inside a stage body the `$lookup` is hoisted ahead of the stage
     expect(compiled("$match($$$.orders.filter(o => o.userId === $._id).length > 1);", [{ _id: 1 }])).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 1] } } },
       { $unset: "__jsmql" },
     ]);
@@ -267,7 +263,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
         { _id: 4, n: 0 },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.var.os" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.var.os" } },
       { $set: { n: { $size: "$__jsmql.var.os" } } },
       { $unset: "__jsmql" },
     ]);
@@ -406,14 +402,7 @@ describe("compiler/emit/join — inside the body", () => {
           from: "orders",
           let: LET,
           pipeline: [
-            {
-              $lookup: {
-                from: "items",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } }],
-                as: "__jsmql.tmp.0",
-              },
-            },
+            { $lookup: { from: "items", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
             {
               $match: {
                 $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] },
@@ -434,7 +423,7 @@ describe("compiler/emit/join — the stream and the root", () => {
     expect(
       compiled("$$ = $$$.orders.filter(o => o.userId === $._id);", [{ _id: 101 }, { _id: 102 }, { _id: 103 }]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -482,7 +471,7 @@ describe("compiler/emit/join — the refusals name the way out", () => {
     expect(() => pipeline("$.o = $$$$.db.orders.find(o => o.a > 1);")).toThrow(/another DATABASE/);
     // a name that is not an identifier is spelled with brackets
     expect(compiled('$.o = $$$["order-log"].filter(o => o.userId === $._id);')).toEqual([
-      { $lookup: { from: "order-log", let: LET, pipeline: [byUser], as: "o" } },
+      { $lookup: { from: "order-log", ...COMPACT, as: "o" } },
     ]);
   });
   it("a body over a stage with no `let` cannot read the outer document", () => {
@@ -497,7 +486,7 @@ describe("compiler/emit/join — the refusals name the way out", () => {
         { _id: 4, t: [] },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
       { $set: { t: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } },
       { $unset: "__jsmql" },
     ]);

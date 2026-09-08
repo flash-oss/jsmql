@@ -36,7 +36,7 @@ Exactly one of `body` / `block` is set. Every consumer that needs a value (an ar
 
 ## The join road
 
-[`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts) lowers every `$$$.<coll>.<chain>`. One route — `let` + `pipeline` + `$expr`, never `localField` / `foreignField`: the basic form matches ANY element of an array field on either side, where the JavaScript `===` compares the two values themselves, and the pipeline form still uses the foreign collection's index (measured).
+[`src/compiler/emit/join.ts`](../../src/compiler/emit/join.ts) lowers every `$$$.<coll>.<chain>`. Two shapes, one road: one correlated equality and nothing else is the `localField` / `foreignField` pair, and everything else is `let` + `pipeline` + `$expr` (the shapes and the rules that apply to each: [emit-pass.md § The join road](emit-pass.md)).
 
 **`lookupOf(node, env)`** turns the chain into a `$lookup`. It peels the links from the collection outwards, asking each link's row for the stages it means on a stream (the same `stream` cell a top-level `$$.<link>` uses — [stream-methods.md](stream-methods.md)), and appends them to the sub-pipeline: `.filter(p)` → `$match`, `.sortBy(k)` → `$sort`, `.take(n)` → `$limit`, a stage link `.$group(…)` → the stage, `.aggregate(block)` → the block's stages. `.find(p)` is the first match as ONE document — `$match` + `$limit: 1`, and the destination unwraps the array with `$first`. The peel stops at the first link that makes a VALUE of the documents (`.length`, `.map(o => o.total)`, `.sum()`, a field read after `.find`): what follows is `rest`, and `complete` is false.
 
@@ -62,7 +62,7 @@ A write whose chain goes on after the peel (`$.o = $$$.c.filter(p).map(f)`) is l
 ```js
 $.a = $$$.b.filter(x => x.n > $.m && $$$.c.filter(y => y.k === x.k).length > 0)
 // → [{ $lookup: { from: "b", let: { jsmql_f0_m: "$m" }, pipeline: [
-//        { $lookup: { from: "c", let: { jsmql_f1_k: "$k" }, pipeline: [{ $match: { $expr: { $eq: ["$k", "$$jsmql_f1_k"] } } }], as: "__jsmql.tmp.0" } },
+//        { $lookup: { from: "c", localField: "k", foreignField: "k", as: "__jsmql.tmp.0" } },
 //        { $match: { $expr: { $and: [{ $gt: ["$n", "$$jsmql_f0_m"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] } } },
 //        { $unset: "__jsmql" }], as: "a" } }]
 ```
