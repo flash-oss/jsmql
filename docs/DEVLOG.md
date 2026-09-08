@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — docs: DEFERRED.md says what is open, and a gate keeps it saying so
+
+Twenty-one claims in `docs/DEFERRED.md` that no longer held, found by re-deriving
+each against the compiler.
+
+Two §B decisions were REVERSED by the code and are deleted: `in` for array
+membership ships (`$.status in ["a","b"]` → `{ status: { $in: […] } }`), and a bare
+foreign-param ref in a `$lookup` predicate compiles to a JavaScript-truthiness
+test on the foreign root rather than being rejected. `shuffle` came off the "no
+MQL meaning" list: `$$.shuffle()` is a shipped stream method.
+
+Fourteen pointers named a file, a line or a symbol that does not exist — a
+`lower.ts:3309` in a 1063-line file, four references to a "fork plan" that is in
+no repository, five identifiers deleted long ago, and a citation into
+`DEVLOG.md`, which is append-only and so drifts by construction. Each now names a
+live site, or says "none" where the compiler simply emits larger MQL. DEF-019's
+premise was two-thirds shipped and is narrowed to the whole-element comparator;
+DEF-014's success criterion already passes and the row is restated on the residue
+that is left.
+
+The header's "Open: 29. Decided-against: 9." was 13 and 10. Counts do not belong
+in prose — CLAUDE.md says so — so a COUNT gate in
+`test/deferred-coverage.test.ts` holds them instead, beside a new ID-ORDER gate
+for the claim that §A is ordered. The nine-field row schema, which was written down
+nowhere, is now in the file's own Conventions block. `test/deferred-allowlist.txt`
+lost four banner blocks heading zero entries and the branch narration in a fifth.
+
+---
+
 ## 2026-09-09 — feat: a placement rule can belong to an operator the stage carries
 
 `$text` reads a text index, and MEASURED the server reads that index only at the

@@ -4,6 +4,7 @@
 
 | Path | Audience | Update when |
 |---|---|---|
+| `docs/LANG_RULES.md` | Anyone changing the language | A language axiom moves. The HARD RULES (HR1–HR4) outrank every other document here; a change is a language-design decision, not a doc edit. |
 | `docs/LANGUAGE.md` | Users of jsmql | User-visible behaviour changes |
 | `docs/DEVLOG.md` | Future-self / contributors asking "why?" | Every observable change — feature, refactor, naming, doc decision |
 | `docs/DEFERRED.md` | Anyone wanting "what's left to do?" / "what did we decide against?" | Adding a new "not yet supported" throw, shipping a deferred item, or recording a "won't implement" decision. See root `CLAUDE.md` § Maintain docs/DEFERRED.md. |
@@ -17,7 +18,7 @@ Never put implementation detail in `LANGUAGE.md`. Never put user-facing examples
 
 The canonical user-facing reference. It must stay in sync with `src/index.ts` and the behaviour of `jsmql()`, `jsmql.compile()`, and `jsmql.validate()` (each polymorphic over the three call shapes — string, arrow, template tag).
 
-When you add a new operator or syntax feature, add a table row or code example here first (docs-driven), then implement it.
+A new operator or syntax feature lands as a registry row, and the LANGUAGE.md table row or example is updated in the SAME commit — the recipe the drift tests enforce is in root `CLAUDE.md` § Adding a new MongoDB operator. `scripts/check-doc-claims.mjs` re-derives every `<jsmql>  // → <MQL>` pair here from the compiler; run it after a shape change.
 
 ## docs/specs/
 

@@ -33,19 +33,9 @@ docs/CLAUDE.md::"what did we decide against?"
 docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
-# The lookup spec keeps a categorical "## Future work" header. The
-# stream-method reducer guard below is a separate, unrelated rejection.
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
 # The one $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
 # -----------------------------------------------------------------------------
 docs/specs/out-stage.md::Out of scope for now.
-
-# -----------------------------------------------------------------------------
-# Fork-in-flight: richer per-key reducer bodies (#32) + dict-build (landed but
-# the comment still mentions "future work" pending source cleanup)
-# -----------------------------------------------------------------------------
 
 # -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
@@ -54,18 +44,8 @@ docs/specs/union-stage.md::Out of scope — the explicit
 docs/specs/aggregation-stages.md::## Out of scope (future work)
 
 # -----------------------------------------------------------------------------
-# Decisions section in DEFERRED.md is referenced via §B headers in specs.
-# These specs cite the rejection reasoning without needing a [DEF-NNN] tag.
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
-# Stale doc references (fork landed the feature but didn't clean up wording).
-# Drop these entries when the fork settles and we do a doc cleanup pass.
+# Doc wording that still names a shipped capability as future work. Drop each
+# entry as the wording is corrected.
 # -----------------------------------------------------------------------------
 docs/LANGUAGE.md::other richer body shapes are future work
 docs/specs/aggregation-stages.md::Will get its own spec when work begins
-
-# -----------------------------------------------------------------------------
-# Test-file phrase fragments (tests assert against rejection wording; the
-# rejection itself is tagged or allowlisted above).
-# -----------------------------------------------------------------------------

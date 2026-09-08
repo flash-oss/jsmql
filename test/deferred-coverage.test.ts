@@ -199,6 +199,21 @@ describe("deferred-tracking drift protection", () => {
     return hits;
   }
 
+  it("COUNT GATE: the number of open items and decisions, so no prose has to claim it", () => {
+    // A count in prose is stale on the next row, and CLAUDE.md keeps counts out of
+    // prose for exactly that reason. It lives here instead, where changing it is part
+    // of changing the file. Update the two numbers when you add or close a row.
+    const { idsInOrder } = parseDeferred();
+    const text = readFileSync(resolve(ROOT, "docs/DEFERRED.md"), "utf8");
+    const decisions = text.substring(text.indexOf("## §B.")).match(/^### /gm) ?? [];
+    expect({ open: idsInOrder.length, decided: decisions.length }).toEqual({ open: 13, decided: 10 });
+  });
+
+  it("ID ORDER GATE: §A rows are in ascending id order, as the header states", () => {
+    const { idsInOrder } = parseDeferred();
+    expect(idsInOrder).toEqual([...idsInOrder].sort());
+  });
+
   it("UNIQUE-ID GATE: no two §A rows share a DEF-NNN id", () => {
     // Two features under one id makes every `[DEF-NNN]` tag ambiguous — a reader
     // following the tag lands on whichever row happens to come first. This gate is

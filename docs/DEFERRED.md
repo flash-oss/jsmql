@@ -1,6 +1,6 @@
 # DEFERRED — open work items
 
-The single source of truth for everything jsmql currently **refuses, defers, or hasn't built**. Newest-thinking on top; rows deleted when the item ships.
+The single source of truth for everything jsmql currently **refuses, defers, or hasn't built**. §A rows are in id order; a row is deleted when the item ships.
 
 This file is the antidote to "I keep forgetting about them". Every "not yet supported" / "future work" / "deferred" / "out of scope" marker in the live surface of jsmql (excluding historical `DEVLOG.md` entries) MUST carry a `[DEF-NNN]` tag and have a row below. The drift-protection test in [`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts) enforces this both ways:
 
@@ -13,9 +13,8 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When you ship an item: delete its row AND strip every `[DEF-NNN]` tag in the same commit.
 - When you reject a feature with a "not yet" error: add the row AND a tag in the same commit.
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
-- Per-row schema is in the Conventions block below.
-
-**Counts.** Open: 29. Decided-against: 9. As of 2026-09-06.
+- **Per-row schema.** Every §A row carries these nine fields, in this order: *What's blocked* (the surface the user cannot reach), *Target lowering* (the MQL it would emit), *Why blocked* (what makes it hard), *Attempted approaches*, *Success criteria* (how we know it shipped), *Rejection site(s)* (where the refusal lives, by file and symbol — never a line number in an append-only file), *Spec* (the owning document), *Status* (`open` or `design-only`), *Effort* (S / M / L).
+- **Counts** live in [`test/deferred-coverage.test.ts`](../test/deferred-coverage.test.ts), not here — a number in prose is stale on the next row.
 
 ---
 
@@ -26,7 +25,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **What's blocked.** Writing the result of a pipeline to a collection with merge semantics (upsert / merge into existing docs) rather than `$out`'s full replace.
 - **Target lowering.** Default: `$$$.metrics += $$;` → `[{ $merge: "metrics" }]`. With pre-filter: `$$$.metrics += $$.filter(d => d.active);` → `[{ $match: { active: true } }, { $merge: "metrics" }]`.
 - **Why blocked.** Default semantics are easy (whole-doc merge into `_id`). The four merge-control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a syntax-design pass — should they be a config-bearing assignment (`$$$.metrics += { source: $$, on: "_id" }`), method chains (`$$.mergeInto($$$.metrics, { on: … })`), or stay only available via `$op($merge, …)`?
-- **Attempted approaches.** Surveyed in fork plan §B2: rejected `$$$.coll <<= $$` (opaque sigil), `$$.mergeInto($$$.coll)` (reverses destination-on-left), `$$$.coll += { source: $$, on: … }` (overloads `+=` with config object).
+- **Attempted approaches.** Three spellings surveyed and rejected: `$$$.coll <<= $$` (an opaque sigil), `$$.mergeInto($$$.coll)` (reverses destination-on-left), and `$$$.coll += { source: $$, on: … }` (overloads `+=` with a config object).
 - **Success criteria.** `$$$.metrics += $$;` lowers to `[{ $merge: "metrics" }]`. `$op($merge, {…})` remains the recommended path for non-default options.
 - **Rejection site(s).** Spec only.
 - **Spec.** `docs/specs/out-stage.md` § Deferred bullet 2.
@@ -36,9 +35,9 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 ### DEF-006 — `jsmql.updateDoc()` — classic-form update operators
 
 - **What's blocked.** The classic-form update operators (`$inc`, `$push`, `$rename`, `$pull`, `$pullAll`, `$pop`, `$min`, `$max`, `$mul`, `$currentDate`). `jsmql.update()` already emits the pipeline-form (`$set`/`$unset` array) — this is the *other* update shape.
-- **Target lowering.** New entry point `jsmql.updateDoc(input)` returns a single object: `{ $inc: { count: 1 } }`, `{ $push: { tags: "vip" } }`, etc. Pattern table in fork plan §B3.
+- **Target lowering.** New entry point `jsmql.updateDoc(input)` returns a single object: `{ $inc: { count: 1 } }`, `{ $push: { tags: "vip" } }`, etc.
 - **Why blocked.** Whole new entry point + ~10 operator pattern matchers + the decision about `$bit` / `$addToSet` (no idiomatic JS shape — keep as `$op($bit, …)`).
-- **Attempted approaches.** None — full design in fork plan §B3 but no code.
+- **Attempted approaches.** None — the pattern table is designed (each write spelling to its update operator) but no code.
 - **Success criteria.** `jsmql.updateDoc("$.count += 1")` → `{ $inc: { count: 1 } }`. Multi-statement combinations work: `"$.count += 1, $.tags.push('vip'), delete $.tmp"` → `{ $inc: …, $push: …, $unset: { tmp: "" } }`. Same target with conflicting operators throws.
 - **Rejection site(s).** No code — the API just doesn't exist. `docs/CLAUDE.md` "Future work areas" paragraph mentions update operators.
 - **Spec.** Will need `docs/specs/update-doc.md` when work begins.
@@ -74,7 +73,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so a self-join (`$$.find()` / `$$.filter()`) can't resolve its `$lookup.from`.
 - **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update` + `.updateDoc`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
 - **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering.
-- **Attempted approaches.** None — design in fork plan §B8.
+- **Attempted approaches.** None.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
 - **Rejection site(s).** `docs/specs/context-references.md:131-132` (allowlisted as a spec future-work bullet).
 - **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
@@ -83,13 +82,13 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 
 ### DEF-014 — Optimised chained terminals on lookups
 
-- **What's blocked.** Chains like `.map`, `.at`, second `.filter` after a lookup terminal currently fall through the generic path and emit one extra `$set` stage. Could be collapsed to a single specialised stage.
-- **Target lowering.** Pattern recogniser in `extractLookupCalls` that emits single-stage variants for specific chain shapes.
+- **What's blocked.** A chain that reads a lookup's array as a VALUE materialises the `$lookup` into a scratch slot and leaves a `$set` plus the `$unset` that clears the slot. The residue is two stages where a specialised recogniser could emit one.
+- **Target lowering.** A recogniser on the join road (`joinValue` in `src/compiler/emit/join.ts`) that folds the slot read into the `$lookup` for the shapes where it can.
 - **Why blocked.** Performance optimisation, not correctness. Needs careful pattern enumeration so we don't break the generic path.
 - **Attempted approaches.** None.
-- **Success criteria.** `$$$.users.filter(u => …).map(u => u.name).at(0)` emits one `$lookup` + one `$set` (combined), not `$lookup` + `$set` + `$set` + `$set`.
-- **Rejection site(s).** `docs/specs/lookup-stage.md:168`.
-- **Spec.** `docs/specs/lookup-stage.md` § Future work bullet 5.
+- **Success criteria.** `$.n = $$$.users.filter(u => …).map(u => u.name).at(0);` emits one `$lookup` and nothing else — today it emits the `$lookup`, a `$set` reading the slot, and the `$unset`.
+- **Rejection site(s).** None — the compiler emits correct, larger MQL.
+- **Spec.** [`docs/specs/lookup-stage.md`](specs/lookup-stage.md) § The join road.
 - **Status.** design-only
 - **Effort.** M
 
@@ -100,20 +99,20 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** The interaction with `$.foo : any` is the open problem. Pre-1.0 the types churn freely, so we'd want to land this once.
 - **Attempted approaches.** None.
 - **Success criteria.** `$abs($.foo)` is `number` in TS but field-ref chains still work.
-- **Rejection site(s).** `docs/specs/globals-generation.md:73`.
+- **Rejection site(s).** The deferral prose in [`docs/specs/globals-generation.md`](specs/globals-generation.md) § the generated shapes; the `[DEF-016]` tag is in the same file.
 - **Spec.** `docs/specs/globals-generation.md`.
 - **Status.** design-only
 - **Effort.** M
 
 ### DEF-019 — `.toSorted(comparator)` two-param arrow recognition
 
-- **What's blocked.** `.toSorted()` accepts a key-function arrow today (`e => e.distance`) but rejects a comparator-style two-param arrow (`(a, b) => a - b`).
-- **Target lowering.** `(a, b) => a - b` → `sortBy: 1`; `(a, b) => b - a` → `sortBy: -1`; `(a, b) => a.x - b.x` → `sortBy: { x: 1 }`. Everything else continues to throw with the `$op($sortArray, …)` hint.
-- **Why blocked.** Pattern recogniser for the three shapes. Easy.
+- **What's blocked.** `.toSorted((a, b) => a.x - b.x)` and its `||`-joined form both ship. What is left is the WHOLE-ELEMENT comparator, `(a, b) => a - b`, which sorts an array of scalars.
+- **Target lowering.** `(a, b) => a - b` → `sortBy: 1`; `(a, b) => b - a` → `sortBy: -1`.
+- **Why blocked.** A recogniser for the two shapes, distinguished from the field form the same cell already reads. Easy.
 - **Attempted approaches.** None.
-- **Success criteria.** The three shapes lower as above; non-matching shapes throw the existing hint.
-- **Rejection site(s).** `DEVLOG.md:1428` (historical, no live throw — the runtime rejection happens in codegen with a generic comparator-not-supported message that doesn't carry the tag).
-- **Spec.** `docs/specs/emit-pass.md` (`.toSorted` section, no spec line today).
+- **Success criteria.** Both shapes lower as above; a body that is not one field of each subtracted keeps the shape-specific refusal.
+- **Rejection site(s).** The comparator cell on the `toSorted` row in `src/registry/names.ts`, whose message names the two supported forms: ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'."
+- **Spec.** [`docs/LANGUAGE.md`](LANGUAGE.md#array-methods) § Array methods.
 - **Status.** design-only — small win
 - **Effort.** S
 
@@ -124,7 +123,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** No Infinity/NaN literal in jsmql source, and the lowering would touch every numeric comparison helper. jsmql's output must stay JSON-serialisable, so an emitted literal cannot be a real BSON `NaN` / `±Infinity` (`JSON.stringify(NaN)` is `null`, which would silently become a different comparison) — it has to be synthesised server-side.
 - **Attempted approaches.** The comparison half is solved and verified on a live mongod: `{$toDouble: "NaN"}` yields a genuine double NaN, and because MongoDB's `$eq` treats `NaN == NaN` as true (unlike JS), `{$eq: [x, {$toDouble: "NaN"}]}` is an exact NaN test — true for `double` and `decimal` NaN, false for ±Infinity, ±0, the string `"NaN"`, null, missing, `[]`, `{}`. `{$toDouble: "-Infinity"}` gives the other bound (NaN sorts below it, so `{$gt: [x, -Infinity]}` also isolates NaN among numbers). What remains is the source-syntax half and the cost: the same clause measured at +41% on a `$match` when added to `jsBool`, which is why the truthiness rule does not carry it (see the NaN note in `docs/LANGUAGE.md`) — a one-off `Number.isFinite` call would not pay that whole-language price. The existing error message names three workarounds (`$type`, `$convert` sentinel, range guard).
 - **Success criteria.** TBD with the literal-escape design.
-- **Rejection site(s).** `src/compiler/emit/lower.ts:3309`.
+- **Rejection site(s).** The `Number.isFinite` row in `src/registry/names.ts` — its refusal cells carry the tag.
 - **Spec.** None — would need `docs/specs/numeric-edges.md` or similar.
 - **Status.** open
 - **Effort.** M
@@ -136,7 +135,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** Filters are a single expression with no statement list; threading a declaration in needs either a separate declaration channel or a textual-inline pass distinct from the pipeline `$let` expansion. Output shape differs from the pipeline form (inlined body vs `$let`), so it's a deliberate separate design.
 - **Attempted approaches.** None — recorded at the developer's request as the likely next step for Filters.
 - **Success criteria.** TBD with the inline design; `db.coll.find(jsmql("const adult = (p) => p.age >= 18; adult($)"))` (or a Filter-specific syntax) produces a query document with the body inlined.
-- **Rejection site(s).** None — no bespoke throw; the existing pipeline-only requirement (`throwFuncDeclOutsidePipeline` in `src/compiler/parse/parser.ts`) covers it generically.
+- **Rejection site(s).** None — no bespoke throw. The parser's generic requirement covers it: a declaration outside a pipeline is refused with "declares a reusable function, and a reusable function is declared at the top level of a pipeline".
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** design-only
 - **Effort.** M
@@ -148,7 +147,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** MQL expressions can't carry a function value; the common `arr.map(double)` desire is already served by `arr.map(x => double(x))` (an explicit lambda whose body calls the function). A clear rejection already guides toward that.
 - **Attempted approaches.** None — scoped out of the first cut per the developer's call.
 - **Success criteria.** TBD; at minimum `arr.map(double)` would lower like `arr.map(x => double(x))`.
-- **Rejection site(s).** `src/compiler/emit/errors.ts` `functionAsValue` (a declared function or an arrow read as a value, tagged `[DEF-032]`).
+- **Rejection site(s).** `functionAsValue` in `src/compiler/emit/errors.ts`, tagged `[DEF-032]` — a DECLARED function read as a value. An arrow read as a value takes `lambdaAsValue`, a separate and untagged refusal.
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** open
 - **Effort.** M
@@ -161,7 +160,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Attempted approaches.** The families that DO fold are stated as evaluators; these are the ones nobody wrote yet. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor of 0.85.
 - **Success criteria.** The floor rises, and each newly folded family agrees with the server's answer for the same input (`test/compiler-fold-agrees.test.ts` compares on mongod).
 - **Rejection site(s).** None — the compiler emits correct, larger MQL. The floor comment in `test/fold-consistency.test.ts` carries the tag.
-- **Spec.** `docs/specs/emit-pass.md` § the fold.
+- **Spec.** [`docs/specs/desugar-pass.md`](specs/desugar-pass.md) — the fold runs between the desugar rounds.
 - **Status.** open
 - **Effort.** S per family.
 
@@ -196,7 +195,7 @@ The expression forms jsmql already emits run correctly in `$project`: `$.items.s
 
 Shipped 2026-07-19, **removed 2026-08-01** by developer decision. MongoDB has no stage that reverses a stream — `$reverseArray` is an *expression*, for an array inside a document — and a stream carries no order except the one a `$sort` gives it, so "the last n" has nothing to count back from.
 
-The implementation was the argument against the feature. All four worked by reaching back and rewriting the **preceding** `$sort` (`reverseSortTrick`, now deleted), which:
+The implementation was the argument against the feature. All four worked by reaching back and rewriting the **preceding** `$sort`, which:
 
 - made them **position-dependent** in a way the JS methods they are named after never are — `.takeRight(3)` meant different things depending on which stage happened to precede it;
 - **silently ordered by `_id`** when no `$sort` preceded, rather than erroring — a wrong answer with no diagnostic. This is what made `$$.shuffle().takeRight(3)` return the last 3 by `_id` and discard the shuffle entirely;
@@ -204,7 +203,7 @@ The implementation was the argument against the feature. All four worked by reac
 
 **Not** rejected in value position: `$.items.takeRight(3)` → `$slice`, `$.items.toReversed()` → `$reverseArray` and friends all still ship. A stored array carries its own order, so there the methods mean exactly what they mean in JS. The distinction is the receiver, not the method.
 
-The stream rewrite is to state the order and take from the front — `$$.toSorted({ createdAt: -1 }).take(3)` — which `fromTheEndRejection` (`src/registry/names.ts`) names in the error. It is wired into all three chain-assembly sites: `unknownStreamMethod`, `validateLookupShape`, and the peel loop in `tryExtractChainedLookup` (that last one so a foreign chain can't quietly fall back to value-mode and slice the tail of an array whose order is whatever the foreign scan produced).
+The stream rewrite is to state the order and take from the front — `$$.toSorted({ createdAt: -1 }).take(3)` — which each row's own stream refusal in `src/registry/names.ts` names. It reaches every chain-assembly site, a foreign chain included, so one cannot quietly fall back to value-mode and slice the tail of an array whose order is whatever the foreign scan produced.
 
 Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation over the existing `$sort` machinery would land back on the same two defects.
 
@@ -214,19 +213,11 @@ Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation ov
 
 ### `!expr` via De Morgan in `$match`
 
-Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `$op($not, …)` stays as the explicit escape. Documented in `docs/specs/emit-pass.md:162-164`. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
+Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `!expr` itself lowers to the query language's own negation, `$nor`; what is rejected is DISTRIBUTING the negation into each clause. `$op($not, …)` stays as the explicit escape. Documented in [`docs/specs/emit-pass.md`](specs/emit-pass.md) § The filter target. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
 
 ### `$let`-as-optimisation (peephole)
 
 When a `let` is read in exactly one downstream expression with no reshape between, the compiler *could* emit a single `$let` instead of `$set`/`$unset`. Rejected: the same input producing a different stage shape because of a downstream-reshape heuristic is the surprise jsmql avoids. Users who need `$let` write `$op($let, …)` explicitly.
-
-### `in` operator query translation
-
-JS `in` checks **property existence**; reusing it for array-membership would be a semantic mismatch. `.includes()` covers the common case and translates to `$in` cleanly. Documented in `docs/specs/emit-pass.md:168`.
-
-### Bare foreign-param ref (`o` alone) in a `$lookup` predicate
-
-Not enough signal to choose between "all foreign docs" and "use foreign doc as key". User must write `o.<field>` or `o => true` explicitly. Rejected in `src/compiler/emit/join.ts:799-802`; tested in `test/lookup.test.ts:228-230`.
 
 ### Compile-time validation of runtime-dependent pipeline constraints
 
@@ -248,7 +239,7 @@ Value-mode covers the lodash Array + Collection vocabulary that maps cleanly to 
 - **Custom-comparator `*With`** — `differenceWith`, `intersectionWith`, `unionWith`, `uniqWith`, `xorWith`. An arbitrary `(a, b) => bool` comparator has no MQL equivalent (MongoDB compares by value/key, not a user callback). The `*By`-iteratee variants (`differenceBy`, `uniqBy`, …) cover the realistic "compare by a derived key" need.
 - **Deep / recursive** — `flattenDeep`, `flattenDepth`, `flatMapDeep`, `flatMapDepth`, `zipObjectDeep`. Unbounded-depth recursion isn't expressible in a single aggregation expression, and a fixed-depth unroll is poor DX. `.flatten()` handles the one-level case; property-path keys (`zipObjectDeep`) are a footgun MQL can't honour.
 - **Binary-search sorted-index** — `sortedIndex`, `sortedIndexBy`, `sortedIndexOf`, `sortedLastIndex`, `sortedLastIndexBy`, `sortedLastIndexOf`. MQL has no binary-search primitive; `$indexOfArray` already linear-scans and backs `.indexOf`, so a "sorted" fast-path buys nothing.
-- **No MQL meaning** — `forEachRight` (side-effect iteration, no value in a pure expression), `invokeMap` (invoke a method by path per element — no runtime method dispatch in MQL), `shuffle` (no permutation primitive; `.sampleSize(size)` gives a random reorder when one is genuinely needed).
+- **No MQL meaning** — `forEachRight` (side-effect iteration, no value in a pure expression) and `invokeMap` (invoke a method by path per element — no runtime method dispatch in MQL).
 - **`unzipWith`** — its iteratee receives a group whose arity equals the receiver's row count (runtime-dynamic), which a fixed-parameter arrow can't express. Carries a tailored error pointing at `.unzip().map(group => …)`, the idiomatic form.
 
 ### Ambient completion for object-receiver value methods (`.mapValues` / `.pick` / `.omit` / `.invert` / …)
