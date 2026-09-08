@@ -1,10 +1,10 @@
 // Phase 2 — PARSE. Driven by src/registry/productions.ts.
 //
-// One Pratt loop reads `precedence`, `associativity` and `fixity` off the rows and
-// replaces fourteen mutually-recursive methods. Adding an operator is a row.
+// One Pratt loop reads `precedence`, `associativity` and `fixity` off the rows, so
+// adding an operator is a row and never a method.
 //
-// Three rules the old cascade could not express are enforced here because the
-// rows now state them:
+// Three rules a precedence number alone cannot express are enforced here, each
+// stated on the row that owns it:
 //   noMixWith          `a ?? b || c` is a JavaScript SyntaxError on either side
 //   leftOperandNot     `-a ** 2` is one on the LEFT only; `2 ** -1` is not
 //   associativity none `a < b < c` does not chain
@@ -364,7 +364,7 @@ class Parser {
    * parsed to the same tree, and nothing downstream could tell them apart.
    *
    * ONE rule for the top level and the entry block, so `({ $ }) => { X }` means
-   * exactly what `X` means — the two used to differ on the `;`.
+   * exactly what `X` means, `;` included.
    */
   private collapse(stmts: PipelineStmt[], sawSemi: boolean): Program {
     if (stmts.length === 1 && !sawSemi) {

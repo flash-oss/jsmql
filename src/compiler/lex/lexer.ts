@@ -1,9 +1,8 @@
 // Phase 1 — LEX. Driven by src/registry/tokens.ts and src/registry/keywords.ts.
 //
-// The old lexer wrote one `if` per spelling, ordered longest-first by hand, and
-// promoted reserved words with a hard-coded switch. Both are table reads here:
-// the punctuator order is DERIVED from the key lengths, and the promotion is the
-// keywords table. Adding a token becomes a row, never a branch.
+// The punctuator order is DERIVED from the key lengths, and a reserved word is
+// promoted by the keywords table — so nothing here is ordered or branched by
+// hand, and adding a token is a row.
 //
 // Five decisions a longest-match table cannot imply are stated on the rows that
 // own them, and read below:

@@ -2,7 +2,6 @@
   "permissions": {
     "allow": [
       "Bash(npm:*)",
-      "Bash(npx:*)",
       "Bash(node:*)",
       "Bash(node_modules/.bin/vitest:*)",
       "Bash(git:*)",

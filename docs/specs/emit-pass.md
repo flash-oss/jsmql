@@ -103,24 +103,25 @@ minter of `Truth`, and `mql.ts` builds every slot that reads one. The table in
 
 `lowerFilter(node, env)` in `emit/filter.ts` turns a predicate into a QUERY
 document — the language an index reads — and falls back to `{ $expr: <truth> }`
-exactly where a row states no native form. The rules the shipped translator
-established hold (see [emit-pass.md](emit-pass.md)
-for the query semantics and the documented divergences from the expression
-form), with one change the developer ruled:
+exactly where a row states no native form. The query semantics and the measured
+divergences from the expression road are in
+[filter-mode.md](filter-mode.md) § The filter road; the rule below is the one
+this file owns:
 
 ```js
 $.a > 1 && $.b <= 2                    // → {"a":{"$gt":1},"b":{"$lte":2}}
-$.a >= 1 && $.a <= 9                   // → {"$and":[{"a":{"$gte":1}},{"a":{"$lte":9}}]}   colliding keys into one $and
+$.a >= 1 && $.a <= 9                   // → {"a":{"$gte":1,"$lte":9}}                     two operators on ONE field merge into one document
+$.a === 1 && $.a === 2                 // → {"$and":[{"a":1},{"a":2}]}                    a COLLIDING key splits into $and
 $.a === 1 && $.q * $.p > 100           // → {"a":1,"$expr":{"$gt":[{"$multiply":["$q","$p"]},100]}}
 $.tags === "red" || $.q * $.p > 100    // → {"$or":[{"tags":"red"},{"$expr":{"$gt":[…]}}]}     PER BRANCH (the ruling)
 $.a || $.b                             // → {"$expr":{"$or":[<truth a>,<truth b>]}}            every branch $expr: one $expr
 $.tags.includes("a") && $.tags.includes("b")  // → {"tags":{"$all":["a","b"]}}
 $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
-{ status: "a", x: $gt($.y) }           // → {"status":"a","x":{"$gt":"$y"}}     a raw document: keys as written, a one-operand $op is the query operator
+{ status: "a", x: $gt($.y) }           // → {"status":"a","$expr":{"$gt":["$x","$y"]}}   a raw document keeps its keys, but an operand that READS the document has no query form and lifts through the row's `liftsTo` twin
 $abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
 ```
 
-The shipped compiler wrapped the whole `||` in `$expr` as soon as one branch
+The reference compiler wrapped the whole `||` in `$expr` as soon as one branch
 needed it, and `{ $expr: { $eq: ["$tags", "red"] } }` does not match
 `tags: ["red", "blue"]` where `{ tags: "red" }` does — the left leaf's answer
 changed with its sibling. Per branch, each branch means what the same predicate
@@ -375,7 +376,7 @@ The scope THREADS through the program: each statement answers the Env the next
 one is lowered under. A stage whose row states `replacesDocument` takes every
 field-carried binding with it — `true` for `$group`, `$replaceWith`, `$count`
 and their kind, `"inclusion"` for a `$project` whose body names fields to keep
-— and a read after that is refused naming the stage, where the shipped compiler
+— and a read after that is refused naming the stage, where the reference compiler
 emitted a read of a field that was no longer there. The way back is the one
 JavaScript allows: `x = …` on a dropped `let` writes its slot again and the next
 statement reads it; a dropped `const` can only be carried as a field of the new
@@ -464,7 +465,7 @@ root count, materialised on the root pipeline and carried in by `let`, and
 `$$.filter(…)` inside a body is refused naming `coll`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own chain,
 whose close runs its own cleanup, so no scratch leaks into the joined array (the
-shipped compiler leaked `__jsmql.tmp` there).
+reference compiler leaked `__jsmql.tmp` there).
 
 ### The facet, union and out roads, the source stages, and declared functions
 

@@ -1,9 +1,8 @@
 // What a node NAMES, and what it BINDS — answered once, for every pass.
 //
-// Three passes used to answer "which row does this node name?" with three
-// different node-type lists (shape.ts knew a single-`$key` object literal names a
-// stage; position.ts knew only `OperatorCall`), and four places listed which
-// node types bind a name. Each list was right on the day it was written and
+// "Which row does this node name?" and "which node types bind a name?" are each
+// answered in ONE place. Spread across the passes that ask them, each answer would
+// be a node-type list of its own — right on the day it was written and
 // wrong the day a node type was added, silently — the walk in walk.ts is
 // reflective precisely so that no pass has to enumerate node types, and these
 // lists reintroduced the enumeration. So each fact is stated here once.

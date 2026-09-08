@@ -915,8 +915,8 @@ export const PRODUCTIONS = {
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
     // `Math.max(a, b)` is a MethodCall whose object is the name `Math`; `Math.PI` is a
-    // MemberAccess. Seven node types collapsed here — the parser no longer knows
-    // which namespace it is looking at.
+    // MemberAccess. Every namespace shares these two node types: the parser does not
+    // know which namespace it is looking at, and does not need to.
     becomes: ["MethodCall", "MemberAccess"],
     on: "any",
     returns: "unknown",

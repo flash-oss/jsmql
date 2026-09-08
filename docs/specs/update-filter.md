@@ -8,53 +8,44 @@ User-facing reference is `docs/LANGUAGE.md` § Update filters.
 
 Three node types in `src/registry/ast.ts`:
 
+The shapes are declared in [src/registry/ast.ts](../../src/registry/ast.ts):
+
 ```ts
-type AssignExpr      = { type: "AssignExpr"; target: Expr; value: Expr };
-type DeleteStmt      = { type: "DeleteStmt"; target: Expr };
-type UpdateOp        = AssignExpr | DeleteStmt;
-type UpdateFilter = { type: "UpdateFilter"; update ops: Update op[] };
+type AssignExpr   = { type: "AssignExpr"; target: Expr; op: AssignOp; value: Expr; pos: number; mutates?: true };
+type DeleteStmt   = { type: "DeleteStmt"; target: Expr; pos: number };
+type UpdateOp     = AssignExpr | DeleteStmt;
+type UpdateFilter = { type: "UpdateFilter"; ops: readonly UpdateOp[]; pos: number };
 ```
 
-`AssignExpr` does not carry an `op` field. The parser desugars compound operators (`+=`, `-=`, `*=`, `/=`) at construction time: `$.a += rhs` becomes `AssignExpr { target: $.a, value: BinaryExpr("+", $.a, rhs) }`. Codegen therefore only sees plain `=` assignments.
+`AssignExpr` carries `op`, the spelling as WRITTEN. The desugar pass — not the parser — reduces a compound operator to its `=` form: `$.a += rhs` becomes `AssignExpr { op: "=", value: BinaryExpr("+", $.a, rhs) }`, so the emit phase only ever sees `=`. `mutates` is set by the same pass on a mutator's own write (`$.a.pop();`), which JavaScript allows on a `const` binding and so does the emitter.
 
 `UpdateFilter` is its own type, not part of the `Expr` union. `Parser.parse()` returns `Program = Expr | UpdateFilter | Pipeline`; `compile()` in `src/index.ts` dispatches on the discriminant. `Pipeline` (from `aggregation-stages.md`) wraps a sequence of `;`-separated top-level statements where each statement is itself an `Expr` or a `UpdateFilter`.
 
-`ArrayElement` is widened to `Expr | SpreadElement | AssignExpr | DeleteStmt` so update ops can sit inside pipeline-array literals. Non-pipeline `ArrayLiteral` codegen rejects update op elements with a clear error.
+`ArrayElement` is `Expr | SpreadElement | LetDecl | FuncDecl | UpdateOp | UpdateFilter`, so update ops can sit inside pipeline-array literals. Non-pipeline `ArrayLiteral` codegen rejects update op elements with a clear error.
 
-## Lexer
+## Lexemes
 
-Six new tokens (`src/compiler/lex/lexer.ts`):
-
-| Token       | Source | Notes |
-|-------------|--------|-------|
-| `Eq`        | `=`    | Distinct from `EqEq` / `EqEqEq` / `Arrow` (longer-token-first ordering preserved) |
-| `PlusEq`    | `+=`   | Two-char lookahead before single-char `Plus` |
-| `MinusEq`   | `-=`   | Same as above for `Minus` |
-| `StarEq`    | `*=`   | Checked after `**` (StarStar) and before `*` (Star) |
-| `SlashEq`   | `/=`   | Only emitted in division-context (`lastTokenType` is value-ending). In regex-context, the `=` after `/` is part of a regex literal. |
-| `Semi`      | `;`    | Top-level pipeline-stage separator (see `aggregation-stages.md` § Implicit `;`-separated form). Not consumed by `parseUpdateFilterRest`. |
-
-One new keyword: `Delete` (added to `keywordToken()` switch alongside `typeof`/`new`/`in`).
+Every lexeme these forms need — `=`, `+=`, `-=`, `*=`, `/=`, `;`, and the `delete`
+keyword — is a ROW in [src/registry/tokens.ts](../../src/registry/tokens.ts) and
+[src/registry/keywords.ts](../../src/registry/keywords.ts), which are the single
+source of truth for them; the lexer reads the tables and adds no name of its own.
+One rule has no other home: a `/` after a value-ending token starts a division, so
+`/=` is that operator, and everywhere else it opens a regular expression.
 
 ## Parser
 
-Top-level dispatch (`Parser.parse()`) is a `;`-separated statement loop, not a single dispatch:
-
-1. Collect the first statement via `collectStatement()`. Inside that helper:
-   1. If the first token is `Delete`, `++`, or `--` → `parseUpdateFilter()` directly.
-   2. Otherwise speculatively `parseExpression()`. If an assignment operator follows, the expression is the first update op target; flow merges into `parseUpdateFilterFrom(target)`. If a postfix `++`/`--` follows, route through `parseUpdateFilterFromPostfix(target)`.
-   3. Otherwise return the expression unchanged.
-2. While the next token is `;`: consume it, mark the input as pipeline-shaped, and (unless EOF follows — trailing `;` is allowed) collect another statement.
-3. Expect EOF.
-4. If no `;` was seen, return the single statement (`Expr` or `UpdateFilter`). Otherwise return a `Pipeline` whose `stmts` are the collected statements.
-
-`parseUpdateFilterRest` only consumes `,` separators — `;` is a top-level boundary, never a update op-chain separator. Each tail update op goes through `parseUpdateOp()`, which calls `parsePostfix()` to read the next target. `parsePostfix()` may return a fully-formed `AssignExpr` if the user wrapped the assignment in parens (`($.a = 1)`) — formatters (prettier, oxfmt) emit this shape when an assignment chains with `,`. `parseUpdateOp` short-circuits on that case and returns the `AssignExpr` directly, so `($.a = 1), ($.b = 2)` coalesces into one `$set` stage just like the bare `$.a = 1, $.b = 2` form.
-
-Inside `parseArrayLiteral`, the same per-element heuristic applies: a leading `Delete`/`++`/`--` token, or an expression followed by an assignment operator, becomes a update op element. This is what enables `[$match(...), $.a = 1, delete $.tmp, $sort(...)]`. Inside the bracketed form, `,` is the only separator (JS syntax).
+A program is a `;`-separated statement loop. A statement that starts with `delete`,
+`++` or `--`, or whose expression is followed by an assignment operator, is an
+`UpdateFilter`; the `,` inside one continues the run and the `;` ends it. The same
+per-element rule applies inside a bracketed pipeline (`[$match(…), $.a = 1,
+delete $.tmp]`), where `,` is the only separator. A parenthesised assignment
+(`($.a = 1), ($.b = 2)` — what a formatter writes) is read as the write it is, so
+it coalesces exactly as the bare form does. See
+[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
 
 ### Chained `=` (right-associative)
 
-`parseAssignmentChainFrom(target)` consumes the `=`, then peeks ahead with `peekIsAssignmentChainStart()` (DollarDot, identifier segments, dots, then an assignment operator). If it matches, parse the next target and recurse, then prepend the outer target with the deepest RHS as its value. The result is a flat list of `AssignExpr` nodes, all sharing the same RHS.
+`$.a = $.b = 1` is one value written to every target in the chain, not a nested assignment: the parser reads each target while the lookahead keeps finding one followed by an assignment operator, then gives a FLAT list of `AssignExpr` nodes all sharing the deepest right-hand side.
 
 Compound operators (`+=`, etc.) reject chained RHS — too easy to misread.
 
@@ -76,14 +67,9 @@ The `<$.a>` node is shared between `target` and `value.left` — the AST is immu
 
 `x++`, `++x`, `x--`, `--x` are sugar for `x += 1` and `x -= 1`. They desugar via `makeIncDecUpdateOp(target, op)` to the same `AssignExpr` shape as a compound assignment with a `NumberLiteral(1)` RHS. All four forms compile to the same `$set` stage — the prefix/postfix distinction (return-then-mutate vs mutate-then-return) is meaningful in JS but irrelevant in pipeline context where stage-level update ops have no return value.
 
-Lexer adds `PlusPlus` and `MinusMinus` tokens with strict longest-match ordering: `++`/`--` is checked before `+=`/`-=` is checked before `+`/`-`. This means `1--2` (no whitespace) lexes as `1`, `--`, `2` and is rejected at target-validation; `1 - -2` (whitespace) lexes as `1`, `-`, `-`, `2` and parses as `1 - (-2)`.
+`++` and `--` are rows in [src/registry/tokens.ts](../../src/registry/tokens.ts) like every other lexeme, and the punctuator order is derived from key length, so `++` is matched before `+=` before `+`. `1--2` (no whitespace) therefore lexes as `1`, `--`, `2` and is rejected at target validation, while `1 - -2` lexes as `1`, `-`, `-`, `2` and parses as `1 - (-2)`.
 
-Parser dispatch matches the rest of the update op surface:
-
-- **Top level**: `parse()` adds `++`/`--` to the leading-token set that triggers `parseUpdateFilter` (alongside `delete`). Postfix is handled the same way as a leading assignment operator: after the speculative `parseExpression`, a `++`/`--` lookahead routes through `parseUpdateFilterFromPostfix(target)`.
-- **`parseUpdateOp`**: prefix when the next token is `PlusPlus`/`MinusMinus`; postfix when the just-parsed target is followed by one.
-- **`parseArrayLiteral`** (pipeline elements): same rules — prefix detected before parsing, postfix detected after.
-- **`parseGrouped`**: `(++x)` and `(x++)` parsed via the same hooks. `(++x = 5)`-style nonsense fails through the existing path-validation errors.
+Both spellings mean one write, so both reach the same road: at the top level, inside a bracketed pipeline, and inside parentheses, a leading `++`/`--` opens an update run and a trailing one closes it over the target just read.
 
 Targets validate the same way as for assignments — only `FieldRef` or chained `MemberAccess`. `1++` and `$.items[0]++` are rejected at parse time; `1 + $.x++` falls through to the codegen-level "Assignment is a statement, not a value" error.
 
@@ -126,9 +112,10 @@ Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "pa
 | `$.t = new Date()` | `$currentDate: { t: true }` |
 | `$.n = Math.min($.n, k)` / `Math.max` | `$min` / `$max` |
 | `$.tags.push(x)` / `.pop()` / `.shift()` | `$push` / `$pop` |
+| `$.b = $.a` paired with `delete $.a`, either order | `$rename` |
 | `$inc({ n: 2 })`, `{ $set: { a: 1 } }` | merged in as written |
 
-A value computed from the document is refused — the server reads `"$b"` in an update document as the string — with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` accepts as well. Two writes to one path, and anything that is not a write or an update operator (a stage, `assert`, a stream chain), are refused too.
+A value computed from the document is refused — the server reads `"$b"` in an update document as the string — with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` accepts as well — the rename pair above is the one read of the document a document-form update takes, because `$rename` names the source field rather than evaluating it. Two writes to one path, and anything that is not a write or an update operator (a stage, `assert`, a stream chain), are refused too.
 
 ### Mutators and `Object.assign`
 

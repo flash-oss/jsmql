@@ -22,6 +22,12 @@ The injected `<script id="examples-data">` carries a `data-stamp` attribute — 
 
 `playground_skeleton.html` is the hand-authored UI source (markup, CSS, behaviour); the examples region sits empty between its markers there, with no stamp — so `EXAMPLES_STAMP` reads `""` until generation. `playground.html` is a **pure build artifact** — never hand-edit it; edit the skeleton and re-run the sync. Because the script reads the skeleton and only ever writes `playground.html` (never the skeleton), changes to `src/` or `test/realistic.test.ts` can never clobber playground UI work. A `playground.html` merge conflict is therefore always resolvable by re-running the sync against the merged skeleton.
 
+Two siblings make the extraction possible without running any test:
+`sync-playground-loader.mjs` is a Node module loader that remaps the bare
+`"vitest"` specifier, and `sync-playground-vitest-shim.mjs` is what it remaps to —
+it records each `describe` / `it` call and captures the `it` body's SOURCE rather
+than executing it, so no assertion runs and no mongod is needed.
+
 Runs as `prebuild`, so `npm run build` always refreshes both artifacts. Also hook-driven: a PostToolUse hook in `.claude/settings.json` runs this script whenever Claude Code edits `test/realistic.test.ts` **or** `playground_skeleton.html`, staging the updated outputs for the next commit. `src/` edits do **not** trigger the hook (deliberately watcher-free) — run `npm run sync:playground` manually after them. Idempotent per file: each artifact is (re)written and staged only when its contents change.
 
 ### `build-cjs.mjs`
@@ -30,7 +36,7 @@ Bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` in
 
 ### `diff-compilers.mjs`
 
-Runs a **reference** compiler (a separate checkout, default: the main checkout this worktree hangs off) and the working-tree compiler over one corpus, and reports every disagreement. Invoked as `npm run diff:compilers`; `--verbose` prints accepted rows too, `--ref <path>` picks a different reference, `--accept` records the current divergences into `test/accepted-divergences.json` for classification. `--cur <module>` compares a module whose named exports are the entry points — the new compiler in `src/compiler/index.ts` — and `--entry <name>` narrows the run to one entry; under `--cur` a lowering the registry marks `pending` and a statement-shaped source are verified SKIPS, not divergences (see docs/specs/emit-pass.md § The acceptance gate).
+Runs a **reference** compiler (a separate checkout, default: the main checkout this worktree hangs off) and the working-tree compiler over one corpus, and reports every disagreement. Invoked as `npm run diff:compilers`; `--verbose` prints accepted rows too, `--ref <path>` picks a different reference, `--accept` records the current divergences into `test/accepted-divergences.json` for classification. `--cur <module>` compares a module whose named exports are the entry points — the new compiler in `src/compiler/index.ts` — and `--entry <name>` narrows the run to one entry; under `--cur` a statement-shaped source is a verified SKIP, not a divergence (see docs/specs/emit-pass.md § The acceptance gate).
 
 Exists because the test suite cannot catch a refactor that changes meaning — the assertions get rewritten along with the code. The reference is not editable from the branch doing the changing, so it is the only thing here that can.
 
@@ -50,7 +56,7 @@ Two reviewers' tools for the suites, run by hand and never on a hook. `regen-exp
 
 ### `check-doc-claims.mjs`
 
-`node scripts/check-doc-claims.mjs [file …]` (default: `README.md` + everything under `docs/`) re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler and prints the pairs that disagree. A doc example is a promise about what jsmql emits, and prose has no test to keep it honest — this is what catches the promise the compiler stopped keeping. An AUDIT tool, not a gate, and it is read the way `diff-compilers.mjs` output is read: it parses markdown, so it reports false positives — a template-tag source it cannot run, a claim showing one stage of a longer pipeline, host code around a `jsmql(…)` call — and a human classifies each. It skips a claim that elides anything (`…`, `/* … */`, `<…>`), which is illustrative by construction.
+`node scripts/check-doc-claims.mjs [file …]` (default: `README.md`, `docs/LANGUAGE.md`, `docs/LANG_RULES.md`, and every file in `docs/specs/`) re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler and prints the pairs that disagree. A doc example is a promise about what jsmql emits, and prose has no test to keep it honest — this is what catches the promise the compiler stopped keeping. An AUDIT tool, not a gate, and it is read the way `diff-compilers.mjs` output is read: it parses markdown, so it reports false positives — a template-tag source it cannot run, a claim showing one stage of a longer pipeline, host code around a `jsmql(…)` call — and a human classifies each. It skips a claim that elides anything (`…`, `/* … */`, `<…>`), which is illustrative by construction.
 
 ## Conventions
 

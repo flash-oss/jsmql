@@ -36,7 +36,7 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
   });
 
   it("folds a constant subexpression with no declaration in sight", () => {
-    // The shipped compiler folds a declaration's value and nothing else, so
+    // The reference compiler folds a declaration's value and nothing else, so
     // `$.x === 1 + 2` computes the 3 on every document it reads.
     expect(shape("$.x === 1 + 2")).toBe(shape("$.x === 3"));
     expect(shape("$.x === (1 in [1, 2])")).toBe(shape("$.x === true"));
@@ -51,7 +51,7 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
   });
 
   it("feeds the desugar rules, which feed it back", () => {
-    // The shipped compiler refuses this outright: the shorthand check runs
+    // The reference compiler refuses this outright: the shorthand check runs
     // before the constant reaches the slot.
     expect(shape('const k = "name"; $.f = $.items.map(k);')).toBe(shape("$.f = $.items.map(x => x.name);"));
     expect(shape("const spec = { active: true }; $.f = $.items.filter(spec);")).toBe(
@@ -117,7 +117,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   });
 
   it("refuses a call whose argument count is wrong, so the error still happens", () => {
-    // Folding it away is how the shipped compiler loses the arity error.
+    // Folding it away is how the reference compiler loses the arity error.
     expect(valueOf('"abc".toUpperCase(1)')).toBe("(not constant)");
     expect(valueOf('"hello".charAt()')).toBe("(not constant)");
   });
@@ -437,7 +437,7 @@ describe("compiler/passes/fold — a declared function called with constants", (
 
 describe("compiler/passes/fold — the folds the server contradicted", () => {
   it("reads one number in Date.UTC as a YEAR, as JavaScript and $dateFromParts do", () => {
-    // `Date.UTC(2020)` is 1577836800000; the shipped compiler emits
+    // `Date.UTC(2020)` is 1577836800000; the reference compiler emits
     // `$toLong($dateFromParts{year:2020})` and mongod agrees. It folded to 2020.
     const r = evaluate(parseExpression("Date.UTC(2020)"), new Map());
     expect(r).toEqual({ ok: true, value: Date.UTC(2020, 0) });

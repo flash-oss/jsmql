@@ -39,7 +39,7 @@ describe("compiler/emit/mode — the truthiness check", () => {
     expect(truthOf("$a", false)).toEqual(SHIPPED_TRUTHY);
   });
 
-  it("flattens nested $and / $or, as the shipped compiler does for `a && b ? … : …`", () => {
+  it("flattens nested $and / $or, as the reference compiler does for `a && b ? … : …`", () => {
     const t = and(jsTruthy("$a"), jsTruthy("$b"));
     expect((t as unknown as { $and: unknown[] }).$and).toHaveLength(8);
     expect(or(or(truthOf(1, true), truthOf(2, true)), truthOf(3, true))).toEqual({ $or: [1, 2, 3] });

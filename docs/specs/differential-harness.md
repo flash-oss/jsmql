@@ -66,8 +66,8 @@ harvested from tests inherits the tests' blind spots: `.take(2)` appears in the 
 `.take(1.5)` did not, so the fractional-count fix would have been invisible. **When a
 change moves a shape the suite never spelled, add that shape to `EDGES`.**
 
-Every corpus source runs through all five entry points, so an entry point that treats a
-shape differently from its siblings shows up without anyone predicting it.
+Every corpus source runs through every entry in `ALL_ENTRIES`, so an entry point that
+treats a shape differently from its siblings shows up without anyone predicting it.
 
 ## BSON values
 
@@ -117,20 +117,19 @@ of them is a silent hole rather than a visible one:
 A backtick body containing `${` is skipped: interpolation makes the source dynamic, so there
 is no static string to compile, and HR1 gives an injected value different meaning anyway.
 
-Reading only the quoted form left every backtick-favouring suite outside the corpus. Adding
-the other two grew it by 370 sources and immediately surfaced 28 divergences that had been
-real for some time — the same accepted behaviour changes, reaching sources the harness had
-never compiled. A divergence the corpus cannot see is not an absence of divergence.
+All three string forms are read, because a suite that favours backticks would otherwise
+sit outside the corpus entirely. A divergence the corpus cannot see is not an absence of
+divergence.
 
-`validate` is compared alongside the four output entries, because its result is itself a
-public contract — `{ valid, errors: [{ message, pos }] }`, and tooling underlines source with
-that `.pos`. The other entries only ever observe that a throw happened; `validate` observes
-what it said and where it pointed. It contributed 24 further rows on the first run.
+`validate` is compared alongside the output entries, because its result is itself a public
+contract — `{ valid, errors: [{ message, pos }] }`, and tooling underlines source with that
+`.pos`. The other entries only ever observe that a throw happened; `validate` observes what
+it said and where it pointed.
 
-Still uncompared, and deliberately: the six `.compile` builders and the interpolating
+Still uncompared, and deliberately: every `.compile` builder and the interpolating
 template-tag form, whose inputs are runtime values rather than static source.
 
-## The new compiler as the working tree
+## A second compiler as the working tree
 
 `--cur src/compiler/index.ts` compares a module whose named exports ARE the entry
 points with the shipped `jsmql`, and `--entry expr` narrows the run to one. Two

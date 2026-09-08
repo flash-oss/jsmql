@@ -1,7 +1,8 @@
 #!/usr/bin/env node
 // Every `<jsmql source>  // → <MQL>` pair in the prose, re-derived from the compiler.
 //
-//   node scripts/check-doc-claims.mjs [file …]     (default: README + docs/)
+//   node scripts/check-doc-claims.mjs [file …]
+//     default: README.md, docs/LANGUAGE.md, docs/LANG_RULES.md, docs/specs/*.md
 //
 // A doc example is a promise about what jsmql emits, and prose has no test to
 // keep it honest. This reads each fenced `js` block, pairs every `// →` comment

@@ -34,15 +34,15 @@ When both appear, the only legal order is `(params, { $, … })`. Shorter combin
 
 ## Parser
 
-[`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) — `parseEntry` returns `{ program, bindings }` (type `FunctionInputResult`). The body is parsed exactly as today; the new work happens in `parseParameterList` (replacing the old `skipParameterList`).
+`parseEntry(source)` in [`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts) returns an `EntryForm` — `{ params, toolbox, program }` — where `params` and `toolbox` are each a list of `ParamBinding`. It reads the parameter slots, then the body exactly as any other program.
 
-`parseParameterList` walks each top-level slot inside the parens, calling `parseParameterSlot` for each:
+A slot is one `{ … }` destructure and nothing else:
 
-- An `LBrace` token → `parseDestructureSlot`. Returns either `{ kind: "toolbox" }` or `{ kind: "params", bindings: ParamBinding[] }`.
-- A bare `Ident` or bare `$` / `$$` / `$$$` / `$$$$` token → immediate `FunctionInputError`: a parameter must be an object destructure (`({ $ }) => …`).
+- An `LBrace` opens one; which list it fills is decided by its keys, not its position.
+- A bare `Ident`, or a bare `$` / `$$` / `$$$` / `$$$$` token → immediate `FunctionInputError`: a parameter must be an object destructure (`({ $ }) => …`).
 - An `LBracket` → immediate `FunctionInputError` (array destructure rejected).
 
-`parseDestructureSlot` walks the `{ … }` body. Each key is either `Ident` (params key) or a `$`-prefixed toolbox key — the bare `$` (a lone `Dollar`), an operator `$name` (`Dollar` + `Ident`), or a context ref `$$` / `$$$` / `$$$$` (`DoubleDollar` / `TripleDollar` / `QuadDollar`). For each entry it also handles:
+Each key of the `{ … }` body Each key is either `Ident` (params key) or a `$`-prefixed toolbox key — the bare `$` (a lone `Dollar`), an operator `$name` (`Dollar` + `Ident`), or a context ref `$$` / `$$$` / `$$$$` (`DoubleDollar` / `TripleDollar` / `QuadDollar`). For each entry it also handles:
 
 - `key: alias` — sets the binding's `name` field to the alias (params keys only; aliases are stripped on toolbox keys because they only matter for autocomplete, which the original key already provides).
 - `key = expr` — rejected with the explanatory message, regardless of what `expr` is. See [§ Why defaults are rejected](#why-defaults-are-rejected).

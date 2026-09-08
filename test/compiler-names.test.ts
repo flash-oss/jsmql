@@ -1,6 +1,6 @@
 // Phase 5 of src/compiler/ — the variable names the compiler writes.
 //
-// Five invariants, each one a bug the shipped compiler had or could have:
+// Five invariants, each one a bug the reference compiler had or could have:
 //   I1  a mint is never a name the program uses, wherever in the program it is bound
 //   I2  a read of an unbound name is the developer's error, at its position
 //   I3  every name written is one the server accepts — the grammar is measured, not remembered

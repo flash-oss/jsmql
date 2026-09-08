@@ -1,10 +1,7 @@
 // The parser's dispatch tables, DERIVED from src/registry/productions.ts.
 //
-// The old parser encoded precedence as the call order of fourteen methods:
-// parseTernary called parseNullish called parseOr, and so on down to parsePostfix.
-// Nothing named a level, so adding an operator meant inserting a method in the
-// right place and threading it through its neighbours. Here the level IS the
-// number on the row, and a new operator is a new row.
+// A level is a NUMBER on a row, not the depth of a call chain, so an operator's
+// precedence is stated where the operator is and a new operator is a new row.
 //
 // A rule's TRIGGER is `tokens[0]` — see the `tokens` doc in productions.ts.
 
@@ -134,8 +131,7 @@ export function mixingRefused(outer: Rule, inner: string | null, side: "left" | 
  *
  * Derived from the rows whose only position is `statement` and whose trigger is
  * a prefix — the writes a `;`-statement, an array element and a parenthesised
- * group all have to recognise, and used to recognise with four hand-written
- * copies of the same three names.
+ * group all have to recognise, from ONE list so the three cannot drift apart.
  */
 export const STATEMENT_PREFIX: ReadonlySet<TokenName> = new Set(
   rows

@@ -137,7 +137,7 @@ call_arg       = "..." expression                            (* spread *)
                | expression
 
 field_ref      = "$." FIELD_SEGMENT                          (* one segment only; postfix handles further dots *)
-FIELD_SEGMENT  = IDENT | "in" | "new" | "typeof"             (* see "Strict-JS-subset rule" — numeric segments use [n] *)
+FIELD_SEGMENT  = IDENT | KEYWORD                             (* KEYWORD: every row of src/registry/keywords.ts; numeric segments use [n] *)
 
 context_ref    = ( "$$" | "$$$" | "$$$$" )                   (* bare prefix tokens — collection / database / cluster *)
                (* parser sanity-guards: next token must be `.` or `[`.
@@ -313,7 +313,7 @@ An operator call uses **object-style** if and only if:
 
 If there is more than one argument, the call is always **positional**, even if the first argument happens to be an object literal (e.g. `$foo({ a: 1 }, $.b)` is positional with two args).
 
-This rule is implemented in `Parser.parseOperatorCall()`.
+The rule runs in the parser's argument loop, [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
 
 ## Field ref — one segment only
 
@@ -356,9 +356,9 @@ A lambda appearing anywhere else (e.g. as a standalone expression) is a codegen 
 
 A lambda body is either an expression (`x => x * 2`) or a **statement-laden block** (`x => { … }`). jsmql follows JavaScript exactly: `=> {` **always** opens a block, so an object return must be parenthesised — `x => ({ k: v })`, never `x => { k: v }` (the latter is a labeled-statement block in JS). Two block grammars exist, selected by position:
 
-- **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [emit-pass.md → Block-body arrows](emit-pass.md#bindings-between-stages)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
+- **Expression block** (`expr_block` above) — the default everywhere a lambda is a value (array methods, `$let`, IIFE). It is `(const|let <name> = <expr>;)* return <expr>;` and lowers to a right-folded nest of `$let` (see [emit-pass.md § Bindings between stages](emit-pass.md#bindings-between-stages)). A bare `=> { k: v }` is rejected (no `return`), pointing at `=> ({ k: v })`; re-declaring a name, or omitting `return`, are likewise actionable errors.
   A block that holds anything else is refused with the mistake it shows, and the refusal splits by what the block holds. A stage call, a bare call (`assert(…)`) or a write with NO `return` beside it is "a pipeline stage, not part of a callback", carrying the `.aggregate((o) => { … })` rewrite. The same statement WITH a `return` names both positions instead — one block cannot be a stage block and a value callback at once, and the `.aggregate` rewrite refuses the block while the `return` is in it, so the message says to delete one or the other. A reusable-function declaration gets its own sentence: it belongs at the top level of a pipeline, and the message quotes the spelling the developer wrote (`const g = (…) => …`, not `function g(…) { … }`). A stray expression statement is the block's own rule ("must end with a `return <expr>`", or "holds 'const' declarations and one 'return'" when a return is present).
-- **Statement block** (the `$lookup`/facet sub-pipeline form) — a `{ … }` body with **no `return`**, e.g. `$$$.<coll>.aggregate((o) => { … })`. Its statements are stages/update ops. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [emit-pass.md](emit-pass.md#the-method-cells).
+- **Statement block** (the `$lookup`/facet sub-pipeline form) — a `{ … }` body with **no `return`**, e.g. `$$$.<coll>.aggregate((o) => { … })`. Its statements are stages/update ops. Only `.aggregate` *keeps* them: for the JavaScript methods the grammar is shared so the stage rejection can name what was written, and a stage-free block folds back to the expression it returns. See [lookup-stage.md](lookup-stage.md) § Grammar and [emit-pass.md § The method cells](emit-pass.md#the-method-cells).
 
 The parser needs no lookahead to tell the two apart: `lambdaBody` parses the braces once and the `return` decides — present, the body is an `ExprBlock`; absent, the statements are a stages `Pipeline`. WHOSE stages they are is the row's fact, not the parser's guess: `args` claims the body for a callee whose row says `blockBody: "stages"` (`blockBodyOf` in [src/compiler/rows.ts](../../src/compiler/rows.ts)), and leaves an unknown callee's body unclaimed so the emit phase can name the nearest method instead. `finish()` runs after the whole tree is built and refuses a stages body nobody claimed, reporting the real mistake — the stage the developer wrote, with the `.aggregate((o) => { … })` and `$$.$match(…)` rewrites — rather than demanding a `return` they never wanted. `return` is a reserved keyword (lexed as its own token; still usable as a property name / object key, matching JS).
 

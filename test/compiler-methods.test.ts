@@ -8,7 +8,7 @@
 // knows no client timezone), the case says so and asserts the MongoDB answer.
 //
 // The wider net is `scripts/diff-compilers.mjs --entry expr`, which compares every
-// harvested expression with the shipped compiler. Self-skips (green) when no mongod
+// harvested expression with the reference compiler. Self-skips (green) when no mongod
 // is reachable, with the all-or-nothing guard.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";

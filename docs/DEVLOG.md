@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — docs: the specs and the CLAUDE.md files name symbols that exist
+
+Forty-odd pointers across `docs/specs/`, the `CLAUDE.md` files and
+`docs/LANG_RULES.md` that named a file, a line, a section or a function that is
+not there.
+
+The worst were whole sections describing code that no longer exists:
+`update-filter.md`'s Lexer and Parser sections named ten parser methods and a
+`keywordToken()` switch, none of which is in the tree — lexemes are registry rows,
+so the section is now one sentence naming `tokens.ts` and `keywords.ts` as the
+SSOT. `let-bindings.md` and `function-form-params.md` each did the same, and
+`stream-methods.md`'s Lowering column named five deleted helpers and a
+`pipeline.ts` that is not in `src/`.
+
+Six claims were wrong about behaviour, not just about names. LANG_RULES' HR3
+showed `$gt($.x)` emitting MQL where the compiler throws; SR3 showed `.count()`,
+an options-object `.plus({ days: 7 })`, and `Date.parse` — none of which exists.
+`emit-pass.md` claimed two range operators on one field become an `$and` (they
+merge into one document) and that a raw `{ x: $gt($.y) }` keeps its key (the
+operand reads the document, so it lifts to `$expr`). `stream-methods.md` said
+`.reject` "never emits a query-form De Morgan"; it emits `$nor`.
+`replace-root-stage.md` documented a fan-out on `$ = <array>`, which is refused.
+
+The rest is hygiene the project's own rules ask for: `Position` and `OutOf` were
+cited in the wrong file; `.claude/settings.json` pre-approved `Bash(npx:*)`, which
+CLAUDE.md forbids outright; the root file map listed 11 of `emit/`'s 18 modules
+and 5 of `passes/` 12, and claimed version `0.1.0` against a `package.json` that
+says `0.2.0`; and a dozen file headers narrated a previous implementation ("the
+old lexer", "used to", "the NEW compiler's") where the rule allows only current
+behaviour. Each is restated as the invariant it was evidence for.
+
+---
+
 ## 2026-09-09 — refactor: a rule nothing produces and nothing reads is not a capability
 
 Fifteen facts and helpers the registry or the compiler declared and nobody read.

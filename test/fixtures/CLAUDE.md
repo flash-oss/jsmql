@@ -46,8 +46,8 @@ the first user exists).
 
 ## The dataset (dataset.ts)
 
-Five collections — `users` (8), `products` (10), `orders` (20), `shipments` (15),
-`reviews` (12) — with realistic cross-references (`orders.userId`→users,
+Five collections — `users`, `products`, `orders`, `shipments`, `reviews`
+(`EXPECTED_COUNTS` in `dataset.ts` is the live tally) — with realistic cross-references (`orders.userId`→users,
 `orders.items[].productId`→products, `shipments.orderId`→orders, `shipments.userId`→users
 [denormalised to the owning order's user, so a nested lookup can correlate
 shipments back to the outer user], reviews→both).

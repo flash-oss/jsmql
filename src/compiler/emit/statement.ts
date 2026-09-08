@@ -808,8 +808,8 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
 function refStatement(node: Extract<Expr, { type: "MethodCall" }>, ref: string, env: Env, first: boolean): Stage[] {
   const name = namedRow(node) ?? node.name;
   // A diagnostic stage is reached through its own sugar, never through the '$' name:
-  // the sugar's row states the scope and the '$' row does not, so '$$.$currentOp({})'
-  // used to put a cluster stage on a collection.
+  // the sugar's row states the SCOPE and the '$' row does not, so the '$' spelling
+  // would put a cluster stage on a collection with nothing to catch it.
   if (node.name.startsWith("$") && diagnosticOf(name) !== undefined) {
     throw E.diagnosticIsNotALink(name, node.pos);
   }
@@ -852,8 +852,9 @@ function streamLink(
   if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], link.pos);
   const name = row;
   // A diagnostic stage reports on the deployment, so it is a SOURCE stage and has
-  // no link form: `$$.$indexStats({})` used to compile, and `$$.$currentOp({})`
-  // put a CLUSTER stage on a collection's chain, which the scope gate never saw.
+  // no link form. Without this, `$$.$indexStats({})` would compile and
+  // `$$.$currentOp({})` would put a CLUSTER stage on a collection's chain, which
+  // the scope gate never sees from here.
   if (diagnosticOf(name) !== undefined) throw E.diagnosticIsNotALink(name, link.pos);
   // `.concat(…)` — documents unioned into this stream, wherever the chain stands.
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);

@@ -47,7 +47,7 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
    * Each case is a slot mongod treats differently from an ordinary expression
    * slot, with the measurement that proves it. Before the row stated its layout
    * every one of these arrived at `value`, and the first three are documents
-   * mongod refuses outright — which the shipped compiler emits today.
+   * mongod refuses outright — which the reference compiler emits today.
    */
   const SLOTS: [string, string, Position][] = [
     // {$group:{_id:null,s:{$sum:["$x","$y"]}}} → "The $sum accumulator is a unary operator"

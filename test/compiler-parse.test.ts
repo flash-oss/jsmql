@@ -349,7 +349,7 @@ describe("compiler/parse — a reserved word is a legal name", () => {
       expect(entry.key.name, word).toBe(word);
       expect((parseExpression(`$.${word}`) as { path: string }).path, word).toBe(word);
     }
-    // The raw `$let` document, which the shipped compiler could not parse at all.
+    // The raw `$let` document, which the reference compiler could not parse at all.
     expect(() => parseExpression('{ $let: { vars: { x: 1 }, in: "$$x" } }')).not.toThrow();
     expect(() => parseExpression('$let({ vars: { x: 1 }, in: "$$x" })')).not.toThrow();
   });

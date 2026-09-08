@@ -1,6 +1,6 @@
 // Phase 5 of src/compiler/ — the statement target, end to end.
 //
-// A JSMQL program and the pipeline the new compiler emits. Two statements never
+// A JSMQL program and the pipeline the compiler emits. Two statements never
 // merge: the `;` the developer wrote is the stage boundary and the `,` is the
 // merge, so one source keeps one output. The wider net is
 // scripts/diff-compilers.mjs --cur … --entry pipeline.

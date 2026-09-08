@@ -1,7 +1,7 @@
 // Phase 5 of src/compiler/ — the value target, end to end.
 //
-// Each case is a JSMQL input and the MQL the new compiler emits for it. The
-// expectations are the shipped compiler's outputs where the two agree, and the
+// Each case is a JSMQL input and the MQL the compiler emits for it. The
+// expectations are the reference compiler's outputs where the two agree, and the
 // registry's stated shape where they differ by design (the `$switch` dispatch,
 // the `jsmql`-prefixed mint). The wider net is scripts/diff-compilers.mjs --cur.
 

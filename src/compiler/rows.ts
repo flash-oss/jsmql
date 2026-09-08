@@ -1,9 +1,9 @@
 // The registry readers every phase shares.
 //
 // A phase asks a QUESTION about a name and gets an answer from a row. The
-// question is spelled out here once, so two phases cannot answer it differently
-// — which is what happened before the registry existed, when the lexer, the
-// parser and codegen each carried their own idea of which names were methods.
+// question is spelled out here once, so two phases cannot answer it differently:
+// there is one place that decides whether a name is a method, and every phase
+// reads it.
 //
 // Nothing here decides anything. Each function is a projection of `names.ts`.
 

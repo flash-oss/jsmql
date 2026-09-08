@@ -16,7 +16,7 @@ jsmql('[{ $match: { a: "$x" } }]');    // → [{ $match: { a: "$x" } }]
 But non-literal values get compiled:
 
 ```js
-jsmql('{ year: { $abs: 1900 + $.age } }'); // → { year: { $abs: { $add: [1900, "$age"] } } }
+jsmql.expr('{ year: { $abs: 1900 + $.age } }'); // → { year: { $abs: { $add: [1900, "$age"] } } }
 ```
 
 A `"$x"` string you type in source is the MQL field reference `$x`. To force the *literal* four-character string, use `$literal("$x")` — exactly as you would in raw MQL. (For safety, **runtime-injected** values — `jsmql.compile` params and template-tag `${…}` interpolations — that look like `"$x"` are still wrapped in `$literal` in expression position, so untrusted input can't silently become a field reference.)
@@ -32,8 +32,8 @@ $eq(1)                          // ✗ error — "$eq(...) takes 2 arguments" �
 But non-literal values get compiled:
 
 ```js
-jsmql('$abs($.cents / 100)');           // → { $abs: { $divide: ["$cents", 100] }
-jsmql('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$age"] } } }
+jsmql.expr('$abs($.cents / 100)');           // → { $abs: { $divide: ["$cents", 100] } }
+jsmql.expr('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$age"] } } }
 ```
 
 **HR3 — jsmql never knowingly emits invalid MQL.** When the compiler can tell from what it knows (the operator registry, stage shapes) that the server would reject its output, it raises an actionable error instead of emitting the MQL object. For the escape hatch specifically, a list-operand operator handed a non-array value is rejected rather than emitted:
@@ -41,7 +41,6 @@ jsmql('{ year: $abs(1900 + $.age) }');  // → { year: { $abs: { $add: [1900, "$
 ```js
 $setUnion($.a)          // ✗ error — "$setUnion operates on a list of operands" → write $setUnion($.a, $.b) or $setUnion([$.a, $.b])
 $add($.x)               // ✗ error — $add needs an operands array → write $add($.x, $.y) or $add([$.x, $.y])
-$gt($.x)                // → { $gt: "$x" } — because a $gt value can be a single argument or an array of 2 items
 $round($.x)             // → { $round: "$x" } — because $round supports a single argument when it's a field reference
 ```
 
@@ -88,12 +87,11 @@ A comparison that must read ONE value rather than an element has its own spellin
 
 This rule does **not** license guessing a value's type. A `$cond` on `$isArray` is the compiler not knowing whether a field holds an array or a string — that is missing information, not JavaScript behaviour, and dropping it would return a wrong answer instead of a smaller one.
 
-**SR3 — jsmql also adds some APIs of its own for brevity and better DX.** Where a construct has no natural JavaScript spelling — nested pipelines above all — jsmql invents a convenience API rather than leave you in the `$op(…)` escape hatch. To stay unsurprising it borrows a name developers already know — a MongoDB driver method (`.aggregate()`, `.count()`) or a widely-recognised JS date idiom (`.plus` / `.minus` / `.diff`, as in Temporal/Luxon) — and lowers to a real MQL operator or stage; it never mints a `$foo()` of its own, and the underlying MQL stays reachable by hand, so the sugar is always additive.
+**SR3 — jsmql also adds some APIs of its own for brevity and better DX.** Where a construct has no natural JavaScript spelling — nested pipelines above all — jsmql invents a convenience API rather than leave you in the `$op(…)` escape hatch. To stay unsurprising it borrows a name developers already know — a MongoDB driver method (e.g. `.aggregate()`) or a widely-recognised JS date idiom (`.plus` / `.minus` / `.diff`, as in Temporal/Luxon) — and lowers to a real MQL operator or stage; it never mints a `$foo()` of its own, and the underlying MQL stays reachable by hand, so the sugar is always additive.
 
 ```js
 $$$.orders.aggregate(…)          // nested sub-pipeline (the driver's own .aggregate)
-$$.count("total")               // → $count stage
-$.createdAt.plus({ days: 7 })   // → $dateAdd  (.minus → $dateSubtract)
+$$.$count("total")              // → $count stage (a stage link, spelled on the stream)
+$.createdAt.plus(7, "day")      // → $dateAdd  (.minus → $dateSubtract)
 $.start.diff($.end, "hour")     // → $dateDiff
-Date.parse($.s, "%Y-%m-%d")     // → $dateFromString  (JS Date.parse + a format)
 ```

@@ -65,21 +65,16 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 
 ## Parser
 
-Three production-level changes in [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts):
+A leading `let` (or its `const` alias) opens a declaration wherever a statement
+stands — at the top level, inside a bracketed pipeline, and inside a block body —
+and the declaration is `let <Ident> = <Expression>`. A missing identifier or a
+missing `=` is a position-marked `ParseError` that echoes the keyword as written
+(`Expected '=' after \`const x\``).
 
-1. **`collectStatement()`** dispatches on a leading `Let` token to
-   `parseLetDecl()` before the existing `Delete` / `++` / `--` checks.
-2. **`parseArrayLiteral()`** mirrors that: a leading `Let` inside `[…]` produces
-   a `LetDecl` element.
-3. **`parse()`, `parseBlockBody()`, `parseExpressionBody()`** each post-check
-   that, when the single returned statement is a `LetDecl` and no `;` flipped
-   the input into pipeline mode, a precise `ParseError` is thrown: `\`let X = …\`
-   is only valid inside a pipeline. Add a trailing \`;\`, or use the bracketed
-   form \`[ let X = …, … ]\`.`
-
-`parseLetDecl()` consumes `let <Ident> = <Expression>` (or the `const` alias).
-Missing identifier or missing `=` produces a position-marked `ParseError` that
-echoes the keyword the user actually wrote (`Expected '=' after \`const x\``).
+A declaration ALONE is not a program: with no `;` to make the input a pipeline, a
+lone `let X = …` is refused with the two spellings that work — a trailing `;`, or
+the bracketed form `[ let X = …, … ]`. See
+[src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
 Re-declaration is **not** caught at the parser — it needs a pipeline-level view
 and lives in codegen. The constructed `LetDecl` node records the keyword's source
 offset in its `pos` field; codegen forwards that offset into every `CodegenError`

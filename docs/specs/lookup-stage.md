@@ -6,7 +6,7 @@ The implementation-facing companion to the user-facing reference in [LANGUAGE.md
 
 ## Why `$$$` (and not `this.`)
 
-The first attempt at this surface used `this.<coll>.find(pred)` ([reverted commit `1dc2c7b`](../DEVLOG.md)). It read well, but `this` is a JavaScript reserved word that's *parse-rejected* outside class/method bodies, which violates the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md): `({ $ }) => this.users.find(...)` would refuse to round-trip through a `.js` file. The reverted spec moved to plain `this.` but the new direction uses the reserved context-reference prefixes (`$$`/`$$$`/`$$$$`) instead — they parse anywhere, never collide with the JS host language, and provide a single uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and AST nodes.
+`this.<coll>.find(pred)` reads well, and cannot be the surface: `this` is a JavaScript reserved word that is *parse-rejected* outside a class or method body, so `({ $ }) => this.users.find(...)` would not round-trip through a `.js` file — the strict-JS-subset rule in the root [`CLAUDE.md`](../../CLAUDE.md). The context-reference prefixes (`$$` / `$$$` / `$$$$`) parse anywhere, never collide with the host language, and give one uniform vocabulary for the four document-context scopes (`$.`, `$$`, `$$$`, `$$$$`). See [`context-references.md`](./context-references.md) for the prefix grammar and AST nodes.
 
 ## Grammar
 

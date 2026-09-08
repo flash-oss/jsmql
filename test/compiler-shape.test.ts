@@ -1,6 +1,6 @@
 // Phase 4 of src/compiler/ — which document a program becomes.
 //
-// The shipped compiler answers this with four stacked auto-wrap heuristics in
+// The reference compiler answers this with four stacked auto-wrap heuristics in
 // `lowerWithCtx`, each a special case with its own paragraph of reasoning. The
 // rule here asks the ROW instead, and the second suite below is what says the two
 // agree: every input the test suite feeds the compiler, compared against the
@@ -105,7 +105,7 @@ function corpus(): string[] {
 }
 
 /**
- * A program that STARTS with a binding, which the shipped compiler may fold away
+ * A program that STARTS with a binding, which the reference compiler may fold away
  * before it decides the shape.
  *
  * `const a = 1; $.x === a` compiles to `{ "x": 1 }`: the value is a compile-time
@@ -117,7 +117,7 @@ function corpus(): string[] {
  */
 const startsWithABinding = (src: string): boolean => /^\s*(?:const|let)\s/.test(src) && src.includes(";");
 
-describe("compiler/passes/shape — agrees with the shipped compiler", () => {
+describe("compiler/passes/shape — agrees with the reference compiler", () => {
   it("gives the same answer for every input the suite compiles", () => {
     const differ: string[] = [];
     let compared = 0;
@@ -126,7 +126,7 @@ describe("compiler/passes/shape — agrees with the shipped compiler", () => {
       try {
         actual = Array.isArray(jsmql(src)) ? "pipeline" : "filter";
       } catch {
-        continue; // an input the shipped compiler refuses says nothing about shape
+        continue; // an input the reference compiler refuses says nothing about shape
       }
       let mine: string;
       try {

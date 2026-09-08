@@ -11,10 +11,10 @@
 //   Math.max($.a, $.b)   MethodCall { name: "max", object: Ident("Math") }
 //   $.rows.max()         MethodCall { name: "max", object: FieldRef("rows") }
 //
-// That removed fourteen node types that existed only because the old parser knew
-// particular names — MathCall, MathConst, ObjectCall, NumberStatic, NewSet,
-// NewDate, DateNow, DateUTC, ArrayFrom, TypeCast, TypeCastRef, MathCallRef,
-// ObjectIdRef, and ParamRef, which was indistinguishable from any other bare
+// So there is no node type per NAME. A tree that knew particular names would need
+// one for each — MathCall, MathConst, ObjectCall, NumberStatic, NewSet, NewDate,
+// DateNow, DateUTC, TypeCast, TypeCastRef, MathCallRef, ObjectIdRef, ParamRef —
+// and the last of those would be indistinguishable from any other bare
 // name. Resolving a name is `names.ts`'s job, in a later phase.
 //
 // `ObjectIdLiteral` stays, because `0x` followed by exactly 24 hex digits is a

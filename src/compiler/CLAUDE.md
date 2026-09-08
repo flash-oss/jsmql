@@ -38,7 +38,9 @@ produce a document, it calls a function here.
 
 ```
 index.ts       source → MQL. The public entries: `expr(source)`, `filter(source)`,
-               `pipeline(source)`.
+               `pipeline(source)`, `update(source)`.
+rows.ts        the registry readers every phase shares: one question about a name,
+               one answer from a row, spelled out once.
 objectid-guard.ts  the one plausibility rule for an ObjectId the source spells.
 
 lex/
@@ -56,9 +58,12 @@ parse/         the Pratt loop driven by precedence / associativity / fixity,
                callee and its `{ … }` body at the same time.
 passes/        naming.ts answers "which row does this node name", "what is the
                chain's base" and "what does this node bind" ONCE for every pass;
-               desugar (source → source), then position and shape (which
-               document the program becomes). See docs/specs/desugar-pass.md
-               and docs/specs/position-pass.md.
+               walk.ts is the one tree walk they all use. fold.ts and its family
+               (fold-dates, fold-methods, evaluate, literal) settle a constant
+               expression to its value; desugar rewrites source to source;
+               inject carries a runtime value in; fresh mints a parameter name;
+               position and shape decide which document the program becomes.
+               See docs/specs/desugar-pass.md and docs/specs/position-pass.md.
 emit/          the lowerings, and the dispatcher that checks a row before running one.
   consult.ts   what a row says about one name in one position — a pure read.
   select.ts    which rule runs: the receiver's proof (a closed Receiver) and the
@@ -88,12 +93,15 @@ emit/          the lowerings, and the dispatcher that checks a row before runnin
   union.ts     the union road: `$$.push(…)` and `.concat(…)` as `$unionWith`, one
                stage per source, JavaScript's spread rule kept.
   join.ts      the join road: `$$$.<coll>.<chain>` as `$lookup` in every position
-  update.ts    the update-document target: the object form of an update from writes and
-               update operators, constants only — a document read is refused with the pipeline
-               form as the way out. See docs/specs/emit-pass.md § The update-document target.
                — the peel, the slot, the four destinations. Lent to lower.ts at
                load (`provideJoin`), since it needs the statement target's link
                walker and the statement target imports lower.ts.
+  update.ts    the update-document target: the object form of an update from writes and
+               update operators, constants only — a document read is refused with the pipeline
+               form as the way out. See docs/specs/emit-pass.md § The update-document target.
+  reduce-wrap.ts  the reducer wrap: `$$ = [{ k: $$.reduce(…) }]` as one `$group`.
+  sort-spec.ts the one reading of a sort argument — a name, a list, a `{ field: dir }`
+               spec, a key function, a comparator — for every row that takes one.
 ```
 
 ## Conventions

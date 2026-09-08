@@ -2,6 +2,15 @@
 
 ## Test files and their purposes
 
+Two directories hold no `*.test.ts` of their own:
+
+- **`test/types/`** — the type-level audits. Each fixture is compiled by `tsc`, not
+  run: a `@ts-expect-error` marks a call the types MUST refuse, and the compile
+  fails if it is accepted. `registry-contracts.test.ts` and `smoke.test.ts` are what
+  run them, each naming its own tsconfig. The contracts fixture is the other half of
+  every type rule in [`src/registry/CLAUDE.md`](../src/registry/CLAUDE.md).
+- **`test/support/`** — helpers the suites share; nothing here asserts.
+
 
 ### `realistic.test.ts` — full-feature integration tests
 
@@ -17,9 +26,9 @@ When a new feature ships, add at least one case to `realistic.test.ts` that uses
 
 ### `smoke.test.ts` — runtime invariants vitest itself can't catch
 
-Three cases, each spawning a real `node` process:
+Two families, each spawning a real `node` process:
 
-1. **Strippable-TS invariant.** `node src/index.ts` must run without errors. Vitest transforms TS through Vite's loader, which silently accepts `enum`, `namespace`, parameter properties, decorators, and other constructs the strippable-subset rule bans. Only the real Node stripper is authoritative — see `src/CLAUDE.md` for the full ban list.
+1. **Strippable-TS invariants.** Every `src/` entry point — `src/index.ts`, `src/mongoose.ts`, `src/cli.ts` — must run under Node's own type stripper without errors. Vitest transforms TS through Vite's loader, which silently accepts `enum`, `namespace`, parameter properties, decorators, and other constructs the strippable-subset rule bans. Only the real Node stripper is authoritative — see `src/CLAUDE.md` for the full ban list.
 2. **Built-dist ESM import.** When `dist/` exists (after `npm run build`), `import { jsmql } from './dist/index.js'` must resolve and produce the expected MQL for a few canonical expressions across all three call shapes (string, arrow, template tag). Skipped when `dist/` is absent so local `npm test` stays fast; run `npm run smoke:dist` to build and exercise it on demand.
 3. **Built-dist CJS require.** Same expectations as the ESM case, but exercises `require('./dist/cjs/index.cjs')` — the bundle produced by `scripts/build-cjs.mjs` under the `require` condition of `package.json#exports`. The bundling step is easy to break without tsc noticing, so this is the guard that the CJS half of the dual package keeps working on Node 14+.
 
@@ -31,11 +40,11 @@ Spawns `node src/cli.ts` directly (native type-stripping, no build step) and ass
 
 ### Suites that talk to a server must say whether they did
 
-`permutations.test.ts`, `fold-consistency.test.ts`, `parity.test.ts` and `integration.test.ts` all self-skip (green) when no mongod is reachable, so `npm test` stays green without one. That design has a failure mode: a suite that silently degrades to compile-only looks exactly like a suite that passed.
+Every suite that constructs a `MongoClient` self-skips (green) when no mongod is reachable, so `npm test` stays green without one — `grep -a -l MongoClient test/*.test.ts` is the live list. That design has a failure mode: a suite that silently degrades to compile-only looks exactly like a suite that passed.
 
 Each therefore carries a **coverage guard** that states which happened. `permutations.test.ts` asserts every generated chain reached the server, or that none did. `fold-consistency.test.ts` asserts that at least 90% of its cases actually compared a fold against a server value, because a case that early-returns asserts nothing. When you add a suite that self-skips, add the matching guard — and check it has teeth by tightening it until it fails.
 
-**Never gate a server half behind an unset environment variable.** `permutations.test.ts` did, and the result was that all 2 277 of its chains were compile-only in every normal run — the half that catches server rejections, and that found the two bugs its header names, never executed. Default to a local URI and self-skip instead.
+**Never gate a server half behind an unset environment variable.** A suite that reaches the server only when someone remembers to export a variable is compile-only in every normal run, and the half that catches server rejections is the half that finds real bugs. Default to a local URI and self-skip instead.
 
 
 
@@ -45,7 +54,7 @@ Guards the landing page (`index.html`), the `CNAME` that binds it to jsmql.js.or
 
 
 
-### `compiler-query-expr-agreement.test.ts` — the NEW compiler's two roads
+### `compiler-query-expr-agreement.test.ts` — the query road and the expression road
 
 The same gate as `query-expr-agreement.test.ts`, for `src/compiler/`: the new `filter(src)` and the new `expr(src)` (under `$expr`) run over one fixture on a live mongod and must select the same documents, except for the divergences the language documents — those live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row rather than landing silently. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row here whenever you give a name or a production a query cell.
 
@@ -55,11 +64,11 @@ The other agreement suites compare two of our own lowerings; this one compares o
 
 The sources JavaScript answers differently live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row instead of landing silently. Two reasons cover almost all of them, and neither is an array bug: JavaScript COERCES under a relational operator (`[2] > 1` is true), and it THROWS when a path walks through a missing intermediate. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row whenever you give a name or a production a query cell.
 
-### `compiler-update.test.ts` — the NEW compiler's update-document target
+### `compiler-update.test.ts` — the update-document target
 
 Each update document — writes (`$.n += 2`, `$.tags.push(x)`, `delete $.a`) and the update operators — is asserted as MQL and, on a live mongod, applied with `updateMany` to one fixture document and the result compared with what JavaScript leaves behind. Self-skips (green) without a server, with the all-or-nothing guard. Add a case whenever you touch `src/compiler/emit/update.ts`.
 
-### `compiler-join.test.ts` — the NEW compiler's join road, against the server's answers
+### `compiler-join.test.ts` — the join road, against the server's answers
 
 Every `$$$.<coll>.<chain>` shape the road emits, asserted as MQL AND run on a live mongod over one fixture, with the documents that come back compared to what JavaScript would answer (ids, and the fields the pipeline added). A join is where a wrong shape hides best — the basic `localField` form and the `let`/`$expr` form both run and return different documents for a null or an array — so the data comparison, not the `toEqual`, is the gate here. Self-skips (green) when no mongod is reachable, with the all-or-nothing guard. Add a case whenever you touch `src/compiler/emit/join.ts` or the capture in `env.ts`.
 

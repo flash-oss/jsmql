@@ -1,6 +1,6 @@
 // Phase 5 of src/compiler/ — the filter target, end to end.
 //
-// A JSMQL predicate and the query document the new compiler emits. The shipped
+// A JSMQL predicate and the query document the compiler emits. The reference
 // compiler's outputs where the two agree, and the ruled shape where they differ:
 // `||` lowers PER BRANCH, so a leaf's query form never depends on its sibling.
 // The wider net is scripts/diff-compilers.mjs --cur … --entry filter.
