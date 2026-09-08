@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: a stage refused as a predicate stops naming the entry point
+
+Every stage's `filter` cell opened its way out with advice about which entry to call:
+
+```
+$match($.a === 1) && $.b > 2
+before: '$match' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write
+        it as a statement ('$match(…);') or a chain link ('$$.$match(…)').
+```
+
+That advice is dead wherever the cell can fire. A stage that IS the whole program never reaches it — the entry answers first, and already names the right one:
+
+```
+jsmql.filter("$sort({ a: 1 })")
+→ jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a
+  top-level '$sort' stage call. Use jsmql.pipeline().
+```
+
+So the cell only ever speaks when the stage sits INSIDE something the developer meant to write — a predicate they are building, a `.filter` callback on a chain — where they are already in the pipeline it tells them to reach for. The clause is gone from all forty-five, and the sentence says what a predicate is for instead:
+
+```
+now:    '$match' is a pipeline stage, not a filter predicate — a predicate says which documents to
+        keep, not what stages to run. Write it as a pipeline statement ('$match(…);') or as a chain
+        link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.
+```
+
+The last clause is the one the stage's `expr` cell already carried, so the two cells for one stage stop disagreeing. Ten stages have such an equivalent — `$addFields` and `$set` to `$mergeObjects`, `$limit` and `$skip` to `$slice`, `$match` and `$redact` to `$filter`, `$project` to `$getField`, `$sort` to `$sortArray`, `$unionWith` to `$concatArrays`, `$unset` to `$unsetField`. The other thirty-five end after the chain link, because there is nothing else true to say.
+
+---
+
+
 ## 2026-09-08 — fix: three roads that answered with a JavaScript error, and one that answered about nothing
 
 A sweep of 254 sources — every callback-taking name in the registry, on every receiver, in every container — found no way to run a pipeline stage inside a JavaScript or lodash callback body. `.aggregate` is the one exception and it is one row wide. Four other defects turned up beside it.
