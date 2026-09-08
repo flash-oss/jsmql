@@ -10,7 +10,7 @@ document with this expression."
 When the RHS is **provably an array** (an array literal, or an array-typed
 expression like `.map()` / `.filter()` / `Object.entries()`), the same surface
 instead *fans out*: one input document becomes one output document **per array
-element**. See [Fan-out variant](#fan-out-variant).
+element**. See [Fan-out variant](#fan-out-belongs-to-the-stream-not-the-root).
 
 We lower to `$replaceWith` (the shorter MQL spelling) rather than
 `$replaceRoot: { newRoot: <expr> }` (the legacy spelling). They are exact
@@ -68,7 +68,7 @@ about what the statement does to the document.
 | `$ = { ...$, x: 1 }` | `{ $replaceWith: { $mergeObjects: ["$$ROOT", { x: 1 }] } }` |
 | `$ = $$$.coll.find(pred)` (direct lookup) | `{ $lookup: { …, pipeline: [ …, { $limit: 1 }], as: "__jsmql.tmp.N" } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — a document whose `.find` matched nothing leaves the stream (by design) |
 | `$ = { n: $.foo + $$$.coll.find(pred).count }` (buried lookup) | the `$lookup` hoisted ahead into a scratch slot, `{ $set: { slot: { $first: "$slot" } } }`, then `{ $replaceWith: { n: { $add: ["$foo", "$slot.count"] } } }` |
-| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out variant](#fan-out-variant) |
+| `$ = [{…}, {…}]` / `$ = $.items.map(…)` / `$ = Object.entries($.x)` (provably array) | `{ $set: { "__jsmql.tmp.N": <array> } }`, `{ $unwind: "$__jsmql.tmp.N" }`, `{ $replaceWith: "$__jsmql.tmp.N" }` — see [Fan-out variant](#fan-out-belongs-to-the-stream-not-the-root) |
 
 The direct-lookup form unwinds the slot instead of reading `$first`: `$replaceWith: { $first: … }` fails on the server for every document whose match is empty (measured), while `$unwind` drops it — the one document it found is what the document becomes, and a document that found nothing has nothing to become ([lookup-stage.md § The join road](lookup-stage.md)). No cleanup follows a `$replaceWith`: the scratch namespace is gone with the old root.
 
@@ -193,7 +193,7 @@ Each refusal names a concrete fix:
 | `$++`, `$ += 5`, `$--`, `$ *= 2` | "Cannot use '++' on bare '$' — it is the whole document, not a scalar. Write the field: '$.<field> ++ …'" |
 | `delete $` | "'delete $' would delete the document itself. To replace it, write '$ = { … };'; to drop every field but one, write '$ = { keep: $.keep };'." |
 
-A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document (`$ = $.points * 1.1` is refused by the server, not at compile time). An array literal fans out whatever its elements are (`$ = [1, 2]` unwinds two scalars, which the server refuses as roots) — see [Fan-out variant](#fan-out-variant).
+A field path that resolves to a document at run time passes (`$ = $.profile`, `$ = "$sub"`), and so does any expression the compiler cannot prove is not a document (`$ = $.points * 1.1` is refused by the server, not at compile time). An array literal fans out whatever its elements are (`$ = [1, 2]` unwinds two scalars, which the server refuses as roots) — see [Fan-out variant](#fan-out-belongs-to-the-stream-not-the-root).
 
 ## Deferred
 

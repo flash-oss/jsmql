@@ -33,7 +33,7 @@ on the source line rather than a dangling blank one.
 | `--filter` | `jsmql.filter(source)` | Filter document (object) |
 | `--pipeline` | `jsmql.pipeline(source)` | Pipeline (array of stages) |
 | `--expr` | `jsmql.expr(source)` | raw aggregation expression |
-| `--update` | `jsmql.update(source)` | update pipeline (whitelisted stages) |
+| `--update` | `jsmql.update(source)` | update document (`{ $set, $inc, … }`, constants only) |
 | `--validate` / `--check` | `jsmql.validate(source)` | `{ valid, errors }` JSON |
 
 The mode flags are mutually exclusive; two of them is a usage error. The strict

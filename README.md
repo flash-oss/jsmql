@@ -275,7 +275,7 @@ With no flag the output shape is picked the same way `jsmql()` picks it (a top-l
 | `--filter` | Filter document | `jsmql.filter()` |
 | `--pipeline` | stage array | `jsmql.pipeline()` |
 | `--expr` | aggregation expression | `jsmql.expr()` |
-| `--update` | update pipeline | `jsmql.update()` |
+| `--update` | update document | `jsmql.update()` |
 | `--validate` (`--check`) | `{ valid, errors }`; exit 1 if invalid | `jsmql.validate()` |
 
 Formatting is pretty 2-space by default (like `jq`); use `-c`/`--compact`, `--tab`, or `--indent N`. A **live BSON value** — a `Date`, an `ObjectId`, a regular expression — prints as the JavaScript that makes it, because JSON has no spelling for one and a stringified date is a string the server compares as a string:
