@@ -730,6 +730,16 @@ function groupedByKey(
   };
 }
 
+/**
+ * 'Array.from(…)' is not part of jsmql. The range operator says the same thing in
+ * fewer characters — MEASURED, 'Array.from({ length: 3 }, (_, i) => i * 2)' emitted a
+ * '$let' binding a throwaway element that '$range(0, 3).map(i => i * 2)' does not —
+ * and one capability gets one spelling.
+ */
+const fromIsNotJsmql = unsupported(
+  "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.",
+);
+
 export const NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -13378,15 +13388,15 @@ export const NAMES = {
   }),
 
   Array: global_({
-    doc: "The Array namespace. Only `Array.from({ length: n })` is jsmql.",
+    doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     provides: "Array",
     returns: "array",
     where: [],
-    filter: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
-    expr: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
+    filter: fromIsNotJsmql,
+    expr: fromIsNotJsmql,
     stream: unsupported("'Array' produces a value, not a stream of documents."),
     statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -13482,43 +13492,20 @@ export const NAMES = {
     window: unsupported("'Date.UTC()' is not a window function."),
   }),
 
+  // Parsed so the name gets an answer, and refused everywhere: the range operator
+  // says the same thing in fewer characters, and one capability gets one spelling.
   from: name({
-    doc: "An array of `n` indices, from `{ length: n }`. No other form is supported.",
+    doc: "'Array.from(…)' is not part of jsmql. See its refusal.",
     call: true,
-    on: "any",
-    params: ["value", "index"],
+    on: "Array",
     returns: "unknown",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      byArgs: {
-        object: {
-          keys: ["length"],
-          args: { sig: "{ length: n }", exact: 1 },
-          // `{ length: n }` lowers to a plain document; its `length` is the count.
-          emit: ({ args, value }) => ({ $range: [0, (value(args[0]) as { length: unknown }).length] }),
-        },
-        // With a mapper: `(_, i) => …` over the range, the element parameter bound to null.
-        multiple: {
-          args: { sig: "{ length: n }, (_, i) => …", exact: 2, constant: [0] },
-          emit: ({ args, value, elements }) => {
-            const cb = elements(args[1], 2, (element, k) => (k === 0 ? null : element));
-            return {
-              $map: { input: { $range: [0, (value(args[0]) as { length: unknown }).length] }, as: cb.as, in: cb.in },
-            };
-          },
-        },
-        otherwise: unsupported(
-          "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
-        ),
-      },
-    },
-    stream: unsupported("'Array.from()' is a value. Use it inside a reshape."),
-    statement: unsupported(
-      "'.from()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.from();'",
-    ),
-    group: unsupported("'Array.from()' is not an accumulator."),
-    window: unsupported("'Array.from()' is not a window function."),
+    where: [],
+    filter: fromIsNotJsmql,
+    expr: fromIsNotJsmql,
+    stream: fromIsNotJsmql,
+    statement: fromIsNotJsmql,
+    group: fromIsNotJsmql,
+    window: fromIsNotJsmql,
   }),
 };
 

@@ -219,7 +219,6 @@ function elementsCallback(
   env: Env,
   read: (body: Expr, e: Env) => unknown,
   name: string,
-  pick: (element: string, k: number) => unknown = (element, k) => ({ $arrayElemAt: [element, k] }),
 ): { as: string; ref: string; in: unknown } {
   if (cb.type !== "Lambda" || cb.body === undefined || cb.params.length !== count) {
     throw elementsShape(name, count, (cb as { pos: number }).pos);
@@ -229,7 +228,7 @@ function elementsCallback(
   const vars: Record<string, unknown> = {};
   cb.params.forEach((p, k) => {
     const b = bodyEnv.param(p, "unknown", cb.pos);
-    vars[b.as] = pick(pair.ref, k);
+    vars[b.as] = { $arrayElemAt: [pair.ref, k] };
     bodyEnv = b.env;
   });
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
@@ -264,7 +263,7 @@ export function exprInputs(
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
     callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
-    elements: (cb, count, pick) => elementsCallback(cb, count, argEnv, read.value, name, pick),
+    elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
     sortSpec: (e, objects) => sortSpecOf(e, name, objects),
     orderBy: (keys, orders) => orderBySpec(keys, orders, name),
     objIteratee: (cb) => {

@@ -547,7 +547,7 @@ accumulator IS `$value` and the element IS `$this` when the body is plain
 arithmetic, and both are read through a `$let` when the body calls anything,
 because a call may lower to a `$reduce` of its own and shadow them.
 `elements` binds one parameter per position of one array element — `.zipWith`'s
-arrow over a `$zip` pair, `Array.from`'s `(_, i)` over a `$range`.
+arrow over a `$zip` pair.
 
 ```
 $.a.reduce((acc, x) => acc + x, 0)

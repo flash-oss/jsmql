@@ -336,7 +336,7 @@ export type Context = "expression" | "params" | "callArgs" | "statement" | "obje
  *                                          types — a count, not a type:
  *                                            new Date($.ms)           → { $toDate: "$ms" }
  *                                            new Date($.y, $.m, $.d)  → { $dateFromParts: … }
- *   "object"    Array.from({ length: n })  one object literal
+ *   "object"    $dateAdd({ startDate: …, … })  one object literal
  *   "constant"  ObjectId("507f…")          one argument the fold could evaluate
  *   "dynamic"   ObjectId($.id)             one argument it could not
  * These are the keys of `ByArgs`; a row states one answer per class.
@@ -972,14 +972,9 @@ export type ExprIn = {
   reducer: (cb: Expr, seed: Expr) => { input: unknown; in: unknown };
   /**
    * An arrow of `count` parameters over the elements of one array — `.zipWith`'s —
-   * each parameter bound to its position of the element (`pick` chooses another
-   * reading: `Array.from`'s `(_, i)` binds the index alone).
+   * each parameter bound to its position of the element.
    */
-  elements: (
-    cb: Expr,
-    count: number,
-    pick?: (element: string, k: number) => unknown,
-  ) => { as: string; ref: string; in: unknown };
+  elements: (cb: Expr, count: number) => { as: string; ref: string; in: unknown };
   /**
    * A collision-free MongoDB variable: the bare name for an `as` / `vars` slot,
    * and the `$$name` that reads it.
@@ -1266,8 +1261,6 @@ export type Uncertain<F extends Family, In, Out> =
 export type ByArgs<In, Out> = {
   none?: Rule<In, Out>;
   multiple?: Rule<In, Out>;
-  /** One object literal, which must carry `keys` — `Array.from({ length: n })`. */
-  object?: { keys: readonly string[] } & Rule<In, Out>;
   /**
    * A constant that REACHES a row is one the fold did not settle: a value with
    * no source spelling (a Date, an ObjectId — settled by the evaluator at the

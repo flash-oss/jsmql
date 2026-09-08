@@ -202,11 +202,6 @@ function fromByArgs(name: string, byArgs: Record<string, unknown>, shaped: Shape
   switch (shaped.kind) {
     case "spread":
       return leftover();
-    case "object": {
-      const entry = byArgs.object as { keys?: readonly string[] } | undefined;
-      if (entry === undefined || entry.keys === undefined) return leftover();
-      return entry.keys.every((k) => shaped.keys.includes(k)) ? settle(name, entry, shaped, count) : leftover();
-    }
     case "constant":
       return byArgs.constant === undefined ? leftover() : settle(name, byArgs.constant, shaped, count);
     default: {

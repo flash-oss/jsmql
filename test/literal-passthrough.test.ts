@@ -291,7 +291,6 @@ const REGRESSION_INPUTS: Array<{ label: string; mql: () => unknown }> = [
   },
   { label: "|| short-circuit binding", mql: () => jsmql.expr(`($.a + $.b) || $.c`) },
   { label: "&& short-circuit binding", mql: () => jsmql.expr(`($.a + $.b) && $.c`) },
-  { label: "Array.from with throwaway _ param", mql: () => jsmql.expr(`Array.from({ length: 3 }, (_, i) => i * 2)`) },
   { label: ".map throwaway _ param", mql: () => jsmql(`$set({ xs: $.xs.map(_ => 0) });`) },
   { label: ".reduce throwaway _ element param", mql: () => jsmql.expr(`$.xs.reduce((acc, _, i) => acc + i, 0)`) },
   { label: ".fill() statement mutator (bounds)", mql: () => jsmql(`$.xs.fill(0, 1, 3);`) },

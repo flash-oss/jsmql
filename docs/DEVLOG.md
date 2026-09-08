@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — feat!: `Array.from` is not part of jsmql
+
+`Array.from({ length: n })` was one spelling of a capability the language already had, and the worse one of the two. `$range` says the same thing in fewer characters, and the mapped form bound a throwaway element nobody asked for:
+
+```
+Array.from({ length: 3 }, (_, i) => i * 2)
+→ { $map: { input: { $range: [0, 3] }, as: "jsmqlPair",
+            in: { $let: { vars: { v__5f: null, i: "$$jsmqlPair" }, in: { $multiply: ["$$i", 2] } } } } }
+
+$range(0, 3).map(i => i * 2)
+→ { $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } } }
+```
+
+It also answered on ANY receiver, so `Object.from({ length: 3 })` compiled to the same `$range` — a second spelling of the second spelling, which no document ever mentioned.
+
+The name still parses, and every position refuses it with the form that works:
+
+```
+Array.from({ length: 5 })
+→ 'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it
+  for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have,
+  call '.map(…)' on that array.
+```
+
+Two registry capabilities went with it, because it was the only thing that produced either. A `byArgs` class for "one object literal carrying these keys" had no other row, and the callback service's third parameter — a reading that bound one arrow parameter to a value of its own — had no other caller. A rule nothing produces is not a capability.
+
+---
+
+
 ## 2026-09-08 — fix: a stage refused as a predicate stops naming the entry point
 
 Every stage's `filter` cell opened its way out with advice about which entry to call:

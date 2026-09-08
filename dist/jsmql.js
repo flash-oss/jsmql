@@ -905,6 +905,9 @@ function groupedByKey(input, it, bind) {
     $arrayToObject: { $map: { input: distinctKeysExpr(input, it), as: key.as, in: { k: key.ref, v: filtered } } }
   };
 }
+var fromIsNotJsmql = unsupported(
+  "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
+);
 var NAMES = {
   $abs: mongo({
     doc: "Returns the absolute value of a number.",
@@ -4175,7 +4178,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$count' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$count(\u2026);') or a chain link ('$$.$count(\u2026)')."
+      "'$count' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$count(\u2026);') or as a chain link ('$$.$count(\u2026)')."
     ),
     expr: unsupported(
       "'$count' is a pipeline stage, not an expression \u2014 MongoDB has no '$count' expression operator, so '{ $count: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$count(\u2026);') or as a chain link ('$$.$count(\u2026)'). As an accumulator it counts a group: $group({ _id: ..., n: $count() }) or a window's documents."
@@ -4776,7 +4779,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$addFields' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$addFields(\u2026);') or a chain link ('$$.$addFields(\u2026)')."
+      "'$addFields' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$addFields(\u2026);') or as a chain link ('$$.$addFields(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
     ),
     expr: unsupported(
       "'$addFields' is a pipeline stage, not an expression \u2014 MongoDB has no '$addFields' expression operator, so '{ $addFields: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$addFields(\u2026);') or as a chain link ('$$.$addFields(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
@@ -4808,7 +4811,7 @@ var NAMES = {
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$bucket' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$bucket(\u2026);') or a chain link ('$$.$bucket(\u2026)')."
+      "'$bucket' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$bucket(\u2026);') or as a chain link ('$$.$bucket(\u2026)')."
     ),
     expr: unsupported(
       "'$bucket' is a pipeline stage, not an expression \u2014 MongoDB has no '$bucket' expression operator, so '{ $bucket: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucket(\u2026);') or as a chain link ('$$.$bucket(\u2026)')."
@@ -4843,7 +4846,7 @@ var NAMES = {
     bodyPositions: { "": "value", "output.*": "group" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$bucketAuto' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$bucketAuto(\u2026);') or a chain link ('$$.$bucketAuto(\u2026)')."
+      "'$bucketAuto' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$bucketAuto(\u2026);') or as a chain link ('$$.$bucketAuto(\u2026)')."
     ),
     expr: unsupported(
       "'$bucketAuto' is a pipeline stage, not an expression \u2014 MongoDB has no '$bucketAuto' expression operator, so '{ $bucketAuto: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$bucketAuto(\u2026);') or as a chain link ('$$.$bucketAuto(\u2026)')."
@@ -4891,7 +4894,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$changeStream' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$changeStream(\u2026);') or a chain link ('$$.$changeStream(\u2026)')."
+      "'$changeStream' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$changeStream(\u2026);') or as a chain link ('$$.$changeStream(\u2026)')."
     ),
     expr: unsupported(
       "'$changeStream' is a pipeline stage, not an expression \u2014 MongoDB has no '$changeStream' expression operator, so '{ $changeStream: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStream(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -4911,7 +4914,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
-      "'$changeStreamSplitLargeEvent' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$changeStreamSplitLargeEvent(\u2026);') or a chain link ('$$.$changeStreamSplitLargeEvent(\u2026)')."
+      "'$changeStreamSplitLargeEvent' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$changeStreamSplitLargeEvent(\u2026);') or as a chain link ('$$.$changeStreamSplitLargeEvent(\u2026)')."
     ),
     expr: unsupported(
       "'$changeStreamSplitLargeEvent' is a pipeline stage, not an expression \u2014 MongoDB has no '$changeStreamSplitLargeEvent' expression operator, so '{ $changeStreamSplitLargeEvent: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$changeStreamSplitLargeEvent(\u2026);') or as a chain link ('$$.$changeStreamSplitLargeEvent(\u2026)')."
@@ -4939,7 +4942,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$collStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$collStats(\u2026);') or a chain link ('$$.$collStats(\u2026)')."
+      "'$collStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$collStats(\u2026);') or as a chain link ('$$.$collStats(\u2026)')."
     ),
     expr: unsupported(
       "'$collStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$collStats' expression operator, so '{ $collStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$collStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -4995,7 +4998,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$currentOp' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$currentOp(\u2026);') or a chain link ('$$.$currentOp(\u2026)')."
+      "'$currentOp' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$currentOp(\u2026);') or as a chain link ('$$.$currentOp(\u2026)')."
     ),
     expr: unsupported(
       "'$currentOp' is a pipeline stage, not an expression \u2014 MongoDB has no '$currentOp' expression operator, so '{ $currentOp: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$currentOp(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5027,7 +5030,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$densify' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$densify(\u2026);') or a chain link ('$$.$densify(\u2026)')."
+      "'$densify' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$densify(\u2026);') or as a chain link ('$$.$densify(\u2026)')."
     ),
     expr: unsupported(
       "'$densify' is a pipeline stage, not an expression \u2014 MongoDB has no '$densify' expression operator, so '{ $densify: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$densify(\u2026);') or as a chain link ('$$.$densify(\u2026)')."
@@ -5047,7 +5050,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
-      "'$documents' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$documents(\u2026);') or a chain link ('$$.$documents(\u2026)')."
+      "'$documents' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$documents(\u2026);') or as a chain link ('$$.$documents(\u2026)')."
     ),
     expr: unsupported(
       "'$documents' is a pipeline stage, not an expression \u2014 MongoDB has no '$documents' expression operator, so '{ $documents: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$documents(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5072,7 +5075,7 @@ var NAMES = {
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$facet' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$facet(\u2026);') or a chain link ('$$.$facet(\u2026)')."
+      "'$facet' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$facet(\u2026);') or as a chain link ('$$.$facet(\u2026)')."
     ),
     expr: unsupported(
       "'$facet' is a pipeline stage, not an expression \u2014 MongoDB has no '$facet' expression operator, so '{ $facet: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$facet(\u2026);') or as a chain link ('$$.$facet(\u2026)')."
@@ -5122,7 +5125,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$fill' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$fill(\u2026);') or a chain link ('$$.$fill(\u2026)')."
+      "'$fill' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$fill(\u2026);') or as a chain link ('$$.$fill(\u2026)')."
     ),
     expr: unsupported(
       "'$fill' is a pipeline stage, not an expression \u2014 MongoDB has no '$fill' expression operator, so '{ $fill: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$fill(\u2026);') or as a chain link ('$$.$fill(\u2026)')."
@@ -5165,7 +5168,7 @@ var NAMES = {
     bodyPositions: { "": "value", query: "filter" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$geoNear' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$geoNear(\u2026);') or a chain link ('$$.$geoNear(\u2026)')."
+      "'$geoNear' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$geoNear(\u2026);') or as a chain link ('$$.$geoNear(\u2026)')."
     ),
     expr: unsupported(
       "'$geoNear' is a pipeline stage, not an expression \u2014 MongoDB has no '$geoNear' expression operator, so '{ $geoNear: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$geoNear(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5190,7 +5193,7 @@ var NAMES = {
     bodyPositions: { "": "value", restrictSearchWithMatch: "filter" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$graphLookup' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$graphLookup(\u2026);') or a chain link ('$$.$graphLookup(\u2026)')."
+      "'$graphLookup' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$graphLookup(\u2026);') or as a chain link ('$$.$graphLookup(\u2026)')."
     ),
     expr: unsupported(
       "'$graphLookup' is a pipeline stage, not an expression \u2014 MongoDB has no '$graphLookup' expression operator, so '{ $graphLookup: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$graphLookup(\u2026);') or as a chain link ('$$.$graphLookup(\u2026)')."
@@ -5216,7 +5219,7 @@ var NAMES = {
     bodyPositions: { "": "value", "*": "group", _id: "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$group' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$group(\u2026);') or a chain link ('$$.$group(\u2026)')."
+      "'$group' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$group(\u2026);') or as a chain link ('$$.$group(\u2026)')."
     ),
     expr: unsupported(
       "'$group' is a pipeline stage, not an expression \u2014 MongoDB has no '$group' expression operator, so '{ $group: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$group(\u2026);') or as a chain link ('$$.$group(\u2026)')."
@@ -5242,7 +5245,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$indexStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$indexStats(\u2026);') or a chain link ('$$.$indexStats(\u2026)')."
+      "'$indexStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$indexStats(\u2026);') or as a chain link ('$$.$indexStats(\u2026)')."
     ),
     expr: unsupported(
       "'$indexStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$indexStats' expression operator, so '{ $indexStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$indexStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5267,7 +5270,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$limit' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$limit(\u2026);') or a chain link ('$$.$limit(\u2026)')."
+      "'$limit' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$limit(\u2026);') or as a chain link ('$$.$limit(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
     ),
     expr: unsupported(
       "'$limit' is a pipeline stage, not an expression \u2014 MongoDB has no '$limit' expression operator, so '{ $limit: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$limit(\u2026);') or as a chain link ('$$.$limit(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
@@ -5311,7 +5314,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$listLocalSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$listLocalSessions(\u2026);') or a chain link ('$$.$listLocalSessions(\u2026)')."
+      "'$listLocalSessions' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listLocalSessions(\u2026);') or as a chain link ('$$.$listLocalSessions(\u2026)')."
     ),
     expr: unsupported(
       "'$listLocalSessions' is a pipeline stage, not an expression \u2014 MongoDB has no '$listLocalSessions' expression operator, so '{ $listLocalSessions: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listLocalSessions(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5338,7 +5341,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$listSampledQueries' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$listSampledQueries(\u2026);') or a chain link ('$$.$listSampledQueries(\u2026)')."
+      "'$listSampledQueries' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSampledQueries(\u2026);') or as a chain link ('$$.$listSampledQueries(\u2026)')."
     ),
     expr: unsupported(
       "'$listSampledQueries' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSampledQueries' expression operator, so '{ $listSampledQueries: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSampledQueries(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5359,7 +5362,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$listSearchIndexes' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$listSearchIndexes(\u2026);') or a chain link ('$$.$listSearchIndexes(\u2026)')."
+      "'$listSearchIndexes' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSearchIndexes(\u2026);') or as a chain link ('$$.$listSearchIndexes(\u2026)')."
     ),
     expr: unsupported(
       "'$listSearchIndexes' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSearchIndexes' expression operator, so '{ $listSearchIndexes: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSearchIndexes(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5385,7 +5388,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$listSessions' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$listSessions(\u2026);') or a chain link ('$$.$listSessions(\u2026)')."
+      "'$listSessions' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$listSessions(\u2026);') or as a chain link ('$$.$listSessions(\u2026)')."
     ),
     expr: unsupported(
       "'$listSessions' is a pipeline stage, not an expression \u2014 MongoDB has no '$listSessions' expression operator, so '{ $listSessions: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$listSessions(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5420,7 +5423,7 @@ var NAMES = {
     binds: { keysOf: "let", visibleIn: ["pipeline"] },
     forbiddenIn: [],
     filter: unsupported(
-      "'$lookup' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$lookup(\u2026);') or a chain link ('$$.$lookup(\u2026)')."
+      "'$lookup' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$lookup(\u2026);') or as a chain link ('$$.$lookup(\u2026)')."
     ),
     expr: unsupported(
       "'$lookup' is a pipeline stage, not an expression \u2014 MongoDB has no '$lookup' expression operator, so '{ $lookup: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$lookup(\u2026);') or as a chain link ('$$.$lookup(\u2026)')."
@@ -5445,7 +5448,7 @@ var NAMES = {
     bodyPositions: { "": "filter" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$match' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$match(\u2026);') or a chain link ('$$.$match(\u2026)')."
+      "'$match' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$match(\u2026);') or as a chain link ('$$.$match(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
     ),
     expr: unsupported(
       "'$match' is a pipeline stage, not an expression \u2014 MongoDB has no '$match' expression operator, so '{ $match: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$match(\u2026);') or as a chain link ('$$.$match(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
@@ -5479,7 +5482,7 @@ var NAMES = {
     bodyPositions: { "": "value", whenMatched: { list: "statement", otherwise: "value" } },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
-      "'$merge' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$merge(\u2026);') or a chain link ('$$.$merge(\u2026)')."
+      "'$merge' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$merge(\u2026);') or as a chain link ('$$.$merge(\u2026)')."
     ),
     expr: unsupported(
       "'$merge' is a pipeline stage, not an expression \u2014 MongoDB has no '$merge' expression operator, so '{ $merge: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$merge(\u2026);') or as a chain link ('$$.$merge(\u2026)')."
@@ -5511,7 +5514,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
     filter: unsupported(
-      "'$out' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$out(\u2026);') or a chain link ('$$.$out(\u2026)')."
+      "'$out' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$out(\u2026);') or as a chain link ('$$.$out(\u2026)')."
     ),
     expr: unsupported(
       "'$out' is a pipeline stage, not an expression \u2014 MongoDB has no '$out' expression operator, so '{ $out: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$out(\u2026);') or as a chain link ('$$.$out(\u2026)')."
@@ -5543,7 +5546,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$planCacheStats' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$planCacheStats(\u2026);') or a chain link ('$$.$planCacheStats(\u2026)')."
+      "'$planCacheStats' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$planCacheStats(\u2026);') or as a chain link ('$$.$planCacheStats(\u2026)')."
     ),
     expr: unsupported(
       "'$planCacheStats' is a pipeline stage, not an expression \u2014 MongoDB has no '$planCacheStats' expression operator, so '{ $planCacheStats: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$planCacheStats(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5571,7 +5574,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$project' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$project(\u2026);') or a chain link ('$$.$project(\u2026)')."
+      "'$project' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$project(\u2026);') or as a chain link ('$$.$project(\u2026)'). For the value-position equivalent, use '$getField(\u2026)'."
     ),
     expr: unsupported(
       "'$project' is a pipeline stage, not an expression \u2014 MongoDB has no '$project' expression operator, so '{ $project: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$project(\u2026);') or as a chain link ('$$.$project(\u2026)'). For the value-position equivalent, use '$getField(\u2026)'."
@@ -5602,7 +5605,7 @@ var NAMES = {
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$rankFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$rankFusion(\u2026);') or a chain link ('$$.$rankFusion(\u2026)')."
+      "'$rankFusion' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$rankFusion(\u2026);') or as a chain link ('$$.$rankFusion(\u2026)')."
     ),
     expr: unsupported(
       "'$rankFusion' is a pipeline stage, not an expression \u2014 MongoDB has no '$rankFusion' expression operator, so '{ $rankFusion: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$rankFusion(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5621,7 +5624,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$redact' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$redact(\u2026);') or a chain link ('$$.$redact(\u2026)')."
+      "'$redact' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$redact(\u2026);') or as a chain link ('$$.$redact(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
     ),
     expr: unsupported(
       "'$redact' is a pipeline stage, not an expression \u2014 MongoDB has no '$redact' expression operator, so '{ $redact: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$redact(\u2026);') or as a chain link ('$$.$redact(\u2026)'). For the value-position equivalent, use '$filter(\u2026)'."
@@ -5649,7 +5652,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$replaceRoot' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$replaceRoot(\u2026);') or a chain link ('$$.$replaceRoot(\u2026)')."
+      "'$replaceRoot' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$replaceRoot(\u2026);') or as a chain link ('$$.$replaceRoot(\u2026)')."
     ),
     expr: unsupported(
       "'$replaceRoot' is a pipeline stage, not an expression \u2014 MongoDB has no '$replaceRoot' expression operator, so '{ $replaceRoot: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceRoot(\u2026);') or as a chain link ('$$.$replaceRoot(\u2026)')."
@@ -5676,7 +5679,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$replaceWith' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$replaceWith(\u2026);') or a chain link ('$$.$replaceWith(\u2026)')."
+      "'$replaceWith' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$replaceWith(\u2026);') or as a chain link ('$$.$replaceWith(\u2026)')."
     ),
     expr: unsupported(
       "'$replaceWith' is a pipeline stage, not an expression \u2014 MongoDB has no '$replaceWith' expression operator, so '{ $replaceWith: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$replaceWith(\u2026);') or as a chain link ('$$.$replaceWith(\u2026)')."
@@ -5708,7 +5711,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$sample' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$sample(\u2026);') or a chain link ('$$.$sample(\u2026)')."
+      "'$sample' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sample(\u2026);') or as a chain link ('$$.$sample(\u2026)')."
     ),
     expr: unsupported(
       "'$sample' is a pipeline stage, not an expression \u2014 MongoDB has no '$sample' expression operator, so '{ $sample: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sample(\u2026);') or as a chain link ('$$.$sample(\u2026)')."
@@ -5739,7 +5742,7 @@ var NAMES = {
     bodyPositions: { "": "value", "input.pipelines.*": "statement" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$scoreFusion' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$scoreFusion(\u2026);') or a chain link ('$$.$scoreFusion(\u2026)')."
+      "'$scoreFusion' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$scoreFusion(\u2026);') or as a chain link ('$$.$scoreFusion(\u2026)')."
     ),
     expr: unsupported(
       "'$scoreFusion' is a pipeline stage, not an expression \u2014 MongoDB has no '$scoreFusion' expression operator, so '{ $scoreFusion: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$scoreFusion(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5759,7 +5762,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$search' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$search(\u2026);') or a chain link ('$$.$search(\u2026)')."
+      "'$search' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$search(\u2026);') or as a chain link ('$$.$search(\u2026)')."
     ),
     expr: unsupported(
       "'$search' is a pipeline stage, not an expression \u2014 MongoDB has no '$search' expression operator, so '{ $search: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$search(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5779,7 +5782,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$searchMeta' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$searchMeta(\u2026);') or a chain link ('$$.$searchMeta(\u2026)')."
+      "'$searchMeta' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$searchMeta(\u2026);') or as a chain link ('$$.$searchMeta(\u2026)')."
     ),
     expr: unsupported(
       "'$searchMeta' is a pipeline stage, not an expression \u2014 MongoDB has no '$searchMeta' expression operator, so '{ $searchMeta: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$searchMeta(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5801,7 +5804,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$set' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$set(\u2026);') or a chain link ('$$.$set(\u2026)')."
+      "'$set' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$set(\u2026);') or as a chain link ('$$.$set(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
     ),
     expr: unsupported(
       "'$set' is a pipeline stage, not an expression \u2014 MongoDB has no '$set' expression operator, so '{ $set: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$set(\u2026);') or as a chain link ('$$.$set(\u2026)'). For the value-position equivalent, use '$mergeObjects(\u2026)'."
@@ -5857,7 +5860,7 @@ var NAMES = {
     bodyPositions: { "": "value", "output.*": "window" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$setWindowFields' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$setWindowFields(\u2026);') or a chain link ('$$.$setWindowFields(\u2026)')."
+      "'$setWindowFields' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$setWindowFields(\u2026);') or as a chain link ('$$.$setWindowFields(\u2026)')."
     ),
     expr: unsupported(
       "'$setWindowFields' is a pipeline stage, not an expression \u2014 MongoDB has no '$setWindowFields' expression operator, so '{ $setWindowFields: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$setWindowFields(\u2026);') or as a chain link ('$$.$setWindowFields(\u2026)')."
@@ -5884,7 +5887,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$shardedDataDistribution' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$shardedDataDistribution(\u2026);') or a chain link ('$$.$shardedDataDistribution(\u2026)')."
+      "'$shardedDataDistribution' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$shardedDataDistribution(\u2026);') or as a chain link ('$$.$shardedDataDistribution(\u2026)')."
     ),
     expr: unsupported(
       "'$shardedDataDistribution' is a pipeline stage, not an expression \u2014 MongoDB has no '$shardedDataDistribution' expression operator, so '{ $shardedDataDistribution: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$shardedDataDistribution(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -5905,7 +5908,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$skip' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$skip(\u2026);') or a chain link ('$$.$skip(\u2026)')."
+      "'$skip' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$skip(\u2026);') or as a chain link ('$$.$skip(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
     ),
     expr: unsupported(
       "'$skip' is a pipeline stage, not an expression \u2014 MongoDB has no '$skip' expression operator, so '{ $skip: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$skip(\u2026);') or as a chain link ('$$.$skip(\u2026)'). For the value-position equivalent, use '$slice(\u2026)'."
@@ -5951,7 +5954,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$sort' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$sort(\u2026);') or a chain link ('$$.$sort(\u2026)')."
+      "'$sort' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sort(\u2026);') or as a chain link ('$$.$sort(\u2026)'). For the value-position equivalent, use '$sortArray(\u2026)'."
     ),
     expr: unsupported(
       "'$sort' is a pipeline stage, not an expression \u2014 MongoDB has no '$sort' expression operator, so '{ $sort: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sort(\u2026);') or as a chain link ('$$.$sort(\u2026)'). For the value-position equivalent, use '$sortArray(\u2026)'."
@@ -5977,7 +5980,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$sortByCount' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$sortByCount(\u2026);') or a chain link ('$$.$sortByCount(\u2026)')."
+      "'$sortByCount' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$sortByCount(\u2026);') or as a chain link ('$$.$sortByCount(\u2026)')."
     ),
     expr: unsupported(
       "'$sortByCount' is a pipeline stage, not an expression \u2014 MongoDB has no '$sortByCount' expression operator, so '{ $sortByCount: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$sortByCount(\u2026);') or as a chain link ('$$.$sortByCount(\u2026)')."
@@ -6006,7 +6009,7 @@ var NAMES = {
     bodyPositions: { "": "value", pipeline: "statement" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$unionWith' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$unionWith(\u2026);') or a chain link ('$$.$unionWith(\u2026)')."
+      "'$unionWith' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unionWith(\u2026);') or as a chain link ('$$.$unionWith(\u2026)'). For the value-position equivalent, use '$concatArrays(\u2026)'."
     ),
     expr: unsupported(
       "'$unionWith' is a pipeline stage, not an expression \u2014 MongoDB has no '$unionWith' expression operator, so '{ $unionWith: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unionWith(\u2026);') or as a chain link ('$$.$unionWith(\u2026)'). For the value-position equivalent, use '$concatArrays(\u2026)'."
@@ -6032,7 +6035,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$unset' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$unset(\u2026);') or a chain link ('$$.$unset(\u2026)')."
+      "'$unset' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unset(\u2026);') or as a chain link ('$$.$unset(\u2026)'). For the value-position equivalent, use '$unsetField(\u2026)'."
     ),
     expr: unsupported(
       "'$unset' is a pipeline stage, not an expression \u2014 MongoDB has no '$unset' expression operator, so '{ $unset: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unset(\u2026);') or as a chain link ('$$.$unset(\u2026)'). For the value-position equivalent, use '$unsetField(\u2026)'."
@@ -6077,7 +6080,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: [],
     filter: unsupported(
-      "'$unwind' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$unwind(\u2026);') or a chain link ('$$.$unwind(\u2026)')."
+      "'$unwind' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$unwind(\u2026);') or as a chain link ('$$.$unwind(\u2026)')."
     ),
     expr: unsupported(
       "'$unwind' is a pipeline stage, not an expression \u2014 MongoDB has no '$unwind' expression operator, so '{ $unwind: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$unwind(\u2026);') or as a chain link ('$$.$unwind(\u2026)')."
@@ -6115,7 +6118,7 @@ var NAMES = {
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet"],
     filter: unsupported(
-      "'$vectorSearch' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(\u2026), or write it as a statement ('$vectorSearch(\u2026);') or a chain link ('$$.$vectorSearch(\u2026)')."
+      "'$vectorSearch' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$vectorSearch(\u2026);') or as a chain link ('$$.$vectorSearch(\u2026)')."
     ),
     expr: unsupported(
       "'$vectorSearch' is a pipeline stage, not an expression \u2014 MongoDB has no '$vectorSearch' expression operator, so '{ $vectorSearch: \u2026 }' in a value position is rejected by the server. Write it as a pipeline statement ('$vectorSearch(\u2026);'). It produces the pipeline's source documents, so it stands first and never as a chain link."
@@ -12991,15 +12994,15 @@ var NAMES = {
     window: unsupported("'Number' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   Array: global_({
-    doc: "The Array namespace. Only `Array.from({ length: n })` is jsmql.",
+    doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
     newKeyword: "forbidden",
     asReference: false,
     provides: "Array",
     returns: "array",
     where: [],
-    filter: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
-    expr: unsupported("'Array' is a namespace. Write 'Array.from({ length: n })'."),
+    filter: fromIsNotJsmql,
+    expr: fromIsNotJsmql,
     stream: unsupported("'Array' produces a value, not a stream of documents."),
     statement: unsupported("'Array' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'Array' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -13090,43 +13093,20 @@ var NAMES = {
     group: unsupported("'Date.UTC()' is not an accumulator."),
     window: unsupported("'Date.UTC()' is not a window function.")
   }),
+  // Parsed so the name gets an answer, and refused everywhere: the range operator
+  // says the same thing in fewer characters, and one capability gets one spelling.
   from: name({
-    doc: "An array of `n` indices, from `{ length: n }`. No other form is supported.",
+    doc: "'Array.from(\u2026)' is not part of jsmql. See its refusal.",
     call: true,
-    on: "any",
-    params: ["value", "index"],
+    on: "Array",
     returns: "unknown",
-    where: ["value"],
-    filter: viaFallback,
-    expr: {
-      byArgs: {
-        object: {
-          keys: ["length"],
-          args: { sig: "{ length: n }", exact: 1 },
-          // `{ length: n }` lowers to a plain document; its `length` is the count.
-          emit: ({ args, value }) => ({ $range: [0, value(args[0]).length] })
-        },
-        // With a mapper: `(_, i) => …` over the range, the element parameter bound to null.
-        multiple: {
-          args: { sig: "{ length: n }, (_, i) => \u2026", exact: 2, constant: [0] },
-          emit: ({ args, value, elements }) => {
-            const cb = elements(args[1], 2, (element2, k) => k === 0 ? null : element2);
-            return {
-              $map: { input: { $range: [0, value(args[0]).length] }, as: cb.as, in: cb.in }
-            };
-          }
-        },
-        otherwise: unsupported(
-          "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it."
-        )
-      }
-    },
-    stream: unsupported("'Array.from()' is a value. Use it inside a reshape."),
-    statement: unsupported(
-      "'.from()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.from();'"
-    ),
-    group: unsupported("'Array.from()' is not an accumulator."),
-    window: unsupported("'Array.from()' is not a window function.")
+    where: [],
+    filter: fromIsNotJsmql,
+    expr: fromIsNotJsmql,
+    stream: fromIsNotJsmql,
+    statement: fromIsNotJsmql,
+    group: fromIsNotJsmql,
+    window: fromIsNotJsmql
   })
 };
 
@@ -13803,7 +13783,7 @@ var PRODUCTIONS = {
     statement: unsupported("'$op()' is not a statement \u2014 see its 'where'.")
   }),
   namespacedCall: production({
-    doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`, `Array.from(...)`.",
+    doc: "`Math.abs(x)`, `Object.keys(o)`, `Number.isInteger(n)`, `Date.now()`.",
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
     // `Math.max(a, b)` is a MethodCall whose object is the name `Math`; `Math.PI` is a
@@ -20289,11 +20269,6 @@ function fromByArgs(name2, byArgs, shaped, count) {
   switch (shaped.kind) {
     case "spread":
       return leftover();
-    case "object": {
-      const entry = byArgs.object;
-      if (entry === void 0 || entry.keys === void 0) return leftover();
-      return entry.keys.every((k) => shaped.keys.includes(k)) ? settle(name2, entry, shaped, count) : leftover();
-    }
     case "constant":
       return byArgs.constant === void 0 ? leftover() : settle(name2, byArgs.constant, shaped, count);
     default: {
@@ -20853,7 +20828,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
   bodyEnv = i.env;
   return { input: indexedPairs(recv), in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function elementsCallback(cb, count, env, read, name2, pick = (element2, k) => ({ $arrayElemAt: [element2, k] })) {
+function elementsCallback(cb, count, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== count) {
     throw elementsShape(name2, count, cb.pos);
   }
@@ -20862,7 +20837,7 @@ function elementsCallback(cb, count, env, read, name2, pick = (element2, k) => (
   const vars = {};
   cb.params.forEach((p, k) => {
     const b = bodyEnv.param(p, "unknown", cb.pos);
-    vars[b.as] = pick(pair.ref, k);
+    vars[b.as] = { $arrayElemAt: [pair.ref, k] };
     bodyEnv = b.env;
   });
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
@@ -20881,7 +20856,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     predicate: (cb) => callback(cb, argEnv, read.truth),
     callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
-    elements: (cb, count, pick) => elementsCallback(cb, count, argEnv, read.value, name2, pick),
+    elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
     sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
     orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
     objIteratee: (cb) => {

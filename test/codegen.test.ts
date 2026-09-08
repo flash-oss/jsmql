@@ -5519,7 +5519,6 @@ describe("every method declares the receiver family it needs", () => {
     toLocaleString: "universal in JS — Number, Date and Array all have it",
     exec: "regex receiver, matched before the family check",
     test: "regex receiver, matched before the family check",
-    from: "Array.from / Object.from — a static, so it has no receiver to check",
   };
   it("only the genuinely universal methods opt out of the receiver check", () => {
     const optedOut = [...new Set([...valueMethodNames(), ...streamMethodNames()])].filter(acceptsAnyReceiver).sort();
@@ -6723,32 +6722,32 @@ describe("internal $let bindings never capture a lambda param", () => {
   });
 });
 
-describe("Array.from({length, ...})", () => {
-  it("no map function returns $range", () => {
-    expect(jsmql.expr("Array.from({ length: 5 })")).toEqual({ $range: [0, 5] });
+describe("Array.from is not part of jsmql", () => {
+  // The name parses, so it gets an answer: '$range' says the same thing, and in
+  // fewer characters — the mapped form used to bind a throwaway element in a '$let'.
+  const REFUSED =
+    "'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have, call '.map(…)' on that array.";
+  it("every spelling is refused, and the refusal is the same one", () => {
+    for (const src of [
+      "Array.from({ length: 5 })",
+      "Array.from({ length: 3 }, (_, i) => i * 2)",
+      "Array.from({ length: $.n }, (_, i) => i)",
+      "Array.from($.iter)",
+      "Array.from({ length: 3 }, x => x)",
+      "Array.from({ length: 5 },)",
+      "Array.from({ length: 5 }, (_, i) => i,)",
+      // 'from' answered on ANY receiver, so this compiled too — a second spelling nobody wrote down.
+      "Object.from({ length: 3 })",
+    ]) {
+      expect(() => jsmql.expr(src)).toThrow(REFUSED);
+    }
   });
-  it("with (_, i) => body maps over $range", () => {
-    expect(jsmql.expr("Array.from({ length: 3 }, (_, i) => i * 2)")).toEqual({
-      $map: {
-        input: { $range: [0, 3] },
-        as: "jsmqlPair",
-        in: { $let: { vars: { v__5f: null, i: "$$jsmqlPair" }, in: { $multiply: ["$$i", 2] } } },
-      },
+  it("the way out it names is the leaner MQL", () => {
+    expect(jsmql.expr("$range(0, 5)")).toEqual({ $range: [0, 5] });
+    expect(jsmql.expr("$range(0, $.n)")).toEqual({ $range: [0, "$n"] });
+    expect(jsmql.expr("$range(0, 3).map(i => i * 2)")).toEqual({
+      $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } },
     });
-  });
-  it("with $.length expression", () => {
-    const out = jsmql.expr("Array.from({ length: $.n }, (_, i) => i)") as Record<string, unknown>;
-    expect(JSON.stringify(out)).toContain('"$range":[0,"$n"]');
-  });
-  it("non-{length} input throws", () => {
-    expect(() => jsmql.expr("Array.from($.iter)")).toThrow(
-      "Only 'Array.from({ length: n })' is supported. To turn an iterable into an array, write the array literal or '.map(...)' on it.",
-    );
-  });
-  it("requires 2-param map function", () => {
-    expect(() => jsmql.expr("Array.from({ length: 3 }, x => x)")).toThrow(
-      "'.from()' takes an arrow with one parameter per zipped array — 2 here — and an expression body.",
-    );
   });
 });
 
@@ -9069,15 +9068,11 @@ describe("trailing commas (JS syntax)", () => {
     expect(jsmql.expr("Date.UTC(2020, 1,)")).toEqual(1580515200000);
   });
 
-  it("Array.from args (both shapes)", () => {
-    expect(jsmql.expr("Array.from({ length: 5 },)")).toEqual({ $range: [0, 5] });
-    expect(jsmql.expr("Array.from({ length: 5 }, (_, i) => i,)")).toEqual({
-      $map: {
-        input: { $range: [0, 5] },
-        as: "jsmqlPair",
-        in: { $let: { vars: { v__5f: null, i: "$$jsmqlPair" }, in: "$$i" } },
-      },
+  it("static-call args (both shapes)", () => {
+    expect(jsmql.expr("Object.keys($.o,)")).toEqual({
+      $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" },
     });
+    expect(jsmql.expr("Math.max($.a, $.b,)")).toEqual({ $max: ["$a", "$b"] });
   });
 
   it("array & object literals", () => {

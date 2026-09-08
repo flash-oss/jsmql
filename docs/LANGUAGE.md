@@ -1562,9 +1562,6 @@ $.items.with(0, 99)        // immutable index-set — replace element at index, 
 $.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
 $.items.toSpliced(1, 0, "x", "y")
                            // immutable insert — insert items without removing
-Array.from({length: 5})    // { $range: [0, 5] }
-Array.from({length: 3}, (_, i) => i * 2)
-                           // { $map: { input: { $range: [0, 3] }, as: "i", in: <body> } }
 [1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
@@ -1988,7 +1985,7 @@ $.legs.map(leg => {
 //          { id: "$$leg.id", score: "$$score", band: "$$band" } } } } } } }
 ```
 
-Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE, `Object.groupBy`, `Array.from` — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
+Bindings are nested in source order, so a later `const` can read an earlier one (`band` reads `score` above). This works wherever a lambda takes a value — an in-document array method, the `$let(vars, fn)` form, an IIFE — **and in every predicate position**, including a `$$$.<coll>` lookup, `$$.filter` / `$$.reject`, a `$facet` branch, an `$out` write chain, and a `$$.push(...)` union source:
 
 ```js
 $.recent = $$$.orders.filter(o => { const t = o.total; return t > $.minTotal; });

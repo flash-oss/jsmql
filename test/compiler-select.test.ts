@@ -66,11 +66,11 @@ describe("compiler/emit/select — a keyed byArgs routes by class and states its
     expect(pick("Date", "f(1, 2, 3, 4, 5, 6, 7, 8)")).toMatchObject({ kind: "wrongCount", got: 8 });
   });
 
-  it("requires the object's stated keys — `Array.from({ length: n })`", () => {
-    expect(pick("from", "f({ length: $.n })").kind).toBe("rule");
-    expect(pick("from", "f({ length: $.n, extra: 1 })").kind).toBe("rule");
-    expect(pick("from", "f({ size: 3 })")).toMatchObject({ kind: "refused" });
-    expect(pick("from", "f($.a)")).toMatchObject({ kind: "refused" });
+  it("an object literal falls to the stated leftover — no class claims it", () => {
+    // `byArgs` names 'none', 'multiple', 'constant' and 'dynamic'; an object literal
+    // belongs to none of them, so the row's own 'otherwise' answers.
+    expect(pick("Date", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
+    expect(pick("ObjectId", "f({ a: 1 })")).toMatchObject({ kind: "refused" });
   });
 
   it("converts a constant `Number(…)` on the server, where the type is decided", () => {

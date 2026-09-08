@@ -444,8 +444,6 @@ const VALUE_METHOD_SKIP = {
   ]),
   // RegExp-receiver (intercepted on regex literals).
   regex: new Set(["test", "exec"]),
-  // `Array.from` is a static the row spells on any receiver; TypeScript's lib types it
-  statics: new Set(["from"]),
   // Shimmed to a tailored error — not a real completable method.
   shimmed: new Set(["unzipWith"]),
 };
@@ -701,7 +699,6 @@ function valueMethodAugmentationBlock() {
     ...VALUE_METHOD_SKIP.object,
     ...VALUE_METHOD_SKIP.set,
     ...VALUE_METHOD_SKIP.regex,
-    ...VALUE_METHOD_SKIP.statics,
     ...VALUE_METHOD_SKIP.shimmed,
   ]);
   const registry = new Set(valueMethodNames());
