@@ -7261,9 +7261,16 @@ describe("Date.now()", () => {
 
 describe("Object.fromEntries", () => {
   it("from $objectToArray result", () => {
+    // The key goes in through $toString, because JavaScript's own
+    // Object.fromEntries([[7, 1]]) answers { "7": 1 } and $arrayToObject refuses a
+    // non-string key outright. Same lowering as '.fromPairs()' and '.fromEntries()'.
     expect(jsmql.expr("Object.fromEntries(Object.entries($.doc))")).toEqual({
       $arrayToObject: {
-        $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+        $map: {
+          input: { $map: { input: { $objectToArray: "$doc" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
       },
     });
   });

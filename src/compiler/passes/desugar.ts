@@ -359,7 +359,8 @@ const mutatedArgument: Rule = {
     if (where.at !== "statement") return node;
     const n = node as Node;
     if (n.type !== "MethodCall" || typeof n.name !== "string") return node;
-    const at = mutatedArgumentOf(n.name);
+    const on = n.object as { type?: string; name?: string } | undefined;
+    const at = mutatedArgumentOf(n.name, on?.type === "Ident" ? (on.name ?? null) : null);
     if (at === undefined) return node;
     const args = n.args as readonly Node[];
     const target = args[at];

@@ -417,3 +417,15 @@ export const cbrt = (v: unknown): Record<string, unknown> => ({
 export const isFiniteNumber = (v: unknown): Record<string, unknown> => ({
   $and: [{ $isNumber: v }, { $not: [{ $in: [{ $toString: v }, ["NaN", "Infinity", "-Infinity"]] }] }],
 });
+
+/**
+ * A list of `[key, value]` pairs as a document. The key is rendered with
+ * `$toString`, because JavaScript's own `Object.fromEntries([[7, 1]])` answers
+ * `{ "7": 1 }` and `$arrayToObject` refuses a non-string key outright —
+ * MEASURED: "\$arrayToObject requires an array of key-value pairs".
+ */
+export const pairsToObject = (pairs: unknown, p: { as: string; ref: string }): unknown => ({
+  $arrayToObject: {
+    $map: { input: pairs, as: p.as, in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }] },
+  },
+});

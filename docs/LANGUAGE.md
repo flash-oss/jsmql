@@ -1937,6 +1937,8 @@ $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receive
 $.o.keys()                            // same MQL as Object.keys($.o)
 $.o.values()                          // same MQL as Object.values($.o)
 $.o.entries()                         // same MQL as Object.entries($.o) — and as $.o.toPairs()
+$.o.assign($.p, $.q)                  // { $mergeObjects: ["$o", "$p", "$q"] } — a NEW object, like .pick()
+$.pairs.fromEntries()                 // same MQL as Object.fromEntries($.pairs) — and as $.pairs.fromPairs()
 $.user?.profile?.keys()               // { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
 ```
 

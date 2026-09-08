@@ -2602,6 +2602,8 @@ declare global {
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     flatten(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
+    fromEntries(): any;
+    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     fromPairs(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     head(): any;
@@ -3131,6 +3133,8 @@ declare global {
     first(): T;
     /** Flatten one level deep — `_.flatten`. */
     flatten(): any[];
+    /** `[key, value]` pairs → object — the JavaScript spelling of `.fromPairs()`, same lowering. */
+    fromEntries(): Record<string, any>;
     /** `[key, value]` pairs → object — `_.fromPairs`. */
     fromPairs(): Record<string, any>;
     /** Group elements by iteratee (omit for identity) — `_.groupBy`. */

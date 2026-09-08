@@ -46,6 +46,7 @@ import {
   lastOf,
   literalIndexValue,
   negate,
+  pairsToObject,
   normaliseSliceIndex,
   regexBody,
   reverseArrayOf,
@@ -10672,21 +10673,7 @@ export const NAMES = {
     returns: "object",
     where: ["value"],
     filter: viaFallback,
-    expr: {
-      args: { sig: "", none: true },
-      emit: ({ recv, bind }) => {
-        const p = bind("p");
-        return {
-          $arrayToObject: {
-            $map: {
-              input: recv,
-              as: p.as,
-              in: [{ $toString: { $arrayElemAt: [p.ref, 0] } }, { $arrayElemAt: [p.ref, 1] }],
-            },
-          },
-        };
-      },
-    },
+    expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
     stream: because("builds ONE object from pairs, so the result is a value rather than a stream."),
     statement: unsupported(
       "'.fromPairs()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.fromPairs();'",
@@ -12336,19 +12323,35 @@ export const NAMES = {
 
   // ── the other namespaces, their members, and the bare callables ──
   assign: name({
-    doc: "'Object.assign(target, ...sources)' — emits $mergeObjects. At statement position it writes the target.",
+    doc: "'Object.assign(target, ...sources)' / '.assign(...sources)' — emits $mergeObjects. At statement position the static form writes the target.",
     call: true,
-    on: "Object",
+    on: ["object", "Object"],
     mutatesArgumentAt: 0,
     returns: "object",
-    where: ["value", "statement"],
+    // 'Object.assign(t, …);' is a write, and the desugar rewrites it to that write
+    // before any statement cell is consulted — so the row states only the value.
+    where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "...sources", atLeast: 1, spread: true },
-      emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) }),
+      perFamily: {
+        // The method form answers a NEW object, as '.pick()' and '.omit()' do —
+        // the receiver is the first source and nothing is written in place.
+        object: {
+          args: { sig: "...sources", atLeast: 1, spread: true },
+          emit: ({ recv, args, value }) => ({ $mergeObjects: [recv, ...args.map(value)] }),
+        },
+        Object: {
+          args: { sig: "...sources", atLeast: 1, spread: true },
+          emit: ({ args, value }) => ({ $mergeObjects: args.length === 1 ? value(args[0]) : args.map(value) }),
+        },
+      },
     },
     stream: unsupported("'Object.assign()' produces a value, not a stream of documents."),
-    statement: inCode("src/compiler/passes/desugar.ts"),
+    // 'Object.assign(t, …);' is rewritten to the write it means before this cell is
+    // reached; the method form answers a value, so a bare statement of it writes nothing.
+    statement: unsupported(
+      "'.assign()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.assign(…);'",
+    ),
     group: unsupported("'Object.assign()' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported(
       "'Object.assign()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.",
@@ -12356,15 +12359,20 @@ export const NAMES = {
   }),
 
   fromEntries: name({
-    doc: "'Object.fromEntries(entries)' — emits $arrayToObject.",
+    doc: "'Object.fromEntries(entries)' / '.fromEntries()' — emits $arrayToObject. Same lowering as '.fromPairs()'.",
     call: true,
-    on: "Object",
+    on: ["array", "Object"],
     returns: "object",
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "entries", exact: 1 },
-      emit: ({ args, value }) => ({ $arrayToObject: singleArrayArg(value(args[0])) }),
+      perFamily: {
+        array: { args: { sig: "", none: true }, emit: ({ recv, bind }) => pairsToObject(recv, bind("p")) },
+        Object: {
+          args: { sig: "entries", exact: 1 },
+          emit: ({ args, value, bind }) => pairsToObject(singleArrayArg(value(args[0])), bind("p")),
+        },
+      },
     },
     stream: unsupported("'Object.fromEntries()' produces a value, not a stream of documents."),
     statement: unsupported(

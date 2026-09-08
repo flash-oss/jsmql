@@ -10,6 +10,35 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — feat: `.assign()` and `.fromEntries()` answer on their receivers
+
+Two more statics gained the method spelling, so every lodash reader of an object has one.
+
+`.assign()` answers a NEW object, the way `.pick()` and `.omit()` do — the receiver is the first source and nothing is written in place:
+
+```
+$.o.assign($.p, $.q)      → { $mergeObjects: ["$o", "$p", "$q"] }
+Object.assign($.o, $.p);  → [{ $set: { o: { $mergeObjects: ["$o", "$p"] } } }]    the static still writes its target
+$.o.assign($.p);          → '.assign()' computes a value, and a statement writes one.
+                            Assign it to a field: '$.<field> = <value>.assign(…);'
+```
+
+The mutation fact belongs to the static spelling alone. Before this it was read off the name, so `$.o.assign($.p);` would have been rewritten as a write to `$.p` — the wrong field.
+
+`.fromEntries()` reads a `[key, value]` list, and the three spellings are one lowering:
+
+```
+Object.fromEntries($.pairs)   ┐
+$.pairs.fromEntries()         ├→ { $arrayToObject: { $map: { input: "$pairs", as: "jsmqlP",
+$.pairs.fromPairs()           ┘      in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } },
+                                           { $arrayElemAt: ["$$jsmqlP", 1] }] } } }
+```
+
+That closes a hole in the static. `Object.fromEntries($.pairs)` emitted a bare `$arrayToObject`, and on a pair whose key is not a string the server stopped the whole command — MEASURED on `[[7, 1]]`: "$arrayToObject requires an array of key-value pairs". JavaScript answers `{ "7": 1 }` there, and all three spellings answer that now. The key coercion costs one `$map` where the pairs are already built by another.
+
+---
+
+
 ## 2026-09-08 — fix!: `$merge` takes the four words again, and the word list is the server's
 
 `$merge({ into: "x", whenMatched: "replace" });` — the commonest `$merge` there is — did not compile:

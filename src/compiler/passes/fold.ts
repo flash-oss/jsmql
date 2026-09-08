@@ -129,7 +129,8 @@ function unfoldable(stmts: readonly PipelineStmt[]): ReadonlySet<string> {
       // `Object.assign(a, …)`. Which argument is the row's fact, not a name matched
       // here, so a second such name is a row and not a branch.
       if (typeof node.name === "string") {
-        const index = mutatedArgumentOf(node.name);
+        const on = node.object as { type?: string; name?: string } | undefined;
+        const index = mutatedArgumentOf(node.name, on?.type === "Ident" ? (on.name ?? null) : null);
         if (index !== undefined) {
           const name = rootName((node.args as readonly unknown[] | undefined)?.[index]);
           if (name !== null) excluded.add(name);

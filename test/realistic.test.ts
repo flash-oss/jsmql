@@ -1973,7 +1973,13 @@ describe("pivot table row via Object.fromEntries(.map(...))", { features: ["Obje
     { kind: "expression", usage: "db.metrics.aggregate([{ $addFields: { row: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`Object.fromEntries($.metrics.map(m => [m.name, m.value]))`)).toEqual({
-        $arrayToObject: { $map: { input: "$metrics", as: "m", in: ["$$m.name", "$$m.value"] } },
+        $arrayToObject: {
+          $map: {
+            input: { $map: { input: "$metrics", as: "m", in: ["$$m.name", "$$m.value"] } },
+            as: "jsmqlP",
+            in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+          },
+        },
       });
     },
   );

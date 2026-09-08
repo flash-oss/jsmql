@@ -471,7 +471,13 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       $mergeObjects: { $concatArrays: [[{}], "$docs"] },
     });
     expect(compiled("Object.fromEntries($.pairs)", () => Object.fromEntries(DOC.pairs as [string, number][]))).toEqual({
-      $arrayToObject: "$pairs",
+      $arrayToObject: {
+        $map: {
+          input: "$pairs",
+          as: "jsmqlP",
+          in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+        },
+      },
     });
   });
 

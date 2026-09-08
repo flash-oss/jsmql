@@ -431,7 +431,7 @@ const VALUE_METHOD_SKIP = {
   // VALUE_METHOD_SIGNATURES.
   dateNative: new Set(NATIVE_DATE_METHODS),
   // Object-receiver — no safe interface (Object is the base of everything).
-  object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs"]),
+  object: new Set(["mapValues", "mapKeys", "pick", "omit", "pickBy", "omitBy", "invert", "toPairs", "assign"]),
   // Set-receiver (intercepted on `new Set(...)`; native/ES-proposal Set methods).
   set: new Set([
     "intersection",
@@ -532,6 +532,11 @@ const VALUE_METHOD_SIGNATURES = {
     doc: "Keys (receiver) → values object — `_.zipObject`.",
   },
   fromPairs: { recv: "Array", sig: "(): Record<string, any>", doc: "`[key, value]` pairs → object — `_.fromPairs`." },
+  fromEntries: {
+    recv: "Array",
+    sig: "(): Record<string, any>",
+    doc: "`[key, value]` pairs → object — the JavaScript spelling of `.fromPairs()`, same lowering.",
+  },
   keyBy: {
     recv: "Array",
     sig: `(${OPT_ITER}): Record<string, T>`,
