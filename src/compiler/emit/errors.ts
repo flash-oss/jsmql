@@ -174,9 +174,15 @@ export const callableAsValue = (spelled: string, pos: number): CodegenError =>
     pos,
   );
 
+/**
+ * A declared function read as a VALUE. MQL expressions carry no function value,
+ * so the way out is the explicit lambda that calls it. The tracking id stays in
+ * this comment and out of the message: a developer reading the error has no use
+ * for it. [DEF-032]
+ */
 export const functionAsValue = (name: string, pos: number): CodegenError =>
   new CodegenError(
-    `'${name}' is a reusable function — call it with '${name}(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead. [DEF-032]`,
+    `'${name}' is a reusable function, and a function is not a value MQL can carry. Call it — '${name}(x)' — or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => ${name}(x))'.`,
     pos,
   );
 
@@ -961,13 +967,6 @@ export const outerWriteInForeign = (pos: number): CodegenError =>
 export const constReassigned = (name: string, pos: number): CodegenError =>
   new CodegenError(
     `'${name}' is a 'const' and cannot be assigned again. Declare it with 'let' to write it more than once.`,
-    pos,
-  );
-
-/** `$$ = [{ a: 1 }, 5]` — a document list holds documents. */
-export const notADocumentInList = (noun: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'$$ = [ … ]' lists the DOCUMENTS the stream starts from, and ${noun} is not a document. Write each as '{ … }'.`,
     pos,
   );
 

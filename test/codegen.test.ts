@@ -6533,7 +6533,11 @@ describe("Number static predicates", () => {
     });
   });
   it("Number.isFinite(x) throws helpful error", () => {
-    expect(() => jsmql.expr("Number.isFinite($.x)")).toThrow(/no syntax for Infinity/);
+    expect(() => jsmql.expr("Number.isFinite($.x)")).toThrow(
+      /no syntax for an Infinity or NaN literal to compare against/,
+    );
+    // The tracking id belongs in the source comment, not in what the developer reads.
+    expect(() => jsmql.expr("Number.isFinite($.x)")).not.toThrow(/DEF-/);
   });
 });
 

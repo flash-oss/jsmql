@@ -44,16 +44,6 @@ export function tmpSlot(n: number): string {
 export const LENGTH_SLOT = `${JSMQL_NS}.length`;
 
 /**
- * The `$setWindowFields` stage that stamps the stream's document count onto
- * every document as `__jsmql.length` — the shape behind `$$.length`, one level
- * per stream. The stage the compiler emits is a fact on the `$$.length` row in
- * src/registry/names.ts. See docs/specs/stream-length.md.
- */
-export function streamLengthStage(): object {
-  return { $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } };
-}
-
-/**
  * Flat reserved scratch name for `$group` / `$bucket` accumulator output, where
  * MongoDB forbids dotted field names so the value can't live under the
  * `__jsmql` object. Must be consumed by the very next stage. The single
@@ -146,20 +136,3 @@ const JSMQL_NS_VAR = "jsmql_";
 export function exprVar(base: string): string {
   return `jsmql${base.charAt(0).toUpperCase()}${base.slice(1)}`;
 }
-
-/**
- * Is `name` one of the `$lookup.let` correlation vars above? Used to catch a
- * hoisted var that has landed in a QUERY-document slot, where MongoDB does not
- * evaluate `$$vars` and the match would silently return nothing.
- */
-export function isCorrelationVar(name: string): boolean {
-  return name.startsWith(JSMQL_NS_VAR);
-}
-
-/**
- * Matches a `$lookup.let` correlation-var name produced by `letFieldVar` /
- * `letBindingVar` / `letSysVar` (`jsmql_<f|v|s><depth>_<name>`). A name of this
- * shape is in scope by construction wherever it is read: a deeper level's
- * cross-level read captures into an enclosing lookup's `let`, and `$$` vars
- * propagate through nested `$lookup.pipeline` boundaries. */
-export const CORRELATION_VAR_RE = /^jsmql_[fvs]\d+_/;

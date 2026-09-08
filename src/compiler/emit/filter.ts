@@ -574,6 +574,3 @@ function mergedOperators(a: unknown, b: unknown): Record<string, unknown> | null
 const isAlwaysTrue = (d: QueryDoc): boolean => Object.keys(d).length === 1 && d.$expr === true;
 /** `{ $expr: false }` — a predicate the fold settled to false; it selects none. */
 const isAlwaysFalse = (d: QueryDoc): boolean => Object.keys(d).length === 1 && d.$expr === false;
-
-/** Is this the document the whole program means — a raw query — rather than a predicate? */
-export const isRawQuery = (node: Expr): boolean => node.type === "ObjectLiteral" && namedRow(node) === null;

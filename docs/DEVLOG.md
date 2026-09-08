@@ -10,6 +10,39 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — refactor: a rule nothing produces and nothing reads is not a capability
+
+Fifteen facts and helpers the registry or the compiler declared and nobody read.
+Each promised a behaviour that did not exist, which is worse than absent: a
+reader adding a row states the fact and believes it does something.
+
+Deleted from the row shape: `asReference` (the bare-callback gate is decided by
+the callback rule, not by this field — and its doc block stated a refusal for
+`Math.asinh` the compiler does not emit), `paramsRepeat` (the arity it describes
+is counted by `elementsCallback` against the sibling), `minVersion` (a second
+copy of the vendored YAML's, which is what `generate-globals.mjs` actually
+reads), `RootSpec.family` (no name resolves through a root's family),
+`StageIn.prevStages`, and the `SugarIn` service type no cell can be handed.
+
+Deleted from the source: `streamLengthStage` and `isStringType` (each described a
+shape the registry builds itself), `isCorrelationVar` + `CORRELATION_VAR_RE` (a
+query-slot guard that was never wired), `notADocumentInList` (superseded by the
+builder that names the element index), `isRawQuery`, the unused `GROUP` position
+constant, and the three truth builders in `emit/mql.ts` that the registry cannot
+reach — it imports nothing outside itself, which is exactly why they were dead.
+
+Two facts became real instead of being deleted. `LENGTH_SLOT` was reserved in
+`src/namespace.ts` and spelled as a literal in the registry, so the registry now
+carries the twin `GROUP_SLOT` already had, and one test holds both pairs equal —
+the test the `GROUP_SLOT` comment had been promising.
+
+Two tracking ids leaked into what a developer reads. `[DEF-022]` in six
+`Number.isFinite` refusals and `[DEF-032]` in the function-as-value one are now
+source comments, and both messages are rewritten to name a way out that compiles
+(the test asserts the `.map((x) => f(x))` form the second one recommends).
+
+---
+
 ## 2026-09-09 — docs: DEFERRED.md says what is open, and a gate keeps it saying so
 
 Twenty-one claims in `docs/DEFERRED.md` that no longer held, found by re-deriving

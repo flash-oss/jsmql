@@ -7,16 +7,7 @@
 import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { and, asValue, jsTruthy, not, or, truthOf } from "../src/compiler/emit/mode.ts";
-import {
-  allElementsTrue,
-  anyElementTrue,
-  cond,
-  filter,
-  letOne,
-  mapToTruth,
-  matchExpr,
-  switchOn,
-} from "../src/compiler/emit/mql.ts";
+import { cond, filter, letOne, matchExpr, switchOn } from "../src/compiler/emit/mql.ts";
 import type { MongoVar } from "../src/compiler/emit/names.ts";
 
 const URI = "mongodb://127.0.0.1:27017";
@@ -69,10 +60,6 @@ describe("compiler/emit/mql — the slots that read a condition", () => {
     expect(switchOn([{ case: t, then: 1 }], "$$REMOVE")).toEqual({
       $switch: { branches: [{ case: { $gt: ["$$x.n", 1] }, then: 1 }], default: "$$REMOVE" },
     });
-    expect(anyElementTrue(mapToTruth("$items", x, t))).toEqual({
-      $anyElementTrue: { $map: { input: "$items", as: "x", in: { $gt: ["$$x.n", 1] } } },
-    });
-    expect(allElementsTrue([true])).toEqual({ $allElementsTrue: [true] });
     expect(matchExpr(t)).toEqual({ $expr: { $gt: ["$$x.n", 1] } });
     expect(letOne(x, "$a", "$$x")).toEqual({ $let: { vars: { x: "$a" }, in: "$$x" } });
   });

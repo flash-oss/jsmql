@@ -595,7 +595,6 @@ export function stageInputs(
     sortSpec: (e, objects = true) => sortSpecOf(e, name, objects),
     orderBy: (keys, orders) => orderBySpec(keys, orders, name),
     slot: () => env.chain.slot().path,
-    prevStages: before,
     bind: (hint) => {
       const b = env.fresh(hint);
       return { as: b.as, ref: b.ref };

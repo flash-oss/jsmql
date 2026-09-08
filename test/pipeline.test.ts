@@ -1467,9 +1467,8 @@ describe("chained stage calls on the current stream", () => {
   });
 
   // A stage link pushes into the SAME buffer the registry methods use, so a
-  // stage-coupled method (one that reads `prevStages`) sees it. `.toReversed()`
-  // was the case that proved this and has since been removed from the stream
-  // surface; `.takeWhile` is the reader that replaced it (see below).
+  // stage-coupled method sees it — `.takeWhile` reads the buffer to insist on a
+  // preceding sort.
   it("shares the stage buffer with registry chain methods", () => {
     expect(jsmql("$$.$sort({ a: -1 }).take(3);")).toEqual([{ $sort: { a: -1 } }, { $limit: 3 }]);
     expect(jsmql("$$.take(3).$sort({ a: -1 });")).toEqual([{ $limit: 3 }, { $sort: { a: -1 } }]);

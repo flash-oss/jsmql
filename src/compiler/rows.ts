@@ -321,7 +321,6 @@ type EmitRow = {
   params?: CallbackParams;
   binds?: Binds;
   shape?: "single" | "array" | "none" | "flex" | "verbatim" | { object: BodyRule };
-  asReference?: boolean;
   family?: Family;
   spreadAlternative?: string;
   newKeyword?: "required" | "optional" | "forbidden";
@@ -490,8 +489,7 @@ export function pipelineOverOf(name: string): "foreign" | null {
   return (row(name) as { pipelineOver?: "foreign" } | undefined)?.pipelineOver ?? null;
 }
 
-/** Does the stage drop the input document's fields — always, only for an inclusion body, or never? */
-/** Every `mongo` row: the names that ARE MongoDB operators and stages, not JavaScript spellings. */
+/** Every `mongo` row: the names that ARE MongoDB operators and stages, not JavaScript spellings. Read by the drift audits. */
 export function everyMongoName(): readonly string[] {
   return mongoNames();
 }
@@ -524,7 +522,7 @@ export function everyOperatorName(): readonly string[] {
   });
 }
 
-/** The category an operator row states, or undefined for a row that states none. */
+/** The category an operator row states, or undefined for a row that states none. Read by the drift audits. */
 export function categoryOf(name: string): string | undefined {
   return (row(name) as { category?: string } | undefined)?.category;
 }
@@ -562,10 +560,6 @@ export function replacesDocumentOf(name: string): true | "inclusion" | false {
 
 export function onlyOf(name: string): readonly string[] {
   return (row(name) as { only?: readonly string[] } | undefined)?.only ?? [];
-}
-
-export function asReferenceOf(name: string): boolean {
-  return emitRow(name)?.asReference === true;
 }
 
 /** Whether `new` is required, optional or forbidden before this global, or undefined for a non-global. */
@@ -706,7 +700,7 @@ export function valueMethodReturns(): Record<string, string> {
   return out;
 }
 
-/** Does the method run on ANY receiver — the one way a row escapes the receiver check? */
+/** Does the method run on ANY receiver — the one way a row escapes the receiver check? Read by the drift audits. */
 export function acceptsAnyReceiver(name: string): boolean {
   return row(name)?.on === "any";
 }

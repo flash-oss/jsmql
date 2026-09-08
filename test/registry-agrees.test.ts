@@ -10,6 +10,8 @@
 import { describe, expect, it } from "vitest";
 import { NAMES } from "../src/registry/names.ts";
 import type { Only, Position } from "../src/registry/vocabulary.ts";
+import { GROUP_SLOT, LENGTH_SLOT } from "../src/registry/vocabulary.ts";
+import { GROUP_TMP, LENGTH_SLOT as NS_LENGTH_SLOT } from "../src/namespace.ts";
 
 type Row = {
   kind?: string;
@@ -58,6 +60,16 @@ describe("registry — every callback-taking name states its slot layout", () =>
       }
     }
     expect(missing).toEqual([]);
+  });
+});
+
+describe("registry — the reserved names it spells for itself", () => {
+  it("every slot the registry spells is the one src/namespace.ts reserves", () => {
+    // The registry imports nothing outside itself, so a reserved name it needs is
+    // written twice. Nothing else holds the two spellings together: a rename on one
+    // side alone would give a stage that writes one field and a read of another.
+    expect(GROUP_SLOT).toBe(GROUP_TMP);
+    expect(LENGTH_SLOT).toBe(NS_LENGTH_SLOT);
   });
 });
 

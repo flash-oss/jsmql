@@ -33,9 +33,19 @@ export type QueryDoc = Record<string, unknown>;
  * cannot hold a dot, so scratch produced INSIDE a group cannot live under the
  * `__jsmql` object like every other temporary; it takes this reserved name and
  * the very next stage consumes it. The twin of `GROUP_TMP` in `src/namespace.ts`
- * — the registry imports nothing outside itself, and a test holds the two equal.
+ * — the registry imports nothing outside itself, and `test/registry-agrees.test.ts`
+ * holds the two equal.
  */
 export const GROUP_SLOT = "__jsmqlTmp";
+
+/**
+ * The reserved field the stream's document count is stamped into, read back as
+ * `"$" + LENGTH_SLOT`. Reserved, so it cannot collide with a user binding
+ * (`let length` takes `__jsmql.var.length`). The twin of `LENGTH_SLOT` in
+ * `src/namespace.ts`, held equal by the same test as `GROUP_SLOT` (`test/registry-agrees.test.ts`).
+ * See docs/specs/stream-length.md.
+ */
+export const LENGTH_SLOT = "__jsmql.length";
 
 /**
  * `{ $eq: v }` is written `v` in a query document — the spelling every MongoDB
@@ -279,7 +289,7 @@ export type Context = "expression" | "params" | "callArgs" | "statement" | "obje
  *   "dynamic"   ObjectId($.id)             one argument it could not
  * These are the keys of `ByArgs`; a row states one answer per class.
  */
-export type ArgShape = "none" | "multiple" | "object" | "constant" | "dynamic";
+type ArgShape = "none" | "multiple" | "object" | "constant" | "dynamic";
 
 /** The type a result has. Not the same set as `Family`. */
 export type Kind =
@@ -406,7 +416,7 @@ export type Returns =
  * `(accumulator, value, index, collection)`, and lodash's `mapValues` gives
  * `(value, key, object)`. A row records the list its own API defines.
  */
-export type ParamKind =
+type ParamKind =
   /** reduce's running value. Becomes MongoDB's fixed `$$value`. */
   | "accumulator"
   /** The element, or an object entry's value. Two of them make a comparator. */
@@ -420,9 +430,10 @@ export type ParamKind =
   /**
    * A variable DECLARED in a sibling argument, not drawn from a receiver:
    *   $let({ x: 1, y: 2 }, (p, q) => p + q)   p binds x, q binds y
-   * Its arity comes from that sibling, so a row using it also sets
-   * `paramsRepeat`. Calling this `"value"` would be a lie of the same kind the
-   * field exists to remove — the parameter is a binding, not an element.
+   * Its arity comes from that sibling — one parameter per binding declared —
+   * and `elementsCallback` counts them there. Calling this `"value"` would be a
+   * lie of the same kind the field exists to remove: the parameter is a binding,
+   * not an element.
    */
   | "binding";
 
@@ -988,19 +999,7 @@ export type StageIn = {
   orderBy: (keys: Expr, orders: Expr | undefined) => SortAsk;
   /** A fresh `__jsmql.tmp.<n>` scratch field path; the chain's cleanup drops it. */
   slot: () => string;
-  /** What the chain has already emitted — `sort().take(1)` reads this. */
-  prevStages: readonly Stage[];
   bind: (hint: string) => { as: string; ref: string };
-};
-
-export type GroupIn = {
-  name: string;
-  /** The lowered receiver of a JavaScript accumulator alias — `$.amount` in `$.amount.sum()`; null for an operator call. */
-  recv: unknown;
-  args: readonly Expr[];
-  keys: readonly string[];
-  value: (e: Expr) => unknown;
-  iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
 };
 
 /**
@@ -1017,13 +1016,14 @@ export type GroupIn = {
  */
 export type MutatorForm = { readonly sig: string; readonly by: Readonly<Record<number, string>> };
 
-export type SugarIn = {
-  /** This entry's own key. See FilterIn.name. */
+export type GroupIn = {
   name: string;
-  captured: Readonly<Record<string, Expr>>;
+  /** The lowered receiver of a JavaScript accumulator alias — `$.amount` in `$.amount.sum()`; null for an operator call. */
+  recv: unknown;
+  args: readonly Expr[];
+  keys: readonly string[];
   value: (e: Expr) => unknown;
-  lowerSub: (stmts: readonly Node[]) => Stage[];
-  bind: (hint: string) => { as: string; ref: string };
+  iteratee: (cb: Expr) => { as: string; ref: string; in: unknown };
 };
 
 // ═════════════════════════════════════════════════════════════════════════════
@@ -1045,7 +1045,7 @@ export type Emit<In, Out> = (input: In) => Out;
  * cannot see any of that. A row states that the construct exists and where it
  * is legal; the code says how it is built.
  */
-export type InCode = { inCode: string };
+type InCode = { inCode: string };
 
 export const inCode = (file: string): InCode => ({ inCode: file });
 
@@ -1088,7 +1088,7 @@ export type ViaFallback = { fallback: "expr" };
  * composition" — `$.a[0] === 1` really does become `$expr`. Conflating the two hid
  * four native renderings behind a field that said there were none.
  */
-export type ComposedInto = { composedInto: readonly string[] };
+type ComposedInto = { composedInto: readonly string[] };
 
 /**
  * Name every row that folds this one in. A LIST, because the consumer sets are
@@ -1189,14 +1189,14 @@ type IsUnion<T, U = T> = [T] extends [never] ? false : T extends unknown ? ([U] 
  *
  * A `Refusal` is an answer too — "cannot tell which" is a decision.
  */
-export type Uncertain<F extends Family, In, Out> =
+type Uncertain<F extends Family, In, Out> =
   IsUnion<Extract<F, FieldFamily>> extends true ? { uncertain: Emit<In, Out> | Refusal } : { uncertain?: never };
 
 /**
  * One answer per ARGUMENT class — see `ArgShape` for the partition. Keyed, not
  * ordered: two rows cannot overlap, and the leftover is STATED.
  */
-export type ByArgs<In, Out> = {
+type ByArgs<In, Out> = {
   none?: Rule<In, Out>;
   multiple?: Rule<In, Out>;
   /**
@@ -1272,7 +1272,7 @@ export type Cell<
  *   One `viaFallback` for all three promised the stream form would merely scan,
  *   when it does not compile at all.
  */
-export type NonEmitter<F extends Family, C extends readonly string[] = readonly never[]> =
+type NonEmitter<F extends Family, C extends readonly string[] = readonly never[]> =
   | Refusal
   | ViaFallback
   | { composedInto: C }

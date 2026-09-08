@@ -1,12 +1,13 @@
 // Phase 5 — EMIT. The MQL shapes that READ a condition, typed to take a Truth.
 //
 // A lowering builds most of its document freely: `{ $add: [a, b] }` needs no
-// help. The exceptions are the slots MongoDB evaluates for truth — `$cond.if`,
-// `$filter.cond`, `$switch.branches[].case`, the operand of `$anyElementTrue` /
-// `$allElementsTrue`, `$match.$expr`. Each of those is built here and nowhere
-// else, and each takes a `Truth`, so the one bug that class of slot invites — a
-// value dropped in unread, where "" or a missing field then means true — is a
-// type error naming the missing `truth()` call.
+// help. The exceptions are the truth-reading slots the COMPILER builds —
+// `$cond.if`, `$filter.cond`, `$switch.branches[].case`, `$match.$expr`. Each
+// takes a `Truth`, so the one bug that class of slot invites — a value dropped
+// in unread, where "" or a missing field then means true — is a type error
+// naming the missing `truth()` call. A registry row builds its own document
+// (the registry imports nothing outside itself) and its cell takes the reading
+// it needs as a service, which is the same guarantee by another route.
 
 import type { QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import type { MongoVar } from "./names.ts";
@@ -36,15 +37,6 @@ export const switchOn = (
   if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
   return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
 };
-
-/** `{ $anyElementTrue: <array of truths> }` — `.some(pred)`. */
-export const anyElementTrue = (truths: unknown): unknown => ({ $anyElementTrue: truths });
-
-/** `{ $allElementsTrue: <array of truths> }` — `.every(pred)`. */
-export const allElementsTrue = (truths: unknown): unknown => ({ $allElementsTrue: truths });
-
-/** `{ $map: { input, as, in } }` whose body is a Truth — the operand `.some` / `.every` read. */
-export const mapToTruth = (input: unknown, as: MongoVar, body: Truth): unknown => ({ $map: { input, as, in: body } });
 
 /** A condition as a query document: `{ $expr: <truth> }`. */
 export const matchExpr = (test: Truth): QueryDoc => ({ $expr: test });

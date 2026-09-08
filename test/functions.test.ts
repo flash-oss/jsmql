@@ -169,8 +169,16 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a function used as a value (not called) is rejected (higher-order use)", () => {
     expect(() => jsmql("const double = (x) => x * 2; $ = { f: double };")).toThrow(
-      /'double' is a reusable function — call it with 'double\(\.\.\.\)'/,
+      "'double' is a reusable function, and a function is not a value MQL can carry. Call it — 'double(x)' — or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => double(x))'.",
     );
+    // The way out the message names compiles.
+    expect(jsmql("const double = (x) => x * 2; $.a = $.xs.map((x) => double(x));")).toEqual([
+      {
+        $set: {
+          a: { $map: { input: "$xs", as: "x", in: { $let: { vars: { x: "$$x" }, in: { $multiply: ["$$x", 2] } } } } },
+        },
+      },
+    ]);
   });
 
   it("a lone `function` declaration (nothing calls it) is rejected like a lone arrow decl", () => {

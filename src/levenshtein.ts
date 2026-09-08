@@ -1,6 +1,7 @@
-// Cheap Levenshtein distance + closest-name lookup. Used to power "did you
-// mean?" suggestions in error messages — pipeline-stage typos and unknown
-// method names today.
+// Cheap Levenshtein distance + closest-name lookup. Builds the "did you mean?"
+// tail for every refusal against a CLOSED SET of names — the `didYouMean` helper
+// is the one way that tail is written, so a new closed-set refusal gets the same
+// suggestion without asking for it. See the DX rules in CLAUDE.md.
 
 export function levenshtein(a: string, b: string): number {
   const m = a.length;

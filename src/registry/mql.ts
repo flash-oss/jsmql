@@ -371,9 +371,6 @@ export const joinedWith = (recv: unknown, separator: unknown): unknown => ({
   },
 });
 
-/** `{ $eq: [{ $type: v }, "string"] }` — the string test a dual-receiver dispatch uses. */
-export const isStringType = (operand: unknown): object => ({ $eq: [{ $type: operand }, "string"] });
-
 // ── the JavaScript globals ───────────────────────────────────────────────────
 
 /**

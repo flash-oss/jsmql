@@ -35,7 +35,6 @@ export const STATEMENT: Where = { at: "statement" };
 export const VALUE: Where = { at: "value" };
 export const STREAM: Where = { at: "stream" };
 export const FILTER: Where = { at: "filter" };
-export const GROUP: Where = { at: "group" };
 export const WINDOW: Where = { at: "window" };
 export const UPDATE_DOC: Where = { at: "updateDoc" };
 /**
