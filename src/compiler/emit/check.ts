@@ -11,6 +11,7 @@ import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.t
 import { CodegenError } from "../../errors.ts";
 import { didYouMean, closestNameTo } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
+import { bodyExampleOf } from "../rows.ts";
 import { computedKeyInOperatorBody, spreadInOperatorBody } from "./errors.ts";
 import { evaluate } from "../passes/evaluate.ts";
 
@@ -102,12 +103,13 @@ const EXPECTS: Record<ArgType, string> = {
   timestamp: "expects a timestamp",
 };
 
-const hint = (expected: ArgType): string =>
-  expected === "date" || expected === "number-or-date"
-    ? " Use a field path or new Date(…)."
-    : expected === "timestamp"
-      ? " Use a field path (a timestamp has no literal form)."
-      : "";
+const hint = (name: string, expected: ArgType): string => {
+  if (expected === "date" || expected === "number-or-date") return " Use a field path or new Date(…).";
+  if (expected === "timestamp") return " Use a field path (a timestamp has no literal form).";
+  // A stage answers with its OWN smallest correct call: $group's is not $sample's.
+  const example = expected === "object" ? bodyExampleOf(name) : undefined;
+  return example === undefined ? "" : ` Write the body as a document, e.g. '${example}'.`;
+};
 
 /** A literal of a type the slot can never take. `slot` is the key, or "" for a positional operand. */
 export function checkType(name: string, slot: string, e: Expr, expected: ArgType): void {
@@ -151,7 +153,7 @@ export function checkType(name: string, slot: string, e: Expr, expected: ArgType
   if (lit === null || lit.kind === "null") return;
   if (matches(lit, expected)) return;
   throw new CodegenError(
-    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(expected)}`,
+    `'${name}'${slot ? ` ${slot}` : ""} ${EXPECTS[expected]}, but got ${NOUN[lit.kind]}.${hint(name, expected)}`,
     e.pos,
   );
 }

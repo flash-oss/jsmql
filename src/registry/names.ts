@@ -321,6 +321,15 @@ type MongoSpec<
   /** Stage-position facts. Meaningful when `where` includes "stream". */
   body?: BodyRule;
   /**
+   * The smallest CORRECT call of this stage, quoted back when the body it was
+   * given is of the wrong type — `$sample(5)` answers with
+   * "…, e.g. '$sample({ size: 10 })'". Stated per stage, because the shortest
+   * right answer for `$group` is not the one for `$sample`, and written as the
+   * WHOLE call so the message quotes it as it stands. Each string COMPILES, as
+   * a statement of its own and inside a bracketed pipeline.
+   */
+  bodyExample?: string;
+  /**
    * Which POSITION each path inside this stage's body stands in.
    *
    * Keys are DOTTED PATHS from the body. `""` is the body itself, a `*` segment
@@ -4765,6 +4774,7 @@ export const NAMES = {
 
   $addFields: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    bodyExample: "$addFields({ total: $.price })",
     where: ["stream", "statement"],
     preservesCount: true,
     only: ["update"],
@@ -5219,6 +5229,7 @@ export const NAMES = {
 
   $group: mongo({
     doc: "Groups input documents by a specified identifier expression and applies the accumulator expression(s), if specified, to each group.",
+    bodyExample: "$group({ _id: $.category })",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: ["_id"], optional: [], closed: false },
@@ -5583,6 +5594,7 @@ export const NAMES = {
 
   $project: mongo({
     doc: "Reshapes each document in the stream, such as by adding new fields or removing existing fields. For each input document, outputs one document.",
+    bodyExample: "$project({ name: 1 })",
     replacesDocument: "inclusion",
     where: ["stream", "statement"],
     only: ["update"],
@@ -5720,6 +5732,7 @@ export const NAMES = {
 
   $sample: mongo({
     doc: "Randomly selects the specified number of documents from its input.",
+    bodyExample: "$sample({ size: 10 })",
     where: ["stream", "statement"],
     body: {
       required: ["size"],
@@ -5820,6 +5833,7 @@ export const NAMES = {
 
   $set: mongo({
     doc: "Adds new fields to documents. Outputs documents that contain all existing fields from the input documents and newly added fields.",
+    bodyExample: "$set({ total: $.price })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     only: ["update"],
@@ -5967,6 +5981,7 @@ export const NAMES = {
 
   $sort: mongo({
     doc: "Reorders the document stream by a specified sort key. Only the order changes; the documents remain unmodified.",
+    bodyExample: "$sort({ createdAt: -1 })",
     where: ["stream", "statement", "updateDoc"],
     preservesCount: true,
     onlyInside: { updateDoc: ["$push"] },

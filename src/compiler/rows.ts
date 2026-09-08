@@ -395,6 +395,11 @@ export function stageBodyRuleOf(name: string): BodyRule | undefined {
   return (row(name) as { body?: BodyRule } | undefined)?.body;
 }
 
+/** A STAGE's own smallest correct call, for the refusal of a wrong-type body; undefined when the row states none. */
+export function bodyExampleOf(name: string): string | undefined {
+  return (row(name) as { bodyExample?: string } | undefined)?.bodyExample;
+}
+
 /** How a MongoDB operator's operand list is written, or undefined for a stage or a name. */
 export function operandShapeOf(name: string): "single" | "array" | "none" | "flex" | "verbatim" | "object" | undefined {
   const shape = emitRow(name)?.shape;

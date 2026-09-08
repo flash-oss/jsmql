@@ -105,26 +105,29 @@ describe("system stages — first-stage-only enforcement", () => {
 describe("system stages — error messages", () => {
   it("wrong scope: a server stage on $$ points at the $$$$ prefix", () => {
     expect(() => jsmql("$$.currentOp()")).toThrow(
-      "'.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.",
+      "'.currentOp()' is not available on a 'stream' — it is defined on 'cluster'. Write '$$$$.currentOp()' — the cluster reference, run on the admin database.",
     );
+    expect(jsmql("$$$$.currentOp()")).toEqual([{ $currentOp: {} }]);
   });
 
   it("wrong scope: a server stage on $$$ (database) points at the $$$$ prefix", () => {
     expect(() => jsmql("$$$.currentOp()")).toThrow(
-      "'$$$' is the database, and no stage runs on it alone: '.currentOp()' runs on the collection ('$$.currentOp()') or the cluster ('$$$$.currentOp()') — its row says which.",
+      "'$$$' is the database, and no stage runs on it alone. Write '$$$$.currentOp()' — the cluster reference, run on the admin database.",
     );
   });
 
   it("wrong scope: a collection stage on $$$$ points at the $$ prefix", () => {
     expect(() => jsmql("$$$$.indexStats()")).toThrow(
-      "'.indexStats()' is not available on a 'cluster' — it is defined on 'stream'.",
+      "'.indexStats()' is not available on a 'cluster' — it is defined on 'stream'. Write '$$.indexStats()' — the collection reference, run on 'db.coll.aggregate()'.",
     );
+    expect(jsmql("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });
 
   it("wrong scope: a cluster stage on $$ points at the $$$$ prefix", () => {
     expect(() => jsmql("$$.shardedDataDistribution()")).toThrow(
-      "'.shardedDataDistribution()' is not available on a 'stream' — it is defined on 'cluster'.",
+      "'.shardedDataDistribution()' is not available on a 'stream' — it is defined on 'cluster'. Write '$$$$.shardedDataDistribution()' — the cluster reference, run on the admin database.",
     );
+    expect(jsmql("$$$$.shardedDataDistribution()")).toEqual([{ $shardedDataDistribution: {} }]);
   });
 
   it("$$$ (database) has no diagnostics of its own — unknown method points elsewhere", () => {
@@ -135,8 +138,13 @@ describe("system stages — error messages", () => {
 
   it("unknown method suggests the nearest diagnostic with its correct prefix", () => {
     expect(() => jsmql("$$.indexStat()")).toThrow(
-      "'.indexStat()' is not a method of the stream '$$'. Did you mean '.$indexStats()'? A stage is a link too: '$$.$match(…)'.",
+      "'.indexStat()' is not a method of the stream '$$'. Did you mean '$$.indexStats()'? A stage is a link too: '$$.$match(…)'.",
     );
+    // The link form the old message named takes a body it does not need, so the
+    // spelling it suggested — '$$.$indexStats()' — is a dead end on its own.
+    expect(() => jsmql("$$.$indexStats()")).toThrow("'.$indexStats(body)' requires exactly 1 argument, got 0");
+    // The sugar the new message names needs nothing.
+    expect(jsmql("$$.indexStats()")).toEqual([{ $indexStats: {} }]);
   });
 
   it("no-option stage given an argument is rejected", () => {

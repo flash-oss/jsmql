@@ -11,12 +11,30 @@ import type { Arity, Position } from "../../registry/vocabulary.ts";
 import { TYPEOF_HINTS } from "../../registry/vocabulary.ts";
 import { refusalSentence } from "./consult.ts";
 import type { Selected } from "./select.ts";
-import { callbackParamsOf, isFieldProperty, spreadAlternativeOf } from "../rows.ts";
+import { callbackParamsOf, diagnosticOf, isFieldProperty, spreadAlternativeOf } from "../rows.ts";
 
 export { CodegenError, UnknownIdentifierError };
 
 /** The argument signature as a message spells it: `.slice(start[, end])`. */
 const signature = (spelled: string, args: Arity): string => `${spelled}(${args.sig})`;
+
+/**
+ * Where a stage runs, as the reference that spells it. Two words name the same
+ * place — the receiver family a stage accepts (`stream`) and the scope a
+ * diagnostic stage states (`collection`) — so both are keys here.
+ */
+const RUNS_ON: Readonly<Record<string, { sigil: string; place: string } | undefined>> = {
+  stream: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  collection: { sigil: "$$", place: "the collection reference, run on 'db.coll.aggregate()'" },
+  cluster: { sigil: "$$$$", place: "the cluster reference, run on the admin database" },
+};
+
+/** The stage name without its `$`: `$indexStats` → `indexStats`, the spelling that takes no body. */
+const sugarOf = (name: string): string => (name.startsWith("$") ? name.slice(1) : name);
+
+/** Where a diagnostic stage runs, from either spelling — `indexStats` or `$indexStats`. */
+const runsOnFor = (name: string): { sigil: string; place: string } | undefined =>
+  RUNS_ON[(diagnosticOf(name) ?? diagnosticOf(`$${name}`))?.scope ?? ""];
 
 /** `[1,2]` → "1 or 2", `[0,1,2]` → "0, 1, or 2". */
 const countList = (ns: readonly number[]): string =>
@@ -67,20 +85,27 @@ export function refusalFor(
       const got = sel.got === null ? "a receiver whose type jsmql cannot prove" : `a '${sel.got}'`;
       // The way from what the value IS to what the method takes, when there is one.
       const takesString = sel.accepts !== "any" && sel.accepts.includes("string");
+      // A stage runs on ONE context reference. Name that spelling, not the value hints below.
+      const oneRef =
+        position === "statement" && sel.accepts !== "any" && sel.accepts.length === 1
+          ? RUNS_ON[sel.accepts[0]]
+          : undefined;
       const hint =
-        sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
-          ? ` Map over the array first — '.map(x => x${bare}(…))' — or take one element ('[0]').`
-          : sel.got === "date" && takesString
-            ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
-            : sel.got === "number" && takesString
-              ? ` Render the number as a string first: '.toString()'.`
-              : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
-                ? ` A stream is not an array: chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
-                : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
-                  ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.`
-                  : sel.got === "bool"
-                    ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
-                    : "";
+        oneRef !== undefined
+          ? ` Write '${oneRef.sigil}${bare}()' — ${oneRef.place}.`
+          : sel.got === "array" && sel.accepts !== "any" && !sel.accepts.includes("array")
+            ? ` Map over the array first — '.map(x => x${bare}(…))' — or take one element ('[0]').`
+            : sel.got === "date" && takesString
+              ? ` Render the date as a string first: '.format("%Y-%m-%d")' or '.toISOString()'.`
+              : sel.got === "number" && takesString
+                ? ` Render the number as a string first: '.toString()'.`
+                : sel.got === "stream" && sel.accepts !== "any" && !sel.accepts.includes("stream")
+                  ? ` A stream is not an array: chain a method the stream has ('$$.filter(…)', '$$.orderBy(…)'), or call this one on an array the document carries ('$.<field>.<method>()').`
+                  : sel.got === "object" && sel.accepts !== "any" && sel.accepts.includes("array")
+                    ? ` A document is not a list: read one of its fields ('.<field>'), or drop the terminal that takes a single document to keep the array.`
+                    : sel.got === "bool"
+                      ? ` A boolean has no methods; use it as a condition ('cond ? a : b').`
+                      : "";
       // a property (`.length`) is spelled without the call parentheses
       const shown = isFieldProperty(sel.name) ? `'${bare}'` : `'${bare}()'`;
       return new CodegenError(`${shown} is not available on ${got} — it is defined on ${accepts}.${hint}`, pos);
@@ -477,11 +502,18 @@ export const notAStreamChain = (pos: number): CodegenError =>
   );
 
 /** A link in a stream chain whose name is not a method the stream has, nor a stage. */
-export const notAStreamLink = (name: string, candidates: readonly string[], pos: number): CodegenError =>
-  new CodegenError(
-    `'.${name}()' is not a method of the stream '$$'.${didYouMean(name, candidates, (s) => `.${s}()`)} A stage is a link too: '$$.$match(…)'.`,
+export const notAStreamLink = (name: string, candidates: readonly string[], pos: number): CodegenError => {
+  // A diagnostic stage is spelled on its own reference and takes no body there,
+  // so the suggestion names that form, not the `.$name(body)` link form.
+  const spell = (s: string): string => {
+    const runsOn = runsOnFor(s);
+    return runsOn === undefined ? `.${s}()` : `${runsOn.sigil}.${sugarOf(s)}()`;
+  };
+  return new CodegenError(
+    `'.${name}()' is not a method of the stream '$$'.${didYouMean(name, candidates, spell)} A stage is a link too: '$$.$match(…)'.`,
     pos,
   );
+};
 
 /** A stage cell asked for a callback and the argument is not an arrow. */
 export const notAnArrow = (name: string, what: string, got: { type: string; pos: number }): CodegenError =>
@@ -606,11 +638,16 @@ export const facetComputedKey = (pos: number): CodegenError =>
   new CodegenError("A '$facet' branch is named when the pipeline is written: a plain key, not a computed one.", pos);
 
 /** `$$$.currentOp()` — the database has no source stage of its own. */
-export const noStageOnDatabase = (name: string, pos: number): CodegenError =>
-  new CodegenError(
-    `'$$$' is the database, and no stage runs on it alone: '.${name}()' runs on the collection ('$$.${name}()') or the cluster ('$$$$.${name}()') — its row says which.`,
+export const noStageOnDatabase = (name: string, pos: number): CodegenError => {
+  const sugar = sugarOf(name);
+  const runsOn = runsOnFor(name);
+  return new CodegenError(
+    runsOn === undefined
+      ? `'$$$' is the database, and no stage runs on it alone. Write '$$.${sugar}()' on the collection, or '$$$$.${sugar}()' on the cluster.`
+      : `'$$$' is the database, and no stage runs on it alone. Write '${runsOn.sigil}.${sugar}()' — ${runsOn.place}.`,
     pos,
   );
+};
 
 // ── the reducer wrap ─────────────────────────────────────────────────────────
 

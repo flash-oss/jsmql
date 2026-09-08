@@ -10,6 +10,50 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: a wrong-body refusal shows a right call, and a scope refusal names the sigil
+
+Two families of refusal said what was wrong and stopped there.
+
+A stage handed a body of the wrong type named only the type it wanted:
+
+```
+[ $group("externalId") ]
+before: '$group' expects a document, but got a string.
+now:    '$group' expects a document, but got a string.
+        Write the body as a document, e.g. '$group({ _id: $.category })'.
+
+[ $sample(5) ]
+now:    '$sample' expects a document, but got a number.
+        Write the body as a document, e.g. '$sample({ size: 10 })'.
+```
+
+The example is a fact on the stage's own entry — `bodyExample` — because the shortest right answer for `$group` is not the one for `$sample`, and the emitter holds no table of stage names. Each example is the whole call, and each one compiles. A stage that states none keeps the sentence it had.
+
+A diagnostic stage on the wrong reference lost the sigil that works, and one message named a spelling that does not:
+
+```
+$$.currentOp()
+before: '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'. A stream is not an array: chain a method the stream has …
+now:    '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
+        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+
+$$$.currentOp()
+before: '$$$' is the database, and no stage runs on it alone: '.currentOp()' runs on the collection ('$$.currentOp()') or the cluster ('$$$$.currentOp()') — its row says which.
+now:    '$$$' is the database, and no stage runs on it alone.
+        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+
+$$.indexStat()
+before: … Did you mean '.$indexStats()'?      ← '$$.$indexStats()' answers "requires exactly 1 argument, got 0"
+now:    … Did you mean '$$.indexStats()'?     ← compiles to [{ $indexStats: {} }]
+```
+
+The scope each stage states decides the sigil, so each message names exactly one spelling instead of offering two and leaving the reader to guess. "its row says which" is gone: a row is a thing the reader has never seen.
+
+Three suites stated the corrected behaviour in their own titles — "points at the $$$$ prefix", "with its correct prefix" — while asserting the text that named none. They assert the way out now, and each way out is compiled in the same test.
+
+---
+
+
 ## 2026-09-08 — feat: `.assign()` and `.fromEntries()` answer on their receivers
 
 Two more statics gained the method spelling, so every lodash reader of an object has one.
