@@ -12,7 +12,7 @@ Statement-only: `assert(...)` emits one pipeline stage and has **no value**.
 Using it on a RHS, as an expression operand, inside a ternary branch, or in a
 Filter / `jsmql.expr` is rejected at compile time (see *Rejections* below).
 
-See [`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert) for the user-facing
+See [`docs/LANGUAGE.md#assert`](../LANGUAGE.md#assert-fail-the-pipeline-when-an-invariant-breaks) for the user-facing
 reference.
 
 ## Why this mechanism (and not `$function`)

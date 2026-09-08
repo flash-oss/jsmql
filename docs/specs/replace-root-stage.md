@@ -35,7 +35,7 @@ out — drop the `$ = ` to build the expression alone, or move to a Pipeline
 entry. A literal sub-pipeline array rejects it too, and names `$replaceWith({ … })`
 — see [aggregation-stages.md](aggregation-stages.md).
 
-See [`docs/LANGUAGE.md#replace-root`](../LANGUAGE.md#replace-root) for the
+See [`docs/LANGUAGE.md#replace-root`](../LANGUAGE.md#replace-root-via---expr) for the
 user-facing reference.
 
 ## Convention: all root-replacing sugar starts with `$ =`

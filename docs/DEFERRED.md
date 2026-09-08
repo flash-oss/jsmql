@@ -13,7 +13,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - When you ship an item: delete its row AND strip every `[DEF-NNN]` tag in the same commit.
 - When you reject a feature with a "not yet" error: add the row AND a tag in the same commit.
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
-- Per-row schema is in [`docs/CLAUDE.md`](CLAUDE.md#maintain-docs-deferred-md).
+- Per-row schema is in the Conventions block below.
 
 **Counts.** Open: 29. Decided-against: 9. As of 2026-09-06.
 

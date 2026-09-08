@@ -4549,7 +4549,7 @@ const combined = jsmql.expr(`$.age > 21 && $.status in ["active", "pending"]`);
 
 MongoDB 8.0 deprecated three operators that run JavaScript on the server: `$function`, `$accumulator`, and `$where`. MongoDB's own docs say to rewrite this logic as native aggregation operators. jsmql does that for you — you write JavaScript, and jsmql compiles it to native operators.
 
-For the full pros and cons of server-side JavaScript, see the [README](../README.md#pros-and-cons-of-server-side-javascript). Short version: it's deprecated, slow, can't use indexes, often turned off, and a security risk.
+For the full pros and cons of server-side JavaScript, see the [README](../README.md). Short version: it's deprecated, slow, can't use indexes, often turned off, and a security risk.
 
 **jsmql does not add new syntax for these three operators.** If you need them on older MongoDB versions, the registry passthrough form still works (e.g. `$function({ body: "...", args: [...], lang: "js" })`). No errors, no warnings — existing code keeps working as-is.
 

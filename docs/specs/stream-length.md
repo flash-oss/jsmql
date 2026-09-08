@@ -9,7 +9,7 @@ a field RHS (`$.n = $$.length`), arithmetic (`$.share = 1 / $$.length`), an
 `assert` condition (`assert($$.length <= 1, …)`), a stage body (`$project`,
 `$group`), a top-level `$match` `$expr`.
 
-See [`docs/LANGUAGE.md#length`](../LANGUAGE.md#length) for the user-facing
+See [`docs/LANGUAGE.md#length`](../LANGUAGE.md#length-count-the-current-stream) for the user-facing
 reference.
 
 ## Mechanism

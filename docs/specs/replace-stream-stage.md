@@ -19,7 +19,7 @@ The trailing `;` is optional: a lone `$$ = <expr>` is Pipeline evidence on its
 own, so it emits the same stages either way. See § Single statement with no
 trailing `;`.
 
-See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream)
+See [`docs/LANGUAGE.md#replace-stream`](../LANGUAGE.md#replace-stream-via---expr)
 for the user-facing reference.
 
 The bare statement `$$.<chain>;` is the usual spelling of a chain on the stream; the assignment form this spec covers is its explicit alternative — see

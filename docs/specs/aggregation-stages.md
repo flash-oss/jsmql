@@ -13,7 +13,7 @@ This spec covers how `jsmql()` recognises a top-level aggregation pipeline and c
 
 ## Two pipeline forms
 
-jsmql accepts two surface forms that both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form-;-between-stages) recommends, what the README's tour uses, and what `test/realistic.test.ts` is written in.
+jsmql accepts two surface forms that both lower through the statement road in `src/compiler/emit/statement.ts`. The **`;`-separated form is canonical** for user-facing material — it's what [LANGUAGE.md](../LANGUAGE.md#canonical-form--between-stages) recommends, what the README's tour uses, and what `test/realistic.test.ts` is written in.
 
 1. **`;`-separated (canonical)** — the parser returns a `Pipeline` whose `stmts` are the `;`-separated statements, and `lowerProgram` lowers each in turn, threading the scope: a `let` declared in one statement is a name the next one reads, and a stage that replaced the document takes it away again.
 2. **Bracketed `[…]`** — the parser returns an `ArrayLiteral`; the shape rule ([filter-mode.md § The decision](filter-mode.md)) reads its FIRST element, and `subPipeline` lowers the elements as the statements they are. Adjacent writes coalesce as a `,`-run does ([update-filter.md](update-filter.md)).

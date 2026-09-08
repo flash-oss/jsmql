@@ -15,7 +15,7 @@ User-facing reference is in [LANGUAGE.md](../LANGUAGE.md) § Pipelines.
 > force Pipeline mode) — owned by [desugar-pass.md](desugar-pass.md). Folding
 > is a post-parse pre-pass; everything below applies to the runtime fallback.
 
-> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [emit-pass.md → Block-body arrows](emit-pass.md#block-body-arrows--nested-let).
+> **Scope note.** This spec covers `let`/`const` at the **top level of a pipeline**, which materialise as `__jsmql.var.<name>` document fields (`$set` stages). The *same keywords* inside a **block-body arrow** (`x => { const a = …; return … }`) are a different construct with a different lowering — in-expression `$let` variables (`$$name`), not document fields. That is owned by [emit-pass.md → Block-body arrows](emit-pass.md#bindings-between-stages).
 
 ## Why it exists
 

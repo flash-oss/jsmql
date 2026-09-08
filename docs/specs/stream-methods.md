@@ -14,7 +14,7 @@ The stream road in [src/compiler/emit/statement.ts](../../src/compiler/emit/stat
 cells — adding a cell makes the method usable on every head.
 
 This spec is the implementation-facing companion to the user-facing chain
-documentation in [docs/LANGUAGE.md](../LANGUAGE.md#stream-methods). The
+documentation in [docs/LANGUAGE.md](../LANGUAGE.md#stream-methods-chained-after-the-rhs). The
 sister specs that handle individual statement-level sugars
 ([replace-stream-stage.md](./replace-stream-stage.md),
 [union-stage.md](./union-stage.md), [lookup-stage.md](./lookup-stage.md))
