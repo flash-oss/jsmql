@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — feat: the lodash reading of an object is a method too
+
+`Object.keys(o)` compiled and `o.keys()` did not. jsmql already carries nine lodash readers of an object as methods — `.mapValues()`, `.pickBy()`, `.toPairs()` and the rest — so the three JavaScript statics were the odd ones out:
+
+```
+$.user?.profile?.keys()
+→ { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+```
+
+which is what `Object.keys($.user?.profile)` emits, to the byte. `.values()` and `.entries()` gained the same. `.entries()` and `.toPairs()` are now two spellings of one lowering, as JavaScript and lodash each name it.
+
+A receiver jsmql can PROVE is an array keeps the refusal it had, because JavaScript's `Array.prototype.keys()` answers an iterator and MongoDB has no such value:
+
+```
+$.xs.map(x => x).keys()
+→ .keys() returns an iterator in JavaScript and has no MongoDB equivalent.
+  Use '$op($range, 0, $op($size, arr))' if you want the index array.
+```
+
+A field path is not provably either, and there the object reading answers. MEASURED on mongod: `{ $objectToArray: "$o" }` returns the pairs for a document, `null` for a missing field and for null, and stops the command for an array, a string or a number — the same bargain every other object method already takes.
+
+`docs/LANGUAGE.md` claimed an `$ifNull` guard around `Object.keys` / `Object.fromEntries` / `new Set(…)` arguments written with `?.`. The compiler adds none, and the table is gone.
+
+---
+
+
 ## 2026-09-08 — fix!: an empty stage list is refused, and the list says what it holds
 
 `$.x = $$$.c.aggregate([]);` compiled to `{ $lookup: { from: "c", pipeline: [], as: "x" } }`, and `$$.aggregate([]);` vanished from the chain without a word. A suite in `test/lookup.test.ts` was titled "an empty pipeline is rejected" while asserting the `$lookup` — the title was right and the assertion was not.

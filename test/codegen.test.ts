@@ -4625,43 +4625,19 @@ describe("array method additions", () => {
     });
   });
   it(".lastIndexOf(x) reverses, finds, normalises back to original index", () => {
+    // The string family is refused, so only the array reading emits: no receiver
+    // test to make, and the answer stands on its own.
     expect(jsmql.expr("$.items.lastIndexOf(42)")).toEqual({
-      $switch: {
-        branches: [
-          {
-            case: { $in: [{ $type: "$items" }, ["array"]] },
-            then: {
-              $let: {
-                vars: { jsmqlArr: "$items" },
-                in: {
-                  $let: {
-                    vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
-                    in: {
-                      $cond: {
-                        if: { $eq: ["$$jsmqlRevIdx", -1] },
-                        then: -1,
-                        else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
-                      },
-                    },
-                  },
-                },
-              },
-            },
-          },
-        ],
-        default: {
+      $let: {
+        vars: { jsmqlArr: "$items" },
+        in: {
           $let: {
-            vars: { jsmqlArr: "$items" },
+            vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
             in: {
-              $let: {
-                vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr" }, 42] } },
-                in: {
-                  $cond: {
-                    if: { $eq: ["$$jsmqlRevIdx", -1] },
-                    then: -1,
-                    else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
-                  },
-                },
+              $cond: {
+                if: { $eq: ["$$jsmqlRevIdx", -1] },
+                then: -1,
+                else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, "$$jsmqlRevIdx"] },
               },
             },
           },
@@ -6461,13 +6437,13 @@ describe("iterator / void / locale DX shims", () => {
     expect(() => jsmql.expr("$.xs.forEach(x => x)")).toThrow(/undefined/);
   });
   it(".entries() suggests .map((v, i) => [i, v])", () => {
-    expect(() => jsmql.expr("$.xs.entries()")).toThrow(/\[index, value\]|\[i, v\]/);
+    expect(() => jsmql.expr("$.xs.map(x => x).entries()")).toThrow(/\[index, value\]|\[i, v\]/);
   });
   it(".keys() suggests $range/$size", () => {
-    expect(() => jsmql.expr("$.xs.keys()")).toThrow(/\$range|\$size/);
+    expect(() => jsmql.expr("$.xs.map(x => x).keys()")).toThrow(/\$range|\$size/);
   });
   it(".values() explains the array is already the value sequence", () => {
-    expect(() => jsmql.expr("$.xs.values()")).toThrow(/value sequence|iterator/);
+    expect(() => jsmql.expr("$.xs.map(x => x).values()")).toThrow(/value sequence|iterator/);
   });
   it(".toLocaleString() explains the locale problem", () => {
     expect(() => jsmql.expr("$.xs.toLocaleString()")).toThrow(/locale/);
@@ -6703,44 +6679,16 @@ describe("internal $let bindings never capture a lambda param", () => {
         input: "$items",
         as: "jsmqlArr",
         in: {
-          $switch: {
-            branches: [
-              {
-                case: { $in: [{ $type: "$$jsmqlArr.list" }, ["array"]] },
-                then: {
-                  $let: {
-                    vars: { jsmqlArr2: "$$jsmqlArr.list" },
-                    in: {
-                      $let: {
-                        vars: {
-                          jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] },
-                        },
-                        in: {
-                          $cond: {
-                            if: { $eq: ["$$jsmqlRevIdx", -1] },
-                            then: -1,
-                            else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr2" }, 1] }, "$$jsmqlRevIdx"] },
-                          },
-                        },
-                      },
-                    },
-                  },
-                },
-              },
-            ],
-            default: {
+          $let: {
+            vars: { jsmqlArr2: "$$jsmqlArr.list" },
+            in: {
               $let: {
-                vars: { jsmqlArr2: "$$jsmqlArr.list" },
+                vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] } },
                 in: {
-                  $let: {
-                    vars: { jsmqlRevIdx: { $indexOfArray: [{ $reverseArray: "$$jsmqlArr2" }, "$$jsmqlArr.needle"] } },
-                    in: {
-                      $cond: {
-                        if: { $eq: ["$$jsmqlRevIdx", -1] },
-                        then: -1,
-                        else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr2" }, 1] }, "$$jsmqlRevIdx"] },
-                      },
-                    },
+                  $cond: {
+                    if: { $eq: ["$$jsmqlRevIdx", -1] },
+                    then: -1,
+                    else: { $subtract: [{ $subtract: [{ $size: "$$jsmqlArr2" }, 1] }, "$$jsmqlRevIdx"] },
                   },
                 },
               },

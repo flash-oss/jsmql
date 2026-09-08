@@ -334,7 +334,6 @@ describe("compiler/emit — array methods", () => {
     expect(compiled('$.csv.indexOf("b")', (d) => d.csv.indexOf("b"))).toMatchObject({ $switch: {} });
     expect(compiled("$.a.includes(2)", (d) => d.a.includes(2))).toMatchObject({ $switch: {} });
     expect(compiled('$.csv.includes("b")', (d) => d.csv.includes("b"))).toMatchObject({ $switch: {} });
-    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $switch: {} });
     expect(compiled("$.a.at(-1)", (d) => d.a.at(-1))).toMatchObject({ $switch: {} });
     expect(compiled("$.csv.at(0)", (d) => d.csv.at(0))).toMatchObject({ $switch: {} });
     expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toMatchObject({ $switch: {} });
@@ -342,6 +341,9 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toMatchObject({ $switch: {} });
     expect(compiled("$.a.size()", (d) => d.a.length)).toMatchObject({ $switch: {} });
     expect(compiled("$.o.size()", (d) => Object.keys(d.o).length)).toMatchObject({ $switch: {} });
+    // `.lastIndexOf` states one emitting family — the string form is refused — so it
+    // answers the array reading outright rather than testing the receiver's type.
+    expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({ $let: {} });
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({ $let: {} });
     expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({ $reduce: {} });

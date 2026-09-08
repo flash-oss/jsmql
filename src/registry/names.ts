@@ -7880,9 +7880,9 @@ export const NAMES = {
   }),
 
   entries: name({
-    doc: "'Object.entries(obj)' — the object as [key, value] pairs. The array form is refused.",
+    doc: "'Object.entries(obj)' / '.entries()' — the object as [key, value] pairs. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7891,6 +7891,13 @@ export const NAMES = {
         array: unsupported(
           ".entries() returns an iterator in JavaScript and has no MongoDB equivalent. Use '.map((v, i) => [i, v])' if you want [index, value] pairs as an array.",
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
+          },
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7900,6 +7907,10 @@ export const NAMES = {
             };
           },
         },
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: [`${kv.ref}.k`, `${kv.ref}.v`] } };
       },
     },
     stream: unsupported("'Object.entries()' produces a value, not a stream of documents."),
@@ -7911,9 +7922,9 @@ export const NAMES = {
   }),
 
   keys: name({
-    doc: "'Object.keys(obj)' — an array of the object's keys. The array form is refused.",
+    doc: "'Object.keys(obj)' / '.keys()' — an array of the object's keys. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7922,6 +7933,13 @@ export const NAMES = {
         array: unsupported(
           ".keys() returns an iterator in JavaScript and has no MongoDB equivalent. Use '$op($range, 0, $op($size, arr))' if you want the index array.",
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
+          },
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7929,6 +7947,10 @@ export const NAMES = {
             return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.k` } };
           },
         },
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.k` } };
       },
     },
     stream: unsupported("'Object.keys()' produces a value, not a stream of documents."),
@@ -7940,9 +7962,9 @@ export const NAMES = {
   }),
 
   values: name({
-    doc: "'Object.values(obj)' — an array of the object's values. The array form is refused.",
+    doc: "'Object.values(obj)' / '.values()' — an array of the object's values. The array form is refused.",
     call: true,
-    on: ["array", "Object"],
+    on: ["array", "object", "Object"],
     returns: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7951,6 +7973,13 @@ export const NAMES = {
         array: unsupported(
           ".values() returns an iterator in JavaScript and has no MongoDB equivalent. The array itself is already the value sequence — use it directly.",
         ),
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, bind }) => {
+            const kv = bind("kv");
+            return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
+          },
+        },
         Object: {
           args: { sig: "obj", exact: 1 },
           emit: ({ args, value, bind }) => {
@@ -7958,6 +7987,10 @@ export const NAMES = {
             return { $map: { input: { $objectToArray: value(args[0]) }, as: kv.as, in: `${kv.ref}.v` } };
           },
         },
+      },
+      uncertain: ({ recv, bind }) => {
+        const kv = bind("kv");
+        return { $map: { input: { $objectToArray: recv }, as: kv.as, in: `${kv.ref}.v` } };
       },
     },
     stream: unsupported("'Object.values()' produces a value, not a stream of documents."),

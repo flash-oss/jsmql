@@ -21,11 +21,21 @@ export const filter = (input: unknown, as: MongoVar, test: Truth, limit?: unknow
   $filter: limit === undefined ? { input, as, cond: test } : { input, as, cond: test, limit },
 });
 
-/** `{ $switch: { branches: [{ case, then }…], default } }`. */
+/**
+ * `{ $switch: { branches: [{ case, then }…], default } }`.
+ *
+ * A test whose every answer is the SAME document decides nothing, so the answer
+ * stands on its own: `$.o.keys()` reads an object either way, and the `$type`
+ * test around it would only cost bytes.
+ */
 export const switchOn = (
   branches: readonly { readonly case: Truth; readonly then: unknown }[],
   fallback: unknown,
-): unknown => ({ $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } });
+): unknown => {
+  const one = JSON.stringify(fallback);
+  if (branches.every((b) => JSON.stringify(b.then) === one)) return fallback;
+  return { $switch: { branches: branches.map((b) => ({ case: b.case, then: b.then })), default: fallback } };
+};
 
 /** `{ $anyElementTrue: <array of truths> }` — `.some(pred)`. */
 export const anyElementTrue = (truths: unknown): unknown => ({ $anyElementTrue: truths });

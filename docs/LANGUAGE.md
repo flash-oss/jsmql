@@ -589,11 +589,8 @@ or poison every downstream caller).
 | `.length` of optional | `""` (string) / `[]` (array or unknown — array branch produces 0) | `$.user?.tags.length` → runtime `$cond` over `$ifNull("$user.tags", [])` |
 | Index access (`obj?.[k]` or `?.` earlier in chain) | `[]` | `$.scoresByLevel?.[$.level]` → runtime `$cond` over `$ifNull("$scoresByLevel", [])` |
 | Non-foldable `$getField` receiver | `{}` | `$.items[0]?.label` → `{ $getField: { field: "label", input: { $ifNull: [..., {}] } } }` |
-| `Object.keys` / `.values` / `.entries` argument | `{}` | `Object.keys($.user?.profile)` → `$objectToArray: { $ifNull: ["$user.profile", {}] }` |
-| `Object.fromEntries` argument | `[]` | `Object.fromEntries($.user?.pairs)` → `$arrayToObject: { $ifNull: ["$user.pairs", []] }` |
-| `new Set(...)` argument | `[]` | `new Set($.user?.tags).union(new Set($.global))` → set ops on `$ifNull(..., [])` |
 
-`?.` is **deliberately not** wrapped where the consumer is already null-safe.
+`?.` is **deliberately not** wrapped where the consumer is already null-safe. A reader of a whole object or array is one of those: `Object.keys($.user?.profile)` and `$.user?.profile?.keys()` both emit `{ $objectToArray: "$user.profile" }`, and MongoDB answers `null` for a missing field rather than erroring — MEASURED.
 These cases produce the same MQL whether you use `.` or `?.`:
 
 | Consumer | Why no wrap |
@@ -1924,6 +1921,8 @@ Object.groupBy($.items, x => x.category)
 
 Value-mode methods on an object field (built over `$objectToArray` / `$arrayToObject`). The `mapValues` / `mapKeys` / `pickBy` / `omitBy` iteratee is a `(value[, key]) => …` arrow.
 
+A reader of an object has both spellings — the JavaScript static and the lodash method — and the two emit the same MQL:
+
 ```js
 $.scores.mapValues(v => v * 2)        // { <k>: v*2 }
 $.o.mapKeys((v, k) => k.toUpperCase())// rename keys
@@ -1934,7 +1933,14 @@ $.o.omitBy((v, k) => k.startsWith("_"))// drop entries whose (value, key) passes
 $.o.invert()                          // swap keys/values (new keys stringified, last wins)
 $.o.toPairs()                         // [[k, v], …]
 $.pairs.fromPairs()                   // { pairs[i][0]: pairs[i][1] }   (receiver is a [[k,v]] array)
+
+$.o.keys()                            // same MQL as Object.keys($.o)
+$.o.values()                          // same MQL as Object.values($.o)
+$.o.entries()                         // same MQL as Object.entries($.o) — and as $.o.toPairs()
+$.user?.profile?.keys()               // { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
 ```
+
+> `.keys()` / `.values()` / `.entries()` read the object where the receiver's type is not known at compile time. On a receiver jsmql can PROVE is an array they are refused, because JavaScript's `Array.prototype.keys()` returns an iterator and MongoDB has no such value: `$.xs.map(x => x).keys()` names `$op($range, 0, $op($size, arr))` instead.
 
 > `pick` uses flat field names only (deep paths like `"a.b"` aren't supported — use `$op($getField, …)`). `mapKeys`/`invert` **stringify** the produced key (`$toString`; last wins on collision), like lodash. All verified against a live mongod.
 
