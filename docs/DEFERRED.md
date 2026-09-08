@@ -51,7 +51,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** Comma disambiguation against the update-filter `,` separator (`$.a = 1, $.b = 2`). The two are syntactically distinguishable (let-binding follows `let <Ident>`, update follows `=`/`+=`/etc.) but the parser doesn't currently route on that.
 - **Attempted approaches.** None.
 - **Success criteria.** `let userId = $.userId, total = $.amount * 1.1; $match(...);` lowers to one combined `$set` + `$match`. `let a = …; let b = …;` continues to work and produces equivalent (two `$set` stages, slightly worse).
-- **Rejection site(s).** `docs/specs/let-bindings.md:199`.
+- **Rejection site(s).** The Deferred bullet in [`docs/specs/let-bindings.md`](specs/let-bindings.md), which carries the `[DEF-010]` tag.
 - **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 3.
 - **Status.** open
 - **Effort.** S
@@ -75,7 +75,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering.
 - **Attempted approaches.** None.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
-- **Rejection site(s).** `docs/specs/context-references.md:131-132` (allowlisted as a spec future-work bullet).
+- **Rejection site(s).** None — the API simply does not exist. The one live `[DEF-013]` tag is in [`docs/LANGUAGE.md`](LANGUAGE.md), on the `$$.find(…)` self-join bullet.
 - **Spec.** `docs/specs/context-references.md` § Future work bullet 1–2. Will need its own `docs/specs/bind.md`.
 - **Status.** design-only
 - **Effort.** L

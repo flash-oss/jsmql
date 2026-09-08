@@ -20,7 +20,7 @@ No new lexer or parser tokens. The receiver chain is one of:
 | `$$$$["db"]["coll"]`         | `IndexAccess { object: IndexAccess { object: ClusterRef, index: StringLiteral }, index: StringLiteral }` |
 | `$$$$.db["coll"]` / `$$$$["db"].coll` | mixed `MemberAccess` / `IndexAccess` over `ClusterRef`                                    |
 
-All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/parser.ts:1164`](../../src/compiler/parse/parser.ts:1164)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
+All shapes are built by the standard primary-postfix loop ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)). The method call `.find(pred)` / `.filter(pred)` parses as the existing `MethodCall` node.
 
 **Block bodies.** The parser accepts a `{ … }` body on any callback (see [grammar.md](grammar.md)); what the block MEANS is the row's business. `.aggregate((o) => { $sort(…); $limit(5); })` keeps its statements as the stages of the sub-pipeline. `.find` / `.filter` / `.reject` / `.map` are JavaScript methods: a stage-free block folds back to its value (`{ return E }` → `E`; `{ const … ; return E }` → a `$let`), and a stage-bearing one is refused, naming the stage and the `.aggregate` rewrite ([method-dispatch of callback blocks](emit-pass.md)). Parsing first is what buys that message: a grammar that stopped at the first `$` could only say "unexpected token".
 

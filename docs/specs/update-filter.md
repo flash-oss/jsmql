@@ -51,7 +51,7 @@ Compound operators (`+=`, etc.) reject chained RHS — too easy to misread.
 
 ### Target validation
 
-A target must be a `FieldRef` or a chain of `MemberAccess` nodes rooted at one. Bare identifiers (`ParamRef`), index access (`IndexAccess`), and any other shape are rejected at parse time with operator-specific error messages. The walk lives in `Parser.isFieldPathTarget`.
+A target must be a `FieldRef` or a chain of `MemberAccess` nodes rooted at one. An index access (`IndexAccess`) and every other shape are rejected at parse time, with the operator named in the message. See [src/compiler/parse/parser.ts](../../src/compiler/parse/parser.ts).
 
 ### Compound desugar
 
