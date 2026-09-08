@@ -3,7 +3,7 @@
 import { describe, it, expect } from "vitest";
 import { jsmql, JsmqlInterpolationError } from "../src/index.ts";
 
-const OWN = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
+const OWN = (v: unknown) => ({ $eq: v });
 
 describe("jsmql template-tag interpolation guards", () => {
   it("rejects undefined with a slot-pointing error", () => {
@@ -34,15 +34,15 @@ describe("jsmql template-tag interpolation guards", () => {
 describe("jsmql template-tag interpolation cannot inject syntax", () => {
   const evil = '"}); db.dropDatabase(); //';
   it("breakout-attempt strings round-trip as literal values", () => {
-    expect(jsmql`$.field === ${evil}`).toEqual({ field: OWN(evil) });
-    expect(jsmql`$eq($.field, ${evil})`).toEqual({ field: { $eq: evil } });
+    expect(jsmql`$.field === ${evil}`).toEqual({ field: '"}); db.dropDatabase(); //' });
+    expect(jsmql`$eq($.field, ${evil})`).toEqual({ field: { $eq: '"}); db.dropDatabase(); //' } });
   });
   it("backticks and template-style payloads stay literal", () => {
     const payload = "`${$.password}`";
-    expect(jsmql`$.field === ${payload}`).toEqual({ field: OWN(payload) });
+    expect(jsmql`$.field === ${payload}`).toEqual({ field: "`${$.password}`" });
   });
   it("a string that looks like a field reference stays a string", () => {
-    expect(jsmql`$.a === ${"$b"}`).toEqual({ a: OWN("$b") });
+    expect(jsmql`$.a === ${"$b"}`).toEqual({ a: "$b" });
     expect(jsmql.expr`$.a + ${"$b"}`).toEqual({ $add: ["$a", { $literal: "$b" }] });
     expect(jsmql.expr.compile(({ s }, { $ }) => $.a + s)({ s: "$b" })).toEqual({ $add: ["$a", { $literal: "$b" }] });
     // a pipeline evaluates its values too: a `$set` value, a stage body, a group key
@@ -60,8 +60,8 @@ describe("jsmql template-tag interpolation cannot inject syntax", () => {
   });
   it("an object whose keys look like operators is emitted as data, not invoked", () => {
     const payload = { $gt: 0, $where: "this.secret" };
-    expect(jsmql`$eq($.field, ${payload})`).toEqual({ field: { $eq: payload } });
-    expect(jsmql.expr`${payload}`).toEqual({ $literal: payload });
+    expect(jsmql`$eq($.field, ${payload})`).toEqual({ field: { $eq: { $gt: 0, $where: "this.secret" } } });
+    expect(jsmql.expr`${payload}`).toEqual({ $literal: { $gt: 0, $where: "this.secret" } });
   });
 });
 

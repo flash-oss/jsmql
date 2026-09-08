@@ -19,7 +19,7 @@
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
-import { FIELD_VALUE, NOT_OWN_VALUE, OWN_VALUE, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -172,7 +172,7 @@ function membershipQuery(input: FilterIn): QueryDoc | null {
   if (path === null) return null;
   const c = input.constant(r);
   if (c === null || !Array.isArray(c.value)) return null;
-  return queryOwnValue(path, { $in: c.value }, OWN_VALUE);
+  return queryOwnValue(path, { $in: c.value });
 }
 
 /** `typeof x === "s"` either way round: the operand's path and the BSON alias, or null. */
@@ -232,8 +232,7 @@ function nullTest(input: FilterIn): string | null {
  * absent. An array at a path PREFIX reads as absent in JavaScript too, so the
  * positive form takes it as an alternative and the negated form excludes it.
  */
-const presenceQuery = (path: string, negated: boolean): QueryDoc =>
-  queryOwnValue(path, { $exists: negated }, { ...FIELD_VALUE, whenAbsent: !negated, whenArray: negated });
+const presenceQuery = (path: string, negated: boolean): QueryDoc => queryOwnValue(path, { $exists: negated });
 
 /** `.length` compared with a natural number is a LENGTH, which no query form expresses. */
 function comparesALength(input: FilterIn): boolean {
@@ -253,12 +252,12 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
     // The `array` spelling asks whether the value IS an array, so it excludes none.
     if (typed.alias === "array") {
       return negated
-        ? queryOwnValue(typed.path, { $not: { $type: "array" } }, { whenAbsent: true, whenArray: false })
-        : queryOwnValue(typed.path, { $type: "array" }, { whenAbsent: false, whenArray: true });
+        ? queryOwnValue(typed.path, { $not: { $type: "array" } })
+        : queryOwnValue(typed.path, { $type: "array" });
     }
     return negated
-      ? queryOwnValue(typed.path, { $not: { $type: typed.alias } }, NOT_OWN_VALUE)
-      : queryOwnValue(typed.path, { $type: typed.alias }, OWN_VALUE);
+      ? queryOwnValue(typed.path, { $not: { $type: typed.alias } })
+      : queryOwnValue(typed.path, { $type: typed.alias });
   }
   const present = presenceTest(input);
   if (present !== null) return presenceQuery(present, negated);
@@ -266,13 +265,11 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   const mod = moduloTest(input);
   if (mod !== null) {
     const test = { $mod: [mod.divisor, mod.remainder] };
-    return negated ? queryOwnValue(mod.path, { $not: test }, NOT_OWN_VALUE) : queryOwnValue(mod.path, test, OWN_VALUE);
+    return negated ? queryOwnValue(mod.path, { $not: test }) : queryOwnValue(mod.path, test);
   }
   const nul = nullTest(input);
   if (nul !== null) {
-    return negated
-      ? queryOwnValue(nul, { $not: { $type: "null" } }, NOT_OWN_VALUE)
-      : queryOwnValue(nul, { $type: "null" }, OWN_VALUE);
+    return negated ? queryOwnValue(nul, { $not: { $type: "null" } }) : queryOwnValue(nul, { $type: "null" });
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
@@ -285,9 +282,7 @@ function strictEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null
   // A RegExp the call supplied is MongoDB's regex query, as the developer passed it: the
   // query language reads `{ field: /re/ }` as a match, and `$eq` would compare a value.
   if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
-  return negated
-    ? queryOwnValue(pc.path, { $ne: pc.value }, NOT_OWN_VALUE)
-    : queryOwnValue(pc.path, { $eq: pc.value }, OWN_VALUE);
+  return negated ? queryOwnValue(pc.path, { $ne: pc.value }) : queryOwnValue(pc.path, { $eq: pc.value });
 }
 
 /** `==`/`!=` against null only: `{ f: null }` matches null OR missing, the loose meaning. */
@@ -297,9 +292,7 @@ function looseEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null 
   // `$eq: null` is the loose meaning — it selects a null AND a missing field, so
   // `== null` holds for an absent field where `!= null` does not, and only the
   // negated form holds for an array (`[null] == null` is false in JavaScript).
-  return negated
-    ? queryOwnValue(path, { $ne: null }, { whenAbsent: false, whenArray: true })
-    : queryOwnValue(path, { $eq: null }, { whenAbsent: true, whenArray: false });
+  return negated ? queryOwnValue(path, { $ne: null }) : queryOwnValue(path, { $eq: null });
 }
 
 const FLIPPED = { $gt: "$lt", $gte: "$lte", $lt: "$gt", $lte: "$gte" } as const;
@@ -311,7 +304,7 @@ function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | nul
   if (pc === null) return null;
   const v = pc.value;
   if (typeof v !== "number" && typeof v !== "string" && !(v instanceof Date)) return null;
-  return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v }, OWN_VALUE);
+  return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 
 export const PRODUCTIONS = {

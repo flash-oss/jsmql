@@ -96,14 +96,7 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
         $lookup: {
           from: "orders",
           let: LET,
-          pipeline: [
-            {
-              $match: {
-                status: { $eq: "paid", $not: { $type: "array" } },
-                $expr: { $eq: ["$userId", "$$jsmql_f0__id"] },
-              },
-            },
-          ],
+          pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
           as: "paid",
         },
       },
@@ -448,7 +441,7 @@ describe("compiler/emit/join — the stream and the root", () => {
     // uncorrelated: the current stream is dropped and the other collection's pipeline unioned in
     expect(compiled('$$ = $$$.orders.filter(o => o.status === "paid");', [{ _id: 101 }, { _id: 103 }])).toEqual([
       { $match: { $expr: false } },
-      { $unionWith: { coll: "orders", pipeline: [{ $match: { status: { $eq: "paid", $not: { $type: "array" } } } }] } },
+      { $unionWith: { coll: "orders", pipeline: [{ $match: { status: "paid" } }] } },
     ]);
     expect(compiled("$$ = $$$.orders;", [{ _id: 101 }, { _id: 102 }, { _id: 103 }, { _id: 104 }])).toEqual([
       { $match: { $expr: false } },

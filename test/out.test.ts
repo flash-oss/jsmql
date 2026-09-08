@@ -38,7 +38,7 @@ describe("$out — bracket-access LHS (equivalent to dotted)", () => {
 describe("$out — RHS chain: $$.filter(<predicate>) → $match + $out", () => {
   it("expression-body filter goes through the index-friendly match translator", () => {
     expect(jsmql("$$$.active = $$.filter(u => u.tier === 'gold');")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $out: "active" },
     ]);
   });
@@ -82,7 +82,7 @@ describe("$out — composes with preceding stages", () => {
 
   it("multiple preceding stages all sit before the $out", () => {
     expect(jsmql("$match($.active === true); $sort({ joined: 1 }); $$$.snapshot = $$;")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $sort: { joined: 1 } },
       { $out: "snapshot" },
     ]);
@@ -180,7 +180,7 @@ describe("$out — multi-method RHS chains", () => {
   // map, slice, toSorted, toReversed, flatMap, concat.
   it(".filter + .slice — $match + $limit + $out", () => {
     expect(jsmql("$$$.archive = $$.filter(d => d.active === false).slice(0, 100);")).toEqual([
-      { $match: { active: { $eq: false, $not: { $type: "array" } } } },
+      { $match: { active: false } },
       { $limit: 100 },
       { $out: "archive" },
     ]);
@@ -189,12 +189,7 @@ describe("$out — multi-method RHS chains", () => {
   it(".filter + .toSorted + .slice — $match + $sort + $limit + $out", () => {
     expect(
       jsmql("$$$.top = $$.filter(d => d.active === true).toSorted((a, b) => b.score - a.score).slice(0, 10);"),
-    ).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
-      { $sort: { score: -1 } },
-      { $limit: 10 },
-      { $out: "top" },
-    ]);
+    ).toEqual([{ $match: { active: true } }, { $sort: { score: -1 } }, { $limit: 10 }, { $out: "top" }]);
   });
 
   it(".map — $replaceWith + $out", () => {
@@ -214,7 +209,7 @@ describe("$out — multi-method RHS chains", () => {
 // writes ("archive everything that ISN'T expired") hit the unknown-method error.
 describe("$out — .reject is .filter negated", () => {
   // Every predicate spelling, same negated $match — matching what a `$$ =` chain emits.
-  const NEGATED = { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } };
+  const NEGATED = { $match: { $nor: [{ archived: true }] } };
   for (const [spelling, predicate] of [
     ["arrow", "d => d.archived === true"],
     ["matches-object", "{ archived: true }"],
@@ -227,15 +222,15 @@ describe("$out — .reject is .filter negated", () => {
 
   it("emits exactly what the same .reject emits in a `$$ =` chain", () => {
     expect(jsmql("$$$.live = $$.reject({ archived: true });")).toEqual([
-      { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } },
+      { $match: { $nor: [{ archived: true }] } },
       { $out: "live" },
     ]);
   });
 
   it("chains with .filter and the rest of the stream methods", () => {
     expect(jsmql("$$$.live = $$.filter(d => d.tier === 'gold').reject({ archived: true }).take(10);")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-      { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } },
+      { $match: { tier: "gold" } },
+      { $match: { $nor: [{ archived: true }] } },
       { $limit: 10 },
       { $out: "live" },
     ]);
@@ -243,7 +238,7 @@ describe("$out — .reject is .filter negated", () => {
 
   it("accepts the `function` spelling of the predicate", () => {
     expect(jsmql("$$$.live = $$.reject(function (d) { return d.archived === true; });")).toEqual([
-      { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } },
+      { $match: { $nor: [{ archived: true }] } },
       { $out: "live" },
     ]);
   });
@@ -326,7 +321,7 @@ describe("$out RHS accepts chained stage calls", () => {
       { $out: "archive" },
     ]);
     expect(jsmql("$$$.archive = $$.filter(d => d.a > 1).$sort({ a: 1 });")).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 1 } } },
       { $sort: { a: 1 } },
       { $out: "archive" },
     ]);

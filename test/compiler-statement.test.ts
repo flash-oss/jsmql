@@ -108,7 +108,7 @@ describe("compiler/emit/statement — the writes", () => {
 describe("compiler/emit/statement — the stage calls", () => {
   it("renders a stage from its own row, in the position the row states for its body", () => {
     // `$match`'s row states `filter` for its body, so the body is a query document.
-    expect(compiled("$match($.a > 1);")).toEqual([{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }]);
+    expect(compiled("$match($.a > 1);")).toEqual([{ $match: { a: { $gt: 1 } } }]);
     expect(compiled("$sort({ a: -1 });")).toEqual([{ $sort: { a: -1 } }]);
     expect(compiled("$limit(2);")).toEqual([{ $limit: 2 }]);
     expect(compiled('$count("n");')).toEqual([{ $count: "n" }]);
@@ -118,7 +118,7 @@ describe("compiler/emit/statement — the stage calls", () => {
       { $group: { _id: null, total: { $sum: "$qty" } } },
     ]);
     expect(compiled("$match($.a > 1); $sort({ a: -1 }); $limit(1);")).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 1 } } },
       { $sort: { a: -1 } },
       { $limit: 1 },
     ]);
@@ -128,7 +128,7 @@ describe("compiler/emit/statement — the stage calls", () => {
     // `$geoNear`'s row states `filter` for its `query` key, so the predicate there
     // becomes a query document — an aggregation expression is refused by the server.
     expect(compiled('$geoNear({ near: [0, 0], distanceField: "d", query: $.k === "a" });')).toEqual([
-      { $geoNear: { near: [0, 0], distanceField: "d", query: { k: { $eq: "a", $not: { $type: "array" } } } } },
+      { $geoNear: { near: [0, 0], distanceField: "d", query: { k: "a" } } },
     ]);
   });
 
@@ -155,10 +155,7 @@ describe("compiler/emit/statement — the stage calls", () => {
   it("passes a raw stage document through, and reads a bracketed program as the pipeline", () => {
     // HR1: raw MQL is the developer's own and keeps MongoDB's reading.
     expect(compiled("{ $match: { a: 2 } };")).toEqual([{ $match: { a: 2 } }]);
-    expect(compiled("[$match($.a > 1), $set({ b: 1 })]")).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
-      { $set: { b: 1 } },
-    ]);
+    expect(compiled("[$match($.a > 1), $set({ b: 1 })]")).toEqual([{ $match: { a: { $gt: 1 } } }, { $set: { b: 1 } }]);
   });
 });
 
@@ -362,13 +359,11 @@ describe("compiler/emit/statement — bindings between stages", () => {
 });
 
 describe("compiler/emit/statement — the stream road", () => {
-  const NA = { $not: { $type: "array" } };
-
   it("lowers a chain on the stream one link at a time, and the bare spelling the same way", () => {
-    expect(compiled("$$ = $$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1, ...NA } } }]);
-    expect(compiled("$$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1, ...NA } } }]);
+    expect(compiled("$$ = $$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1 } } }]);
+    expect(compiled("$$.filter(d => d.x > 1);")).toEqual([{ $match: { x: { $gt: 1 } } }]);
     expect(compiled('$$ = $$.filter(d => d.x > 1).sortBy("k").take(2);')).toEqual([
-      { $match: { x: { $gt: 1, ...NA } } },
+      { $match: { x: { $gt: 1 } } },
       { $sort: { k: 1 } },
       { $limit: 2 },
     ]);
@@ -382,7 +377,7 @@ describe("compiler/emit/statement — the stream road", () => {
     // `$.x` inside the callback is the same document — HR4 at every depth
     expect(compiled("$$ = $$.filter(d => d.x > $.y);")).toEqual([{ $match: { $expr: { $gt: ["$x", "$y"] } } }]);
     // the lodash shorthands are arrows by the time a cell sees them
-    expect(compiled("$$ = $$.filter({ k: 1 });")).toEqual([{ $match: { k: { $eq: 1, ...NA } } }]);
+    expect(compiled("$$ = $$.filter({ k: 1 });")).toEqual([{ $match: { k: 1 } }]);
     expect(compiled('$$ = $$.map("sub");')).toEqual([{ $replaceWith: "$sub" }]);
   });
 
@@ -429,10 +424,10 @@ describe("compiler/emit/statement — the stream road", () => {
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
     // `.reject` is the complement of the predicate's own clause, as `!p` is
-    expect(compiled("$$ = $$.reject(d => d.x > 1);")).toEqual([{ $match: { $nor: [{ x: { $gt: 1, ...NA } }] } }]);
+    expect(compiled("$$ = $$.reject(d => d.x > 1);")).toEqual([{ $match: { $nor: [{ x: { $gt: 1 } }] } }]);
     // the block's statements ARE the chain's stages
     expect(compiled("$$.aggregate((o) => { $match(o.a > 1); $limit(2); });")).toEqual([
-      { $match: { a: { $gt: 1, ...NA } } },
+      { $match: { a: { $gt: 1 } } },
       { $limit: 2 },
     ]);
   });
@@ -569,7 +564,7 @@ describe("compiler/emit/statement — the refusals name the way out", () => {
     // a read of another collection with nowhere to go is refused, not a bare stage on the wrong collection
     expect(() => pipeline("$$$.orders.$match({ a: 1 });")).toThrow(/gives it no destination/);
     expect(compiled("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
-      { $match: { a: { $eq: 1, $not: { $type: "array" } } } },
+      { $match: { a: 1 } },
       { $out: "dest" },
     ]);
   });

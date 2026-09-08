@@ -30,7 +30,7 @@ describe("pipeline — stage-object form", () => {
     // See `docs/specs/emit-pass.md` § The filter target for the full rules; cases
     // that fall outside the translatable subset are exercised in
     // `test/match-translation.test.ts`.
-    expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(jsmql("[{ $match: $.age > 18 }]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$match with object-literal body passes through as raw query doc", () => {
@@ -82,7 +82,7 @@ describe("pipeline — stage-object form", () => {
 
 describe("pipeline — stage-call form", () => {
   it("$match expression body translates to a query doc", () => {
-    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("$match object-literal body is raw query doc", () => {
@@ -142,17 +142,13 @@ describe("pipeline — mixed forms", () => {
         $sort({ created: -1 }),
         { $limit: 25 }
       ]`),
-    ).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
-      { $sort: { created: -1 } },
-      { $limit: 25 },
-    ]);
+    ).toEqual([{ $match: { active: true } }, { $sort: { created: -1 } }, { $limit: 25 }]);
   });
 
   it("the two forms produce identical output for the same stage", () => {
     const a = jsmql("[$match($.age > 18)]");
     const b = jsmql("[{ $match: $.age > 18 }]");
-    expect(a).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(a).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 });
 
@@ -266,7 +262,7 @@ describe("pipeline — jsmql template-tag form", () => {
     const minAge = 18;
     const limit = 25;
     expect(jsmql`[ { $match: $.age > ${minAge} }, { $limit: ${limit} } ]`).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $match: { age: { $gt: 18 } } },
       { $limit: 25 },
     ]);
   });
@@ -275,7 +271,7 @@ describe("pipeline — jsmql template-tag form", () => {
 describe("pipeline — function input", () => {
   it("compiles an arrow returning a pipeline", () => {
     expect(jsmql(({ $ }) => [{ $match: $.active === true }, { $sort: { created: -1 } }, { $limit: 10 }])).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $sort: { created: -1 } },
       { $limit: 10 },
     ]);
@@ -527,7 +523,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
 describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
   it("expression-body predicate becomes a `$match` sub-pipeline", () => {
     expect(jsmql(`$ = { recent: $$.filter(o => o.createdAt >= "2026-01-01") };`)).toEqual([
-      { $facet: { recent: [{ $match: { createdAt: { $gte: "2026-01-01", $not: { $type: "array" } } } }] } },
+      { $facet: { recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }] } },
     ]);
   });
 
@@ -554,7 +550,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
       {
         $facet: {
           topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
-          recent: [{ $match: { createdAt: { $gte: "2026-01-01", $not: { $type: "array" } } } }],
+          recent: [{ $match: { createdAt: { $gte: "2026-01-01" } } }],
           byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
         },
       },
@@ -596,7 +592,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
     expect(jsmql(`$ = { recent: $$.filter(o => $.x > 5) };`)).toEqual([
-      { $facet: { recent: [{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }] } },
+      { $facet: { recent: [{ $match: { x: { $gt: 5 } } }] } },
     ]);
   });
 
@@ -606,7 +602,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 
   it("rejects two-argument lambda", () => {
     expect(jsmql(`$ = { a: $$.filter((a, b) => a.x > 5) };`)).toEqual([
-      { $facet: { a: [{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }] } },
+      { $facet: { a: [{ $match: { x: { $gt: 5 } } }] } },
     ]);
   });
 
@@ -631,7 +627,7 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
   it("statement-position `$$.filter(...)` (not in facet) lowers to `$match` — bare-statement stream sugar", () => {
     // Bare `$$.filter(...)` is sugar for `$$ = $$.filter(...)` (ships DEF-003),
     // so a statement-position filter now narrows the stream rather than erroring.
-    expect(jsmql(`$$.filter(o => o.x > 0);`)).toEqual([{ $match: { x: { $gt: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql(`$$.filter(o => o.x > 0);`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
   });
 
   it("$facet is reshape-clearing: prior lets can't be read after", () => {
@@ -644,24 +640,14 @@ describe("pipeline — facet (`$ = { k: $$.filter(...) }`)", () => {
 describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   it("`$$ = $$.filter(p)` lowers to a single `$match` stage", () => {
     expect(jsmql(`$$ = $$.filter(t => t.client === 156 && t.createdAt >= "2026-01-01");`)).toEqual([
-      {
-        $match: {
-          client: { $eq: 156, $not: { $type: "array" } },
-          createdAt: { $gte: "2026-01-01", $not: { $type: "array" } },
-        },
-      },
+      { $match: { client: 156, createdAt: { $gte: "2026-01-01" } } },
     ]);
   });
 
   it("`$$ = $$$.<coll>.filter(p)` lowers to `$limit: 0` + `$unionWith`", () => {
     expect(jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`)).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "transactions",
-          pipeline: [{ $match: { client: { $eq: 156, $not: { $type: "array" } } } }],
-        },
-      },
+      { $unionWith: { coll: "transactions", pipeline: [{ $match: { client: 156 } }] } },
     ]);
   });
 
@@ -673,18 +659,14 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
       {
         $unionWith: {
           coll: "transactions",
-          pipeline: [
-            { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
-          ],
+          pipeline: [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } }],
         },
       },
     ]);
   });
 
   it("bracketed `[...]` form works for both shapes", () => {
-    expect(jsmql(`[ $$ = $$.filter(t => t.x > 0) ]`)).toEqual([
-      { $match: { x: { $gt: 0, $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql(`[ $$ = $$.filter(t => t.x > 0) ]`)).toEqual([{ $match: { x: { $gt: 0 } } }]);
     expect(jsmql(`[ $$ = $$$.users.filter(u => u.active) ]`)).toEqual([
       { $match: { $expr: false } },
       {
@@ -717,11 +699,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
       {
         $unionWith: {
           coll: "transactions",
-          pipeline: [
-            { $match: { amount: { $gt: 100, $not: { $type: "array" } } } },
-            { $sort: { amount: -1 } },
-            { $limit: 5 },
-          ],
+          pipeline: [{ $match: { amount: { $gt: 100 } } }, { $sort: { amount: -1 } }, { $limit: 5 }],
         },
       },
     ]);
@@ -832,7 +810,7 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
   });
 
   it("rejects `$.<field>` inside the predicate with a 'use lambda param' hint", () => {
-    expect(jsmql(`$$ = $$.filter(t => $.x > 5);`)).toEqual([{ $match: { x: { $gt: 5, $not: { $type: "array" } } } }]);
+    expect(jsmql(`$$ = $$.filter(t => $.x > 5);`)).toEqual([{ $match: { x: { $gt: 5 } } }]);
   });
 
   it("rejects bare `$$$.<coll>` on the RHS (no stream method)", () => {
@@ -855,8 +833,8 @@ describe("pipeline — replace stream (`$$ = <expr>`)", () => {
 // byte-identical to the `;`-terminated one.
 describe("replace stream (`$$ = <expr>`) — single statement without a trailing `;`", () => {
   it("`$$ = $$.filter(p)` lowers to `$match`, same as the `;` form", () => {
-    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }]);
-    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }]);
+    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: 1 } }]);
+    expect(jsmql(`$$ = $$.filter({ a: 1 })`)).toEqual([{ $match: { a: 1 } }]);
   });
 
   it("every stream-method head reaches its stage — not just `.filter`", () => {
@@ -883,14 +861,8 @@ describe("replace stream (`$$ = <expr>`) — single statement without a trailing
   it("a comma-grouped chain around the assignment keeps update-op flush order", () => {
     // Same `$set`-flush rule the `;` form documents: the buffer flushes on either
     // side of `$$ = …`, never one merged `$set` straddling it.
-    expect(jsmql(`$.a = 1, $$ = $$.filter({ b: 2 })`)).toEqual([
-      { $set: { a: 1 } },
-      { $match: { b: { $eq: 2, $not: { $type: "array" } } } },
-    ]);
-    expect(jsmql(`$$ = $$.filter({ b: 2 }), $.a = 1`)).toEqual([
-      { $match: { b: { $eq: 2, $not: { $type: "array" } } } },
-      { $set: { a: 1 } },
-    ]);
+    expect(jsmql(`$.a = 1, $$ = $$.filter({ b: 2 })`)).toEqual([{ $set: { a: 1 } }, { $match: { b: 2 } }]);
+    expect(jsmql(`$$ = $$.filter({ b: 2 }), $.a = 1`)).toEqual([{ $match: { b: 2 } }, { $set: { a: 1 } }]);
   });
 
   it("an unsupported RHS reaches its actionable rejection with a real `.pos`", () => {
@@ -1142,19 +1114,14 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     // `$limit:0 + $unionWith` lowering is correct.
     expect(jsmql(`$$ = $$$.users.filter(u => u.active === true);`)).toEqual([
       { $match: { $expr: false } },
-      { $unionWith: { coll: "users", pipeline: [{ $match: { active: { $eq: true, $not: { $type: "array" } } } }] } },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }] } },
     ]);
   });
 
   it("non-correlated predicate + chain keeps using $unionWith", () => {
     expect(jsmql(`$$ = $$$.users.filter(u => u.active === true).slice(0, 10);`)).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "users",
-          pipeline: [{ $match: { active: { $eq: true, $not: { $type: "array" } } } }, { $limit: 10 }],
-        },
-      },
+      { $unionWith: { coll: "users", pipeline: [{ $match: { active: true } }, { $limit: 10 }] } },
     ]);
   });
 
@@ -1278,11 +1245,7 @@ describe("$$ = $$$.<coll>.<streamMethod>… — any lodash method may start the 
       {
         $unionWith: {
           coll: "orders",
-          pipeline: [
-            { $sort: { createdAt: -1 } },
-            { $limit: 200 },
-            { $match: { qty: { $gt: 1, $not: { $type: "array" } } } },
-          ],
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { qty: { $gt: 1 } } }],
         },
       },
     ]);
@@ -1512,7 +1475,7 @@ describe("chained stage calls on the current stream", () => {
 
   it("interleaves freely with lodash chain methods", () => {
     expect(jsmql("$$.filter(p => p.a > 1).$sort({ b: -1 }).take(2);")).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 1 } } },
       { $sort: { b: -1 } },
       { $limit: 2 },
     ]);
@@ -1637,18 +1600,13 @@ describe("$facet branches accept any `$$` chain", () => {
 
   it("accepts a stage link after a .filter", () => {
     expect(jsmql("$ = { k: $$.filter(d => d.a === 1).$limit(3) };")).toEqual([
-      { $facet: { k: [{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 3 }] } },
+      { $facet: { k: [{ $match: { a: 1 } }, { $limit: 3 }] } },
     ]);
   });
 
   it("mixes chain branches with the classic .filter(<arrow>) branch", () => {
     expect(jsmql('$ = { hi: $$.$match({ s: "a" }).$limit(2), lo: $$.filter(d => d.n < 5) };')).toEqual([
-      {
-        $facet: {
-          hi: [{ $match: { s: "a" } }, { $limit: 2 }],
-          lo: [{ $match: { n: { $lt: 5, $not: { $type: "array" } } } }],
-        },
-      },
+      { $facet: { hi: [{ $match: { s: "a" } }, { $limit: 2 }], lo: [{ $match: { n: { $lt: 5 } } }] } },
     ]);
   });
 
@@ -1690,7 +1648,7 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
   for (const [container, source, expected] of CONTAINERS) {
     for (const [spelling, predicate] of SPELLINGS) {
       it(`${container} accepts the ${spelling} spelling`, () => {
-        expect(jsmql(source(predicate))).toEqual(expected({ $match: { a: { $eq: 1, $not: { $type: "array" } } } }));
+        expect(jsmql(source(predicate))).toEqual(expected({ $match: { a: 1 } }));
       });
     }
   }
@@ -1701,7 +1659,7 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
   it("a non-constant matcher value lowers to $expr, not an invalid query operator", () => {
     for (const [container, source, expected] of CONTAINERS) {
       expect(jsmql(source("$$.filter({ a: 2 + 3 })")), container).toEqual(
-        expected({ $match: { a: { $eq: 5, $not: { $type: "array" } } } }), // the fold settles 2 + 3
+        expected({ $match: { a: 5 } }), // the fold settles 2 + 3
       );
     }
   });
@@ -1797,13 +1755,7 @@ describe("a lookup inside a literal sub-pipeline array", () => {
       {
         $facet: {
           a: [
-            {
-              $lookup: {
-                from: "orders",
-                pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-                as: "o",
-              },
-            },
+            { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "o" } },
             { $set: { o: { $first: "$o" } } },
           ],
         },
@@ -1814,13 +1766,7 @@ describe("a lookup inside a literal sub-pipeline array", () => {
   it("still hoists out of an ORDINARY stage body", () => {
     // The fix is about a sub-pipeline being another pipeline's scope, not about hoisting.
     expect(jsmql("$project({ o: $$$.orders.find(o => o.uid === 1) });")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-          as: "__jsmql.tmp.0",
-        },
-      },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
       { $project: { o: "$__jsmql.tmp.0" } },
       { $unset: "__jsmql" },
@@ -1840,23 +1786,11 @@ describe("jsmql() and jsmql.pipeline() agree on the lookup form", () => {
   ];
   it("compiles identically through both entries", () => {
     expect(jsmql(SRC)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-          as: "o",
-        },
-      },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "o" } },
       { $set: { o: { $first: "$o" } } },
     ]);
     expect(jsmql.pipeline(SRC)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-          as: "o",
-        },
-      },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }, { $limit: 1 }], as: "o" } },
       { $set: { o: { $first: "$o" } } },
     ]);
   });

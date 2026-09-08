@@ -386,7 +386,7 @@ describe("`function` keyword — parity with the arrow form", () => {
       jsmql(function ({ $ }) {
         return $.age >= 18;
       }),
-    ).toEqual({ age: { $gte: 18, $not: { $type: "array" } } });
+    ).toEqual({ age: { $gte: 18 } });
   });
 
   it("`jsmql.compile(function (params, { $ }) { return … })` lowers like the arrow compile form", () => {
@@ -394,7 +394,7 @@ describe("`function` keyword — parity with the arrow form", () => {
       return $.age >= min;
     });
     const arrow = jsmql.compile(({ min }, { $ }) => $.age >= min);
-    expect(fn({ min: 21 })).toEqual({ age: { $gte: 21, $not: { $type: "array" } } });
+    expect(fn({ min: 21 })).toEqual({ age: { $gte: 21 } });
   });
 
   // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). The
@@ -423,9 +423,7 @@ describe("`function` keyword — parity with the arrow form", () => {
   });
 
   it("accepts the bare `$` plus context refs `$$` / `$$$` / `$$$$` as toolbox keys", () => {
-    expect(jsmql.compile("({ $, $$, $$$, $$$$ }) => $.age > 18")()).toEqual({
-      age: { $gt: 18, $not: { $type: "array" } },
-    });
+    expect(jsmql.compile("({ $, $$, $$$, $$$$ }) => $.age > 18")()).toEqual({ age: { $gt: 18 } });
   });
 
   it("rejects mixing params and toolbox keys in one destructure", () => {

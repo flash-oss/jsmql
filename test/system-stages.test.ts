@@ -74,7 +74,7 @@ describe("system stages — pipeline composition", () => {
   it("works as the first statement of a ;-separated pipeline", () => {
     expect(jsmql("$$.collStats({ storageStats: {} }); $match($.shard === 'a')")).toEqual([
       { $collStats: { storageStats: {} } },
-      { $match: { shard: { $eq: "a", $not: { $type: "array" } } } },
+      { $match: { shard: "a" } },
     ]);
   });
 
@@ -138,13 +138,7 @@ describe("system stages — error messages", () => {
     expect(() => jsmql("$$$$.currentOpp()")).toThrow("Did you mean '$$$$.currentOp()'?");
     // And a read of a collection is still a read, whatever it is called.
     expect(jsmql("$.x = $$$.fooBar.find(d => d.a === 1);")).toEqual([
-      {
-        $lookup: {
-          from: "fooBar",
-          pipeline: [{ $match: { a: { $eq: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-          as: "x",
-        },
-      },
+      { $lookup: { from: "fooBar", pipeline: [{ $match: { a: 1 } }, { $limit: 1 }], as: "x" } },
       { $set: { x: { $first: "$x" } } },
     ]);
   });

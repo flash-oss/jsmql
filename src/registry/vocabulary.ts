@@ -38,99 +38,37 @@ export type QueryDoc = Record<string, unknown>;
 export const GROUP_SLOT = "__jsmqlTmp";
 
 /**
- * A JavaScript SPELLING compares the field's OWN value.
- *
- * MongoDB's query language satisfies a field comparison when ANY ELEMENT of an
- * array value satisfies it: `{ a: 1 }` selects `a: [1, 2]`, and `{ a: { $type:
- * "number" } }` selects an array holding a number. It also TRAVERSES an array in
- * the middle of a path: `{ "a.b": 1 }` selects `a: [{ b: 1 }]`. JavaScript does
- * neither — `[1, 2] === 1` is false, and reading `a.b` there gives `undefined`.
- * Containment already has its own JavaScript spelling (`.includes(x)`), and an
- * element test has `.some(e => …)`, so the query form of a JavaScript spelling
- * gives up nothing by reading one value.
- *
- * Raw MongoDB reached through the escape hatch — a `$op(…)` call, a raw `{ … }`
- * filter document — keeps MongoDB's own behaviour. There the developer writes
- * MQL, and MQL means what MQL means.
- *
- * Measured: the exclusion costs no index. `{ a: { $eq: 1, $not: { $type:
- * "array" } } }` plans an IXSCAN over the bounds `[1, 1]`, the same as `{ a: 1 }`.
+ * `{ $eq: v }` is written `v` in a query document — the spelling every MongoDB
+ * developer reads and writes. Not where `v` would be read as something else: an
+ * operator document (`{ $gt: 1 }`) or a regular expression both mean a test
+ * rather than a value at that position.
  */
-const NOT_AN_ARRAY = { $not: { $type: "array" } } as const;
-
-/**
- * What a cell's answer is where JavaScript has no field value to compare. Two
- * facts, because a path reaches two kinds of nothing: an ABSENT field, which is
- * also what an array at a path PREFIX reads as, and a value that IS an array.
- * A cell states them about its own meaning; this file turns them into MQL.
- */
-export type ValueReading = {
-  /** Does the answer hold when the field is ABSENT? `$.a !== 1` holds. `$.a === 1` does not. */
-  whenAbsent: boolean;
-  /** Does the answer hold when the value IS an array? `!==` holds — no array is `===` a scalar. */
-  whenArray: boolean;
-  /**
-   * The test asks about the FIELD, not about an element: `$exists` answers
-   * whether the field is there, and `$elemMatch` asks whether it is an array
-   * with a matching element. Neither takes a leaf exclusion, because neither can
-   * be satisfied by an element the way `$eq` can. A PREFIX array is excluded all
-   * the same — JavaScript reads that as absent.
-   */
-  ofTheField?: true;
-};
-
-/** Both readings false: the ordinary positive comparison. */
-export const OWN_VALUE: ValueReading = { whenAbsent: false, whenArray: false };
-/** Both true: the ordinary negated comparison, which every absent field and every array satisfies. */
-export const NOT_OWN_VALUE: ValueReading = { whenAbsent: true, whenArray: true };
-/** A test about the field itself — `$elemMatch`, `$exists` — which holds for neither nothing nor an array of its own accord. */
-export const FIELD_VALUE: ValueReading = { whenAbsent: false, whenArray: false, ofTheField: true };
-
-/** Every proper prefix of a dotted path — the segments MongoDB would traverse. */
-const prefixesOf = (path: string): readonly string[] => {
-  const seg = path.split(".");
-  return seg.slice(0, -1).map((_, i) => seg.slice(0, i + 1).join("."));
+const shorthand = (test: Readonly<Record<string, unknown>>): unknown => {
+  const keys = Object.keys(test);
+  if (keys.length !== 1 || keys[0] !== "$eq") return test;
+  const v = test.$eq;
+  if (v instanceof RegExp) return test;
+  const operatorDoc =
+    typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith("$"));
+  return operatorDoc ? test : v;
 };
 
 /** A literal needle as a regular expression that matches it verbatim. */
 export const escapeForRegex = (needle: string): string => needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
 
 /**
- * `test` — a query operator document the server evaluates element-wise — read as
- * JavaScript reads it: of the field's own value, at the end of a path that walks
- * through no array.
+ * `test` — a query operator document — at `path`, as a query document.
  *
- * An array VALUE is excluded at the leaf, or added back as an alternative when
- * the cell says it satisfies. An array at a PREFIX is the absent case: excluded
- * when the answer does not hold for an absent field, and offered as an
- * alternative when it does.
+ * MongoDB's query language satisfies a field comparison when any ELEMENT of an
+ * array value satisfies it, and it traverses an array in the middle of a path.
+ * jsmql emits the query a MongoDB developer would write by hand and lets the
+ * server's own rules apply: `$.age > 18` is `{ age: { $gt: 18 } }`, the document
+ * every index plan and every code review is written against. A comparison that
+ * must read one value and not an element has its own JavaScript spelling —
+ * `.includes(x)` for containment, `.some(e => …)` for an element test.
  */
-export function queryOwnValue(path: string, test: Readonly<Record<string, unknown>>, reading: ValueReading): QueryDoc {
-  const prefixes = prefixesOf(path);
-  const elementWise = reading.ofTheField !== true;
-  // A test that carries its own `$not` cannot take a second one in the same
-  // document, so there the exclusion becomes a sibling clause — and none at all
-  // when the test already IS the exclusion.
-  const excludes = JSON.stringify(test) === JSON.stringify(NOT_AN_ARRAY);
-  const leaf: QueryDoc =
-    reading.whenArray || !elementWise || excludes
-      ? { [path]: test }
-      : "$not" in test
-        ? { $and: [{ [path]: test }, { [path]: { ...NOT_AN_ARRAY } }] }
-        : { [path]: { ...test, ...NOT_AN_ARRAY } };
-  const alternatives: QueryDoc[] = [leaf];
-  if (reading.whenArray && elementWise) alternatives.push({ [path]: { $type: "array" } });
-  if (reading.whenAbsent) for (const p of prefixes) alternatives.push({ [p]: { $type: "array" } });
-  // Every alternative built here holds a `$type` or an `$exists`, so a JSON
-  // spelling separates them; nothing with a regex or a date reaches this list.
-  const spelled = new Set<string>();
-  const distinct = alternatives.filter((a) => {
-    const k = JSON.stringify(a);
-    return spelled.has(k) ? false : (spelled.add(k), true);
-  });
-  const one = distinct.length === 1 ? distinct[0] : { $or: distinct };
-  if (reading.whenAbsent || prefixes.length === 0) return one;
-  return { ...one, ...Object.fromEntries(prefixes.map((p) => [p, { ...NOT_AN_ARRAY }])) };
+export function queryOwnValue(path: string, test: Readonly<Record<string, unknown>>): QueryDoc {
+  return { [path]: shorthand(test) };
 }
 export type Stage = Record<string, unknown>;
 /**

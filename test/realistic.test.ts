@@ -84,7 +84,7 @@ $$ = candidateProductIds
   .take(10);
       `,
       ).toEqual([
-        { $match: { _id: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } } } },
+        { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
         { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
         {
           $match: {
@@ -106,7 +106,7 @@ $$ = candidateProductIds
           $lookup: {
             from: "orders",
             pipeline: [
-              { $match: { userId: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } } } },
+              { $match: { userId: new ObjectId("507f1f77bcf86cd799439011") } },
               { $sort: { createdAt: -1 } },
               { $limit: 10 },
             ],
@@ -326,7 +326,7 @@ $$ = $$$.orders
   .take(5);
           `,
         ).toEqual([
-          { $match: { email: { $eq: "me@example.com", $not: { $type: "array" } } } },
+          { $match: { email: "me@example.com" } },
           { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
           {
             $match: {
@@ -388,7 +388,7 @@ const cohortRevenue = $$$.orders
 $set({ topRegions: cohortRevenue });
 `,
       ).toEqual([
-        { $match: { status: { $eq: "active", $not: { $type: "array" } } } },
+        { $match: { status: "active" } },
         {
           $lookup: {
             from: "orders",
@@ -422,12 +422,7 @@ $sort({ revenue: -1 });
 $limit(3);
       `,
     ).toEqual([
-      {
-        $match: {
-          status: { $eq: "shipped", $not: { $type: "array" } },
-          placedAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-        },
-      },
+      { $match: { status: "shipped", placedAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
       { $lookup: { from: "users", localField: "userId", foreignField: "_id", as: "buyer" } },
       { $unwind: "$buyer" },
       { $group: { _id: "$buyer.department", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
@@ -498,7 +493,7 @@ describe("tally shipped orders by payment method (lodash `.countBy`)", { feature
     // value-mode `$.items.countBy(...)`, not a `{ _id, count }` stream. (For the
     // count-descending stream instead, write `$sortByCount(...)`.)
     expect(jsmql`$$.filter({ status: "shipped" }).countBy("paymentMethod");`).toEqual([
-      { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
+      { $match: { status: "shipped" } },
       { $group: { _id: "$paymentMethod", __jsmqlTmp: { $sum: 1 } } },
       {
         $group: {
@@ -569,12 +564,7 @@ describe("alternative bracketed array form", { features: ["Pipelines"] }, () => 
 ]
       `,
     ).toEqual([
-      {
-        $match: {
-          status: { $eq: "pending", $not: { $type: "array" } },
-          $or: [{ paidAt: { $ne: null } }, { paidAt: { $type: "array" } }],
-        },
-      },
+      { $match: { status: "pending", paidAt: { $ne: null } } },
       { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $unset: ["tempToken", "_processingState"] },
       { $set: { status: "complete" } },
@@ -597,11 +587,11 @@ $ = {
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) }),
 };`),
     ).toEqual([
-      { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
+      { $match: { status: "shipped" } },
       {
         $facet: {
           topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
-          recent: [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } }],
+          recent: [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } }],
           byStatus: [{ $group: { _id: "$status", n: { $sum: 1 } } }],
         },
       },
@@ -624,14 +614,7 @@ describe("switch source to another collection (`$$ = $$$.<coll>.filter(...)`)", 
       {
         $unionWith: {
           coll: "transactions",
-          pipeline: [
-            {
-              $match: {
-                createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-                client: { $eq: 156, $not: { $type: "array" } },
-              },
-            },
-          ],
+          pipeline: [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") }, client: 156 } }],
         },
       },
     ]);
@@ -652,12 +635,7 @@ describe("narrow the current stream (`$$.filter(...)`)", { features: ["Pipelines
     // and `===` — while a predicate with a range or null test stays on
     // `$match(<expr>)`, which reads better than a lambda for that.
     expect(jsmql`$$.filter(t => t.createdAt >= new Date("2026-01-01") && t.client === 156);`).toEqual([
-      {
-        $match: {
-          createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-          client: { $eq: 156, $not: { $type: "array" } },
-        },
-      },
+      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") }, client: 156 } },
     ]);
   });
 });
@@ -683,7 +661,7 @@ $$.filter(p => p.season === "2026" && p.score > 0)
   .map(p => ({ player: p.name, score: p.score, rank: p.rank }));
       `,
       ).toEqual([
-        { $match: { season: { $eq: "2026", $not: { $type: "array" } }, score: { $gt: 0, $not: { $type: "array" } } } },
+        { $match: { season: "2026", score: { $gt: 0 } } },
         { $skip: 40 },
         { $limit: 20 },
         { $replaceWith: { player: "$name", score: "$score", rank: "$rank" } },
@@ -705,7 +683,7 @@ $ = $.profile;
 $ = { ...$, computedScore: $.points * 1.1 };
       `,
     ).toEqual([
-      { $match: { $or: [{ profile: { $ne: null } }, { profile: { $type: "array" } }] } },
+      { $match: { profile: { $ne: null } } },
       { $replaceWith: "$profile" },
       { $replaceWith: { $mergeObjects: ["$$ROOT", { computedScore: { $multiply: ["$points", 1.1] } }] } },
     ]);
@@ -757,7 +735,7 @@ $$.filter({ plan: "active" });
 $ = { userId: $._id, graceEndsAt: $.subscribedAt.plus(30, "day"), remindAt: $.expiresAt.minus(3, "day") };
       `,
     ).toEqual([
-      { $match: { plan: { $eq: "active", $not: { $type: "array" } } } },
+      { $match: { plan: "active" } },
       {
         $replaceWith: {
           userId: "$_id",
@@ -786,7 +764,7 @@ $sort({ "_id.month": -1 });
 $limit(12);
       `,
     ).toEqual([
-      { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+      { $match: { status: "paid" } },
       {
         $group: {
           _id: {
@@ -816,7 +794,7 @@ $$.filter({ status: "paid" });
 $$ = $.lineItems.map(li => ({ orderId: $._id, sku: li.sku, revenue: li.qty * li.price }));
       `,
     ).toEqual([
-      { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+      { $match: { status: "paid" } },
       {
         $set: {
           "__jsmql.tmp.0": {
@@ -931,12 +909,7 @@ delete $.tempToken, delete $._processingState;
 $.status = 'complete'
       `,
     ).toEqual([
-      {
-        $match: {
-          status: { $eq: "pending", $not: { $type: "array" } },
-          $or: [{ paidAt: { $ne: null } }, { paidAt: { $type: "array" } }],
-        },
-      },
+      { $match: { status: "pending", paidAt: { $ne: null } } },
       { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $unset: ["tempToken", "_processingState"] },
       { $set: { status: "complete" } },
@@ -1083,10 +1056,9 @@ describe("active premium subscribers", { features: ["Filters"] }, () => {
     expect(
       jsmql(`$.subscription.tier === "premium" && $.status === "active" && $.expiresAt > new Date("2026-05-01")`),
     ).toEqual({
-      "subscription.tier": { $eq: "premium", $not: { $type: "array" } },
-      subscription: { $not: { $type: "array" } },
-      status: { $eq: "active", $not: { $type: "array" } },
-      expiresAt: { $gt: new Date("2026-05-01T00:00:00.000Z"), $not: { $type: "array" } },
+      "subscription.tier": "premium",
+      status: "active",
+      expiresAt: { $gt: new Date("2026-05-01T00:00:00.000Z") },
     });
   });
 });
@@ -1100,30 +1072,24 @@ $.placedAt >= new Date("2026-01-01") && $.placedAt < new Date("2026-02-01") &&
 $.status === "shipped"
       `,
     ).toEqual({
-      customerId: { $eq: "cust_42", $not: { $type: "array" } },
-      placedAt: {
-        $gte: new Date("2026-01-01T00:00:00.000Z"),
-        $not: { $type: "array" },
-        $lt: new Date("2026-02-01T00:00:00.000Z"),
-      },
-      status: { $eq: "shipped", $not: { $type: "array" } },
+      customerId: "cust_42",
+      placedAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $lt: new Date("2026-02-01T00:00:00.000Z") },
+      status: "shipped",
     });
   });
 });
 
 describe("posts pinned or by trusted author", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.posts.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.pinned === true || $.author === "ada"`)).toEqual({
-      $or: [{ pinned: { $eq: true, $not: { $type: "array" } } }, { author: { $eq: "ada", $not: { $type: "array" } } }],
-    });
+    expect(jsmql(`$.pinned === true || $.author === "ada"`)).toEqual({ $or: [{ pinned: true }, { author: "ada" }] });
   });
 });
 
 describe("archivable docs (not pinned, untouched since)", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$.pinned !== true && $.lastModifiedAt < new Date("2025-01-01")`)).toEqual({
-      $or: [{ pinned: { $ne: true } }, { pinned: { $type: "array" } }],
-      lastModifiedAt: { $lt: new Date("2025-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+      pinned: { $ne: true },
+      lastModifiedAt: { $lt: new Date("2025-01-01T00:00:00.000Z") },
     });
   });
 });
@@ -1131,18 +1097,15 @@ describe("archivable docs (not pinned, untouched since)", { features: ["Filters"
 describe("in-stock products within a price range", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.products.find(jsmql(...))" }, () => {
     expect(jsmql(`$.inStock === true && $.price >= 50 && $.price <= 200`)).toEqual({
-      inStock: { $eq: true, $not: { $type: "array" } },
-      price: { $gte: 50, $not: { $type: "array" }, $lte: 200 },
+      inStock: true,
+      price: { $gte: 50, $lte: 200 },
     });
   });
 });
 
 describe("users with a non-null email", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.email != null && $.status === "active"`)).toEqual({
-      $or: [{ email: { $ne: null } }, { email: { $type: "array" } }],
-      status: { $eq: "active", $not: { $type: "array" } },
-    });
+    expect(jsmql(`$.email != null && $.status === "active"`)).toEqual({ email: { $ne: null }, status: "active" });
   });
 });
 
@@ -1152,8 +1115,8 @@ describe("payments since a cutoff (Date folded into query doc)", { features: ["F
   // instead of being trapped inside an `$expr`.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.payments.find(jsmql(...))" }, () => {
     expect(jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)).toEqual({
-      method: { $eq: "postalDelivery", $not: { $type: "array" } },
-      createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+      method: "postalDelivery",
+      createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") },
     });
   });
 });
@@ -1161,18 +1124,15 @@ describe("payments since a cutoff (Date folded into query doc)", { features: ["F
 describe("typeof check for documents with an object profile", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
     expect(jsmql(`typeof $.profile === "object" && $.status === "active"`)).toEqual({
-      profile: { $type: "object", $not: { $type: "array" } },
-      status: { $eq: "active", $not: { $type: "array" } },
+      profile: { $type: "object" },
+      status: "active",
     });
   });
 });
 
 describe("lookup by `_id` and tenant", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
-    expect(jsmql(`$._id === "doc_42" && $.tenantId === "acme"`)).toEqual({
-      _id: { $eq: "doc_42", $not: { $type: "array" } },
-      tenantId: { $eq: "acme", $not: { $type: "array" } },
-    });
+    expect(jsmql(`$._id === "doc_42" && $.tenantId === "acme"`)).toEqual({ _id: "doc_42", tenantId: "acme" });
   });
 });
 
@@ -1184,8 +1144,8 @@ describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
   // match uses the `_id` index directly.
   it("compiles to the expected MQL", { kind: "filter", usage: "db.documents.find(jsmql(...))" }, () => {
     expect(jsmql(`$._id === 0x507f1f77bcf86cd799439011 && $.tenantId === "acme"`)).toEqual({
-      _id: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } },
-      tenantId: { $eq: "acme", $not: { $type: "array" } },
+      _id: new ObjectId("507f1f77bcf86cd799439011"),
+      tenantId: "acme",
     });
   });
 });
@@ -1193,29 +1153,21 @@ describe("fetch a document by its ObjectId", { features: ["Filters"] }, () => {
 describe("exclude deleted and archived", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.posts.find(jsmql(...))" }, () => {
     expect(jsmql(`$.deleted !== true && $.archived !== true`)).toEqual({
-      $and: [
-        { $or: [{ deleted: { $ne: true } }, { deleted: { $type: "array" } }] },
-        { $or: [{ archived: { $ne: true } }, { archived: { $type: "array" } }] },
-      ],
+      deleted: { $ne: true },
+      archived: { $ne: true },
     });
   });
 });
 
 describe("top-level posts (no parent) that are published", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.comments.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.parent === null && $.published === true`)).toEqual({
-      parent: { $type: "null", $not: { $type: "array" } },
-      published: { $eq: true, $not: { $type: "array" } },
-    });
+    expect(jsmql(`$.parent === null && $.published === true`)).toEqual({ parent: { $type: "null" }, published: true });
   });
 });
 
 describe("parameterised lookup via the template tag", { features: ["Filters"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.users.find(jsmql(...))" }, () => {
-    expect(jsmql(`$.tier === "gold" && $.country === "AU"`)).toEqual({
-      tier: { $eq: "gold", $not: { $type: "array" } },
-      country: { $eq: "AU", $not: { $type: "array" } },
-    });
+    expect(jsmql(`$.tier === "gold" && $.country === "AU"`)).toEqual({ tier: "gold", country: "AU" });
   });
 });
 
@@ -1229,10 +1181,8 @@ $.cart.items.length < 20 &&
 $.customer.region.trim().toLowerCase() === "us"
       `,
     ).toEqual({
-      "cart.total": { $gte: 50, $not: { $type: "array" } },
-      cart: { $not: { $type: "array" } },
-      "customer.status": { $in: ["premium", "gold", "platinum"], $not: { $type: "array" } },
-      customer: { $not: { $type: "array" } },
+      "cart.total": { $gte: 50 },
+      "customer.status": { $in: ["premium", "gold", "platinum"] },
       $expr: {
         $and: [
           {
@@ -1809,8 +1759,7 @@ $.file.name.endsWith($.file.ext) &&
 $.file.size <= 25_000_000
       `,
     ).toEqual({
-      "file.size": { $lte: 25000000, $not: { $type: "array" } },
-      file: { $not: { $type: "array" } },
+      "file.size": { $lte: 25000000 },
       $expr: {
         $and: [
           { $in: [{ $toLower: "$file.ext" }, [".jpg", ".png", ".pdf", ".docx"]] },
@@ -2081,16 +2030,9 @@ $.policy.kmPerYear <= 30_000 &&
 !($.driver.occupation in ["stunt-double", "test-pilot", "demolition-engineer"])
       `,
     ).toEqual({
-      "driver.age": { $gte: 25, $not: { $type: "array" }, $lte: 70 },
-      driver: { $not: { $type: "array" } },
-      "policy.kmPerYear": { $lte: 30000, $not: { $type: "array" } },
-      policy: { $not: { $type: "array" } },
-      $nor: [
-        {
-          "driver.occupation": { $in: ["stunt-double", "test-pilot", "demolition-engineer"], $not: { $type: "array" } },
-          driver: { $not: { $type: "array" } },
-        },
-      ],
+      "driver.age": { $gte: 25, $lte: 70 },
+      "policy.kmPerYear": { $lte: 30000 },
+      $nor: [{ "driver.occupation": { $in: ["stunt-double", "test-pilot", "demolition-engineer"] } }],
     });
   });
 });
@@ -2231,11 +2173,7 @@ $.score >= 75 &&
 $.grade in ["A", "B"] &&
 $.submitted === true
       `,
-    ).toEqual({
-      score: { $gte: 75, $not: { $type: "array" } },
-      grade: { $in: ["A", "B"], $not: { $type: "array" } },
-      submitted: { $eq: true, $not: { $type: "array" } },
-    });
+    ).toEqual({ score: { $gte: 75 }, grade: { $in: ["A", "B"] }, submitted: true });
   });
 });
 
@@ -2253,7 +2191,7 @@ let nOrders = $$$.orders.filter({ userId: $._id }).length;
 $project({ name: 1, recentOrders: 1, nOrders });
       `,
     ).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       {
         $lookup: {
           from: "orders",
@@ -2309,7 +2247,7 @@ $.recentOrders = $$$.orders.aggregate(o => {
 $project({ name: 1, recentOrders: 1 });
       `,
       ).toEqual([
-        { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+        { $match: { active: true } },
         {
           $lookup: {
             from: "orders",
@@ -2367,7 +2305,7 @@ $sort({ name: 1 });
 $limit(50);
       `,
       ).toEqual([
-        { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+        { $match: { active: true } },
         {
           $unionWith: {
             pipeline: [
@@ -2380,12 +2318,7 @@ $limit(50);
             ],
           },
         },
-        {
-          $unionWith: {
-            coll: "archive_users",
-            pipeline: [{ $match: { deleted: { $eq: true, $not: { $type: "array" } } } }],
-          },
-        },
+        { $unionWith: { coll: "archive_users", pipeline: [{ $match: { deleted: true } }] } },
         { $sort: { name: 1 } },
         { $limit: 50 },
       ]);
@@ -2415,12 +2348,7 @@ $match($.active === false && $.lastSeen < new Date("2025-01-01"));
 $$$$.dw.archive_users = $$;
       `,
       ).toEqual([
-        {
-          $match: {
-            active: { $eq: false, $not: { $type: "array" } },
-            lastSeen: { $lt: new Date("2025-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-          },
-        },
+        { $match: { active: false, lastSeen: { $lt: new Date("2025-01-01T00:00:00.000Z") } } },
         { $out: { db: "dw", coll: "archive_users" } },
       ]);
     },
@@ -2433,7 +2361,7 @@ describe("archive expired users via $out (inline filter)", { features: ["Pipelin
     { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
     () => {
       expect(jsmql(`$$$$.dw.archive = $$.filter({ status: "expired" });`)).toEqual([
-        { $match: { status: { $eq: "expired", $not: { $type: "array" } } } },
+        { $match: { status: "expired" } },
         { $out: { db: "dw", coll: "archive" } },
       ]);
     },
@@ -2460,7 +2388,7 @@ $$$$.reporting.daily_revenue = $$
   .$sort({ _id: -1 });
       `),
       ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
+        { $match: { status: "shipped" } },
         {
           $group: {
             _id: { $dateTrunc: { date: "$placedAt", unit: "day" } },
@@ -2486,7 +2414,7 @@ describe("quarantine invalid orders via $out (`.reject`)", { features: ["Pipelin
       // emits a query-form De Morgan). Verified on a live mongod — only the
       // `valid: false` order lands in `quarantine.bad_orders`.
       expect(jsmql(`$$$$.quarantine.bad_orders = $$.reject({ valid: true });`)).toEqual([
-        { $match: { $nor: [{ valid: { $eq: true, $not: { $type: "array" } } }] } },
+        { $match: { $nor: [{ valid: true }] } },
         { $out: { db: "quarantine", coll: "bad_orders" } },
       ]);
     },
@@ -2562,12 +2490,7 @@ describe("paginate shipped orders newest-first (`.toSorted` + `.slice`)", { feat
 $$.filter({ status: "shipped" });
 $$.toSorted((a, b) => b.placedAt - a.placedAt).slice(25, 50);
         `,
-      ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
-        { $sort: { placedAt: -1 } },
-        { $skip: 25 },
-        { $limit: 25 },
-      ]);
+      ).toEqual([{ $match: { status: "shipped" } }, { $sort: { placedAt: -1 } }, { $skip: 25 }, { $limit: 25 }]);
     },
   );
 });
@@ -2590,7 +2513,7 @@ assert($.qty >= 0, "order qty must be non-negative");
 $.revenue = $.qty * $.unitPrice;
         `,
       ).toEqual([
-        { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
+        { $match: { status: "paid" } },
         {
           $match: {
             $expr: {
@@ -2632,7 +2555,7 @@ $.sharePct = 100 / $$.length;
 assert($$.length <= 1000, "too many in-stock products to render");
         `,
         ).toEqual([
-          { $match: { inStock: { $eq: true, $not: { $type: "array" } } } },
+          { $match: { inStock: true } },
           { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
           { $set: { totalInStock: "$__jsmql.length" } },
           { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
@@ -2680,7 +2603,7 @@ $$.map(o => ({
 }));
         `,
       ).toEqual([
-        { $match: { shipped: { $eq: true, $not: { $type: "array" } } } },
+        { $match: { shipped: true } },
         {
           $replaceWith: {
             orderId: "$_id",
@@ -2730,7 +2653,7 @@ $sort({ price: -1 });
 $limit(50);
         `,
       ).toEqual([
-        { $match: { status: { $eq: "shipped", $not: { $type: "array" } } } },
+        { $match: { status: "shipped" } },
         { $unwind: "$items" },
         { $replaceWith: "$items" },
         { $sort: { price: -1 } },
@@ -2755,8 +2678,8 @@ $$.filter({ region: "AU" });
 $$.filter(t => t.amount > 100).concat(...$$$.archive_transactions);
         `,
       ).toEqual([
-        { $match: { region: { $eq: "AU", $not: { $type: "array" } } } },
-        { $match: { amount: { $gt: 100, $not: { $type: "array" } } } },
+        { $match: { region: "AU" } },
+        { $match: { amount: { $gt: 100 } } },
         { $unionWith: "archive_transactions" },
       ]);
     },
@@ -2787,11 +2710,7 @@ $$ = [{
       ).toEqual([
         {
           $match: {
-            placedAt: {
-              $gte: new Date("2026-05-01T00:00:00.000Z"),
-              $not: { $type: "array" },
-              $lt: new Date("2026-06-01T00:00:00.000Z"),
-            },
+            placedAt: { $gte: new Date("2026-05-01T00:00:00.000Z"), $lt: new Date("2026-06-01T00:00:00.000Z") },
           },
         },
         {
@@ -2846,11 +2765,7 @@ $$ = [$$.reduce(
         ).toEqual([
           {
             $match: {
-              placedAt: {
-                $gte: new Date("2026-05-01T00:00:00.000Z"),
-                $not: { $type: "array" },
-                $lt: new Date("2026-06-01T00:00:00.000Z"),
-              },
+              placedAt: { $gte: new Date("2026-05-01T00:00:00.000Z"), $lt: new Date("2026-06-01T00:00:00.000Z") },
             },
           },
           {
@@ -2972,7 +2887,7 @@ $$ = $$$.users.filter({ active: true }).map(u => ({
             $unionWith: {
               coll: "users",
               pipeline: [
-                { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+                { $match: { active: true } },
                 {
                   $lookup: {
                     from: "orders",
@@ -3277,7 +3192,7 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
 });
           `),
     ).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       {
         $lookup: {
@@ -3498,7 +3413,7 @@ $.monthlySpend = $$$.orders.aggregate((o) => {
 $.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 }, { $project: { name: 1 } }]);
       `),
       ).toEqual([
-        { $match: { status: { $eq: "active", $not: { $type: "array" } } } },
+        { $match: { status: "active" } },
         {
           $lookup: {
             from: "orders",
@@ -3541,9 +3456,9 @@ describe("config-driven filter with compile-time constants", { features: ["Let b
           $.status in CLOSED && $.createdAt >= CUTOFF && $.retries <= MAX_RETRIES
         `),
       ).toEqual({
-        status: { $in: ["CANCELLED", "REJECTED", "REFUNDED"], $not: { $type: "array" } },
-        createdAt: { $gte: new Date("2024-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-        retries: { $lte: 16, $not: { $type: "array" } },
+        status: { $in: ["CANCELLED", "REJECTED", "REFUNDED"] },
+        createdAt: { $gte: new Date("2024-01-01T00:00:00.000Z") },
+        retries: { $lte: 16 },
       });
     },
   );
@@ -3563,7 +3478,7 @@ $$.toSorted({ readAt: 1 }).takeWhile({ status: "ok" });
 $group({ _id: null, lastGood: { $max: "$readAt" }, readings: { $sum: 1 } });
         `),
     ).toEqual([
-      { $match: { deviceId: { $eq: "dev-7", $not: { $type: "array" } } } },
+      { $match: { deviceId: "dev-7" } },
       { $sort: { readAt: 1 } },
       {
         $setWindowFields: {

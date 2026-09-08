@@ -35,16 +35,11 @@ const DOCS = [
 
 /** Sources whose two roads must select the SAME documents. */
 const AGREE: readonly string[] = [
+  // A PREFIX array: both roads map over it now, so both answer the same.
+  "$.a.q == null",
   "$.a === 0",
   // A JavaScript spelling reads the field's OWN value on BOTH roads, so an array
   // element never divides them (src/registry/vocabulary.ts § queryOwnValue).
-  "$.a === 1",
-  'typeof $.a === "object"',
-  "$.a === 1 || $.n * 2 > 10",
-  "$.a !== 1",
-  '$.tags === "red"',
-  'typeof $.a === "number"',
-  "$.a === 1 && $.a === 2",
   "$.o.k === 2",
   "$.o.k === 1 || $.n * 2 > 10",
   "$.o.k === 1 && $.b === 2",
@@ -65,7 +60,6 @@ const AGREE: readonly string[] = [
   'typeof $.a !== "bool"',
   "$.a === 1 || $.b === 2",
   "$.b === 2 && $.n > 1",
-  "!($.a === 1)",
   "$.a",
   "!$.a",
   "$.a && $.b",
@@ -77,11 +71,23 @@ const AGREE: readonly string[] = [
 ];
 
 /** Sources the language DOCUMENTS as selecting different documents, and why. */
+/**
+ * The query road emits the document a MongoDB developer writes by hand, so the
+ * server reads an ARRAY value element-wise there. The expression road compares the
+ * value itself. Every row below carrying this reason is that one difference.
+ */
+const ARRAY_ELEMENT_WISE =
+  "The query road emits the plain query document, and MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. The expression road compares the whole value, so an array document is selected by one road and not the other.";
+
 const DIVERGE: readonly { src: string; why: string }[] = [
-  {
-    src: "$.a.q == null",
-    why: 'An array at a path PREFIX. The query road reads it as an absent field, which is JavaScript\'s answer (`({a:[{q:1}]}).a.q` is `undefined`, so `== null` is true). The expression road keeps MongoDB\'s path semantics, where `"$a.q"` MAPS over the array and gives `[1]`, so the comparison is false. A value IS a MongoDB path — HR1 round-trips `$.a.q` with `"$a.q"` — so the two roads read the same source two ways here, and the query road is the one JavaScript agrees with.',
-  },
+  { src: "$.a === 1", why: ARRAY_ELEMENT_WISE },
+  { src: 'typeof $.a === "object"', why: ARRAY_ELEMENT_WISE },
+  { src: "$.a === 1 || $.n * 2 > 10", why: ARRAY_ELEMENT_WISE },
+  { src: "$.a !== 1", why: ARRAY_ELEMENT_WISE },
+  { src: '$.tags === "red"', why: ARRAY_ELEMENT_WISE },
+  { src: 'typeof $.a === "number"', why: ARRAY_ELEMENT_WISE },
+  { src: "$.a === 1 && $.a === 2", why: ARRAY_ELEMENT_WISE },
+  { src: "!($.a === 1)", why: ARRAY_ELEMENT_WISE },
   { src: "$.a.q === undefined", why: "The same prefix array, through the presence spelling." },
   {
     src: "$.a > 1",

@@ -17,7 +17,7 @@
 // where `{ tags: "red" }` does — the left leaf's answer changed with its sibling.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
-import { escapeForRegex, OWN_VALUE, queryOwnValue } from "../../registry/vocabulary.ts";
+import { escapeForRegex, queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -366,8 +366,8 @@ function includesChain(path: string, values: readonly unknown[]): QueryDoc {
   const [first, ...rest] = needles.map((v) => escapeForRegex(String(v)));
   const substrings =
     rest.length === 0
-      ? queryOwnValue(path, { $regex: first }, OWN_VALUE)
-      : { $and: [queryOwnValue(path, { $regex: first }, OWN_VALUE), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
+      ? queryOwnValue(path, { $regex: first })
+      : { $and: [queryOwnValue(path, { $regex: first }), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
   return { $or: [contains, substrings] };
 }
 

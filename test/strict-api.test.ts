@@ -5,14 +5,9 @@
 import { describe, it, expect } from "vitest";
 import { jsmql } from "../src/index.ts";
 
-const OWN = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
-
 describe("jsmql.filter() — strict Filter shape", () => {
   it("returns a Filter document for an indexable predicate", () => {
-    expect(jsmql.filter("$.age > 18 && $.status === 'active'")).toEqual({
-      age: { $gt: 18, $not: { $type: "array" } },
-      status: OWN("active"),
-    });
+    expect(jsmql.filter("$.age > 18 && $.status === 'active'")).toEqual({ age: { $gt: 18 }, status: "active" });
   });
   it("takes the expression road where the query language has no clause", () => {
     expect(jsmql.filter("$.name.trim() === 'alice'")).toEqual({
@@ -20,11 +15,11 @@ describe("jsmql.filter() — strict Filter shape", () => {
     });
   });
   it("accepts the arrow form", () => {
-    expect(jsmql.filter(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(jsmql.filter(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18 } });
   });
   it("accepts the template-tag form with an interpolated value", () => {
     const minAge = 21;
-    expect(jsmql.filter`$.age >= ${minAge}`).toEqual({ age: { $gte: 21, $not: { $type: "array" } } });
+    expect(jsmql.filter`$.age >= ${minAge}`).toEqual({ age: { $gte: 21 } });
   });
   it("refuses a `;`-separated Pipeline and names jsmql.pipeline()", () => {
     expect(() => jsmql.filter("$match($.x > 0); $sort({ x: 1 })")).toThrow(
@@ -62,11 +57,11 @@ describe("jsmql.filter() — strict Filter shape", () => {
 
 describe("jsmql.pipeline() — strict Pipeline shape", () => {
   it("takes a single top-level stage call (same as jsmql())", () => {
-    expect(jsmql.pipeline("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(jsmql.pipeline("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
   it("compiles a `;`-separated multi-stage pipeline", () => {
     expect(jsmql.pipeline("$match($.age > 18); $sort({ age: 1 })")).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $match: { age: { $gt: 18 } } },
       { $sort: { age: 1 } },
     ]);
   });
@@ -75,15 +70,13 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
   });
   it("accepts an array-literal Pipeline", () => {
     expect(jsmql.pipeline("[{ $match: $.x > 0 }, { $sort: { x: 1 } }]")).toEqual([
-      { $match: { x: { $gt: 0, $not: { $type: "array" } } } },
+      { $match: { x: { $gt: 0 } } },
       { $sort: { x: 1 } },
     ]);
   });
   it("accepts the template-tag form with an interpolated value", () => {
     const cutoff = 100;
-    expect(jsmql.pipeline`$match($.score > ${cutoff})`).toEqual([
-      { $match: { score: { $gt: 100, $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql.pipeline`$match($.score > ${cutoff})`).toEqual([{ $match: { score: { $gt: 100 } } }]);
   });
   it("accepts the block-body arrow form", () => {
     expect(
@@ -91,11 +84,11 @@ describe("jsmql.pipeline() — strict Pipeline shape", () => {
         $match($.age > 18);
         $sort({ age: 1 });
       }),
-    ).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }, { $sort: { age: 1 } }]);
+    ).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } }]);
   });
   it("lowers a stream-replace `$$ = <expr>` with or without a trailing `;`, like jsmql()", () => {
     for (const src of ["$$ = $$.filter({ a: 1 })", "$$ = $$.filter({ a: 1 });"]) {
-      expect(jsmql.pipeline(src)).toEqual([{ $match: { a: OWN(1) } }]);
+      expect(jsmql.pipeline(src)).toEqual([{ $match: { a: 1 } }]);
       expect(jsmql.pipeline(src)).toEqual(jsmql(src));
     }
   });
@@ -136,12 +129,12 @@ describe("jsmql.update() — the update document", () => {
 describe("strict-shape `.compile` builders", () => {
   it("jsmql.filter.compile binds params and returns a Filter", () => {
     const q = jsmql.filter.compile(({ minAge }: { minAge: number }) => $.age > minAge);
-    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
-    expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21, $not: { $type: "array" } } });
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
   });
   it("jsmql.filter.compile accepts the arrow as a source string", () => {
     const q = jsmql.filter.compile("({ minAge }, { $ }) => $.age > minAge");
-    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(q({ minAge: 18 })).toEqual({ age: { $gt: 18 } });
   });
   it("jsmql.filter.compile refuses a Pipeline-shaped arrow body", () => {
     const q = jsmql.filter.compile("({ $ }) => { $match($.x > 0); $sort({ x: 1 }) }");
@@ -152,10 +145,7 @@ describe("strict-shape `.compile` builders", () => {
       $match($.age > minAge);
       $sort({ age: -1 });
     });
-    expect(q({ minAge: 18 })).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
-      { $sort: { age: -1 } },
-    ]);
+    expect(q({ minAge: 18 })).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
   });
   it("jsmql.pipeline.compile refuses a bare-expression arrow body", () => {
     const q = jsmql.pipeline.compile("({ minAge }, { $ }) => $.age > minAge");

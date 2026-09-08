@@ -173,33 +173,32 @@ expression road, where `$eq` compares the whole value.
 
 ```
 $exists($.a)                          → {"a":{"$exists":true}}
-$and([{ a: 1 }, $.b < 2])             → {"$and":[{"a":1},{"b":{"$lt":2,"$not":{"$type":"array"}}}]}
+$and([{ a: 1 }, $.b < 2])             → {"$and":[{"a":1},{"b":{"$lt":2}}]}
 $geoWithin($.loc, $box([[0,0],[1,1]])) → {"loc":{"$geoWithin":{"$box":[[0,0],[1,1]]}}}
 ```
 
-### A JavaScript spelling reads the field's own value
+### A query document is the plain one
 
-MongoDB's query language satisfies a field comparison when ANY ELEMENT of an
-array value satisfies it, and it traverses an array in the middle of a path.
-JavaScript does neither. So every query cell of a JavaScript spelling states two
-facts about its own meaning — `ValueReading` in `src/registry/vocabulary.ts` —
-and `queryOwnValue` turns them into MQL:
+`queryOwnValue` in `src/registry/vocabulary.ts` puts a cell's test at its path and
+does nothing else, so what comes out is the document a MongoDB developer writes by
+hand and the server's own rules apply to it:
 
-| the cell's answer | field ABSENT | value IS an array | shape |
-|---|---|---|---|
-| `$.a === 1` | false | false | `{ a: { $eq: 1, $not: { $type: "array" } } }` |
-| `$.a !== 1` | true | true | `{ $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] }` |
-| `$.a == null` | true | false | `{ a: { $eq: null, $not: { $type: "array" } } }` |
-| `$.a != null` | false | true | `{ $or: [{ a: { $ne: null } }, { a: { $type: "array" } }] }` |
+| source | shape |
+|---|---|
+| `$.a === 1` | `{"a":1}` |
+| `$.a !== 1` | `{"a":{"$ne":1}}` |
+| `$.a == null` | `{"a":null}` |
+| `$.a != null` | `{"a":{"$ne":null}}` |
+| `$.a.b === 1` | `{"a.b":1}` |
 
-An array at a path PREFIX is the ABSENT case, because that is what JavaScript
-reads there: `$.a.b === 1` adds `a: { $not: { $type: "array" } }`, and
-`$.a.b !== 1` offers `{ a: { $type: "array" } }` as an alternative instead. A
-third reading, `FIELD_VALUE`, is for a test the server reads of the FIELD rather
-than of an element — `$exists`, and the `$elemMatch` a `.some` becomes: neither
-can be satisfied by an element, so neither takes a leaf exclusion, and a prefix
-array is still absent (`$.a.items.some(…)` where `a` is an array selects
-nothing, as `.some` throws there).
+`{ $eq: v }` is written `v`, the spelling MQL is read and written in — except where
+`v` would be read as something else, an operator document or a regular expression.
+
+MongoDB then satisfies a field comparison when any ELEMENT of an array value
+satisfies it, and traverses an array in the middle of a path. JavaScript does
+neither, and the two suites that measure the gap name every source it separates:
+`test/compiler-js-agreement.test.ts` against JavaScript's own answers, and
+`test/compiler-query-expr-agreement.test.ts` against the aggregation road.
 
 `!p` is the COMPLEMENT of p's own clause — `{ $nor: [<p>] }` — whenever p has a
 clause with no `$expr` inside. That is not a size choice: `$expr` orders across

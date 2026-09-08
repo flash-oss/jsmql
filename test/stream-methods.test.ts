@@ -55,7 +55,7 @@ describe(".slice(start, end?) — on $$ (top-level stream)", () => {
 
   it("query-form predicate then slice", () => {
     expect(jsmql("$$ = $$.filter(o => o.tier === 'gold').slice(0, 5);")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $limit: 5 },
     ]);
   });
@@ -76,12 +76,7 @@ describe(".slice — on $$$.<coll> (source switch)", () => {
   it(".filter then .slice runs both stages inside the $unionWith body", () => {
     expect(jsmql("$$ = $$$.archive.filter(o => o.tier === 'gold').slice(0, 10);")).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { tier: { $eq: "gold", $not: { $type: "array" } } } }, { $limit: 10 }],
-        },
-      },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $limit: 10 }] } },
     ]);
   });
   // (A cross-database source-switch — `$$ = $$$$.<db>.<coll>.filter(...)` — is
@@ -90,9 +85,7 @@ describe(".slice — on $$$.<coll> (source switch)", () => {
 
 describe(".slice — preserves existing $$.filter(...) behaviour", () => {
   it("$$ = $$.filter(...) alone still emits a single $match (no regression)", () => {
-    expect(jsmql("$$ = $$.filter(o => o.tier === 'gold');")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("$$ = $$.filter(o => o.tier === 'gold');")).toEqual([{ $match: { tier: "gold" } }]);
   });
 
   it("$$ = $$$.coll.filter(o => true) keeps the existing $expr-residual shape", () => {
@@ -435,7 +428,7 @@ describe(".sample() → $sample: { size: 1 } — one random document", () => {
 
   it("chains after .filter", () => {
     expect(jsmql('$$ = $$.filter({ tier: "gold" }).sample();')).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $sample: { size: 1 } },
     ]);
   });
@@ -520,19 +513,15 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
 
 describe(".reject(pred) → $match (filter negated)", () => {
   it("arrow predicate → $match with $expr $not (no query-form De Morgan)", () => {
-    expect(jsmql("$$.reject(o => o.archived === true);")).toEqual([
-      { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } },
-    ]);
+    expect(jsmql("$$.reject(o => o.archived === true);")).toEqual([{ $match: { $nor: [{ archived: true }] } }]);
   });
   it("matches-object shorthand negates each key", () => {
-    expect(jsmql("$$.reject({ archived: true });")).toEqual([
-      { $match: { $nor: [{ archived: { $eq: true, $not: { $type: "array" } } }] } },
-    ]);
+    expect(jsmql("$$.reject({ archived: true });")).toEqual([{ $match: { $nor: [{ archived: true }] } }]);
   });
   it("chains after .filter and before other stream methods", () => {
     expect(jsmql("$$.filter(o => o.active === true).reject(o => o.hidden === true).take(5);")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
-      { $match: { $nor: [{ hidden: { $eq: true, $not: { $type: "array" } } }] } },
+      { $match: { active: true } },
+      { $match: { $nor: [{ hidden: true }] } },
       { $limit: 5 },
     ]);
   });
@@ -697,12 +686,7 @@ describe("lodash iteratee shorthands on stream methods", () => {
 
   it(".filter({ matches }) → equality $match query", () => {
     expect(jsmql('$$ = $$.filter({ status: "CLOSED", tier: "gold" });')).toEqual([
-      {
-        $match: {
-          status: { $eq: "CLOSED", $not: { $type: "array" } },
-          tier: { $eq: "gold", $not: { $type: "array" } },
-        },
-      },
+      { $match: { status: "CLOSED", tier: "gold" } },
     ]);
   });
 
@@ -735,7 +719,7 @@ describe("composed lodash stream vocabulary — full pipeline", () => {
           '.flatMap("productIds").groupBy({ _id: null, boughtProductIds: $addToSet("$productIds") });',
       ),
     ).toEqual([
-      { $match: { status: { $eq: "CLOSED", $not: { $type: "array" } } } },
+      { $match: { status: "CLOSED" } },
       { $sort: { createdAt: -1 } },
       { $limit: 10 },
       { $unwind: "$productIds" },
@@ -757,18 +741,13 @@ describe(".concat(...others) — JS-idiomatic alias for $$.push", () => {
 
   it(".find without spread emits $unionWith with $match + $limit:1", () => {
     expect(jsmql("$$ = $$.concat($$$.archive.find(u => u._id === 'X'));")).toEqual([
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { _id: { $eq: "X", $not: { $type: "array" } } } }, { $limit: 1 }],
-        },
-      },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { _id: "X" } }, { $limit: 1 }] } },
     ]);
   });
 
   it("chains after .filter — $match + $unionWith", () => {
     expect(jsmql("$$ = $$.filter(o => o.active === true).concat(...$$$.archive);")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $unionWith: "archive" },
     ]);
   });
@@ -809,7 +788,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
   it("composes after .filter — $match + $replaceWith", () => {
     expect(jsmql("$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $replaceWith: { id: "$_id" } },
     ]);
   });
@@ -824,12 +803,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
   it("works inside $$$.<coll> lookup body", () => {
     expect(jsmql("$$ = $$$.archive.filter(o => o.tier === 'gold').map(d => ({ n: d.name }));")).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { tier: { $eq: "gold", $not: { $type: "array" } } } }, { $replaceWith: { n: "$name" } }],
-        },
-      },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { tier: "gold" } }, { $replaceWith: { n: "$name" } }] } },
     ]);
   });
 
@@ -935,7 +909,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         "`$match(...)` at position 19 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Move the stages to '.aggregate((o) => { $match(...); … })', which takes a block of stages and no 'return'; or delete the stage and fold its work into the 'return'. Over the stream a stage is also a chain link: '$$.$match(…)'.",
       );
       expect(jsmql(`$match($.active === true); $ = { id: $._id };`)).toEqual([
-        { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+        { $match: { active: true } },
         { $replaceWith: { id: "$_id" } },
       ]);
     });
@@ -1020,7 +994,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         },
       },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $replaceWith: { id: "$_id", archived: "$__jsmql.tmp.0" } },
     ]);
   });
@@ -1048,7 +1022,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         $unionWith: {
           coll: "users",
           pipeline: [
-            { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+            { $match: { active: true } },
             {
               $lookup: {
                 from: "archive",
@@ -1077,7 +1051,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         $unionWith: {
           coll: "users",
           pipeline: [
-            { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+            { $match: { active: true } },
             {
               $lookup: {
                 from: "archive",
@@ -1128,7 +1102,7 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
 
   it("composes after .filter — $match + $sort", () => {
     expect(jsmql("$$ = $$.filter(o => o.active === true).toSorted((a, b) => a.age - b.age);")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $sort: { age: 1 } },
     ]);
   });
@@ -1175,22 +1149,13 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
   it("composes after .filter and before .map (the JS-faithful unwind+project pattern)", () => {
     expect(
       jsmql("$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(d => ({ item: d.items }));"),
-    ).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
-      { $unwind: "$items" },
-      { $replaceWith: { item: "$items" } },
-    ]);
+    ).toEqual([{ $match: { active: true } }, { $unwind: "$items" }, { $replaceWith: { item: "$items" } }]);
   });
 
   it("works inside $$$.<coll> lookup body", () => {
     expect(jsmql("$$ = $$$.orders.filter(o => o.shipped === true).flatMap(d => d.items);")).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "orders",
-          pipeline: [{ $match: { shipped: { $eq: true, $not: { $type: "array" } } } }, { $unwind: "$items" }],
-        },
-      },
+      { $unionWith: { coll: "orders", pipeline: [{ $match: { shipped: true } }, { $unwind: "$items" }] } },
     ]);
   });
 
@@ -1463,7 +1428,7 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
 
   it("composes with a preceding $match", () => {
     expect(jsmql("$match($.active === true); $$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name }), {})]")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $group: { _id: null, __jsmqlTmp: { $push: { k: "$id", v: "$name" } } } },
       { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
     ]);
@@ -1522,7 +1487,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("query-form predicate (translatable to query doc) → $match + $replaceWith", () => {
     expect(jsmql("$$ = $$.reduce((acc, d) => (d.tier === 'gold' ? acc.concat(d.profile) : acc), []);")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $replaceWith: "$profile" },
     ]);
   });
@@ -1535,7 +1500,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
 
   it("filter-only via bare `d` projection (identity): just $match, no $replaceWith", () => {
     expect(jsmql("$$ = $$.reduce((acc, d) => (d.active === true ? acc.concat(d) : acc), []);")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $replaceWith: "$$ROOT" },
     ]);
   });
@@ -1639,9 +1604,7 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
   // Each registered array→array method works as a standalone statement,
   // lowering identically to the explicit-assignment form.
   it(".filter → $match", () => {
-    expect(jsmql("$$.filter(o => o.tier === 'gold');")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("$$.filter(o => o.tier === 'gold');")).toEqual([{ $match: { tier: "gold" } }]);
   });
 
   it(".map → $replaceWith", () => {
@@ -1666,7 +1629,7 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
 
   it("chained .filter(p).map(f) → $match + $replaceWith", () => {
     expect(jsmql("$$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));")).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
+      { $match: { tier: "gold" } },
       { $replaceWith: { id: "$_id" } },
     ]);
   });
@@ -1677,18 +1640,9 @@ describe("bare-statement stream chain (no `$$ =` head) — sugar for `$$ = $$.<c
     const split = jsmql("$$.filter(o => o.tier === 'gold'); $$.map(d => ({ id: d._id }));");
     const assigned = jsmql("$$ = $$.filter(o => o.tier === 'gold').map(d => ({ id: d._id }));");
     const expected = [{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }];
-    expect(chained).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-      { $replaceWith: { id: "$_id" } },
-    ]);
-    expect(split).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-      { $replaceWith: { id: "$_id" } },
-    ]);
-    expect(assigned).toEqual([
-      { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-      { $replaceWith: { id: "$_id" } },
-    ]);
+    expect(chained).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
+    expect(split).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
+    expect(assigned).toEqual([{ $match: { tier: "gold" } }, { $replaceWith: { id: "$_id" } }]);
   });
 
   it("a descending sort is written directly, not as sort-then-reverse", () => {

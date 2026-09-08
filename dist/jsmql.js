@@ -448,31 +448,17 @@ function lex(src) {
 
 // src/registry/vocabulary.ts
 var GROUP_SLOT = "__jsmqlTmp";
-var NOT_AN_ARRAY = { $not: { $type: "array" } };
-var OWN_VALUE = { whenAbsent: false, whenArray: false };
-var NOT_OWN_VALUE = { whenAbsent: true, whenArray: true };
-var FIELD_VALUE = { whenAbsent: false, whenArray: false, ofTheField: true };
-var prefixesOf = (path) => {
-  const seg = path.split(".");
-  return seg.slice(0, -1).map((_, i) => seg.slice(0, i + 1).join("."));
+var shorthand = (test) => {
+  const keys = Object.keys(test);
+  if (keys.length !== 1 || keys[0] !== "$eq") return test;
+  const v = test.$eq;
+  if (v instanceof RegExp) return test;
+  const operatorDoc = typeof v === "object" && v !== null && !Array.isArray(v) && Object.keys(v).some((k) => k.startsWith("$"));
+  return operatorDoc ? test : v;
 };
 var escapeForRegex = (needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\\" + m);
-function queryOwnValue(path, test, reading) {
-  const prefixes = prefixesOf(path);
-  const elementWise = reading.ofTheField !== true;
-  const excludes = JSON.stringify(test) === JSON.stringify(NOT_AN_ARRAY);
-  const leaf2 = reading.whenArray || !elementWise || excludes ? { [path]: test } : "$not" in test ? { $and: [{ [path]: test }, { [path]: { ...NOT_AN_ARRAY } }] } : { [path]: { ...test, ...NOT_AN_ARRAY } };
-  const alternatives = [leaf2];
-  if (reading.whenArray && elementWise) alternatives.push({ [path]: { $type: "array" } });
-  if (reading.whenAbsent) for (const p of prefixes) alternatives.push({ [p]: { $type: "array" } });
-  const spelled3 = /* @__PURE__ */ new Set();
-  const distinct = alternatives.filter((a) => {
-    const k = JSON.stringify(a);
-    return spelled3.has(k) ? false : (spelled3.add(k), true);
-  });
-  const one = distinct.length === 1 ? distinct[0] : { $or: distinct };
-  if (reading.whenAbsent || prefixes.length === 0) return one;
-  return { ...one, ...Object.fromEntries(prefixes.map((p) => [p, { ...NOT_AN_ARRAY }])) };
+function queryOwnValue(path, test) {
+  return { [path]: shorthand(test) };
 }
 var isSlotLayout = (l) => !("arrowOnly" in l) && !("sortSpec" in l);
 var BSON_TYPE_ALIASES = [
@@ -6346,7 +6332,7 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
       }
     },
     expr: {
@@ -6376,7 +6362,7 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
       }
     },
     expr: {
@@ -6463,7 +6449,7 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) });
       }
     },
     expr: {
@@ -6639,7 +6625,7 @@ var NAMES = {
           const contains = { [path]: { $eq: c.value, $type: "array" } };
           const v = c.value;
           if (typeof v !== "string" && typeof v !== "number") return contains;
-          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) }, OWN_VALUE);
+          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) });
           return { $or: [contains, substring] };
         }
         if (recv.type !== "ArrayLiteral") return null;
@@ -6651,7 +6637,7 @@ var NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target, { $in: values }, OWN_VALUE);
+        return queryOwnValue(target, { $in: values });
       }
     },
     expr: {
@@ -7417,7 +7403,7 @@ var NAMES = {
         const path = recv === null ? null : pathOf3(recv);
         if (path === null) return null;
         const q = elementQuery(args[0]);
-        return q === null ? null : queryOwnValue(path, { $elemMatch: q }, FIELD_VALUE);
+        return q === null ? null : queryOwnValue(path, { $elemMatch: q });
       }
     },
     expr: {
@@ -13132,7 +13118,7 @@ function membershipQuery(input) {
   if (path === null) return null;
   const c = input.constant(r);
   if (c === null || !Array.isArray(c.value)) return null;
-  return queryOwnValue(path, { $in: c.value }, OWN_VALUE);
+  return queryOwnValue(path, { $in: c.value });
 }
 function typeTest(input) {
   const [l, r] = input.args;
@@ -13165,7 +13151,7 @@ function nullTest(input) {
   if (l.type === "NullLiteral") return r.type === "NullLiteral" ? null : input.pathOf(r);
   return r.type === "NullLiteral" ? input.pathOf(l) : null;
 }
-var presenceQuery = (path, negated) => queryOwnValue(path, { $exists: negated }, { ...FIELD_VALUE, whenAbsent: !negated, whenArray: negated });
+var presenceQuery = (path, negated) => queryOwnValue(path, { $exists: negated });
 function comparesALength(input) {
   const isLength = (e) => e.type === "MemberAccess" && e.name === "length";
   const [l, r] = input.args;
@@ -13175,9 +13161,9 @@ function strictEqualityQuery(input, negated) {
   const typed = typeTest(input);
   if (typed !== null) {
     if (typed.alias === "array") {
-      return negated ? queryOwnValue(typed.path, { $not: { $type: "array" } }, { whenAbsent: true, whenArray: false }) : queryOwnValue(typed.path, { $type: "array" }, { whenAbsent: false, whenArray: true });
+      return negated ? queryOwnValue(typed.path, { $not: { $type: "array" } }) : queryOwnValue(typed.path, { $type: "array" });
     }
-    return negated ? queryOwnValue(typed.path, { $not: { $type: typed.alias } }, NOT_OWN_VALUE) : queryOwnValue(typed.path, { $type: typed.alias }, OWN_VALUE);
+    return negated ? queryOwnValue(typed.path, { $not: { $type: typed.alias } }) : queryOwnValue(typed.path, { $type: typed.alias });
   }
   const present = presenceTest(input);
   if (present !== null) return presenceQuery(present, negated);
@@ -13185,22 +13171,22 @@ function strictEqualityQuery(input, negated) {
   const mod = moduloTest(input);
   if (mod !== null) {
     const test = { $mod: [mod.divisor, mod.remainder] };
-    return negated ? queryOwnValue(mod.path, { $not: test }, NOT_OWN_VALUE) : queryOwnValue(mod.path, test, OWN_VALUE);
+    return negated ? queryOwnValue(mod.path, { $not: test }) : queryOwnValue(mod.path, test);
   }
   const nul = nullTest(input);
   if (nul !== null) {
-    return negated ? queryOwnValue(nul, { $not: { $type: "null" } }, NOT_OWN_VALUE) : queryOwnValue(nul, { $type: "null" }, OWN_VALUE);
+    return negated ? queryOwnValue(nul, { $not: { $type: "null" } }) : queryOwnValue(nul, { $type: "null" });
   }
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   if (Array.isArray(pc.value)) return null;
   if (pc.value instanceof RegExp) return negated ? { [pc.path]: { $not: pc.value } } : { [pc.path]: pc.value };
-  return negated ? queryOwnValue(pc.path, { $ne: pc.value }, NOT_OWN_VALUE) : queryOwnValue(pc.path, { $eq: pc.value }, OWN_VALUE);
+  return negated ? queryOwnValue(pc.path, { $ne: pc.value }) : queryOwnValue(pc.path, { $eq: pc.value });
 }
 function looseEqualityQuery(input, negated) {
   const path = nullTest(input);
   if (path === null) return null;
-  return negated ? queryOwnValue(path, { $ne: null }, { whenAbsent: false, whenArray: true }) : queryOwnValue(path, { $eq: null }, { whenAbsent: true, whenArray: false });
+  return negated ? queryOwnValue(path, { $ne: null }) : queryOwnValue(path, { $eq: null });
 }
 var FLIPPED = { $gt: "$lt", $gte: "$lte", $lt: "$gt", $lte: "$gte" };
 function orderedQuery(input, op) {
@@ -13209,7 +13195,7 @@ function orderedQuery(input, op) {
   if (pc === null) return null;
   const v = pc.value;
   if (typeof v !== "number" && typeof v !== "string" && !(v instanceof Date)) return null;
-  return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v }, OWN_VALUE);
+  return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 var PRODUCTIONS = {
   conditional: production({
@@ -20555,7 +20541,7 @@ function includesChain(path, values) {
   const needles = values.filter((v) => typeof v === "string" || typeof v === "number");
   if (needles.length !== values.length) return contains;
   const [first, ...rest] = needles.map((v) => escapeForRegex(String(v)));
-  const substrings = rest.length === 0 ? queryOwnValue(path, { $regex: first }, OWN_VALUE) : { $and: [queryOwnValue(path, { $regex: first }, OWN_VALUE), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
+  const substrings = rest.length === 0 ? queryOwnValue(path, { $regex: first }) : { $and: [queryOwnValue(path, { $regex: first }), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
   return { $or: [contains, substrings] };
 }
 function extractIncludesChain(node, env) {

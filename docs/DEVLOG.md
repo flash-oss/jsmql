@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix!: a query document is the plain one
+
+Every field comparison carried an array exclusion:
+
+```
+$.age > 18 && $.status === "active"
+before: { age: { $gt: 18, $not: { $type: "array" } },
+          status: { $eq: "active", $not: { $type: "array" } } }
+now:    { age: { $gt: 18 }, status: "active" }
+```
+
+The exclusion was there so a JavaScript spelling would read the field's OWN value, because MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. It is gone. jsmql emits the document a MongoDB developer writes by hand — the one every index plan, every `explain` output and every code review is written against — and the server's own rules apply to it.
+
+The negated and nested forms shed their machinery with it:
+
+```
+$.a !== 1     before: { $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] }        now: { a: { $ne: 1 } }
+$.a.b === 1   before: { "a.b": { $eq: 1, … }, a: { $not: { $type: "array" } } }      now: { "a.b": 1 }
+$.a == null   before: { a: { $eq: null, $not: { $type: "array" } } }                 now: { a: null }
+```
+
+`{ $eq: v }` is written `v` now, the spelling MQL is read and written in — except where `v` would be read as something else, an operator document or a regular expression. An `ObjectId` therefore lands as the value: `$._id === ObjectId("…")` is `{ _id: <ObjectId> }`.
+
+A comparison that must read ONE value still has its own spelling: `.includes(x)` for containment, `.some(e => …)` for an element test, and the aggregation road for the value itself.
+
+Three registry facts went with the exclusion, because nothing else asked for them: the `ValueReading` type, its three constants, and the path-prefix walk that turned an array in the middle of a path into the absent case.
+
+The two suites that measure the boundary tell the whole story, and each names every source it separates. `test/compiler-js-agreement.test.ts` compares the emitted query against JavaScript's own answers on a live mongod: 25 sources moved from its agreement list to its divergence table, each with the array rule as its reason. `test/compiler-query-expr-agreement.test.ts` compares the two roads against each other: 8 moved the same way, and one moved back — a path with an array PREFIX now reads the same on both roads.
+
+---
+
+
 ## 2026-09-08 — feat!: `Array.from` is not part of jsmql
 
 `Array.from({ length: n })` was one spelling of a capability the language already had, and the worse one of the two. `$range` says the same thing in fewer characters, and the mapped form bound a throwaway element nobody asked for:

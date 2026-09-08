@@ -102,10 +102,8 @@ import {
   accumulated,
   because,
   escapeForRegex,
-  FIELD_VALUE,
   GROUP_SLOT,
   objectBody,
-  OWN_VALUE,
   queryOwnValue,
   inCode,
   single,
@@ -6426,7 +6424,7 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const needle = args[0];
         if (path === null || needle.type !== "StringLiteral" || needle.value.startsWith("$")) return null;
-        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(`^${escapeForRegex(needle.value)}`) });
       },
     },
     expr: {
@@ -6460,7 +6458,7 @@ export const NAMES = {
         // `\z` is the end of the subject. PCRE's `$` also matches before a final
         // newline, so it accepted "report.pdf\n" where JavaScript's endsWith does not.
         // MEASURED: /\.pdf$/ selects both, new RegExp("\\.pdf\\z") selects only "report.pdf".
-        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(`${escapeForRegex(needle.value)}\\z`) });
       },
     },
     expr: {
@@ -6550,7 +6548,7 @@ export const NAMES = {
         const path = recv === null ? null : pathOf(recv);
         const re = args[0];
         if (path === null || re.type !== "RegexLiteral") return null;
-        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) }, OWN_VALUE);
+        return queryOwnValue(path, { $regex: new RegExp(re.pattern, re.flags) });
       },
     },
     expr: {
@@ -6740,7 +6738,7 @@ export const NAMES = {
           const v = c.value;
           // A needle no string could hold — a date, an ObjectId — has the array reading only.
           if (typeof v !== "string" && typeof v !== "number") return contains;
-          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) }, OWN_VALUE);
+          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) });
           return { $or: [contains, substring] };
         }
         if (recv.type !== "ArrayLiteral") return null;
@@ -6760,7 +6758,7 @@ export const NAMES = {
           if (c === null) return null;
           values.push(c.value);
         }
-        return queryOwnValue(target, { $in: values }, OWN_VALUE);
+        return queryOwnValue(target, { $in: values });
       },
     },
     expr: {
@@ -7561,7 +7559,7 @@ export const NAMES = {
         // `$elemMatch` asks about the FIELD — is it an array with a matching
         // element — so it takes no leaf exclusion, and a PREFIX array is still
         // absent, where JavaScript's `.some` throws and selects nothing.
-        return q === null ? null : queryOwnValue(path, { $elemMatch: q }, FIELD_VALUE);
+        return q === null ? null : queryOwnValue(path, { $elemMatch: q });
       },
     },
     expr: {

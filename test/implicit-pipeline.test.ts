@@ -13,7 +13,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("single trailing `;` after a stage call wraps as a one-stage pipeline", () => {
-    expect(jsmql("$match($.a === 0);")).toEqual([{ $match: { a: { $eq: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql("$match($.a === 0);")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("single trailing `;` after a stage-object wraps as a one-stage pipeline", () => {
@@ -47,10 +47,7 @@ describe("implicit pipeline — `;` triggers pipeline mode", () => {
   });
 
   it("stage call followed by update op", () => {
-    expect(jsmql("$match($.a === 0); $.b = 1")).toEqual([
-      { $match: { a: { $eq: 0, $not: { $type: "array" } } } },
-      { $set: { b: 1 } },
-    ]);
+    expect(jsmql("$match($.a === 0); $.b = 1")).toEqual([{ $match: { a: 0 } }, { $set: { b: 1 } }]);
   });
 
   it("two stage calls produce two stages", () => {
@@ -135,13 +132,13 @@ describe("implicit pipeline — single-statement update-filter inputs always wra
     // silently producing `{ $expr: { $match: ... } }` (a useless Filter),
     // jsmql() auto-wraps the stage as a one-element Pipeline — no `;`
     // discipline required at the call site.
-    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: { $eq: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("bare stage-object literal without `;` auto-wraps the same way", () => {
     // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
     // detect as Pipeline intent.
-    expect(jsmql("{ $match: $.a === 0 }")).toEqual([{ $match: { a: { $eq: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql("{ $match: $.a === 0 }")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("comma-grouped chain without `;` coalesces and wraps as a one-stage pipeline", () => {
@@ -218,7 +215,7 @@ describe("implicit pipeline — block-body arrow input", () => {
       jsmql(({ $ }) => {
         return $.a > 18;
       }),
-    ).toEqual({ a: { $gt: 18, $not: { $type: "array" } } });
+    ).toEqual({ a: { $gt: 18 } });
   });
 
   it("a stray `return` in a `;`-separated block body is rejected with guidance", () => {

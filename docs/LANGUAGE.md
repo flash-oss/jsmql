@@ -89,12 +89,12 @@ The first four rows all produce arrays — `jsmql()` is "would the driver call s
 
 The expression is interpreted as a Filter. Field-vs-literal predicates the MongoDB query language can express directly emit indexable `{ field: { $op: lit } }` pairs; anything else (method calls, computed expressions, non-predicate values) rides in a top-level `$expr` residual — a legal Filter operator. So both predicates and computational expressions produce a valid Filter.
 
-**A JavaScript spelling reads the field's own value.** MongoDB's query language matches an array field when *any element* satisfies the predicate; JavaScript's `$.age > 18` compares the value itself. Every field-vs-literal pair therefore carries `$not: { $type: "array" }`, so a document whose `age` is `[10, 25]` does not match — exactly as the JavaScript would answer. The extra key costs nothing: the index on `age` is still used. To test an array's elements, say so: `$.tags.includes("a")` or `$.items.some(i => i.qty > 5)`. A raw query document (`{ age: { $gt: 18 } }`) is MongoDB's own reading and passes through untouched.
+**A query document is the plain one.** `$.age > 18` is `{ age: { $gt: 18 } }` — the document you would write by hand, and the one every index plan and `explain` output is written against. MongoDB's own rules then apply to it: a field comparison is satisfied when *any element* of an array value satisfies it, and a path traverses an array in the middle. JavaScript does neither, so a comparison that must read ONE value has its own spelling — `$.tags.includes("a")` for containment, `$.items.some(i => i.qty > 5)` for an element test, and `jsmql.expr` when you want the aggregation language's value comparison.
 
 ```js
 // Pure query-document — indexable on `age` and `status`
 jsmql("$.age > 18 && $.status === 'active'");
-// → { age: { $gt: 18, $not: { $type: "array" } }, status: { $eq: "active", $not: { $type: "array" } } }
+// → {"age":{"$gt":18},"status":"active"}
 
 // `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
@@ -103,7 +103,7 @@ jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
-// → { status: { $eq: "active", $not: { $type: "array" } }, $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] } }
+// → {"status":"active","$expr":{"$eq":[{"$trim":{"input":"$name"}},"alice"]}}
 
 // A value that is not a predicate — the JavaScript truthiness test rides in $expr
 jsmql("$.a + $.b");
@@ -1319,7 +1319,7 @@ $.score <= 100                      // { $lte: ["$score", 100] }
 $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]] }
 // in a filter (no ';'), a constant list is the native query operator — the '$not' keeps JavaScript's
 // meaning, a test of the scalar, where MongoDB's '$in' alone would also match an array field holding the value:
-//   { status: { $in: ["active", "pending"], $not: { $type: "array" } } }
+//   {"status":{"$in":["active","pending"]}}
 $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
@@ -1332,11 +1332,11 @@ jsmql tracks the JS distinction between strict and loose equality, mapped to the
 
 | jsmql              | Matches                              | MQL (expression context)                                              | MQL (`$match` body)                          |
 | ------------------ | ------------------------------------ | --------------------------------------------------------------------- | -------------------------------------------- |
-| `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{ x: { $type: "null", $not: { $type: "array" } } }` |
-| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{ $or: [{ x: { $not: { $type: "null" } } }, { x: { $type: "array" } }] }` |
-| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{ x: { $eq: null, $not: { $type: "array" } } }` |
-| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{ $or: [{ x: { $ne: null } }, { x: { $type: "array" } }] }` |
-| `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{ x: { $eq: 5, $not: { $type: "array" } } }` |
+| `$.x === null`     | only real `null` (excludes missing)  | `{ $eq: ["$x", null] }`                                               | `{"x":{"$type":"null"}}` |
+| `$.x !== null`     | anything except real `null` (incl. missing) | `{ $ne: ["$x", null] }`                                        | `{"x":{"$not":{"$type":"null"}}}` |
+| `$.x == null`      | null OR missing                      | `{ $in: [{ $type: "$x" }, ["null", "missing"]] }`                     | `{"x":null}` |
+| `$.x != null`      | neither null nor missing             | `{ $not: [{ $in: [{ $type: "$x" }, ["null", "missing"]] }] }`         | `{"x":{"$ne":null}}` |
+| `$.x === 5`        | `5`                                  | `{ $eq: ["$x", 5] }`                                                  | `{"x":5}` |
 | `$.x == 5`         | **compile error**                    | —                                                                     | —                                            |
 
 The error for non-null `==`:
@@ -2680,7 +2680,7 @@ A value that arrives at **run time** — a template-tag `${…}` interpolation, 
 ```js
 jsmql.expr`$.a + ${"$b"}`        // { $add: ["$a", { $literal: "$b" }] }
 jsmql.pipeline`$.x = ${"$b"};`   // [{ $set: { x: { $literal: "$b" } } }]
-jsmql`$.a === ${"$b"}`           // { a: { $eq: "$b", $not: { $type: "array" } } }
+jsmql`$.a === ${"$b"}`           // { a: { $literal: "$b" } }
 jsmql.update`$.x = ${"$b"}`      // { $set: { x: "$b" } }
 ```
 

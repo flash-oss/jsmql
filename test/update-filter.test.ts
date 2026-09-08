@@ -448,7 +448,7 @@ describe("update filters: parenthesized form (formatter-friendly)", () => {
         $.status = "complete";
       }),
     ).toEqual([
-      { $match: { status: { $eq: "pending", $not: { $type: "array" } } } },
+      { $match: { status: "pending" } },
       { $set: { lineTotal: { $multiply: ["$qty", "$unitPrice"] }, invoiceCount: { $add: ["$invoiceCount", 1] } } },
       { $set: { status: "complete" } },
     ]);

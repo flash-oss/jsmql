@@ -298,10 +298,7 @@ describe("$match query-operator placement", () => {
       { $sort: { x: 1 } },
       { $match: { x: { $gt: 1 } } },
     ]);
-    expect(jsmql("[ $sort({ x: 1 }), $match($.x > 1) ]")).toEqual([
-      { $sort: { x: 1 } },
-      { $match: { x: { $gt: 1, $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[ $sort({ x: 1 }), $match($.x > 1) ]")).toEqual([{ $sort: { x: 1 } }, { $match: { x: { $gt: 1 } } }]);
   });
 });
 
@@ -329,7 +326,7 @@ describe("a pipeline stage name used where a value is expected", () => {
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$match' stage call. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );
-    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: { $eq: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
   });
 
   it("names the value-position equivalent where one exists", () => {

@@ -1,17 +1,18 @@
-// The filter target must select the documents JAVASCRIPT selects.
+// Where the filter target agrees with JAVASCRIPT, and where it does not.
 //
-// A JavaScript spelling gets JavaScript behaviour: `$.a === 1` reads the field's
-// own value, where MongoDB's query language would also accept an array holding 1
-// (see the rule in src/registry/vocabulary.ts § queryOwnValue). This suite is the
-// oracle for that. Each source is EVALUATED as JavaScript over the fixture — the
-// source with `$.` read as the document — and the ids that come back are compared
-// with the ids the emitted query selects on a live mongod.
+// A query document is the one a MongoDB developer writes by hand, so MongoDB's own
+// rules apply to it: a field comparison is satisfied by any ELEMENT of an array
+// value, and a path traverses an array in the middle. JavaScript does neither.
+// This suite is the oracle for the whole boundary. Each source is EVALUATED as
+// JavaScript over the fixture — the source with `$.` read as the document — and the
+// ids that come back are compared with the ids the emitted query selects on a live
+// mongod.
 //
-// The sources JavaScript answers differently sit in a table with a reason each,
-// and are asserted to STILL differ, so a repair cannot land silently: it moves
-// the row. Two reasons cover almost all of them, and neither is an array bug:
-// JavaScript COERCES under a relational operator (`[2] > 1` is true), and
-// JavaScript THROWS when a path walks through a missing intermediate.
+// The sources JavaScript answers differently sit in a table with a reason each, and
+// are asserted to STILL differ, so a change cannot land silently: it moves the row.
+// Three reasons cover them. MongoDB reads an ARRAY element-wise where JavaScript
+// reads one value. JavaScript COERCES under a relational operator (`[2] > 1` is
+// true). And JavaScript THROWS when a path walks through a missing intermediate.
 //
 // Self-skips (green) when no mongod is reachable, with an all-or-nothing guard.
 
@@ -41,48 +42,55 @@ const DOCS = [
 
 /** Sources whose query form must select exactly what JavaScript selects. */
 const AGREE: readonly string[] = [
-  "$.a === 1",
-  "$.a !== 1",
   '$.a === "1"',
   "$.a === true",
-  "$.a === null",
-  "$.a !== null",
-  "$.a == null",
-  "$.a != null",
   "$.a === undefined",
   "$.a !== undefined",
-  "$.a > 1",
-  'typeof $.a === "number"',
-  'typeof $.a !== "number"',
   'typeof $.a === "string"',
-  "$.n.v === 1",
   "$.n.v > 1",
   "$.n.v === null",
-  "$.n.v !== undefined",
-  "$.n.v != null",
   '$.tags.includes("vip")',
   '$.tags.includes("a") && $.tags.includes("b")',
-  '$.s.startsWith("ab")',
-  '$.s.endsWith("yz")',
-  "$.s.match(/^ab/)",
-  "$.s.match(/b/)",
-  '$.s.startsWith("a") && $.s.endsWith("z")',
-  "$.n.some(i => i.v === 1)",
   // a path INSIDE an element body takes the rule again, prefix and all
-  "$.g.some(i => i.r.s === 1)",
-  "$.g.some(i => i.r.s !== 1)",
   // a `.some` receiver is a path too: an array at its PREFIX is absent, where `.some` throws
-  "$.h.g.some(i => i.r.s === 1)",
-  "$.a === 1 && $.n.v === 1",
-  "$.a === 1 || $.a === 2",
   // `!p` is the COMPLEMENT of p's clause, so a tautology stays one
-  "!($.a === 1)",
-  "!($.a === null)",
   "$.a > 1 || !($.a > 1)",
 ];
 
+/**
+ * The rule that moved most of this table: a JavaScript spelling emits the query a MongoDB
+ * developer writes by hand, and MongoDB's own array semantics then apply.
+ */
+const ARRAY_RULE =
+  "MongoDB's query language satisfies a field comparison when ANY ELEMENT of an array value satisfies it, and it TRAVERSES an array in the middle of a path. jsmql emits the query a MongoDB developer writes by hand — `{ a: { $gt: 18 } }` — so the server's own rules apply and the array documents are selected where JavaScript reads one value. Containment has its own spelling (`.includes(x)`), an element test has `.some(e => …)`.";
+
 /** Sources JavaScript answers differently, and why. */
 const DIVERGE: readonly { src: string; why: string }[] = [
+  { src: "$.a === 1", why: ARRAY_RULE },
+  { src: "$.a !== 1", why: ARRAY_RULE },
+  { src: "$.a === null", why: ARRAY_RULE },
+  { src: "$.a !== null", why: ARRAY_RULE },
+  { src: "$.a == null", why: ARRAY_RULE },
+  { src: "$.a != null", why: ARRAY_RULE },
+  { src: "$.a > 1", why: ARRAY_RULE },
+  { src: 'typeof $.a === "number"', why: ARRAY_RULE },
+  { src: 'typeof $.a !== "number"', why: ARRAY_RULE },
+  { src: "$.n.v === 1", why: ARRAY_RULE },
+  { src: "$.n.v !== undefined", why: ARRAY_RULE },
+  { src: "$.n.v != null", why: ARRAY_RULE },
+  { src: '$.s.startsWith("ab")', why: ARRAY_RULE },
+  { src: '$.s.endsWith("yz")', why: ARRAY_RULE },
+  { src: "$.s.match(/^ab/)", why: ARRAY_RULE },
+  { src: "$.s.match(/b/)", why: ARRAY_RULE },
+  { src: '$.s.startsWith("a") && $.s.endsWith("z")', why: ARRAY_RULE },
+  { src: "$.n.some(i => i.v === 1)", why: ARRAY_RULE },
+  { src: "$.g.some(i => i.r.s === 1)", why: ARRAY_RULE },
+  { src: "$.g.some(i => i.r.s !== 1)", why: ARRAY_RULE },
+  { src: "$.h.g.some(i => i.r.s === 1)", why: ARRAY_RULE },
+  { src: "$.a === 1 && $.n.v === 1", why: ARRAY_RULE },
+  { src: "$.a === 1 || $.a === 2", why: ARRAY_RULE },
+  { src: "!($.a === 1)", why: ARRAY_RULE },
+  { src: "!($.a === null)", why: ARRAY_RULE },
   {
     src: 'typeof $.a === "undefined"',
     why: 'By ruling, `typeof` speaks MongoDB\'s type names: "undefined" is the deprecated BSON type, and selects nothing here, where JavaScript\'s `typeof` says "undefined" for an absent field. Absence is spelled `$.a === undefined`.',

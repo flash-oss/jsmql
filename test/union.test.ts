@@ -13,7 +13,7 @@ describe("$$.push — bare collection (short form)", () => {
 
   it("works inside a multi-statement pipeline, between other stages", () => {
     expect(jsmql("$match($.active === true); $$.push(...$$$.archive); $sort({ name: 1 })")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
+      { $match: { active: true } },
       { $unionWith: "archive" },
       { $sort: { name: 1 } },
     ]);
@@ -54,11 +54,7 @@ describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
       {
         $unionWith: {
           coll: "archive_users",
-          pipeline: [
-            { $match: { tier: { $eq: "gold", $not: { $type: "array" } } } },
-            { $sort: { joined: -1 } },
-            { $limit: 100 },
-          ],
+          pipeline: [{ $match: { tier: "gold" } }, { $sort: { joined: -1 } }, { $limit: 100 }],
         },
       },
     ]);
@@ -68,12 +64,7 @@ describe("$$.push — .filter spread (pipeline-form $unionWith)", () => {
 describe("$$.push — .find no-spread (single-doc append)", () => {
   it("lowers to a $match + $limit: 1 sub-pipeline", () => {
     expect(jsmql("$$.push($$$.archive_users.find(u => u._id === 'ABC'))")).toEqual([
-      {
-        $unionWith: {
-          coll: "archive_users",
-          pipeline: [{ $match: { _id: { $eq: "ABC", $not: { $type: "array" } } } }, { $limit: 1 }],
-        },
-      },
+      { $unionWith: { coll: "archive_users", pipeline: [{ $match: { _id: "ABC" } }, { $limit: 1 }] } },
     ]);
   });
 });
@@ -144,13 +135,8 @@ describe("$$.push — mixed args (real-world chain)", () => {
       jsmql("$$.push({ a: 1 }, $$$.coll.find(p => p._id === 'X'), ...$$$.other.filter(o => o.tier === 'gold'))"),
     ).toEqual([
       { $unionWith: { pipeline: [{ $documents: [{ a: 1 }] }] } },
-      {
-        $unionWith: {
-          coll: "coll",
-          pipeline: [{ $match: { _id: { $eq: "X", $not: { $type: "array" } } } }, { $limit: 1 }],
-        },
-      },
-      { $unionWith: { coll: "other", pipeline: [{ $match: { tier: { $eq: "gold", $not: { $type: "array" } } } }] } },
+      { $unionWith: { coll: "coll", pipeline: [{ $match: { _id: "X" } }, { $limit: 1 }] } },
+      { $unionWith: { coll: "other", pipeline: [{ $match: { tier: "gold" } }] } },
     ]);
   });
 });

@@ -127,14 +127,7 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
         $lookup: {
           from: "orders",
           let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            {
-              $match: {
-                status: { $eq: "shipped", $not: { $type: "array" } },
-                $expr: { $eq: ["$userId", "$$jsmql_f0__id"] },
-              },
-            },
-          ],
+          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
           as: "x",
         },
       },
@@ -155,7 +148,7 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
           pipeline: [
             {
               $match: {
-                qty: { $gt: 0, $not: { $type: "array" } },
+                qty: { $gt: 0 },
                 $expr: { $eq: ["$ref", { $getField: { field: "sub-id", input: "$$jsmql_f0_meta" } }] },
               },
             },
@@ -1082,11 +1075,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
       {
         $lookup: {
           from: "orders",
-          pipeline: [
-            { $sort: { createdAt: -1 } },
-            { $limit: 200 },
-            { $match: { qty: { $gt: 1, $not: { $type: "array" } } } },
-          ],
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 200 }, { $match: { qty: { $gt: 1 } } }],
           as: "recent",
         },
       },
@@ -1106,7 +1095,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
           pipeline: [
             { $sort: { createdAt: -1 } },
             { $limit: 200 },
-            { $match: { qty: { $gt: 1, $not: { $type: "array" } }, $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
+            { $match: { qty: { $gt: 1 }, $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
           ],
           as: "recent",
         },
@@ -1119,10 +1108,7 @@ describe("$$$.coll.<streamMethod>… — any lodash stream method may start the 
       {
         $lookup: {
           from: "orders",
-          pipeline: [
-            { $match: { qty: { $gt: 1, $not: { $type: "array" } } } },
-            { $match: { status: { $eq: "paid", $not: { $type: "array" } } } },
-          ],
+          pipeline: [{ $match: { qty: { $gt: 1 } } }, { $match: { status: "paid" } }],
           as: "paid",
         },
       },
@@ -1181,10 +1167,10 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // `as: "x"` write straight to the destination field (no tmp slot, no trailing
     // `$set`/`$unset`) that the arrow form has always had.
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
-      { $lookup: { from: "orders", pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }], as: "x" } },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
     expect(jsmql("$.x = $$$.orders.filter({ uid: 1 });")).toEqual([
-      { $lookup: { from: "orders", pipeline: [{ $match: { uid: { $eq: 1, $not: { $type: "array" } } } }], as: "x" } },
+      { $lookup: { from: "orders", pipeline: [{ $match: { uid: 1 } }], as: "x" } },
     ]);
   });
 
@@ -1779,21 +1765,21 @@ describe("$$$.coll.aggregate — error cases", () => {
     // "write them directly" spelling to redirect to.
     expect(jsmql("$$.aggregate((o) => { $group({ _id: o.s }); });")).toEqual([{ $group: { _id: "$s" } }]);
     expect(jsmql("$$ = $$.aggregate((o) => { $match(o.a === 1); $limit(3); });")).toEqual([
-      { $match: { a: { $eq: 1, $not: { $type: "array" } } } },
+      { $match: { a: 1 } },
       { $limit: 3 },
     ]);
     expect(jsmql("$ = { byStatus: $$.aggregate((o) => { $group({ _id: o.s, n: $sum(1) }); }) };")).toEqual([
       { $facet: { byStatus: [{ $group: { _id: "$s", n: { $sum: 1 } } }] } },
     ]);
     expect(jsmql("$$$.dest = $$.aggregate((o) => { $match(o.a === 1); });")).toEqual([
-      { $match: { a: { $eq: 1, $not: { $type: "array" } } } },
+      { $match: { a: 1 } },
       { $out: "dest" },
     ]);
   });
 
   it("a `$.<field>` read inside `$$.aggregate` names `.aggregate`, not `.map`", () => {
     expect(jsmql("$$$.dest = $$.aggregate(o => { $match($.x === 1); });")).toEqual([
-      { $match: { x: { $eq: 1, $not: { $type: "array" } } } },
+      { $match: { x: 1 } },
       { $out: "dest" },
     ]);
   });
@@ -2120,15 +2106,7 @@ describe("chained stage calls on $$$.<coll>", () => {
       { $lookup: { from: "orders", pipeline: [{ $match: { qty: { $gt: 5 } } }], as: "t" } },
     ]);
     expect(jsmql("$.t = $$$.orders.filter({ qty: { $gt: 5 } });")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          pipeline: [
-            { $match: { "qty.$gt": { $eq: 5, $not: { $type: "array" } }, qty: { $not: { $type: "array" } } } },
-          ],
-          as: "t",
-        },
-      },
+      { $lookup: { from: "orders", pipeline: [{ $match: { "qty.$gt": 5 } }], as: "t" } },
     ]);
   });
 

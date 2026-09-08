@@ -13,24 +13,20 @@ import { jsmql, ObjectId } from "../src/index.ts";
 describe("const folding — collapse to Filter", () => {
   it("ObjectId const folds and collapses to a Filter", () => {
     expect(jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId")).toEqual({
-      userId: { $eq: new ObjectId("507f1f77bcf86cd799439011"), $not: { $type: "array" } },
+      userId: new ObjectId("507f1f77bcf86cd799439011"),
     });
   });
 
   it("arithmetic const folds and collapses to a Filter", () => {
-    expect(jsmql("const msInDay = 24*60*60*1000; $.elapsedMs > msInDay")).toEqual({
-      elapsedMs: { $gt: 86400000, $not: { $type: "array" } },
-    });
+    expect(jsmql("const msInDay = 24*60*60*1000; $.elapsedMs > msInDay")).toEqual({ elapsedMs: { $gt: 86400000 } });
   });
 
   it("exponentiation folds", () => {
-    expect(jsmql("const limit = 2**32; $.n < limit")).toEqual({ n: { $lt: 4294967296, $not: { $type: "array" } } });
+    expect(jsmql("const limit = 2**32; $.n < limit")).toEqual({ n: { $lt: 4294967296 } });
   });
 
   it("string const folds", () => {
-    expect(jsmql('const status = "active"; $.status === status')).toEqual({
-      status: { $eq: "active", $not: { $type: "array" } },
-    });
+    expect(jsmql('const status = "active"; $.status === status')).toEqual({ status: "active" });
   });
 
   it("new Date(literal) folds to a BSON Date", () => {
@@ -40,14 +36,12 @@ describe("const folding — collapse to Filter", () => {
   });
 
   it("a const chain folds (a const built from an earlier const)", () => {
-    expect(jsmql("const base = 10; const doubled = base * 2; $.n < doubled")).toEqual({
-      n: { $lt: 20, $not: { $type: "array" } },
-    });
+    expect(jsmql("const base = 10; const doubled = base * 2; $.n < doubled")).toEqual({ n: { $lt: 20 } });
   });
 
   it("array literal const folds (membership → $expr $in)", () => {
     expect(jsmql('const bad = ["cancelled", "rejected"]; $.status in bad')).toEqual({
-      status: { $in: ["cancelled", "rejected"], $not: { $type: "array" } },
+      status: { $in: ["cancelled", "rejected"] },
     });
   });
 
@@ -59,7 +53,7 @@ describe("const folding — collapse to Filter", () => {
 
   it("string template with string interpolation folds", () => {
     expect(jsmql("const region = `us-east`; const key = `region:${region}`; $.key === key")).toEqual({
-      key: { $eq: "region:us-east", $not: { $type: "array" } },
+      key: "region:us-east",
     });
   });
 
@@ -67,19 +61,15 @@ describe("const folding — collapse to Filter", () => {
     // Folding evaluates the const's RHS; a `.length`/index there collapses to a
     // literal. (In a query expression like `$.count === items.length`, `items`
     // inlines but `.length` stays `$size` — the server computes it.)
-    expect(jsmql("const n = [10, 20, 30].length; $.count === n")).toEqual({
-      count: { $eq: 3, $not: { $type: "array" } },
-    });
-    expect(jsmql("const first = [10, 20, 30][0]; $.first === first")).toEqual({
-      first: { $eq: 10, $not: { $type: "array" } },
-    });
+    expect(jsmql("const n = [10, 20, 30].length; $.count === n")).toEqual({ count: 3 });
+    expect(jsmql("const first = [10, 20, 30][0]; $.first === first")).toEqual({ first: 10 });
   });
 });
 
 describe("const folding — pipeline interaction", () => {
   it("a folded const in a multi-stage pipeline emits no $set / $unset", () => {
     expect(jsmql("const minAge = 18; $match($.age > minAge); $sort({ age: -1 })")).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $match: { age: { $gt: 18 } } },
       { $sort: { age: -1 } },
     ]);
   });
@@ -87,7 +77,7 @@ describe("const folding — pipeline interaction", () => {
   it("mixed fold + runtime binding stays a Pipeline", () => {
     expect(jsmql("const x = 5; const t = new Date(); $match($.a === x && $.b >= t)")).toEqual([
       { $set: { "__jsmql.var.t": { $toDate: "$$NOW" } } },
-      { $match: { a: { $eq: 5, $not: { $type: "array" } }, $expr: { $gte: ["$b", "$__jsmql.var.t"] } } },
+      { $match: { a: 5, $expr: { $gte: ["$b", "$__jsmql.var.t"] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -169,8 +159,8 @@ describe("const folding — parameterised (jsmql.compile) per-call folding", () 
       const cutoff = max * 2;
       $match($.n < cutoff);
     });
-    expect(q({ max: 10 })).toEqual([{ $match: { n: { $lt: 20, $not: { $type: "array" } } } }]);
-    expect(q({ max: 50 })).toEqual([{ $match: { n: { $lt: 100, $not: { $type: "array" } } } }]);
+    expect(q({ max: 10 })).toEqual([{ $match: { n: { $lt: 20 } } }]);
+    expect(q({ max: 50 })).toEqual([{ $match: { n: { $lt: 100 } } }]);
   });
 });
 
@@ -178,46 +168,34 @@ describe("const folding — native method calls", () => {
   it("array .map with an arrow callback folds (example 5)", () => {
     expect(
       jsmql('const bad = ["cancelled", "rejected", "returned"].map(s => s.toUpperCase()); $.status in bad'),
-    ).toEqual({ status: { $in: ["CANCELLED", "REJECTED", "RETURNED"], $not: { $type: "array" } } });
+    ).toEqual({ status: { $in: ["CANCELLED", "REJECTED", "RETURNED"] } });
   });
 
   it("array .filter with an arrow callback folds", () => {
     expect(jsmql("const evens = [1, 2, 3, 4, 5, 6].filter(n => n % 2 === 0); $.k in evens")).toEqual({
-      k: { $in: [2, 4, 6], $not: { $type: "array" } },
+      k: { $in: [2, 4, 6] },
     });
   });
 
   it("array .reduce folds to a scalar", () => {
-    expect(jsmql("const total = [1, 2, 3, 4].reduce((a, b) => a + b, 0); $.n === total")).toEqual({
-      n: { $eq: 10, $not: { $type: "array" } },
-    });
+    expect(jsmql("const total = [1, 2, 3, 4].reduce((a, b) => a + b, 0); $.n === total")).toEqual({ n: 10 });
   });
 
   it("nested method chain folds (map → filter)", () => {
     expect(jsmql("const xs = [1, 2, 3, 4].map(x => x * 10).filter(x => x > 15); $.v in xs")).toEqual({
-      v: { $in: [20, 30, 40], $not: { $type: "array" } },
+      v: { $in: [20, 30, 40] },
     });
   });
 
   it("string methods fold (ASCII case, split)", () => {
-    expect(jsmql('const up = "active".toUpperCase(); $.s === up')).toEqual({
-      s: { $eq: "ACTIVE", $not: { $type: "array" } },
-    });
-    expect(jsmql('const parts = "a,b,c".split(","); $.x in parts')).toEqual({
-      x: { $in: ["a", "b", "c"], $not: { $type: "array" } },
-    });
+    expect(jsmql('const up = "active".toUpperCase(); $.s === up')).toEqual({ s: "ACTIVE" });
+    expect(jsmql('const parts = "a,b,c".split(","); $.x in parts')).toEqual({ x: { $in: ["a", "b", "c"] } });
   });
 
   it("array .slice folds (const receiver + const args) with JS start/end semantics", () => {
-    expect(jsmql("const recent = [1, 2, 3, 4, 5].slice(-3); $.k in recent")).toEqual({
-      k: { $in: [3, 4, 5], $not: { $type: "array" } },
-    });
-    expect(jsmql("const page = [1, 2, 3, 4, 5, 6].slice(1, 3); $.k in page")).toEqual({
-      k: { $in: [2, 3], $not: { $type: "array" } },
-    });
-    expect(jsmql("const empty = [1, 2, 3].slice(2, 1); $.k in empty")).toEqual({
-      k: { $in: [], $not: { $type: "array" } },
-    });
+    expect(jsmql("const recent = [1, 2, 3, 4, 5].slice(-3); $.k in recent")).toEqual({ k: { $in: [3, 4, 5] } });
+    expect(jsmql("const page = [1, 2, 3, 4, 5, 6].slice(1, 3); $.k in page")).toEqual({ k: { $in: [2, 3] } });
+    expect(jsmql("const empty = [1, 2, 3].slice(2, 1); $.k in empty")).toEqual({ k: { $in: [] } });
   });
 
   it("array .slice with a runtime index does NOT fold — falls through to the $slice lowering", () => {
@@ -246,31 +224,19 @@ describe("const folding — lodash string methods", () => {
       jsmql(
         'let webhookMessage = "time elapsed"; let webhookType = webhookMessage.snakeCase(); $.type === webhookType',
       ),
-    ).toEqual({ type: { $eq: "time_elapsed", $not: { $type: "array" } } });
+    ).toEqual({ type: "time_elapsed" });
   });
 
   it("camelCase / kebabCase / startCase / capitalize fold", () => {
-    expect(jsmql('const k = "order_total".camelCase(); $.f === k')).toEqual({
-      f: { $eq: "orderTotal", $not: { $type: "array" } },
-    });
-    expect(jsmql('const k = "orderTotal".kebabCase(); $.f === k')).toEqual({
-      f: { $eq: "order-total", $not: { $type: "array" } },
-    });
-    expect(jsmql('const k = "hello world".startCase(); $.f === k')).toEqual({
-      f: { $eq: "Hello World", $not: { $type: "array" } },
-    });
-    expect(jsmql('const k = "hELLO".capitalize(); $.f === k')).toEqual({
-      f: { $eq: "Hello", $not: { $type: "array" } },
-    });
+    expect(jsmql('const k = "order_total".camelCase(); $.f === k')).toEqual({ f: "orderTotal" });
+    expect(jsmql('const k = "orderTotal".kebabCase(); $.f === k')).toEqual({ f: "order-total" });
+    expect(jsmql('const k = "hello world".startCase(); $.f === k')).toEqual({ f: "Hello World" });
+    expect(jsmql('const k = "hELLO".capitalize(); $.f === k')).toEqual({ f: "Hello" });
   });
 
   it(".escape() and .truncate() fold", () => {
-    expect(jsmql("const k = '<a href=\"x\">'.escape(); $.f === k")).toEqual({
-      f: { $eq: "&lt;a href=&quot;x&quot;&gt;", $not: { $type: "array" } },
-    });
-    expect(jsmql('const k = "the quick brown fox".truncate({ length: 12 }); $.f === k')).toEqual({
-      f: { $eq: "the quick...", $not: { $type: "array" } },
-    });
+    expect(jsmql("const k = '<a href=\"x\">'.escape(); $.f === k")).toEqual({ f: "&lt;a href=&quot;x&quot;&gt;" });
+    expect(jsmql('const k = "the quick brown fox".truncate({ length: 12 }); $.f === k')).toEqual({ f: "the quick..." });
   });
 
   it(".words() folds to an array", () => {
@@ -280,9 +246,7 @@ describe("const folding — lodash string methods", () => {
       $expr: { $eq: ["$tags", ["foo", "Bar", "baz", "9"]] },
     });
     // the index is part of the const RHS, so it folds too
-    expect(jsmql('const first = "fooBar-baz 9".words()[0]; $.f === first')).toEqual({
-      f: { $eq: "foo", $not: { $type: "array" } },
-    });
+    expect(jsmql('const first = "fooBar-baz 9".words()[0]; $.f === first')).toEqual({ f: "foo" });
   });
 });
 
@@ -322,9 +286,6 @@ describe("const folding — inside lambda expr-blocks", () => {
 
 describe("const folding — output stability", () => {
   it("a pipeline with no foldable consts is byte-identical to before", () => {
-    expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([
-      { $match: { x: { $gt: 0, $not: { $type: "array" } } } },
-      { $sort: { x: 1 } },
-    ]);
+    expect(jsmql("$match($.x > 0); $sort({ x: 1 })")).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
   });
 });

@@ -521,10 +521,7 @@ describe("escape-hatch operators (single-arg, expression-shaped)", () => {
     // rejects it because that entry point cannot produce a $match condition.
     expect(jsmql("$sampleRate(0.1)")).toEqual({ $sampleRate: 0.1 });
     expect(jsmql("$match($sampleRate(0.1));")).toEqual([{ $match: { $sampleRate: 0.1 } }]);
-    expect(jsmql("$.age > 18 && $sampleRate(0.1)")).toEqual({
-      age: { $gt: 18, $not: { $type: "array" } },
-      $sampleRate: 0.1,
-    });
+    expect(jsmql("$.age > 18 && $sampleRate(0.1)")).toEqual({ age: { $gt: 18 }, $sampleRate: 0.1 });
     expect(() => jsmql.expr("$sampleRate(0.1)")).toThrow(/is a query operator/);
   });
 });
@@ -774,10 +771,7 @@ describe("jsmql template-tag form", () => {
         method: string;
         createdAt: { $gte: Date };
       };
-      expect(out).toEqual({
-        method: { $eq: "postalDelivery", $not: { $type: "array" } },
-        createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-      });
+      expect(out).toEqual({ method: "postalDelivery", createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } });
       expect(out.createdAt.$gte).toBeInstanceOf(Date);
       expect(out.createdAt.$gte.getTime()).toBe(1767225600000);
     });
@@ -791,27 +785,25 @@ describe("jsmql template-tag form", () => {
     it("Uint8Array interpolation passes through unchanged", () => {
       const buf = new Uint8Array([1, 2, 3]);
       const out = jsmql`$.payload === ${buf}` as { payload: Uint8Array };
-      expect(out.payload).toEqual({ $eq: new Uint8Array([1, 2, 3]), $not: { $type: "array" } });
+      expect(out.payload).toEqual(new Uint8Array([1, 2, 3]));
     });
 
     it("ObjectId duck-typed (legacy _bsontype: 'ObjectID') passes through unchanged", () => {
       const oid = { _bsontype: "ObjectID", id: "abc" };
       const out = jsmql`$._id === ${oid}` as { _id: typeof oid };
-      expect(out._id).toEqual({ $eq: { _bsontype: "ObjectID", id: "abc" }, $not: { $type: "array" } });
+      expect(out._id).toEqual({ _bsontype: "ObjectID", id: "abc" });
     });
 
     it("ObjectId duck-typed (newer _bsontype: 'ObjectId') passes through unchanged", () => {
       const oid = { _bsontype: "ObjectId", id: "xyz" };
       const out = jsmql`$._id === ${oid}` as { _id: typeof oid };
-      expect(out._id).toEqual({ $eq: { _bsontype: "ObjectId", id: "xyz" }, $not: { $type: "array" } });
+      expect(out._id).toEqual({ _bsontype: "ObjectId", id: "xyz" });
     });
 
     it("Date interpolation works inside an explicit $match pipeline stage", () => {
       const cutoff = new Date("2026-01-01");
       const out = jsmql`$match($.createdAt >= ${cutoff});` as Array<{ $match: { createdAt: { $gte: Date } } }>;
-      expect(out).toEqual([
-        { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
-      ]);
+      expect(out).toEqual([{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } }]);
       expect(out[0].$match.createdAt.$gte).toBeInstanceOf(Date);
     });
 
@@ -832,7 +824,7 @@ describe("jsmql template-tag form", () => {
       const cutoff = new Date("2026-01-01");
       const tier = "gold";
       const out = jsmql`$.tier === ${tier} && $.createdAt >= ${cutoff}` as { tier: string; createdAt: { $gte: Date } };
-      expect(out.tier).toEqual({ $eq: "gold", $not: { $type: "array" } });
+      expect(out.tier).toEqual("gold");
       expect(out.createdAt.$gte).toEqual(new Date("2026-01-01T00:00:00.000Z"));
     });
 
@@ -915,9 +907,9 @@ describe("ObjectId literal (in-source constant)", () => {
 
   it('ObjectId("hex") in a filter lowers to a live BSON ObjectId in field-equality position', () => {
     const out = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
-    expect((out._id as unknown as { $eq: ObjectId }).$eq).toBeInstanceOf(ObjectId);
-    expect((out._id as unknown as { $eq: ObjectId }).$eq._bsontype).toBe("ObjectId");
-    expect((out._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("698a76556c10b90d8bd0497e");
+    expect(out._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
+    expect((out._id as unknown as ObjectId)._bsontype).toBe("ObjectId");
+    expect((out._id as unknown as ObjectId).toHexString()).toBe("698a76556c10b90d8bd0497e");
     // index-friendly: a query-doc value, not an $expr wrap
     expect("$expr" in out).toBe(false);
   });
@@ -925,8 +917,8 @@ describe("ObjectId literal (in-source constant)", () => {
   it('new ObjectId("hex") is accepted identically to the bare-call form', () => {
     const bare = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
     const knew = jsmql(`$._id === new ObjectId("${HEX}")`) as { _id: ObjectId };
-    expect((knew._id as unknown as { $eq: ObjectId }).$eq).toBeInstanceOf(ObjectId);
-    expect((knew._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("698a76556c10b90d8bd0497e");
+    expect(knew._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
+    expect((knew._id as unknown as ObjectId).toHexString()).toBe("698a76556c10b90d8bd0497e");
   });
 
   it("an array of ObjectId literals lowers to $in with live instances", () => {
@@ -949,14 +941,14 @@ describe("ObjectId literal (in-source constant)", () => {
 
   it("ObjectId literal inside an explicit $match pipeline stage", () => {
     const out = jsmql(`$match($._id === ObjectId("${HEX}"));`) as Array<{ $match: { _id: ObjectId } }>;
-    expect((out[0].$match._id as unknown as { $eq: ObjectId }).$eq).toBeInstanceOf(ObjectId);
-    expect((out[0].$match._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("698a76556c10b90d8bd0497e");
+    expect(out[0].$match._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
+    expect((out[0].$match._id as unknown as ObjectId).toHexString()).toBe("698a76556c10b90d8bd0497e");
   });
 
   it("emits a real BSON value (12 serialisable bytes), not a string — the property that makes the server match it", () => {
     const out = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
     const buf = new Uint8Array(12);
-    expect((out._id as unknown as { $eq: ObjectId }).$eq.serializeInto(buf, 0)).toBe(12);
+    expect((out._id as unknown as ObjectId).serializeInto(buf, 0)).toBe(12);
     expect(Buffer.from(buf).toString("hex")).toBe(HEX);
   });
 
@@ -1002,20 +994,20 @@ describe("ObjectId via 0x hex literal", () => {
 
   it("0x + exactly 24 hex digits lowers to a live ObjectId (type 0x, paste an _id)", () => {
     const out = jsmql(`$._id === 0x${HEX}`) as { _id: ObjectId };
-    expect((out._id as unknown as { $eq: ObjectId }).$eq).toBeInstanceOf(ObjectId);
-    expect((out._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("507f1f77bcf86cd799439011");
+    expect(out._id as unknown as ObjectId).toBeInstanceOf(ObjectId);
+    expect((out._id as unknown as ObjectId).toHexString()).toBe("507f1f77bcf86cd799439011");
     expect("$expr" in out).toBe(false);
   });
 
   it('identical to the ObjectId("…") form', () => {
     const viaHex = jsmql(`$._id === 0x${HEX}`) as { _id: ObjectId };
     const viaCall = jsmql(`$._id === ObjectId("${HEX}")`) as { _id: ObjectId };
-    expect((viaHex._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("507f1f77bcf86cd799439011");
+    expect((viaHex._id as unknown as ObjectId).toHexString()).toBe("507f1f77bcf86cd799439011");
   });
 
   it("numeric separators are allowed inside the hex literal", () => {
     const out = jsmql(`$._id === 0x507f_1f77_bcf8_6cd7_9943_9011`) as { _id: ObjectId };
-    expect((out._id as unknown as { $eq: ObjectId }).$eq.toHexString()).toBe("507f1f77bcf86cd799439011");
+    expect((out._id as unknown as ObjectId).toHexString()).toBe("507f1f77bcf86cd799439011");
   });
 
   it("an array of 0x literals lowers to $in", () => {
@@ -2365,8 +2357,8 @@ describe("a registry cell says what the compiler actually emits", () => {
 
   it("the query cell of `%` keeps $mod's [divisor, remainder] order", () => {
     // The single most swappable pair in the surface — 5 is the divisor, 0 the remainder.
-    expect(jsmql("$.a % 5 === 0")).toEqual({ a: { $mod: [5, 0], $not: { $type: "array" } } });
-    expect(jsmql("$.a % 5 !== 0")).toEqual({ $or: [{ a: { $not: { $mod: [5, 0] } } }, { a: { $type: "array" } }] });
+    expect(jsmql("$.a % 5 === 0")).toEqual({ a: { $mod: [5, 0] } });
+    expect(jsmql("$.a % 5 !== 0")).toEqual({ a: { $not: { $mod: [5, 0] } } });
   });
 });
 
@@ -2446,7 +2438,7 @@ describe("typeof: the Query and Expr targets agree", () => {
   it("expands the query-only umbrella alias for the expression target", () => {
     // `$type` accepts "number" as a QUERY alias but never RETURNS it, so the expression form
     // has to name the concrete types instead of comparing against the umbrella.
-    expect(jsmql('typeof $.a === "number"')).toEqual({ a: { $type: "number", $not: { $type: "array" } } });
+    expect(jsmql('typeof $.a === "number"')).toEqual({ a: { $type: "number" } });
     expect(jsmql.expr('typeof $.a === "number"')).toEqual({
       $in: [{ $type: "$a" }, ["double", "int", "long", "decimal"]],
     });
@@ -8113,7 +8105,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     // (e.g. inside `$addFields`) still gets the wrap — covered in the
     // pipeline-integration tests below.
     const q = jsmql.compile(({ name }: { name: string }, { $ }) => $.x === name);
-    expect(q({ name: "$dangerous" })).toEqual({ x: { $eq: "$dangerous", $not: { $type: "array" } } });
+    expect(q({ name: "$dangerous" })).toEqual({ x: "$dangerous" });
   });
 
   it("compile-form binding deeply wraps $-strings inside arrays and objects", () => {
@@ -8121,9 +8113,7 @@ describe("$-prefixed string values: source passes through, injected wraps (HR1)"
     // which re-enters aggregation codegen — and that path still applies the
     // auto-$literal wrap to $-prefixed strings inside the array binding.
     const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
-    expect(q({ allowed: ["$a", "$b", "safe"] })).toEqual({
-      grade: { $in: ["$a", "$b", "safe"], $not: { $type: "array" } },
-    });
+    expect(q({ allowed: ["$a", "$b", "safe"] })).toEqual({ grade: { $in: ["$a", "$b", "safe"] } });
   });
 });
 
@@ -8275,19 +8265,19 @@ describe("jsmql.compile()", () => {
   describe("basic binding", () => {
     it("scalar binding inlines as a literal", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age > minAge);
-      expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21, $not: { $type: "array" } } });
+      expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
     });
 
     it("string binding inlines as a literal string", () => {
       const q = jsmql.compile(({ region }: { region: string }, { $ }) => $.region === region);
-      expect(q({ region: "AU" })).toEqual({ region: { $eq: "AU", $not: { $type: "array" } } });
+      expect(q({ region: "AU" })).toEqual({ region: "AU" });
     });
 
     it("array binding inlines into $in", () => {
       // `in` is not query-translatable today, so the residual goes through
       // $expr — the binding still inlines into `$in`'s second slot.
       const q = jsmql.compile(({ allowed }: { allowed: string[] }, { $ }) => $.grade in allowed);
-      expect(q({ allowed: ["A", "B"] })).toEqual({ grade: { $in: ["A", "B"], $not: { $type: "array" } } });
+      expect(q({ allowed: ["A", "B"] })).toEqual({ grade: { $in: ["A", "B"] } });
     });
 
     it("plain-object binding inlines as a nested object literal value", () => {
@@ -8301,13 +8291,13 @@ describe("jsmql.compile()", () => {
 
     it("the same compiled query is reusable with different params", () => {
       const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.age > n);
-      expect(q({ n: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
-      expect(q({ n: 65 })).toEqual({ age: { $gt: 65, $not: { $type: "array" } } });
+      expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
+      expect(q({ n: 65 })).toEqual({ age: { $gt: 65 } });
     });
 
     it("aliased destructure key binds the alias name", () => {
       const q = jsmql.compile(({ minAge: floor }: { minAge: number }, { $ }) => $.age >= floor);
-      expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18, $not: { $type: "array" } } });
+      expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18 } });
     });
   });
 
@@ -8319,7 +8309,7 @@ describe("jsmql.compile()", () => {
 
     it("(params, { $ }) two-slot form", () => {
       const q = jsmql.compile(({ n }: { n: number }, { $ }) => $.age > n);
-      expect(q({ n: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+      expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
     });
 
     it("(params, { $, ...ops }) toolbox form — ops hint is types-only", () => {
@@ -8328,7 +8318,7 @@ describe("jsmql.compile()", () => {
           $match($.score >= minScore),
         ],
       );
-      expect(q({ minScore: 75 })).toEqual([{ $match: { score: { $gte: 75, $not: { $type: "array" } } } }]);
+      expect(q({ minScore: 75 })).toEqual([{ $match: { score: { $gte: 75 } } }]);
     });
 
     it("the one-slot `({ $ }) => …` toolbox form works via jsmql.expr()", () => {
@@ -8357,10 +8347,7 @@ describe("jsmql.compile()", () => {
 
     it("binding visible alongside other refs translates to a query-doc conjunction", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age >= minAge && $.country === "US");
-      expect(q({ minAge: 21 })).toEqual({
-        age: { $gte: 21, $not: { $type: "array" } },
-        country: { $eq: "US", $not: { $type: "array" } },
-      });
+      expect(q({ minAge: 21 })).toEqual({ age: { $gte: 21 }, country: "US" });
     });
   });
 
@@ -8371,7 +8358,7 @@ describe("jsmql.compile()", () => {
           $match($.age >= minAge),
         ],
       );
-      expect(q({ minAge: 21 })).toEqual([{ $match: { age: { $gte: 21, $not: { $type: "array" } } } }]);
+      expect(q({ minAge: 21 })).toEqual([{ $match: { age: { $gte: 21 } } }]);
     });
 
     it("string binding equals a field becomes a query-language $match", () => {
@@ -8380,7 +8367,7 @@ describe("jsmql.compile()", () => {
           $match($.region === region),
         ],
       );
-      expect(q({ region: "AU" })).toEqual([{ $match: { region: { $eq: "AU", $not: { $type: "array" } } } }]);
+      expect(q({ region: "AU" })).toEqual([{ $match: { region: "AU" } }]);
     });
 
     it("Date binding against a field becomes a query-language $match", () => {
@@ -8388,9 +8375,7 @@ describe("jsmql.compile()", () => {
       // them. Without this, a Date parameter would fall through to $expr.
       const q = jsmql.compile(({ cutoff }: { cutoff: Date }, { $ }) => $.createdAt >= cutoff);
       const cutoff = new Date("2026-01-01");
-      expect(q({ cutoff })).toEqual({
-        createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
-      });
+      expect(q({ cutoff })).toEqual({ createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } });
     });
 
     it("RegExp binding inlines as a query-doc regex match", () => {
@@ -8418,7 +8403,7 @@ describe("jsmql.compile()", () => {
         ) => [$match($.score >= min), $project({ name: $.name, score: $.score }), $limit(limit)],
       );
       expect(q({ min: 75, limit: 10 })).toEqual([
-        { $match: { score: { $gte: 75, $not: { $type: "array" } } } },
+        { $match: { score: { $gte: 75 } } },
         { $project: { name: "$name", score: "$score" } },
         { $limit: 10 },
       ]);
@@ -8586,33 +8571,30 @@ describe("jsmql.compile()", () => {
   describe("extra params keys are allowed silently", () => {
     it("extra keys not referenced in the body are ignored", () => {
       const q = jsmql.compile(({ a }: { a: number }, { $ }) => $.x > a);
-      expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ x: { $gt: 1, $not: { $type: "array" } } });
+      expect(q({ a: 1, unused: 99 } as unknown as { a: number })).toEqual({ x: { $gt: 1 } });
     });
   });
 
   describe("string input", () => {
     it("string containing an arrow compiles like the function form", () => {
       const q = jsmql.compile("({ minAge }, { $ }) => $.age > minAge");
-      expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21, $not: { $type: "array" } } });
+      expect(q({ minAge: 21 })).toEqual({ age: { $gt: 21 } });
     });
 
     it("aliased destructure works in the string form too", () => {
       const q = jsmql.compile("({ minAge: floor }, { $ }) => $.age >= floor");
-      expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18, $not: { $type: "array" } } });
+      expect(q({ minAge: 18 })).toEqual({ age: { $gte: 18 } });
     });
 
     it("string form returns a reusable closure", () => {
       const q = jsmql.compile("({ n }, { $ }) => $.age > n");
-      expect(q({ n: 18 })).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
-      expect(q({ n: 65 })).toEqual({ age: { $gt: 65, $not: { $type: "array" } } });
+      expect(q({ n: 18 })).toEqual({ age: { $gt: 18 } });
+      expect(q({ n: 65 })).toEqual({ age: { $gt: 65 } });
     });
 
     it("string input drives a pipeline end-to-end", () => {
       const q = jsmql.compile("({ id, count }, { $, $match, $limit }) => [$match($._id === id), $limit(count)]");
-      expect(q({ id: 42, count: 10 })).toEqual([
-        { $match: { _id: { $eq: 42, $not: { $type: "array" } } } },
-        { $limit: 10 },
-      ]);
+      expect(q({ id: 42, count: 10 })).toEqual([{ $match: { _id: 42 } }, { $limit: 10 }]);
     });
 
     it("missing param at call time names the binding (same path as fn form)", () => {
@@ -8642,25 +8624,19 @@ describe("jsmql.compile()", () => {
 describe("Filter dispatch (no semicolons)", () => {
   describe("pure query-document predicates", () => {
     it("field-vs-literal `>` translates to `{ field: { $gt: lit } }`", () => {
-      expect(jsmql("$.age > 18")).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+      expect(jsmql("$.age > 18")).toEqual({ age: { $gt: 18 } });
     });
 
     it("`===` against a string literal emits a bare-value equality", () => {
-      expect(jsmql("$.status === 'shipped'")).toEqual({ status: { $eq: "shipped", $not: { $type: "array" } } });
+      expect(jsmql("$.status === 'shipped'")).toEqual({ status: "shipped" });
     });
 
     it("`&&` of two index-friendly conjuncts merges into one query document", () => {
-      expect(jsmql("$.status === 'active' && $.age >= 18")).toEqual({
-        status: { $eq: "active", $not: { $type: "array" } },
-        age: { $gte: 18, $not: { $type: "array" } },
-      });
+      expect(jsmql("$.status === 'active' && $.age >= 18")).toEqual({ status: "active", age: { $gte: 18 } });
     });
 
     it("nested field paths preserve their dotted key", () => {
-      expect(jsmql("$.address.country === 'AU'")).toEqual({
-        "address.country": { $eq: "AU", $not: { $type: "array" } },
-        address: { $not: { $type: "array" } },
-      });
+      expect(jsmql("$.address.country === 'AU'")).toEqual({ "address.country": "AU" });
     });
   });
 
@@ -8706,7 +8682,7 @@ describe("Filter dispatch (no semicolons)", () => {
     // usable with `db.coll.aggregate(...)`, with no `;` discipline required.
 
     it("`$match(...)` without `;` auto-wraps as a Pipeline", () => {
-      expect(jsmql("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+      expect(jsmql("$match($.age > 18)")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
     it("any registered stage call auto-wraps the same way", () => {
@@ -8718,11 +8694,11 @@ describe("Filter dispatch (no semicolons)", () => {
     it("the stage-object form `{ $match: ... }` auto-wraps the same way", () => {
       // The Compass copy-paste form (`{ $match: ... }`) is the other shape we
       // detect as Pipeline intent.
-      expect(jsmql("{ $match: $.age > 18 }")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+      expect(jsmql("{ $match: $.age > 18 }")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
     it("adding the `;` produces an identical Pipeline output", () => {
-      expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+      expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18 } } }]);
     });
 
     it("non-stage operator calls still go through Filter dispatch unaffected", () => {
@@ -8744,7 +8720,7 @@ describe("Filter dispatch (no semicolons)", () => {
   describe("partial translation: indexable + $expr in the same document", () => {
     it("translatable + untranslatable `&&` produces both shapes side-by-side", () => {
       expect(jsmql("$.status === 'active' && $.name.trim() === 'alice'")).toEqual({
-        status: { $eq: "active", $not: { $type: "array" } },
+        status: "active",
         $expr: { $eq: [{ $trim: { input: "$name" } }, "alice"] },
       });
     });
@@ -8753,14 +8729,14 @@ describe("Filter dispatch (no semicolons)", () => {
   describe("compile-form parameter substitution", () => {
     it("a scalar binding inlines into the query-doc literal slot", () => {
       const q = jsmql.compile(({ minAge }: { minAge: number }, { $ }) => $.age >= minAge);
-      expect(q({ minAge: 21 })).toEqual({ age: { $gte: 21, $not: { $type: "array" } } });
+      expect(q({ minAge: 21 })).toEqual({ age: { $gte: 21 } });
     });
   });
 
   describe("template-tag interpolation", () => {
     it("interpolated values become query-doc literals", () => {
       const region = "AU";
-      expect(jsmql`$.region === ${region}`).toEqual({ region: { $eq: "AU", $not: { $type: "array" } } });
+      expect(jsmql`$.region === ${region}`).toEqual({ region: "AU" });
     });
   });
 });
@@ -8772,12 +8748,12 @@ describe("Filter dispatch (no semicolons)", () => {
 
 describe("Pipeline dispatch (semicolons present)", () => {
   it("a single trailing `;` produces a one-element stage array", () => {
-    expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(jsmql("$match($.age > 18);")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("`;`-separated stages compile to a multi-stage pipeline", () => {
     expect(jsmql("$match($.age > 18); $sort({ age: 1 })")).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" } } } },
+      { $match: { age: { $gt: 18 } } },
       { $sort: { age: 1 } },
     ]);
   });
@@ -8805,7 +8781,7 @@ describe("Pipeline dispatch (semicolons present)", () => {
 
 describe("function-form dispatch parity", () => {
   it("expression-body arrow lowers as a Filter", () => {
-    expect(jsmql(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(jsmql(({ $ }) => $.age > 18)).toEqual({ age: { $gt: 18 } });
   });
 
   it("block-body arrow lowers as a Pipeline", () => {
@@ -8813,7 +8789,7 @@ describe("function-form dispatch parity", () => {
       $match($.age > 18);
       $sort({ age: 1 });
     });
-    expect(result).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }, { $sort: { age: 1 } }]);
+    expect(result).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: 1 } }]);
   });
 });
 
@@ -8862,7 +8838,7 @@ describe("jsmql.expr()", () => {
     expect(() => jsmql.expr("$match($.a === 0)")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level '$match' stage call. Use jsmql.pipeline() — for a Filter, drop the `$match(...)` wrapper and pass its predicate.",
     );
-    expect(jsmql.pipeline("$match($.a === 0)")).toEqual([{ $match: { a: { $eq: 0, $not: { $type: "array" } } } }]);
+    expect(jsmql.pipeline("$match($.a === 0)")).toEqual([{ $match: { a: 0 } }]);
     expect(jsmql.expr("$.a === 0")).toEqual({ $eq: ["$a", 0] });
   });
 
@@ -9094,16 +9070,7 @@ describe("trailing commas (JS syntax)", () => {
       '$match($.amount > 100 && ($.currency === "USD" || $.currency === "EUR") && $.status === "active")',
     );
     expect(withComma).toEqual([
-      {
-        $match: {
-          amount: { $gt: 100, $not: { $type: "array" } },
-          $or: [
-            { currency: { $eq: "USD", $not: { $type: "array" } } },
-            { currency: { $eq: "EUR", $not: { $type: "array" } } },
-          ],
-          status: { $eq: "active", $not: { $type: "array" } },
-        },
-      },
+      { $match: { amount: { $gt: 100 }, $or: [{ currency: "USD" }, { currency: "EUR" }], status: "active" } },
     ]);
   });
 
@@ -9124,12 +9091,8 @@ describe("trailing commas (JS syntax)", () => {
     // String entry so the trailing commas survive the formatter: one inside the
     // params destructure (`{ min, }`) and one after the `{ $ }` toolbox slot
     // (`{ $ },`).
-    expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({
-      age: { $gt: 18, $not: { $type: "array" } },
-    });
-    expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({
-      age: { $gt: 18, $not: { $type: "array" } },
-    });
+    expect(jsmql.compile("({ min, }, { $ },) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
+    expect(jsmql.compile("({ min }, { $ }) => $.age > min")({ min: 18 })).toEqual({ age: { $gt: 18 } });
   });
 });
 

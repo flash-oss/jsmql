@@ -344,12 +344,7 @@ describe("server-rejection regressions — no invalid var names, $limit:0, or re
     expect(jsmql(`$$ = [];`)).toEqual([{ $match: { $expr: false } }]);
     expect(jsmql(`$$ = $$$.transactions.filter(t => t.client === 156);`)).toEqual([
       { $match: { $expr: false } },
-      {
-        $unionWith: {
-          coll: "transactions",
-          pipeline: [{ $match: { client: { $eq: 156, $not: { $type: "array" } } } }],
-        },
-      },
+      { $unionWith: { coll: "transactions", pipeline: [{ $match: { client: 156 } }] } },
     ]);
     // No pipeline should ever contain `$limit: 0`.
     for (const { mql } of REGRESSION_INPUTS) {

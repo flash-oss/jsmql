@@ -20,7 +20,7 @@ describe("$$.length — materialisation", () => {
 
   it("computes the count after a preceding $match (count at that point)", () => {
     expect(jsmql('$match($.status === "active"); $.n = $$.length')).toEqual([
-      { $match: { status: { $eq: "active", $not: { $type: "array" } } } },
+      { $match: { status: "active" } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { n: "$__jsmql.length" } },
       { $unset: "__jsmql" },
@@ -62,7 +62,7 @@ describe("$$.length — compute-once / reuse / recompute", () => {
     expect(jsmql("$.a = $$.length; $match($.a > 0); $.b = $$.length")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { a: "$__jsmql.length" } },
-      { $match: { a: { $gt: 0, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 0 } } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { b: "$__jsmql.length" } },
       { $unset: "__jsmql" },
@@ -120,7 +120,7 @@ describe("$$.length — call forms", () => {
 
   it("composes with assert() — the conditional-error use", () => {
     expect(jsmql('$match($.email === "x"); assert($$.length <= 1, "must be <= 1")')).toEqual([
-      { $match: { email: { $eq: "x", $not: { $type: "array" } } } },
+      { $match: { email: "x" } },
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       {
         $match: {

@@ -17,48 +17,40 @@ describe("compiler/emit/filter — comparisons", () => {
   // with `a: [1, 2]`, and JavaScript's `===` never does. A path of more than one
   // segment excludes an array at each prefix too, because MongoDB traverses it.
   it("lowers a field against a constant to the query language", () => {
-    expect(filter("$.a === 1")).toEqual({ a: { $eq: 1, $not: { $type: "array" } } });
-    expect(filter("$.a !== 1")).toEqual({ $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] });
-    expect(filter("1 === $.a")).toEqual({ a: { $eq: 1, $not: { $type: "array" } } });
-    expect(filter("$.a > 1")).toEqual({ a: { $gt: 1, $not: { $type: "array" } } });
-    expect(filter("1 < $.a")).toEqual({ a: { $gt: 1, $not: { $type: "array" } } });
-    expect(filter("$.a.b.c > 5")).toEqual({
-      "a.b.c": { $gt: 5, $not: { $type: "array" } },
-      a: { $not: { $type: "array" } },
-      "a.b": { $not: { $type: "array" } },
-    });
-    expect(filter('$.d > new Date("2024-01-01")')).toEqual({
-      d: { $gt: new Date("2024-01-01"), $not: { $type: "array" } },
-    });
-    expect(String((filter("$._id === 0x507f1f77bcf86cd799439011") as { _id: { $eq: unknown } })._id.$eq)).toBe(
+    expect(filter("$.a === 1")).toEqual({ a: 1 });
+    expect(filter("$.a !== 1")).toEqual({ a: { $ne: 1 } });
+    expect(filter("1 === $.a")).toEqual({ a: 1 });
+    expect(filter("$.a > 1")).toEqual({ a: { $gt: 1 } });
+    expect(filter("1 < $.a")).toEqual({ a: { $gt: 1 } });
+    expect(filter("$.a.b.c > 5")).toEqual({ "a.b.c": { $gt: 5 } });
+    expect(filter('$.d > new Date("2024-01-01")')).toEqual({ d: { $gt: new Date("2024-01-01") } });
+    expect(String((filter("$._id === 0x507f1f77bcf86cd799439011") as { _id: unknown })._id)).toBe(
       "507f1f77bcf86cd799439011",
     );
   });
 
   it("keeps the null, presence and type tests as the query language spells them", () => {
-    expect(filter("$.a == null")).toEqual({ a: { $eq: null, $not: { $type: "array" } } });
-    expect(filter("$.a != null")).toEqual({ $or: [{ a: { $ne: null } }, { a: { $type: "array" } }] });
-    expect(filter("$.a === null")).toEqual({ a: { $type: "null", $not: { $type: "array" } } });
-    expect(filter("$.a !== null")).toEqual({ $or: [{ a: { $not: { $type: "null" } } }, { a: { $type: "array" } }] });
+    expect(filter("$.a == null")).toEqual({ a: null });
+    expect(filter("$.a != null")).toEqual({ a: { $ne: null } });
+    expect(filter("$.a === null")).toEqual({ a: { $type: "null" } });
+    expect(filter("$.a !== null")).toEqual({ a: { $not: { $type: "null" } } });
     expect(filter("$.a === undefined")).toEqual({ a: { $exists: false } });
     // `typeof` speaks MongoDB's type names: "undefined" IS one, the deprecated BSON
     // type. Absence has its own spelling, `x === undefined`.
-    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $type: "undefined", $not: { $type: "array" } } });
+    expect(filter('typeof $.a === "undefined"')).toEqual({ a: { $type: "undefined" } });
     expect(filter("$.a !== undefined")).toEqual({ a: { $exists: true } });
-    expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string", $not: { $type: "array" } } });
-    expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool", $not: { $type: "array" } } });
+    expect(filter('typeof $.a === "string"')).toEqual({ a: { $type: "string" } });
+    expect(filter('typeof $.a === "bool"')).toEqual({ a: { $type: "bool" } });
     // A name MongoDB does not know is refused with the nearest one, never lowered
     // to a test that quietly matches nothing.
     expect(() => filter('typeof $.a === "boolean"')).toThrow(/not one\. Did you mean 'bool'\?/);
     expect(() => filter('typeof $.a === "function"')).toThrow(/MongoDB's type names/);
-    expect(filter('typeof $.a !== "number"')).toEqual({
-      $or: [{ a: { $not: { $type: "number" } } }, { a: { $type: "array" } }],
-    });
+    expect(filter('typeof $.a !== "number"')).toEqual({ a: { $not: { $type: "number" } } });
     // The `array` spelling asks whether the value IS an array, so it excludes none.
     expect(filter('typeof $.a === "array"')).toEqual({ a: { $type: "array" } });
     expect(filter('typeof $.a !== "array"')).toEqual({ a: { $not: { $type: "array" } } });
-    expect(filter("$.a % 2 === 0")).toEqual({ a: { $mod: [2, 0], $not: { $type: "array" } } });
-    expect(filter("$.a % 2 !== 0")).toEqual({ $or: [{ a: { $not: { $mod: [2, 0] } } }, { a: { $type: "array" } }] });
+    expect(filter("$.a % 2 === 0")).toEqual({ a: { $mod: [2, 0] } });
+    expect(filter("$.a % 2 !== 0")).toEqual({ a: { $not: { $mod: [2, 0] } } });
   });
 
   it("falls back to $expr where the query language has no form", () => {
@@ -67,7 +59,7 @@ describe("compiler/emit/filter — comparisons", () => {
     expect(filter("$abs($.a) === 2")).toEqual({ $expr: { $eq: [{ $abs: "$a" }, 2] } });
     expect(filter("$.a")).toEqual({ $expr: TRUTHY("$a") });
     // a constant list is the native `$in`, which the planner reads; a list that is not a constant falls back
-    expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2], $not: { $type: "array" } } });
+    expect(filter("$.a in [1, 2]")).toEqual({ a: { $in: [1, 2] } });
     expect(filter("$.a in $.list")).toEqual({ $expr: { $in: ["$a", "$list"] } });
     // `.length` is a LENGTH, which `$size` (arrays only) cannot say for a string
     expect(filter("$.arr.length > 2")).toMatchObject({ $expr: { $gt: [expect.anything(), 2] } });
@@ -76,57 +68,35 @@ describe("compiler/emit/filter — comparisons", () => {
 
 describe("compiler/emit/filter — && and ||", () => {
   it("merges conjuncts, colliding keys into one $and, residuals into one $expr", () => {
-    expect(filter("$.a > 1 && $.b <= 2")).toEqual({
-      a: { $gt: 1, $not: { $type: "array" } },
-      b: { $lte: 2, $not: { $type: "array" } },
-    });
+    expect(filter("$.a > 1 && $.b <= 2")).toEqual({ a: { $gt: 1 }, b: { $lte: 2 } });
     // Two operator documents on one field that agree wherever they overlap are ONE
     // document: the server reads every operator in it as a conjunction.
-    expect(filter("$.a >= 1 && $.a <= 9")).toEqual({ a: { $gte: 1, $not: { $type: "array" }, $lte: 9 } });
+    expect(filter("$.a >= 1 && $.a <= 9")).toEqual({ a: { $gte: 1, $lte: 9 } });
     // The same operator named twice stays in the `$and`.
-    expect(filter("$.a === 1 && $.a === 2 && $.b === 3")).toEqual({
-      $and: [{ a: { $eq: 1, $not: { $type: "array" } } }, { a: { $eq: 2, $not: { $type: "array" } } }],
-      b: { $eq: 3, $not: { $type: "array" } },
-    });
+    expect(filter("$.a === 1 && $.a === 2 && $.b === 3")).toEqual({ $and: [{ a: 1 }, { a: 2 }], b: 3 });
     expect(filter('$.status === "active" && $.a > $.b && $.c < $.d')).toEqual({
-      status: { $eq: "active", $not: { $type: "array" } },
+      status: "active",
       $expr: { $and: [{ $gt: ["$a", "$b"] }, { $lt: ["$c", "$d"] }] },
     });
-    expect(filter("$.x === 1 && ($.y === 2 || $.z === 3)")).toEqual({
-      x: { $eq: 1, $not: { $type: "array" } },
-      $or: [{ y: { $eq: 2, $not: { $type: "array" } } }, { z: { $eq: 3, $not: { $type: "array" } } }],
-    });
+    expect(filter("$.x === 1 && ($.y === 2 || $.z === 3)")).toEqual({ x: 1, $or: [{ y: 2 }, { z: 3 }] });
   });
 
   // `!p` is the complement of p's own clause. `$expr` orders across BSON types, so
   // `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]`, where JavaScript says true.
   it("complements a native clause under !, and keeps the truth road otherwise", () => {
-    expect(filter("!($.a > 1)")).toEqual({ $nor: [{ a: { $gt: 1, $not: { $type: "array" } } }] });
-    expect(filter("!($.a === 1 && $.b === 2)")).toEqual({
-      $nor: [{ a: { $eq: 1, $not: { $type: "array" } }, b: { $eq: 2, $not: { $type: "array" } } }],
-    });
+    expect(filter("!($.a > 1)")).toEqual({ $nor: [{ a: { $gt: 1 } }] });
+    expect(filter("!($.a === 1 && $.b === 2)")).toEqual({ $nor: [{ a: 1, b: 2 }] });
     // no native form inside: the truth road's own `$not` is already JavaScript's answer
     expect(filter("!$.a")).toEqual({ $expr: { $not: TRUTHY("$a") } });
     expect(filter("!($.a > $.b)")).toEqual({ $expr: { $not: { $gt: ["$a", "$b"] } } });
   });
 
   it("lowers || per branch — a leaf's meaning never depends on its sibling", () => {
-    expect(filter("$.a === 1 || $.b === 2")).toEqual({
-      $or: [{ a: { $eq: 1, $not: { $type: "array" } } }, { b: { $eq: 2, $not: { $type: "array" } } }],
-    });
+    expect(filter("$.a === 1 || $.b === 2")).toEqual({ $or: [{ a: 1 }, { b: 2 }] });
     expect(filter('$.tags === "red" || $.qty * $.price > 100')).toEqual({
-      $or: [
-        { tags: { $eq: "red", $not: { $type: "array" } } },
-        { $expr: { $gt: [{ $multiply: ["$qty", "$price"] }, 100] } },
-      ],
+      $or: [{ tags: "red" }, { $expr: { $gt: [{ $multiply: ["$qty", "$price"] }, 100] } }],
     });
-    expect(filter("$.a === 1 || $.b === 2 || $.c === 3")).toEqual({
-      $or: [
-        { a: { $eq: 1, $not: { $type: "array" } } },
-        { b: { $eq: 2, $not: { $type: "array" } } },
-        { c: { $eq: 3, $not: { $type: "array" } } },
-      ],
-    });
+    expect(filter("$.a === 1 || $.b === 2 || $.c === 3")).toEqual({ $or: [{ a: 1 }, { b: 2 }, { c: 3 }] });
   });
 
   // `.includes` reads two ways — containment in an array, substring in a string —
@@ -135,13 +105,13 @@ describe("compiler/emit/filter — && and ||", () => {
     expect(filter('$.tags.includes("a") && $.tags.includes("b")')).toEqual({
       $or: [
         { tags: { $all: ["a", "b"], $type: "array" } },
-        { $and: [{ tags: { $regex: "a", $not: { $type: "array" } } }, { tags: { $regex: "b" } }] },
+        { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] },
       ],
     });
     expect(filter('$.tags.includes("a") && $.other.includes("b")')).toEqual({
       $and: [
-        { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a", $not: { $type: "array" } } }] },
-        { $or: [{ other: { $eq: "b", $type: "array" } }, { other: { $regex: "b", $not: { $type: "array" } } }] },
+        { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }] },
+        { $or: [{ other: { $eq: "b", $type: "array" } }, { other: { $regex: "b" } }] },
       ],
     });
   });
@@ -177,20 +147,14 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
 
   it("negates one raw clause with $not, and a JavaScript spelling through the expression form", () => {
     expect(filter("$not($gt($.a, 1))")).toEqual({ a: { $not: { $gt: 1 } } });
-    expect(filter("$not($.a > 1)")).toEqual({ $expr: { $not: { $gt: ["$a", 1] } } });
+    expect(filter("$not($.a > 1)")).toEqual({ a: { $not: { $gt: 1 } } });
   });
 
   it("lists the predicates of $and / $or / $nor, each a filter of its own", () => {
-    expect(filter("$and([{ a: 1 }, $.b < 2])")).toEqual({
-      $and: [{ a: 1 }, { b: { $lt: 2, $not: { $type: "array" } } }],
-    });
-    expect(filter("$or($.a > 1, $.b < 2)")).toEqual({
-      $or: [{ a: { $gt: 1, $not: { $type: "array" } } }, { b: { $lt: 2, $not: { $type: "array" } } }],
-    });
-    expect(filter("$nor([$.a > 1])")).toEqual({ $nor: [{ a: { $gt: 1, $not: { $type: "array" } } }] });
-    expect(filter("{ $and: [{ a: $gt(1) }, $.b < 2] }")).toEqual({
-      $and: [{ a: { $gt: 1 } }, { b: { $lt: 2, $not: { $type: "array" } } }],
-    });
+    expect(filter("$and([{ a: 1 }, $.b < 2])")).toEqual({ $and: [{ a: 1 }, { b: { $lt: 2 } }] });
+    expect(filter("$or($.a > 1, $.b < 2)")).toEqual({ $or: [{ a: { $gt: 1 } }, { b: { $lt: 2 } }] });
+    expect(filter("$nor([$.a > 1])")).toEqual({ $nor: [{ a: { $gt: 1 } }] });
+    expect(filter("{ $and: [{ a: $gt(1) }, $.b < 2] }")).toEqual({ $and: [{ a: { $gt: 1 } }, { b: { $lt: 2 } }] });
   });
 
   it("lowers the query-only field operators to their clause", () => {
@@ -201,9 +165,7 @@ describe("compiler/emit/filter — the query operators' call forms", () => {
     expect(filter("$nin($.a, [1])")).toEqual({ a: { $nin: [1] } });
     expect(filter('$all($.tags, ["a"])')).toEqual({ tags: { $all: ["a"] } });
     expect(filter("$elemMatch($.items, { q: $gt(1) })")).toEqual({ items: { $elemMatch: { q: { $gt: 1 } } } });
-    expect(filter("$elemMatch($.items, x => x.q > 1)")).toEqual({
-      items: { $elemMatch: { q: { $gt: 1, $not: { $type: "array" } } } },
-    });
+    expect(filter("$elemMatch($.items, x => x.q > 1)")).toEqual({ items: { $elemMatch: { q: { $gt: 1 } } } });
     expect(filter("$bitsAllSet($.a, 5)")).toEqual({ a: { $bitsAllSet: 5 } });
     expect(filter("$geoWithin($.loc, $box([[0, 0], [1, 1]]))")).toEqual({
       loc: {
@@ -246,21 +208,19 @@ describe("compiler/emit/filter — methods and operators", () => {
     // Containment for an array value, substring for a string one — JavaScript reads
     // `.includes` both ways, and a bare field path proves neither.
     expect(filter('$.tags.includes("x")')).toEqual({
-      $or: [{ tags: { $eq: "x", $type: "array" } }, { tags: { $regex: "x", $not: { $type: "array" } } }],
+      $or: [{ tags: { $eq: "x", $type: "array" } }, { tags: { $regex: "x" } }],
     });
-    expect(filter('["a", "b"].includes($.s)')).toEqual({ s: { $in: ["a", "b"], $not: { $type: "array" } } });
-    expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/, $not: { $type: "array" } } });
+    expect(filter('["a", "b"].includes($.s)')).toEqual({ s: { $in: ["a", "b"] } });
+    expect(filter('$.s.startsWith("A")')).toEqual({ s: { $regex: /^A/ } });
     // `\z` is the end of the SUBJECT. PCRE's `$` also matches before a final newline,
     // so it accepted "z.\n" where JavaScript's endsWith does not.
-    expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/, $not: { $type: "array" } } });
-    expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i, $not: { $type: "array" } } });
+    expect(filter('$.s.endsWith("z.")')).toEqual({ s: { $regex: /z\.\z/ } });
+    expect(filter("$.s.match(/^a/i)")).toEqual({ s: { $regex: /^a/i } });
     // `.some` IS the element test, so `$elemMatch` is its own reading; the element's
     // own fields take the rule again.
-    expect(filter("$.items.some(i => i.q > 2)")).toEqual({
-      items: { $elemMatch: { q: { $gt: 2, $not: { $type: "array" } } } },
-    });
+    expect(filter("$.items.some(i => i.q > 2)")).toEqual({ items: { $elemMatch: { q: { $gt: 2 } } } });
     expect(filter("$.items.some(i => i.q > 2 && i.name === 'x')")).toEqual({
-      items: { $elemMatch: { q: { $gt: 2, $not: { $type: "array" } }, name: { $eq: "x", $not: { $type: "array" } } } },
+      items: { $elemMatch: { q: { $gt: 2 }, name: "x" } },
     });
   });
 
@@ -276,17 +236,14 @@ describe("compiler/emit/filter — methods and operators", () => {
     // and an OUTER element's fields are not the inner element's
     expect(filter("$.a.some(i => i.b.some(j => i.c === 1))")).toHaveProperty("$expr");
     expect(filter("$.a.some(i => i.b.some(j => j.c === 1))")).toEqual({
-      a: { $elemMatch: { b: { $elemMatch: { c: { $eq: 1, $not: { $type: "array" } } } } } },
+      a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } },
     });
     // a field against a field has no query form: the value cell's shape under `$expr`
     expect(filter("$.s.startsWith($.prefix)")).toEqual({ $expr: { $eq: [{ $indexOfCP: ["$s", "$prefix"] }, 0] } });
   });
 
   it("lowers a query-only operator to its query form and refuses a non-constant", () => {
-    expect(filter("$.a === 1 && $sampleRate(0.5)")).toEqual({
-      a: { $eq: 1, $not: { $type: "array" } },
-      $sampleRate: 0.5,
-    });
+    expect(filter("$.a === 1 && $sampleRate(0.5)")).toEqual({ a: 1, $sampleRate: 0.5 });
     expect(() => filter("$sampleRate($.r)")).toThrow(/must be a compile-time constant/);
     expect(() => filter("$sampleRate(2)")).toThrow(/from 0 to 1/);
     expect(() => filter('$sampleRate("0.5")')).toThrow(/expects a number/);
@@ -309,12 +266,12 @@ describe("compiler/emit/filter — methods and operators", () => {
   });
 
   it("drops a branch the fold settled, and keeps the rest as written", () => {
-    expect(filter("$.a === 1 || false")).toEqual({ a: { $eq: 1, $not: { $type: "array" } } });
-    expect(filter("$.a === 1 && true")).toEqual({ a: { $eq: 1, $not: { $type: "array" } } });
+    expect(filter("$.a === 1 || false")).toEqual({ a: 1 });
+    expect(filter("$.a === 1 && true")).toEqual({ a: 1 });
     expect(filter("$.a === 1 || true")).toEqual({});
     expect(filter("$.a === 1 && false")).toEqual({ $expr: false });
     expect(filter("1 === 1")).toEqual({ $expr: true });
-    expect(filter("$.a > -1")).toEqual({ a: { $gt: -1, $not: { $type: "array" } } });
+    expect(filter("$.a > -1")).toEqual({ a: { $gt: -1 } });
   });
 });
 
@@ -365,7 +322,7 @@ describe("compiler/emit/filter — a read inside a raw query value has no query 
       "{ a: { $exists: true } }",
       "{ a: { $type: 'string' } }",
       "{ a: { $mod: [4, 0] } }",
-      "{ a: { $not: { $eq: 1 } } }",
+      "{ a: { $not: 1 } }",
       "{ a: { $all: [1, 2] } }",
       "{ a: { $elemMatch: { x: 2 } } }",
       "{ a: $gt(1) }",

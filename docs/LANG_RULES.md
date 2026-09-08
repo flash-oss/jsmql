@@ -75,16 +75,16 @@ $$ = $$.uniqBy("t") // → $group — MongoDB's order, because you never asked f
 
 Where MQL simply rejects the JavaScript form, jsmql raises an actionable error rather than emit a wrapper that hides the constraint. Where a behaviour differs, the divergence is documented, not hidden.
 
-The same line decides how a comparison reads an **array** field. MongoDB's query language satisfies `{ tags: "red" }` when `tags` is an array *holding* `"red"`, and it traverses an array in the middle of a path. JavaScript does neither: `["red"] === "red"` is false, and reading `a.b` where `a` is an array gives `undefined`. Nobody writes `===` to mean "contains" — containment has its own spelling, and so does an element test — so a JavaScript comparison reads the field's **own** value, and pays the MQL to say so:
+A comparison emits the query document a MongoDB developer writes by hand, and MongoDB's own rules then apply to it. Its query language satisfies `{ tags: "red" }` when `tags` is an array *holding* `"red"`, and it traverses an array in the middle of a path; the emitted document says nothing to prevent that, because that document is what every index plan, every code review and every `explain` output is written against:
 
 ```js
-$.tags === "red"            // → { tags: { $eq: "red", $not: { $type: "array" } } }
+$.tags === "red"            // → {"tags":"red"}
 $.tags.includes("red")      // → containment for an array value, substring for a string one
-$.items.some(i => i.q > 2)  // → { items: { $elemMatch: { q: { $gt: 2, $not: { $type: "array" } } } } }
-$.a.b === 1                 // → { "a.b": { $eq: 1, … }, a: { $not: { $type: "array" } } }
+$.items.some(i => i.q > 2)  // → {"items":{"$elemMatch":{"q":{"$gt":2}}}}
+$.a.b === 1                 // → {"a.b":1}
 ```
 
-Raw MQL keeps MQL's meaning: a raw `{ tags: "red" }` filter document, and a `$eq($.tags, "red")` call, are the developer's own MongoDB and pass through unchanged (HR1). The boundary is the same one the truthiness rule draws — a JavaScript spelling gets JavaScript's reading, the escape hatch gets MongoDB's.
+A comparison that must read ONE value rather than an element has its own spelling. `.includes(x)` is containment, `.some(e => …)` is an element test, and the aggregation road (`jsmql.expr`, or a predicate that needs `$expr` anyway) compares the value itself.
 
 This rule does **not** license guessing a value's type. A `$cond` on `$isArray` is the compiler not knowing whether a field holds an array or a string — that is missing information, not JavaScript behaviour, and dropping it would return a wrong answer instead of a smaller one.
 

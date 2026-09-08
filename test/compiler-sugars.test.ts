@@ -33,7 +33,6 @@ const compiled = (src: string, expected?: unknown, reads?: string): unknown[] =>
   RUNS.push({ src, expected, reads });
   return pipeline(src);
 };
-const ARR = (v: unknown) => ({ $eq: v, $not: { $type: "array" } });
 
 describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
   it("makes one branch per chain on the stream, each the chain's stages", () => {
@@ -41,18 +40,10 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
       compiled('$ = { big: $$.filter(o => o.a > 1), all: $$.take(10), n: $$.$count("n") };', [
         { big: [2, 3], all: [1, 2, 3], n: [{ n: 3 }] },
       ]),
-    ).toEqual([
-      {
-        $facet: {
-          big: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }],
-          all: [{ $limit: 10 }],
-          n: [{ $count: "n" }],
-        },
-      },
-    ]);
+    ).toEqual([{ $facet: { big: [{ $match: { a: { $gt: 1 } } }], all: [{ $limit: 10 }], n: [{ $count: "n" }] } }]);
     // the root document is the branch's document, at every depth (HR4)
     expect(compiled("$ = { t1: $$.filter(o => $.tag === 't1') };", [{ t1: [1, 3] }])).toEqual([
-      { $facet: { t1: [{ $match: { tag: ARR("t1") } }] } },
+      { $facet: { t1: [{ $match: { tag: "t1" } }] } },
     ]);
     // a bare `$$` is the stream unchanged; a block is its stages
     expect(
@@ -66,12 +57,7 @@ describe("compiler/emit — `$ = { k: $$.… }` is a $facet", () => {
         },
       ]),
     ).toEqual([
-      {
-        $facet: {
-          all: [],
-          agg: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }, { $set: { y: { $multiply: ["$a", 2] } } }],
-        },
-      },
+      { $facet: { all: [], agg: [{ $match: { a: { $gt: 1 } } }, { $set: { y: { $multiply: ["$a", 2] } } }] } },
     ]);
     // a `let` before it is dropped — the stage replaces the document
     expect(() => pipeline("let x = $.a; $ = { k: $$.take(1) }; $.z = x;")).toThrow(/can't be read after `\$facet`/);
@@ -95,15 +81,10 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
   it("one stage per source, in order; documents batch into one $documents", () => {
     expect(compiled("$$.push(...$$$.archive);", [1, 2, 3, 10, 20])).toEqual([{ $unionWith: "archive" }]);
     expect(compiled("$$.push(...$$$.archive.filter(o => o.a > 10));", [1, 2, 3, 20])).toEqual([
-      { $unionWith: { coll: "archive", pipeline: [{ $match: { a: { $gt: 10, $not: { $type: "array" } } } }] } },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { a: { $gt: 10 } } }] } },
     ]);
     expect(compiled("$$.push($$$.archive.find(o => o.a > 1));", [1, 2, 3, 10])).toEqual([
-      {
-        $unionWith: {
-          coll: "archive",
-          pipeline: [{ $match: { a: { $gt: 1, $not: { $type: "array" } } } }, { $limit: 1 }],
-        },
-      },
+      { $unionWith: { coll: "archive", pipeline: [{ $match: { a: { $gt: 1 } } }, { $limit: 1 }] } },
     ]);
     expect(
       compiled("$$.push({ a: 1 }, { b: 2 }, ...$$$.archive, { c: 3 });", [
@@ -123,7 +104,7 @@ describe("compiler/emit — `$$.push(…)` and `.concat(…)` are $unionWith", (
     ]);
     // `.concat` is the same, mid-chain
     expect(compiled("$$.filter(o => o.a > 2).concat(...$$$.archive).take(2);", [3, 10])).toEqual([
-      { $match: { a: { $gt: 2, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 2 } } },
       { $unionWith: "archive" },
       { $limit: 2 },
     ]);
@@ -159,7 +140,7 @@ describe("compiler/emit — `$$$.<coll> = <stream>` is $out", () => {
   it("writes the stream, after its stages, as the last stage", () => {
     expect(compiled("$$$.out_all = $$;", [1, 2, 3], "out_all")).toEqual([{ $out: "out_all" }]);
     expect(compiled("$$$.out_big = $$.filter(o => o.a > 1).take(5);", [2, 3], "out_big")).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 1 } } },
       { $limit: 5 },
       { $out: "out_big" },
     ]);
@@ -246,7 +227,7 @@ describe("compiler/emit — `$$ = [{ k: $$.reduce(…) }]` folds the stream to o
         [{ total: 5, double: 10 }],
       ),
     ).toEqual([
-      { $match: { a: { $gt: 1, $not: { $type: "array" } } } },
+      { $match: { a: { $gt: 1 } } },
       { $group: { _id: null, total: { $sum: "$a" } } },
       { $replaceWith: { total: "$total" } },
       { $set: { double: { $multiply: ["$total", 2] } } },

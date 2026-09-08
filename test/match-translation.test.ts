@@ -10,19 +10,15 @@ import { jsmql } from "../src/index.ts";
 
 describe("$match translation — equality", () => {
   it("translates `===` against a string literal", () => {
-    expect(jsmql('[$match($.email === "alice@example.com")]')).toEqual([
-      { $match: { email: { $eq: "alice@example.com", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match($.email === "alice@example.com")]')).toEqual([{ $match: { email: "alice@example.com" } }]);
   });
 
   it("translates `===` against a number literal", () => {
-    expect(jsmql("[$match($.userId === 42)]")).toEqual([{ $match: { userId: { $eq: 42, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match($.userId === 42)]")).toEqual([{ $match: { userId: 42 } }]);
   });
 
   it("translates `===` against a boolean literal", () => {
-    expect(jsmql("[$match($.active === true)]")).toEqual([
-      { $match: { active: { $eq: true, $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match($.active === true)]")).toEqual([{ $match: { active: true } }]);
   });
 
   it("rejects `==` against a non-null literal in `$match`", () => {
@@ -30,9 +26,7 @@ describe("$match translation — equality", () => {
   });
 
   it("translates `!==` to query-language $ne", () => {
-    expect(jsmql('[$match($.status !== "archived")]')).toEqual([
-      { $match: { $or: [{ status: { $ne: "archived" } }, { status: { $type: "array" } }] } },
-    ]);
+    expect(jsmql('[$match($.status !== "archived")]')).toEqual([{ $match: { status: { $ne: "archived" } } }]);
   });
 
   it("rejects `!=` against a non-null literal in `$match`", () => {
@@ -40,38 +34,32 @@ describe("$match translation — equality", () => {
   });
 
   it("accepts the field on either side (5 < $.age flips to $.age > 5)", () => {
-    expect(jsmql('[$match("alice" === $.name)]')).toEqual([
-      { $match: { name: { $eq: "alice", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match("alice" === $.name)]')).toEqual([{ $match: { name: "alice" } }]);
   });
 
   it("uses dotted paths for nested field refs", () => {
-    expect(jsmql('[$match($.user.role === "admin")]')).toEqual([
-      { $match: { "user.role": { $eq: "admin", $not: { $type: "array" } }, user: { $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match($.user.role === "admin")]')).toEqual([{ $match: { "user.role": "admin" } }]);
   });
 });
 
 describe("$match translation — ordered comparisons", () => {
   it("translates `>` to $gt", () => {
-    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match($.age > 18)]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("translates `>=`, `<`, `<=`", () => {
-    expect(jsmql("[$match($.score >= 80)]")).toEqual([{ $match: { score: { $gte: 80, $not: { $type: "array" } } } }]);
-    expect(jsmql("[$match($.year < 2020)]")).toEqual([{ $match: { year: { $lt: 2020, $not: { $type: "array" } } } }]);
-    expect(jsmql("[$match($.qty <= 5)]")).toEqual([{ $match: { qty: { $lte: 5, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match($.score >= 80)]")).toEqual([{ $match: { score: { $gte: 80 } } }]);
+    expect(jsmql("[$match($.year < 2020)]")).toEqual([{ $match: { year: { $lt: 2020 } } }]);
+    expect(jsmql("[$match($.qty <= 5)]")).toEqual([{ $match: { qty: { $lte: 5 } } }]);
   });
 
   it("translates string ordered comparison (lexicographic dates etc.)", () => {
-    expect(jsmql('[$match($.placedAt >= "2026-01-01")]')).toEqual([
-      { $match: { placedAt: { $gte: "2026-01-01", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match($.placedAt >= "2026-01-01")]')).toEqual([{ $match: { placedAt: { $gte: "2026-01-01" } } }]);
   });
 
   it("flips operator when literal is on the left (`18 < $.age` → `age > 18`)", () => {
-    expect(jsmql("[$match(18 < $.age)]")).toEqual([{ $match: { age: { $gt: 18, $not: { $type: "array" } } } }]);
-    expect(jsmql("[$match(5 >= $.qty)]")).toEqual([{ $match: { qty: { $lte: 5, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match(18 < $.age)]")).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(jsmql("[$match(5 >= $.qty)]")).toEqual([{ $match: { qty: { $lte: 5 } } }]);
   });
 });
 
@@ -83,71 +71,46 @@ describe("$match translation — null vs missing semantics", () => {
   // which already matches "null OR missing".
 
   it("translates `=== null` to `{ field: { $type: 'null' } }` (strict — excludes missing)", () => {
-    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([
-      { $match: { deletedAt: { $type: "null", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match($.deletedAt === null)]")).toEqual([{ $match: { deletedAt: { $type: "null" } } }]);
   });
 
   it("translates `!== null` to `{ field: { $not: { $type: 'null' } } }` (strict — missing fields pass)", () => {
-    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([
-      { $match: { $or: [{ paidAt: { $not: { $type: "null" } } }, { paidAt: { $type: "array" } }] } },
-    ]);
+    expect(jsmql("[$match($.paidAt !== null)]")).toEqual([{ $match: { paidAt: { $not: { $type: "null" } } } }]);
   });
 
   it("translates `== null` to `{ field: null }` (loose — matches null OR missing)", () => {
-    expect(jsmql("[$match($.deletedAt == null)]")).toEqual([
-      { $match: { deletedAt: { $eq: null, $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match($.deletedAt == null)]")).toEqual([{ $match: { deletedAt: null } }]);
   });
 
   it("translates `!= null` to `{ field: { $ne: null } }` (loose — excludes both null AND missing)", () => {
-    expect(jsmql("[$match($.paidAt != null)]")).toEqual([
-      { $match: { $or: [{ paidAt: { $ne: null } }, { paidAt: { $type: "array" } }] } },
-    ]);
+    expect(jsmql("[$match($.paidAt != null)]")).toEqual([{ $match: { paidAt: { $ne: null } } }]);
   });
 
   it("accepts `null` on the left for the loose form", () => {
-    expect(jsmql("[$match(null == $.x)]")).toEqual([{ $match: { x: { $eq: null, $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match(null == $.x)]")).toEqual([{ $match: { x: null } }]);
   });
 });
 
 describe("$match translation — boolean combinators", () => {
   it("merges `&&` with disjoint keys into a single doc", () => {
     expect(jsmql('[$match($.status === "active" && $.age > 18)]')).toEqual([
-      { $match: { status: { $eq: "active", $not: { $type: "array" } }, age: { $gt: 18, $not: { $type: "array" } } } },
+      { $match: { status: "active", age: { $gt: 18 } } },
     ]);
   });
 
   it("uses $and when `&&` operands collide on the same field", () => {
-    expect(jsmql("[$match($.age > 18 && $.age < 65)]")).toEqual([
-      { $match: { age: { $gt: 18, $not: { $type: "array" }, $lt: 65 } } },
-    ]);
+    expect(jsmql("[$match($.age > 18 && $.age < 65)]")).toEqual([{ $match: { age: { $gt: 18, $lt: 65 } } }]);
   });
 
   it("translates `||` with two translatable branches into $or", () => {
     expect(jsmql('[$match($.role === "admin" || $.role === "owner")]')).toEqual([
-      {
-        $match: {
-          $or: [
-            { role: { $eq: "admin", $not: { $type: "array" } } },
-            { role: { $eq: "owner", $not: { $type: "array" } } },
-          ],
-        },
-      },
+      { $match: { $or: [{ role: "admin" }, { role: "owner" }] } },
     ]);
   });
 
   it("composes nested && / ||", () => {
     expect(jsmql('[$match(($.role === "admin" || $.role === "owner") && $.active === true)]')).toEqual([
-      {
-        $match: {
-          $or: [
-            { role: { $eq: "admin", $not: { $type: "array" } } },
-            { role: { $eq: "owner", $not: { $type: "array" } } },
-          ],
-          active: { $eq: true, $not: { $type: "array" } },
-        },
-      },
+      { $match: { $or: [{ role: "admin" }, { role: "owner" }], active: true } },
     ]);
   });
 });
@@ -158,18 +121,13 @@ describe("$match translation — partial extraction", () => {
   // and wrap the residual in $expr.
   it("keeps index-using clause, wraps residual in $expr", () => {
     expect(jsmql('[$match($.status === "active" && $.score > $.threshold)]')).toEqual([
-      { $match: { status: { $eq: "active", $not: { $type: "array" } }, $expr: { $gt: ["$score", "$threshold"] } } },
+      { $match: { status: "active", $expr: { $gt: ["$score", "$threshold"] } } },
     ]);
   });
 
   it("combines multiple residuals under a synthetic $and", () => {
     expect(jsmql('[$match($.status === "active" && $.a > $.b && $.c < $.d)]')).toEqual([
-      {
-        $match: {
-          status: { $eq: "active", $not: { $type: "array" } },
-          $expr: { $and: [{ $gt: ["$a", "$b"] }, { $lt: ["$c", "$d"] }] },
-        },
-      },
+      { $match: { status: "active", $expr: { $and: [{ $gt: ["$a", "$b"] }, { $lt: ["$c", "$d"] }] } } },
     ]);
   });
 
@@ -178,11 +136,7 @@ describe("$match translation — partial extraction", () => {
     // disjunction's index-using guarantee, so if either `||` branch has a
     // residual, the entire expression becomes a residual.
     expect(jsmql('[$match($.status === "active" || $.score > $.threshold)]')).toEqual([
-      {
-        $match: {
-          $or: [{ status: { $eq: "active", $not: { $type: "array" } } }, { $expr: { $gt: ["$score", "$threshold"] } }],
-        },
-      },
+      { $match: { $or: [{ status: "active" }, { $expr: { $gt: ["$score", "$threshold"] } }] } },
     ]);
   });
 });
@@ -215,28 +169,22 @@ describe("$match translation — untranslatable shapes ($expr fallback)", () => 
 
 describe("$match translation — typeof → $type", () => {
   it('translates `typeof $.x === "string"` to query-doc $type', () => {
-    expect(jsmql('[$match(typeof $.email === "string")]')).toEqual([
-      { $match: { email: { $type: "string", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match(typeof $.email === "string")]')).toEqual([{ $match: { email: { $type: "string" } } }]);
   });
   it("accepts the literal on either side", () => {
-    expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([
-      { $match: { count: { $type: "int", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql('[$match("int" === typeof $.count)]')).toEqual([{ $match: { count: { $type: "int" } } }]);
   });
   it("translates `!==` via $not", () => {
-    expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([
-      { $match: { $or: [{ x: { $not: { $type: "null" } } }, { x: { $type: "array" } }] } },
-    ]);
+    expect(jsmql('[$match(typeof $.x !== "null")]')).toEqual([{ $match: { x: { $not: { $type: "null" } } } }]);
   });
   it("works on nested field paths", () => {
     expect(jsmql('[$match(typeof $.user.role === "string")]')).toEqual([
-      { $match: { "user.role": { $type: "string", $not: { $type: "array" } }, user: { $not: { $type: "array" } } } },
+      { $match: { "user.role": { $type: "string" } } },
     ]);
   });
   it("combines with other translated clauses via $and-merge", () => {
     expect(jsmql('[$match(typeof $.age === "int" && $.age > 18)]')).toEqual([
-      { $match: { age: { $type: "int", $not: { $type: "array" }, $gt: 18 } } },
+      { $match: { age: { $type: "int", $gt: 18 } } },
     ]);
   });
   it("falls through to $expr for unknown type aliases", () => {
@@ -274,42 +222,38 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
 
   it("translates `>=` against `new Date(stringLiteral)` to field-form Date", () => {
     expect(jsmql('[$match($.createdAt >= new Date("2026-01-01"))]')).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("translates the bug-report shape in bare Filter mode", () => {
     expect(jsmql('$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")')).toEqual({
-      method: { $eq: "postalDelivery", $not: { $type: "array" } },
-      createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } },
+      method: "postalDelivery",
+      createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") },
     });
   });
 
   it("translates `>`, `<`, `<=` and equality the same way", () => {
     expect(jsmql('[$match($.createdAt > new Date("2026-01-01"))]')).toEqual([
-      { $match: { createdAt: { $gt: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gt: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
     expect(jsmql('[$match($.createdAt < new Date("2026-01-01"))]')).toEqual([
-      { $match: { createdAt: { $lt: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $lt: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
     expect(jsmql('[$match($.createdAt <= new Date("2026-01-01"))]')).toEqual([
-      { $match: { createdAt: { $lte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $lte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
     expect(jsmql('[$match($.startedAt === new Date("2026-01-01"))]')).toEqual([
-      { $match: { startedAt: { $eq: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { startedAt: new Date("2026-01-01T00:00:00.000Z") } },
     ]);
     expect(jsmql('[$match($.startedAt !== new Date("2026-01-01"))]')).toEqual([
-      {
-        $match: {
-          $or: [{ startedAt: { $ne: new Date("2026-01-01T00:00:00.000Z") } }, { startedAt: { $type: "array" } }],
-        },
-      },
+      { $match: { startedAt: { $ne: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("flips the operator when `new Date` is on the left", () => {
     expect(jsmql('[$match(new Date("2026-01-01") <= $.createdAt)]')).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } },
     ]);
   });
 
@@ -318,13 +262,13 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     // `$dateFromParts` codegen lowering — so the folded value is TZ-independent
     // (the expected uses Date.UTC, NOT the machine-local `new Date(2026,0,1)`).
     expect(jsmql("[$match($.createdAt >= new Date(2026, 1, 1))]")).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
     ]);
   });
 
   it("folds `new Date(Date.UTC(...))` for UTC-anchored dates", () => {
     expect(jsmql("[$match($.createdAt >= new Date(Date.UTC(2026, 1, 1)))]")).toEqual([
-      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z"), $not: { $type: "array" } } } },
+      { $match: { createdAt: { $gte: new Date("2026-02-01T00:00:00.000Z") } } },
     ]);
   });
 
@@ -355,11 +299,7 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
     expect(jsmql('[$match($.createdAt >= new Date("2026-01-01") && $.createdAt < new Date("2026-02-01"))]')).toEqual([
       {
         $match: {
-          createdAt: {
-            $gte: new Date("2026-01-01T00:00:00.000Z"),
-            $not: { $type: "array" },
-            $lt: new Date("2026-02-01T00:00:00.000Z"),
-          },
+          createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z"), $lt: new Date("2026-02-01T00:00:00.000Z") },
         },
       },
     ]);
@@ -373,30 +313,19 @@ describe("$match translation — .includes() → $in / array-element", () => {
 
   it("translates `field.includes(<literal>)` to an implicit array-element match", () => {
     expect(jsmql('[$match($.tags.includes("vip"))]')).toEqual([
-      {
-        $match: {
-          $or: [{ tags: { $eq: "vip", $type: "array" } }, { tags: { $regex: "vip", $not: { $type: "array" } } }],
-        },
-      },
+      { $match: { $or: [{ tags: { $eq: "vip", $type: "array" } }, { tags: { $regex: "vip" } }] } },
     ]);
   });
 
   it("translates `[lit,lit,…].includes(field)` to `$in`", () => {
     expect(jsmql('[$match(["active", "trial"].includes($.status))]')).toEqual([
-      { $match: { status: { $in: ["active", "trial"], $not: { $type: "array" } } } },
+      { $match: { status: { $in: ["active", "trial"] } } },
     ]);
   });
 
   it("uses dotted paths for nested receivers", () => {
     expect(jsmql('[$match($.user.roles.includes("admin"))]')).toEqual([
-      {
-        $match: {
-          $or: [
-            { "user.roles": { $eq: "admin", $type: "array" } },
-            { "user.roles": { $regex: "admin", $not: { $type: "array" } }, user: { $not: { $type: "array" } } },
-          ],
-        },
-      },
+      { $match: { $or: [{ "user.roles": { $eq: "admin", $type: "array" } }, { "user.roles": { $regex: "admin" } }] } },
     ]);
   });
 
@@ -454,34 +383,19 @@ describe("$match translation — .match(regex) → BSON regex", () => {
 describe("$match translation — .some(p) → $elemMatch", () => {
   it("translates `.some(item => item.field === lit)` to $elemMatch", () => {
     expect(jsmql("[$match($.items.some(item => item.tag === 'vip'))]")).toEqual([
-      { $match: { items: { $elemMatch: { tag: { $eq: "vip", $not: { $type: "array" } } } } } },
+      { $match: { items: { $elemMatch: { tag: "vip" } } } },
     ]);
   });
 
   it("translates compound predicates inside the lambda", () => {
     expect(jsmql("[$match($.items.some(i => i.qty > 5 && i.tag === 'vip'))]")).toEqual([
-      {
-        $match: {
-          items: {
-            $elemMatch: { qty: { $gt: 5, $not: { $type: "array" } }, tag: { $eq: "vip", $not: { $type: "array" } } },
-          },
-        },
-      },
+      { $match: { items: { $elemMatch: { qty: { $gt: 5 }, tag: "vip" } } } },
     ]);
   });
 
   it("handles nested member paths on the lambda param", () => {
     expect(jsmql("[$match($.line.some(it => it.product.price > 100))]")).toEqual([
-      {
-        $match: {
-          line: {
-            $elemMatch: {
-              "product.price": { $gt: 100, $not: { $type: "array" } },
-              product: { $not: { $type: "array" } },
-            },
-          },
-        },
-      },
+      { $match: { line: { $elemMatch: { "product.price": { $gt: 100 } } } } },
     ]);
   });
 
@@ -544,7 +458,7 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
 
   it("works on dotted paths", () => {
     expect(jsmql("[$match($.user.deletedAt === undefined)]")).toEqual([
-      { $match: { $or: [{ "user.deletedAt": { $exists: false } }, { user: { $type: "array" } }] } },
+      { $match: { "user.deletedAt": { $exists: false } } },
     ]);
   });
 
@@ -576,9 +490,7 @@ describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
   });
 
   it("still accepts the raw BSON alias `bool`", () => {
-    expect(jsmql("[$match(typeof $.flag === 'bool')]")).toEqual([
-      { $match: { flag: { $type: "bool", $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match(typeof $.flag === 'bool')]")).toEqual([{ $match: { flag: { $type: "bool" } } }]);
   });
 });
 
@@ -896,23 +808,19 @@ describe("$match translation — .length vs natural number → string-or-array $
 
 describe("$match translation — % N === M → $mod", () => {
   it("translates `$.x % N === M` to `$mod: [N, M]`", () => {
-    expect(jsmql("[$match($.x % 5 === 0)]")).toEqual([{ $match: { x: { $mod: [5, 0], $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match($.x % 5 === 0)]")).toEqual([{ $match: { x: { $mod: [5, 0] } } }]);
   });
 
   it("translates `!==` via $not", () => {
-    expect(jsmql("[$match($.x % 7 !== 3)]")).toEqual([
-      { $match: { $or: [{ x: { $not: { $mod: [7, 3] } } }, { x: { $type: "array" } }] } },
-    ]);
+    expect(jsmql("[$match($.x % 7 !== 3)]")).toEqual([{ $match: { x: { $not: { $mod: [7, 3] } } } }]);
   });
 
   it("accepts the literal on either side", () => {
-    expect(jsmql("[$match(0 === $.x % 5)]")).toEqual([{ $match: { x: { $mod: [5, 0], $not: { $type: "array" } } } }]);
+    expect(jsmql("[$match(0 === $.x % 5)]")).toEqual([{ $match: { x: { $mod: [5, 0] } } }]);
   });
 
   it("works on dotted paths", () => {
-    expect(jsmql("[$match($.user.score % 10 === 0)]")).toEqual([
-      { $match: { "user.score": { $mod: [10, 0], $not: { $type: "array" } }, user: { $not: { $type: "array" } } } },
-    ]);
+    expect(jsmql("[$match($.user.score % 10 === 0)]")).toEqual([{ $match: { "user.score": { $mod: [10, 0] } } }]);
   });
 
   it("falls through to $expr for non-integer divisor or remainder", () => {
@@ -927,7 +835,7 @@ describe("$match translation — $all folding from .includes && .includes", () =
         $match: {
           $or: [
             { tags: { $all: ["a", "b"], $type: "array" } },
-            { $and: [{ tags: { $regex: "a", $not: { $type: "array" } } }, { tags: { $regex: "b" } }] },
+            { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }] },
           ],
         },
       },
@@ -940,13 +848,7 @@ describe("$match translation — $all folding from .includes && .includes", () =
         $match: {
           $or: [
             { tags: { $all: ["a", "b", "c"], $type: "array" } },
-            {
-              $and: [
-                { tags: { $regex: "a", $not: { $type: "array" } } },
-                { tags: { $regex: "b" } },
-                { tags: { $regex: "c" } },
-              ],
-            },
+            { $and: [{ tags: { $regex: "a" } }, { tags: { $regex: "b" } }, { tags: { $regex: "c" } }] },
           ],
         },
       },
@@ -958,13 +860,8 @@ describe("$match translation — $all folding from .includes && .includes", () =
       {
         $match: {
           $and: [
-            { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a", $not: { $type: "array" } } }] },
-            {
-              $or: [
-                { colors: { $eq: "red", $type: "array" } },
-                { colors: { $regex: "red", $not: { $type: "array" } } },
-              ],
-            },
+            { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }] },
+            { $or: [{ colors: { $eq: "red", $type: "array" } }, { colors: { $regex: "red" } }] },
           ],
         },
       },
@@ -975,12 +872,7 @@ describe("$match translation — $all folding from .includes && .includes", () =
     // The user can reorder to enable the fold; the un-folded form has
     // identical semantics on array-valued fields, so this isn't a footgun.
     expect(jsmql('[$match($.tags.includes("a") && $.age > 18)]')).toEqual([
-      {
-        $match: {
-          $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a", $not: { $type: "array" } } }],
-          age: { $gt: 18, $not: { $type: "array" } },
-        },
-      },
+      { $match: { $or: [{ tags: { $eq: "a", $type: "array" } }, { tags: { $regex: "a" } }], age: { $gt: 18 } } },
     ]);
   });
 });

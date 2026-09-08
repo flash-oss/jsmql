@@ -106,14 +106,14 @@ describe("@koresar/jsmql/mongoose — Filter-accepting methods", () => {
       jsmqlMongoose(mongoose);
       Model[name]("$.age > 18");
       expect(recorded).toHaveLength(1);
-      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
     });
 
     it(`Model.${name}: arrow filter is lowered through jsmql.filter`, () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
       Model[name](({ $ }: any) => $.age > 18);
-      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+      expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
     });
 
     it(`Model.${name}: plain-object filter passes through untouched`, () => {
@@ -131,7 +131,7 @@ describe("@koresar/jsmql/mongoose — Filter-accepting methods", () => {
     const projection = { name: 1, age: 1 };
     const options = { limit: 10 };
     Model.find("$.age > 18", projection, options);
-    expect(recorded[0].args).toEqual([{ age: { $gt: 18, $not: { $type: "array" } } }, projection, options]);
+    expect(recorded[0].args).toEqual([{ age: { $gt: 18 } }, projection, options]);
   });
 
   it("a Pipeline-shaped source at a filter slot surfaces the strict error", () => {
@@ -149,7 +149,7 @@ describe("@koresar/jsmql/mongoose — Filter + update slots", () => {
       const { mongoose, Model, recorded } = buildMockMongoose();
       jsmqlMongoose(mongoose);
       Model[name]("$.status === 'active'", ({ $ }: any) => ($.score += 1));
-      expect(recorded[0].args[0]).toEqual({ status: { $eq: "active", $not: { $type: "array" } } });
+      expect(recorded[0].args[0]).toEqual({ status: "active" });
       expect(recorded[0].args[1]).toEqual({ $inc: { score: 1 } });
     });
 
@@ -202,7 +202,7 @@ describe("@koresar/jsmql/mongoose — distinct (filter-at-1)", () => {
     jsmqlMongoose(mongoose);
     Model.distinct("email", "$.region === 'AU'");
     expect(recorded[0].args[0]).toBe("email");
-    expect(recorded[0].args[1]).toEqual({ region: { $eq: "AU", $not: { $type: "array" } } });
+    expect(recorded[0].args[1]).toEqual({ region: "AU" });
   });
 
   it("Model.distinct(field) with no filter is a no-op pass-through", () => {
@@ -218,7 +218,7 @@ describe("@koresar/jsmql/mongoose — aggregate (pipeline-at-0)", () => {
     const { mongoose, Model, recorded } = buildMockMongoose();
     jsmqlMongoose(mongoose);
     Model.aggregate("$match($.x > 0); $sort({ x: 1 })");
-    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $sort: { x: 1 } }]);
+    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
   });
 
   it("arrow pipeline is lowered through jsmql.pipeline", () => {
@@ -228,7 +228,7 @@ describe("@koresar/jsmql/mongoose — aggregate (pipeline-at-0)", () => {
       $match($.x > 0);
       $sort({ x: 1 });
     });
-    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0, $not: { $type: "array" } } } }, { $sort: { x: 1 } }]);
+    expect(recorded[0].args[0]).toEqual([{ $match: { x: { $gt: 0 } } }, { $sort: { x: 1 } }]);
   });
 
   it("array-of-stages passes through untouched", () => {
@@ -252,7 +252,7 @@ describe("@koresar/jsmql/mongoose — subclass propagation", () => {
     jsmqlMongoose(mongoose);
     class User extends Model {}
     User.find("$.age > 18");
-    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
     // The patched function is reached via prototype-chain lookup, so it
     // executes with the subclass as `this` — matching real mongoose behaviour.
     expect(recorded[0].thisArg).toBe(User);
@@ -273,6 +273,6 @@ describe("@koresar/jsmql/mongoose — idempotence", () => {
     jsmqlMongoose(mongoose);
     jsmqlMongoose(mongoose);
     Model.find("$.age > 18");
-    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18, $not: { $type: "array" } } });
+    expect(recorded[0].args[0]).toEqual({ age: { $gt: 18 } });
   });
 });
