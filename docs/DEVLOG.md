@@ -10,6 +10,31 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix!: an empty stage list is refused, and the list says what it holds
+
+`$.x = $$$.c.aggregate([]);` compiled to `{ $lookup: { from: "c", pipeline: [], as: "x" } }`, and `$$.aggregate([]);` vanished from the chain without a word. A suite in `test/lookup.test.ts` was titled "an empty pipeline is rejected" while asserting the `$lookup` — the title was right and the assertion was not.
+
+`.aggregate()` states `nonEmpty` on its argument now:
+
+```
+$.x = $$$.c.aggregate([]);
+→ '.aggregate()' needs at least one stage — an empty list has none.
+  List the stages — '.aggregate([$match(…), $sort(…)])' — or drop the '.aggregate()' link.
+```
+
+`.aggregate` is the only name whose argument is a bracketed stage list, so nothing else changes. A stage body that IS raw MQL — `$lookup({ from: "c", pipeline: [], as: "x" })`, `$facet({ a: [] })`, `$unionWith({ coll: "c", pipeline: [] })` — still passes through verbatim: the server accepts an empty sub-pipeline there, and HR1 gives raw MQL right of way.
+
+The `nonEmpty` fact itself had one message for every slot — "takes at least one field name" — which was true only for `$unset`. It states the noun and the way out now, and the message spells a method with its dot and parentheses:
+
+```
+$unset([]);
+→ '$unset' needs at least one field name — an empty list has none.
+  Name the fields to remove: '$unset(["a", "b"])'.
+```
+
+---
+
+
 ## 2026-09-08 — refactor!: the rows are the only table
 
 `src/operators.ts` and `src/stages.ts` were the previous compiler's catalogs: a name, its operand shape, its category and its one-sentence description, kept by hand beside the rows that already state the same facts. Nothing in `src/compiler/` read either file. Both are deleted. The globals generator, the playground sync and the drift suites read the rows instead, through accessors in [src/compiler/rows.ts](../../src/compiler/rows.ts) — `everyStageName`, `everyOperatorName`, `describes`, `categoryOf`, `diagnosticOf`, `operandShapeOf`, `positionalKeysOf` — so a name exists in the generated types because a row says so.

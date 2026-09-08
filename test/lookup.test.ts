@@ -1768,7 +1768,9 @@ describe("$$$.coll.aggregate — error cases", () => {
   });
 
   it("an empty pipeline is rejected (array form; the arrow form's empty block is a parse error)", () => {
-    expect(jsmql("$.x = $$$.c.aggregate([]);")).toEqual([{ $lookup: { from: "c", pipeline: [], as: "x" } }]);
+    expect(() => jsmql("$.x = $$$.c.aggregate([]);")).toThrow(
+      "'.aggregate()' needs at least one stage — an empty list has none. List the stages — '.aggregate([$match(…), $sort(…)])' — or drop the '.aggregate()' link.",
+    );
   });
 
   it("$$.aggregate (current stream) appends its stages to the chain, in every container", () => {

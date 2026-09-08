@@ -449,6 +449,9 @@ function walkBody(node: Expr, path: readonly string[]): Expr[] {
 }
 
 /** The per-slot literal checks an `Arity` states — `slotType`, `slotEnums` — over positional operands. */
+/** How the source spells a name: a stage or an operator keeps its '$', a method gets its dot and parentheses. */
+const spell = (name: string): string => (name.startsWith("$") ? name : `.${name}()`);
+
 export function checkSlots(
   name: string,
   args: Arity,
@@ -493,12 +496,12 @@ export function checkSlots(
     const e = operands[Number(i)];
     if (e !== undefined && e.type === "ObjectLiteral") checkBody(name, rule, [e], rule.positional ?? [], e.pos);
   }
-  for (const i of args.nonEmpty ?? []) {
-    const e = operands[i];
+  for (const [i, { noun, instead }] of Object.entries(args.nonEmpty ?? {})) {
+    const e = operands[Number(i)];
     if (e === undefined) continue;
     if ((e.type === "StringLiteral" && e.value === "") || (e.type === "ArrayLiteral" && e.elements.length === 0)) {
       throw new CodegenError(
-        `'${name}' takes at least one field name — an empty ${e.type === "StringLiteral" ? "string" : "list"} names none, and the server refuses it.`,
+        `'${spell(name)}' needs at least one ${noun} — an empty ${e.type === "StringLiteral" ? "string" : "list"} has none. ${instead}`,
         e.pos,
       );
     }

@@ -523,11 +523,12 @@ export type Arity = {
   /** Slots that must be compile-time constants HERE. */
   constant?: readonly number[];
   /**
-   * Slots whose literal string or array must not be empty. Measured on `$unset`:
-   * `""` → "FieldPath cannot be constructed with empty string", `[]` → "must be a
-   * string or an array with at least one field".
+   * Slots whose literal string or array must not be empty, keyed by slot: `noun`
+   * names what one entry is, and `instead` is the way out the message ends with.
+   * Measured on `$unset`: `""` → "FieldPath cannot be constructed with empty
+   * string", `[]` → "must be a string or an array with at least one field".
    */
-  nonEmpty?: readonly number[];
+  nonEmpty?: Readonly<Record<number, { noun: string; instead: string }>>;
   /** Per-slot literal type, checked only when the slot is a literal. */
   /**
    * A slot's accepted literal type, or the SET of them where a slot takes more

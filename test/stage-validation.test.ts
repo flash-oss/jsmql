@@ -169,7 +169,7 @@ describe("stage body validation — $project", () => {
 describe("stage body validation — $unset / $unwind", () => {
   it("rejects an empty $unset string and a non-$ $unwind path", () => {
     expect(() => jsmql("[ $unset('') ]")).toThrow(
-      "'$unset' takes at least one field name — an empty string names none, and the server refuses it.",
+      "'$unset' needs at least one field name — an empty string has none. Name the fields to remove: '$unset([\"a\", \"b\"])'.",
     );
     expect(() => jsmql("[ $unwind('items') ]")).toThrow(
       "'$unwind' reads a field PATH, and the server insists it carries its own '$': write '$items'.",

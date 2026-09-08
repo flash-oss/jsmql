@@ -6061,11 +6061,23 @@ export const NAMES = {
     group: unsupported("'$unset' is not valid in a $group output position — see its 'where'."),
     window: unsupported("'$unset' is not valid in a $setWindowFields output position — see its 'where'."),
     stream: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: ["string", "array"] },
+        nonEmpty: { 0: { noun: "field name", instead: 'Name the fields to remove: \'$unset(["a", "b"])\'.' } },
+      },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     statement: {
-      args: { sig: "body", exact: 1, constant: [0], slotType: { 0: ["string", "array"] }, nonEmpty: [0] },
+      args: {
+        sig: "body",
+        exact: 1,
+        constant: [0],
+        slotType: { 0: ["string", "array"] },
+        nonEmpty: { 0: { noun: "field name", instead: 'Name the fields to remove: \'$unset(["a", "b"])\'.' } },
+      },
       emit: ({ name, args, value }) => [{ [name]: value(args[0]) }],
     },
     updateDoc: {
@@ -12230,7 +12242,16 @@ export const NAMES = {
     filter: unsupported("'.aggregate()' splices stages; it is not a filter predicate."),
     expr: unsupported("'.aggregate()' produces pipeline stages, not a value."),
     stream: {
-      args: { sig: "stages | (o) => { …stages }", exact: 1 },
+      args: {
+        sig: "stages | (o) => { …stages }",
+        exact: 1,
+        nonEmpty: {
+          0: {
+            noun: "stage",
+            instead: "List the stages — '.aggregate([$match(…), $sort(…)])' — or drop the '.aggregate()' link.",
+          },
+        },
+      },
       // The block's statements ARE the chain's stages; a bracketed list is the same list.
       emit: ({ args, value, block }) => (args[0].type === "Lambda" ? block(args[0]) : (value(args[0]) as Stage[])),
     },
