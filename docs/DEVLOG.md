@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: a program is judged for its shape only once it is correct
+
+`jsmql.pipeline()` handed a Filter answered with the entry the developer had just called:
+
+```
+jsmql.pipeline("const cutoff = 18; $.age > cutoff")
+before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline.
+        Use jsmql.pipeline() (or jsmql(), which decides from the shape).
+now:    jsmql.pipeline() expects a Pipeline …, but received a binding and one expression, which is a
+        Filter (`const cutoff = 18; $.age > cutoff`). Use jsmql.filter() for a Filter, or wrap the
+        predicate as `$match(…)` for a Pipeline.
+```
+
+A `;` alone does not make a Pipeline. The old branch read the AST node type while the shape check read the shape, so a binding in front of one expression was announced as a Pipeline to the entry that wants one. Both ways out compile:
+
+```
+jsmql.filter("const cutoff = 18; $.age > cutoff")           → { age: { $gt: 18, $not: { $type: "array" } } }
+jsmql.pipeline("const cutoff = 18; $match($.age > cutoff);") → [{ $match: { age: { $gt: 18, … } } }]
+```
+
+The second half was a defect the shape refusal hid:
+
+```
+jsmql.pipeline("const d = new Date('nope'); $.t < d")
+before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline. …
+now:    new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and
+        this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).
+```
+
+A bad date is wrong under every entry, so it speaks before the entry mismatch: told only to call another entry, the developer meets it on the next run instead. The search lowers the program as a FILTER, which is the shape a program the pipeline entry refuses actually has — reading it as anything else answered with a position the developer never asked for. A program with no defect still gets the shape sentence.
+
+---
+
+
 ## 2026-09-08 — fix!: the `$` spelling of a diagnostic stage meets the scope its row states
 
 A diagnostic stage has two spellings, and only one of them was checked.

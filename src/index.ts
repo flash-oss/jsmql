@@ -208,8 +208,17 @@ const DRIVER: Record<Exclude<Mode, "auto">, string> = {
 
 /** What a program IS, for a strict entry that wanted another shape. */
 function received(program: Program): { what: string; hint: string } {
-  if (program.type === "Pipeline") {
+  // A `;` alone does not make a Pipeline. A binding in front of one expression is
+  // still the Filter that expression is, and calling it a Pipeline answered the
+  // pipeline entry with the entry the developer had already called.
+  if (program.type === "Pipeline" && shapeOf(program) === "pipeline") {
     return { what: "a `;`-separated Pipeline", hint: "jsmql.pipeline() (or jsmql(), which decides from the shape)" };
+  }
+  if (program.type === "Pipeline") {
+    return {
+      what: "a binding and one expression, which is a Filter (`const cutoff = 18; $.age > cutoff`)",
+      hint: "jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline",
+    };
   }
   if (program.type === "UpdateFilter") {
     const target = program.ops[0]?.type === "AssignExpr" ? program.ops[0].target.type : null;
@@ -239,6 +248,27 @@ function received(program: Program): { what: string; hint: string } {
     what: "a bare expression that would lower to a Filter (`$.age > 18`)",
     hint: "jsmql.filter() for a Filter, or wrap the predicate as `$match(…)` for a Pipeline",
   };
+}
+
+/**
+ * The defect inside a program that is a FILTER, found by lowering it as one.
+ *
+ * A program is judged for its shape only once it is correct. `new Date("nope")`
+ * is wrong under every entry, and told only to call another one the developer
+ * meets it on the next run. Null when the only thing wrong is the shape.
+ *
+ * Only the filter reading is searched, because that is the shape a program the
+ * pipeline entry refuses actually has — lowering it as anything else would
+ * answer with a position the developer never asked for.
+ */
+function defectAsFilter(injected: Program): CodegenError | null {
+  try {
+    const program = expressionOf(desugar(fold(injected), FILTER));
+    lowerFilter(program, Env.root(program, "filter"));
+    return null;
+  } catch (e) {
+    return e instanceof CodegenError ? e : null;
+  }
 }
 
 function wrongShape(api: string, wanted: Exclude<Mode, "auto">, program: Program): CodegenError {
@@ -305,7 +335,9 @@ function lowerMode(mode: Mode, api: string, parsed: Program, values: Values): Js
       // Handing it to the shape refusal would answer a typo inside it with "use
       // jsmql.pipeline()" — the entry they already called; the lowering names the stage.
       if (shapeOf(injected) !== "pipeline" && injected.type !== "ArrayLiteral") {
-        throw wrongShape(api, "pipeline", injected);
+        // A program is judged for its SHAPE only once it is correct: a defect the
+        // developer must fix under every entry speaks before the entry mismatch.
+        throw defectAsFilter(injected) ?? wrongShape(api, "pipeline", injected);
       }
       const program = desugar(fold(injected), STATEMENT);
       const stages = lowerProgram(program, Env.root(program, "statement"));
