@@ -1277,10 +1277,10 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     // position-accurate: consumed as a value, the chain lowers to an array operator
     // with nowhere to run stages at all. Both named rewrites compile (asserted below).
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 28",
+      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
     );
     expect(() => jsmql("$.x = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });")).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 28",
+      "`$sort(...)` at position 28 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
     );
     // Rewrite 1: stay a sub-pipeline and reshape with a stage — `$` inside the body is the OUTER document, which the body reads and never writes.
     expect(() =>
@@ -1719,7 +1719,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
   describe("argument errors match the head form's wording", () => {
     const pairs: [string, string, RegExp][] = [
       ["expression body", "(o) => o.total", /takes an arrow whose body is a block of stages/],
-      ["trailing return", "(o) => { $limit(2); return o.total; }", /is a pipeline stage, not part of a callback/],
+      ["trailing return", "(o) => { $limit(2); return o.total; }", /is a pipeline stage/],
       ["4 params", "(a, b, c, d) => { $limit(1); }", /takes a block of stages as a one-parameter arrow/],
       ["index param used", "(o, i) => { $addFields({ k: i }); }", /has no value inside `\.aggregate\(\)`/],
       ["coll param beyond .length", "(o, _i, c) => { $addFields({ k: c.total }); }", /the body's own stream|only 'c/],
@@ -1846,7 +1846,7 @@ describe("$$$.coll.aggregate — error cases", () => {
 
   it("a trailing `return` inside an aggregate block is rejected (it's not a per-doc reshape)", () => {
     expect(() => jsmql("$.x = $$$.c.aggregate((o) => { $sort({ a: 1 }); return o.v; });")).toThrow(
-      "`$sort(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 31",
+      "`$sort(...)` at position 31 is a pipeline stage, and the 'return' at position 48 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
     );
   });
 

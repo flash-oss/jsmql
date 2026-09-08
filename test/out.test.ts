@@ -154,7 +154,7 @@ describe("$out — RHS shape errors", () => {
   // that already works. These are the two that genuinely have no chain form.
   it("names the stage equivalent for a JS method a stream chain deliberately lacks", () => {
     expect(() => jsmql("$$$.coll = $$.reduce((a, d) => a + d.n, 0);")).toThrow(
-      "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'. To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'.",
     );
     expect(() => jsmql("$$$.coll = $$.flat();")).toThrow(
       "'.flat()' isn't available on '$$' — flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' — that is '$unwind'.",

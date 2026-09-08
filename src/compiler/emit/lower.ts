@@ -680,7 +680,7 @@ function callExpression(node: Extract<Expr, { type: "CallExpression" }>, env: En
       if (newKeywordOf(callee.name) === "required") throw E.unknownFunction(callee.name, [], node.pos);
       return dispatchBare(node, callee.name, node.args, env);
     }
-    throw E.unknownFunction(callee.name, [], node.pos);
+    throw E.unknownFunction(callee.name, env.scope.functionNames(), node.pos);
   }
   if (callee.type === "Lambda") return applyLambda(callee, node.args, env, node.pos, "IIFE", null);
   throw E.notCallable(node.pos);

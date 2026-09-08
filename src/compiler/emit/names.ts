@@ -266,6 +266,11 @@ export class Scope {
     return this.bound.has(js);
   }
 
+  /** Every name bound to a declared function — the candidates when a call names none of them. */
+  functionNames(): readonly string[] {
+    return [...this.bound].filter(([, b]) => b.ref.kind === "function").map(([js]) => js);
+  }
+
   /**
    * What a JavaScript name means here — the ONLY way a read learns it. An
    * unbound name is the developer's error, positioned at the read.

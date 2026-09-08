@@ -6904,7 +6904,7 @@ describe("error cases", () => {
   });
   it("assigning to a method-call result is rejected with a precise message", () => {
     expect(() => jsmql.expr("$.s.trim() = 1")).toThrow(
-      "Cannot apply '=' to a '.field' expression — only a field, a binding, '$', '$$' or a collection can be written at position 11",
+      "Cannot apply '=' to the result of '.trim()' at position 11 — only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>.trim();'.",
     );
   });
   it("assigning to a literal is rejected with a precise message", () => {

@@ -163,7 +163,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("unknown function suggests the closest declared name", () => {
     expect(() => jsmql("const compute = (x) => x; $ = { a: comput($.n) };")).toThrow(
-      "Unknown function 'comput(...)'. Declare it first with `const comput = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$comput(...)`; for a method, `receiver.comput(...)`.",
+      "Unknown function 'comput(...)'. Did you mean 'compute(...)'? Declare it first with `const comput = (…) => …;` at the top level of a pipeline; for a MongoDB operator write `$comput(...)`; for a method, `receiver.comput(...)`.",
     );
   });
 
@@ -210,7 +210,7 @@ describe("reusable functions — rejections (actionable errors)", () => {
 
   it("a nested function inside an arrow body is rejected", () => {
     expect(() => jsmql("$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };")).toThrow(
-      "`function g(…) { … }` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 25",
+      "`const g = (…) => …` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write `const g = (…) => …;` as its own statement before this one, then call 'g(…)' inside the callback. at position 25",
     );
   });
 

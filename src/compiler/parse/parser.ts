@@ -122,12 +122,20 @@ function isStageStmt(stmt: PipelineStmt): boolean {
 }
 
 function statementSpelling(stmt: PipelineStmt): string {
-  const s = stmt as { type: string; name?: string; ops?: readonly { type: string; target?: Expr }[]; callee?: Expr };
+  const s = stmt as {
+    type: string;
+    name?: string;
+    ops?: readonly { type: string; target?: Expr }[];
+    callee?: Expr;
+    form?: "arrow" | "function";
+    kind?: "let" | "const";
+  };
   switch (s.type) {
     case "OperatorCall":
       return `${s.name}(...)`;
     case "FuncDecl":
-      return `function ${s.name}(…) { … }`;
+      // Two spellings, one node: a developer cannot find `function g(` in a program that says `const g = `.
+      return s.form === "function" ? `function ${s.name}(…) { … }` : `${s.kind} ${s.name} = (…) => …`;
     case "UpdateFilter": {
       const op = s.ops?.[0];
       const target = op?.target === undefined ? "$.x" : targetSpelling(op.target);
@@ -138,6 +146,22 @@ function statementSpelling(stmt: PipelineStmt): string {
     default:
       return "…";
   }
+}
+
+/**
+ * A pipeline statement found inside a callback's `{ … }`. `retPos` is where the
+ * block's `return` sits, or null when the block has none: the two cases have
+ * different ways out, and a declaration has a third.
+ */
+function notPartOfACallback(stmt: PipelineStmt, retPos: number | null): string {
+  const wrote = statementSpelling(stmt);
+  if (stmt.type === "FuncDecl") {
+    return `\`${wrote}\` declares a reusable function, and a reusable function is declared at the top level of a pipeline, not inside a callback. Write \`${wrote};\` as its own statement before this one, then call '${stmt.name}(…)' inside the callback.`;
+  }
+  if (retPos !== null) {
+    return `\`${wrote}\` at position ${(stmt as { pos: number }).pos} is a pipeline stage, and the 'return' at position ${retPos} makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.`;
+  }
+  return `\`${wrote}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`;
 }
 
 /** `$.a.b` for a field target; the bare name otherwise. */
@@ -183,10 +207,7 @@ class Parser {
     // where the pipeline belongs.
     const stmt = lambda.stages?.stmts.find((st) => st.type !== "LetDecl");
     if (stmt !== undefined && isStageStmt(stmt)) {
-      throw new ParseError(
-        `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`,
-        (stmt as { pos: number }).pos,
-      );
+      throw new ParseError(notPartOfACallback(stmt, null), (stmt as { pos: number }).pos);
     }
     throw new ParseError(needsReturn(endPos, "'}'"), endPos);
   }
@@ -656,6 +677,16 @@ class Parser {
       t === "DatabaseRef" ||
       t === "ClusterRef";
     if (isPlace) return;
+    // A method call is spelled by the CALL the source wrote, not by the rule that built its receiver:
+    // `$.s.trim()` is a `MethodCall` node whose rule is `.field`, and "a '.field' expression" is a form
+    // the reader never typed.
+    if (target.expr.type === "MethodCall") {
+      const call = `.${target.expr.wrote ?? target.expr.name}()`;
+      throw new ParseError(
+        `Cannot apply '${op}' to the result of '${call}' at position ${pos} — only a field, a binding, '$', '$$' or a collection can be written. Write the result to a field instead: '$.<field> = <receiver>${call};'.`,
+        pos,
+      );
+    }
     const what = target.rule === null ? `a ${t}` : `a '${spelled(target.rule)}' expression`;
     throw new ParseError(
       `Cannot apply '${op}' to ${what} — only a field, a binding, '$', '$$' or a collection can be written`,
@@ -1060,10 +1091,7 @@ class Parser {
             (stmt as { pos: number }).pos,
           );
         }
-        throw new ParseError(
-          `\`${statementSpelling(stmt)}\` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'.`,
-          (stmt as { pos: number }).pos,
-        );
+        throw new ParseError(notPartOfACallback(stmt, retPos), (stmt as { pos: number }).pos);
       }
       return { type: "Lambda", params, body: { type: "ExprBlock", decls, ret, pos: retPos }, pos };
     }

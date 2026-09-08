@@ -441,7 +441,7 @@ describe(".sample() → $sample: { size: 1 } — one random document", () => {
   });
 
   it("rejects an argument (→ .sampleSize)", () => {
-    expect(() => jsmql("$$ = $$.sample(3);")).toThrow("'.sample()' takes no arguments, got 1");
+    expect(() => jsmql("$$ = $$.sample(3);")).toThrow("'.sample()' takes no arguments.");
   });
 });
 
@@ -919,7 +919,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
           assert(o.total > 0, "bad order");
           return { id: o._id, t: o.total };
         });`),
-      ).toThrow(/`assert\(\.\.\.\)` is a pipeline stage, not part of a callback/);
+      ).toThrow(/`assert\(\.\.\.\)`( at position \d+)? is a pipeline stage/);
       expect(() =>
         jsmql(`$$ = $$$.orders.filter(o => o.userId === $._id).aggregate(o => {
           assert(o.total > 0, "bad order");
@@ -932,7 +932,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
 
     it("current stream: the stage is a statement and the reshape is `$ = <expr>`", () => {
       expect(() => jsmql(`$$ = $$.map(d => { $match(d.active === true); return { id: d._id }; });`)).toThrow(
-        "`$match(...)` is a pipeline stage, not part of a callback — a callback's block holds declarations and a 'return'. To run stages over another collection, write '.aggregate((o) => { … })' on it; over the stream, chain the stage: '$$.$match(…)'. at position 19",
+        "`$match(...)` at position 19 is a pipeline stage, and the 'return' at position 46 makes this block a value callback. One block cannot be both. Delete the 'return' to keep a block of stages — that is what '.aggregate((o) => { … })' on a collection takes. Delete the stage to keep a value callback, and fold its work into the 'return'.",
       );
       expect(jsmql(`$match($.active === true); $ = { id: $._id };`)).toEqual([
         { $match: { active: { $eq: true, $not: { $type: "array" } } } },
@@ -943,7 +943,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
     it("current stream: the sub-stream count is `$$.length`", () => {
       expect(() =>
         jsmql(`$$ = $$.map((d, _i, coll) => { assert(coll.length > 0, "empty"); return { id: d._id }; });`),
-      ).toThrow(/`assert\(\.\.\.\)` is a pipeline stage, not part of a callback/);
+      ).toThrow(/`assert\(\.\.\.\)`( at position \d+)? is a pipeline stage/);
       expect(jsmql(`assert($$.length > 0, "empty"); $ = { id: $._id };`)).toEqual([
         { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
         {
@@ -1602,7 +1602,7 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
 
   it("$$ = $$.filter(p).reduce(...) is rejected (same reason)", () => {
     expect(() => jsmql("$$ = $$.filter(o => o.tier === 'gold').reduce((acc, d) => acc + d.amount, 0);")).toThrow(
-      "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "'.reduce(...)' is not a chain method on '$$' — in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'. To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'.",
     );
   });
 

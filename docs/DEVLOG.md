@@ -10,6 +10,54 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-08 — fix: six refusals name a way out, and each way out compiles
+
+Each of these said what was wrong and stopped, or named a form that does not work.
+
+```
+$$ = $$.sample(3);
+before: '.sample()' takes no arguments, got 1
+now:    '.sample()' takes no arguments. It keeps one random document. For n documents write '.sampleSize(n)'.
+        →  $$ = $$.sampleSize(3);   compiles to [{ $sample: { size: 3 } }]
+
+const compute = (x) => x; $ = { a: comput($.n) };
+before: Unknown function 'comput(...)'. Declare it first with …
+now:    Unknown function 'comput(...)'. Did you mean 'compute(...)'? Declare it first with …
+
+$.s.trim() = 1
+before: Cannot apply '=' to a '.field' expression — only a field, a binding, '$', '$$' or a collection can be written at position 11
+now:    Cannot apply '=' to the result of '.trim()' at position 11 — only a field, a binding, '$', '$$' or a
+        collection can be written. Write the result to a field instead: '$.<field> = <receiver>.trim();'.
+
+$$$.coll = $$.reduce((a, d) => a + d.n, 0);
+before: … Use the '$ = [{ k: $.reduce(...) }]' wrap form.        ← that form does not compile
+now:    … To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'.
+        To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'.
+```
+
+The did-you-mean over a user's own declared names was gone because the call site could not see them. It can now.
+
+A statement found inside a callback answered one sentence for three different mistakes, and for two of them the sentence was wrong. It splits by what is actually in the block:
+
+```
+$.r = $$$.o.filter(x => { $sort({ a: 1 }); });                       no return
+→ `$sort(...)` is a pipeline stage, not part of a callback … write '.aggregate((o) => { … })' on it …
+   $.r = $$$.o.aggregate(x => { $sort({ a: 1 }); });   compiles
+
+$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });          a return as well
+→ `$sort(...)` at position 26 is a pipeline stage, and the 'return' at position 44 makes this block a value
+   callback. One block cannot be both. Delete the 'return' … Delete the stage …
+   the old advice named '.aggregate((o) => { … })', which refuses this block while the 'return' is in it
+
+$ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };    a declaration
+→ `const g = (…) => …` declares a reusable function, and a reusable function is declared at the top level of
+   a pipeline, not inside a callback. Write `const g = (…) => …;` as its own statement before this one …
+   the old sentence said `function g(…) { … }` — a spelling the reader never wrote
+```
+
+---
+
+
 ## 2026-09-08 — fix: a wrong-body refusal shows a right call, and a scope refusal names the sigil
 
 Two families of refusal said what was wrong and stopped there.

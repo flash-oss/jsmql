@@ -29,7 +29,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   ];
   for (const [label, src] of foreign) {
     it(`${label} → points at .aggregate on the same collection`, () => {
-      expect(() => jsmql(src)).toThrow(/is a pipeline stage, not part of a callback/);
+      expect(() => jsmql(src)).toThrow(/is a pipeline stage/);
     });
   }
 
@@ -45,22 +45,46 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
   ];
   for (const [label, src] of stream) {
     it(`${label} → points at the chained-stage spelling`, () => {
-      expect(() => jsmql(src)).toThrow(/is a pipeline stage, not part of a callback/);
+      expect(() => jsmql(src)).toThrow(/is a pipeline stage/);
     });
   }
 
   it("names the offending statement, whichever statement form it takes", () => {
     const cases: [string, RegExp][] = [
-      [`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`, /`\$sort\(\.\.\.\)` is a pipeline stage/],
-      [`$.r = $$$.o.filter(x => { $.y = 1; return true; });`, /`\$\.y = …` is a pipeline stage/],
-      [`$.r = $$$.o.filter(x => { delete $.y; return true; });`, /`delete \$\.y` is a pipeline stage/],
-      [`$.r = $$$.o.filter(x => { assert(x.a > 0, "m"); return true; });`, /`assert\(\.\.\.\)` is a pipeline stage/],
+      [`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`, /`\$sort\(\.\.\.\)`( at position \d+)? is a pipeline stage/],
+      [`$.r = $$$.o.filter(x => { $.y = 1; return true; });`, /`\$\.y = …`( at position \d+)? is a pipeline stage/],
+      [
+        `$.r = $$$.o.filter(x => { delete $.y; return true; });`,
+        /`delete \$\.y`( at position \d+)? is a pipeline stage/,
+      ],
+      [
+        `$.r = $$$.o.filter(x => { assert(x.a > 0, "m"); return true; });`,
+        /`assert\(\.\.\.\)`( at position \d+)? is a pipeline stage/,
+      ],
       [
         `$.r = $$$.o.filter(x => { function f(a) { return a } return f(x.a); });`,
-        /`function f\(…\) \{ … \}` is a pipeline stage/,
+        /`function f\(…\) \{ … \}` declares a reusable function/,
       ],
     ];
     for (const [src, message] of cases) expect(() => jsmql(src)).toThrow(message);
+  });
+
+  it("says which of the three it is: a stage with a return, a stage without one, a declaration", () => {
+    // A block that also RETURNS cannot become a stage block by moving it: the
+    // reader has to drop one of the two, and the message names both positions.
+    expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); return true; });`)).toThrow(
+      /is a pipeline stage, and the 'return' at position \d+ makes this block a value callback/,
+    );
+    expect(jsmql(`$.r = $$$.o.aggregate(x => { $sort({ a: 1 }); });`)).toEqual([
+      { $lookup: { from: "o", pipeline: [{ $sort: { a: 1 } }], as: "r" } },
+    ]);
+    // No return: the block can BE a stage block, and the message says where.
+    expect(() => jsmql(`$.r = $$$.o.filter(x => { $sort({ a: 1 }); });`)).toThrow(/is a pipeline stage/);
+    // A declaration belongs at the top level, and moving it out compiles.
+    expect(() => jsmql(`$.r = $$$.o.filter(x => { const g = z => z; return g(x.a) > 1; });`)).toThrow(
+      /declares a reusable function, and a reusable function is declared at the top level/,
+    );
+    expect(() => jsmql(`const g = z => z; $.r = $$$.o.filter(x => g(x.a) > 1);`)).not.toThrow();
   });
 
   it("carries the offending statement's position, not the call's", () => {
@@ -72,7 +96,7 @@ describe("a pipeline stage in a JavaScript callback is rejected", () => {
 
   it("a value-position callback names the value position, where no stage can run at all", () => {
     expect(() => jsmql(`$.r = $$$.orders.map(o => { $sort({ x: -1 }); return o.total; });`)).toThrow(
-      /is a pipeline stage, not part of a callback/,
+      /is a pipeline stage/,
     );
   });
 });

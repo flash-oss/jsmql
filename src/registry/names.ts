@@ -7606,7 +7606,7 @@ export const NAMES = {
       },
     },
     stream: unsupported(
-      "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. Use the '$ = [{ k: $.reduce(...) }]' wrap form.",
+      "'.reduce(...)' is not a chain method on '$$' \u2014 in JS '.reduce' collapses an array to a single value, but '$$' must stay a stream of documents. To fold the whole stream, write a '$group' statement: '$group({ _id: null, total: $sum($.n) });'. To fold an array a document carries, call it on that array: '$.<field>.reduce((a, b) => a + b, 0)'.",
     ),
     statement: unsupported(
       "'.reduce()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.reduce();'",
@@ -10046,7 +10046,13 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: "", none: true },
+      args: {
+        sig: "",
+        none: true,
+        reject: {
+          1: "'.sample()' takes no arguments. It returns one random element. For n elements write '.sampleSize(n)'.",
+        },
+      },
       emit: ({ recv, bind }) => {
         const arr = bind("arr");
         return {
@@ -10057,7 +10063,16 @@ export const NAMES = {
         };
       },
     },
-    stream: { args: { sig: "", none: true }, emit: () => [{ $sample: { size: 1 } }] },
+    stream: {
+      args: {
+        sig: "",
+        none: true,
+        reject: {
+          1: "'.sample()' takes no arguments. It keeps one random document. For n documents write '.sampleSize(n)'.",
+        },
+      },
+      emit: () => [{ $sample: { size: 1 } }],
+    },
     statement: unsupported(
       "'.sample()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sample();'",
     ),
