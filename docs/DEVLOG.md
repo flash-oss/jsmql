@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix: a write to a callback's own stream is answered by name
+
+`.push`, `.sort` and every other mutator spelling desugars to `x = …` on its
+receiver, and the emitter judges the write. A callback's THIRD parameter is the
+body's own STREAM, not a value, so the write reached the end of the target road
+and answered with the wrong thing entirely:
+
+```
+$.o = $$$.u.aggregate((u, _i, c) => { c.push({ x: 1 }); });
+before: Unknown identifier 'c'. Did you mean '$.c'?
+after:  'c' is the body's own stream, and a stream is not a value a statement writes to.
+        Append documents with '.concat(…)' ('c.concat([{ … }]);'), keep some with
+        '.filter(…)', or run a stage on it ('c.$match(…);').
+```
+
+Every way out the message names compiles — `c.concat([{ x: 1 }])` is the same
+`$unionWith` the mutator meant, and `c.$match(…)` the stage — and the test asserts
+each. One message covers every spelling, because they all arrive as one assignment.
+
+---
+
 ## 2026-09-09 — fix!: two shapes the server refuses, refused at compile time instead
 
 Both were HR3 holes — jsmql emitted MQL a `mongod` rejects — and both are now

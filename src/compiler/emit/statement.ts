@@ -403,6 +403,10 @@ function targetPath(op: UpdateOp, env: Env): string {
     }
     if (b.ref.kind === "dropped") throw E.droppedBinding(b.ref, t.pos);
   }
+  // A callback's stream parameter is bound, but not as a value: a mutator on it
+  // (`c.push({ … });`) has already desugared to `c = [...c, { … }]`, so every
+  // spelling of a write to a stream arrives here as one assignment.
+  if (t.type === "Ident" && onOwnStream(t, env)) throw E.writeToOwnStream(t.name, t.pos);
   if (t.type === "Ident") throw new E.UnknownIdentifierError(t.name, t.pos);
   if (t.type === "CollectionRef") return STREAM_TARGET;
   throw E.notAWriteTarget(op.pos);

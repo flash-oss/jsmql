@@ -515,6 +515,17 @@ export const notAMongoType = (spelling: string, aliases: readonly string[], pos:
 
 // ── the stream road ──────────────────────────────────────────────────────────
 
+/**
+ * A write to a callback's own STREAM parameter. `.push`/`.sort` and friends desugar
+ * to `x = …` on the receiver, so every mutator spelling lands here as an assignment
+ * and the message names the chain links that do the same job.
+ */
+export const writeToOwnStream = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(…)' ('${name}.concat([{ … }]);'), keep some with '.filter(…)', or run a stage on it ('${name}.$match(…);').`,
+    pos,
+  );
+
 /** `$$ = <array whose elements the registry proves are not documents>`. */
 export const streamElementsNotDocuments = (noun: string, pos: number): CodegenError =>
   new CodegenError(

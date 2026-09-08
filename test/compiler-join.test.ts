@@ -474,6 +474,22 @@ describe("compiler/emit/join — the refusals name the way out", () => {
       { $lookup: { from: "order-log", ...COMPACT, as: "o" } },
     ]);
   });
+  it("a write to the body's own stream names the chain links that do the job", () => {
+    // Every mutator spelling desugars to `x = …` on the receiver, so all of them
+    // arrive as one assignment and take one message. Each way out compiles.
+    for (const src of ["c.push({ x: 1 });", 'c.sort("k");', "c = 5;"]) {
+      expect(() => pipeline(`$.o = $$$.orders.aggregate((o, _i, c) => { ${src} });`)).toThrow(
+        "'c' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(…)' ('c.concat([{ … }]);'), keep some with '.filter(…)', or run a stage on it ('c.$match(…);').",
+      );
+    }
+    expect(compiled("$.o = $$$.orders.aggregate((o, _i, c) => { c.concat([{ x: 1 }]); });")).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $unionWith: { pipeline: [{ $documents: [{ x: 1 }] }] } }], as: "o" } },
+    ]);
+    expect(compiled('$.o = $$$.orders.aggregate((o, _i, c) => { c.$match({ status: "paid" }); });')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $match: { status: "paid" } }], as: "o" } },
+    ]);
+  });
+
   it("a body over a stage with no `let` cannot read the outer document", () => {
     expect(() => pipeline('$unionWith({ coll: "orders", pipeline: [$match($.a > 1)] });')).toThrow(/has no 'let'/);
   });
