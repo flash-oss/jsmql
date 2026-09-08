@@ -77,9 +77,22 @@ for (const f of FILES) {
       if (text === "" || ELIDED.test(claim) || HOST.test(text)) continue;
       const m = /^jsmql(\.\w+)?\(\s*[`"']([\s\S]*)[`"']\s*\)[;,]?$/.exec(text);
       const source = m ? m[2] : text;
-      // The prose does not say which entry point it means, so any of the three
-      // agreeing is agreement; only a claim NONE of them produces is drift.
-      const entries = m?.[1] === ".expr" ? [jsmql.expr] : m?.[1] === ".update" ? [jsmql.update] : [jsmql, jsmql.expr];
+      // A block that NAMES its entry point is held to it: `jsmql("…")` returning what
+      // `jsmql.expr` returns is exactly the drift this catches (a Filter shown as an
+      // aggregation expression). Only an unlabelled source may answer from either.
+      const named = m?.[1];
+      const entries =
+        named === ".expr"
+          ? [jsmql.expr]
+          : named === ".update"
+            ? [jsmql.update]
+            : named === ".filter"
+              ? [jsmql.filter]
+              : named === ".pipeline"
+                ? [jsmql.pipeline]
+                : m !== null
+                  ? [jsmql]
+                  : [jsmql, jsmql.expr];
       checked++;
       const answers = entries.map((e) => {
         try {

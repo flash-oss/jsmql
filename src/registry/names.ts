@@ -499,12 +499,14 @@ type MongoSpec<
    */
   bansNested?: readonly string[];
   /**
-   * The way out the container refusal names. A stage that belongs to the OUTER
-   * pipeline needs none — the refusal says so already. A stage that has no place
-   * in a collection's pipeline at all states the spelling that does the same job,
-   * so the refusal never sends the reader somewhere the server also refuses.
+   * How a PLACEMENT refusal for this name is worded, where the generic sentence is
+   * wrong for it. `first` replaces "produces the pipeline's source documents" — the
+   * reason a name must stand first is not always that. `container` replaces "Run it
+   * as a stage of the outer pipeline instead" — a name with no place in a
+   * collection's pipeline at all needs the spelling that does the same job, so the
+   * refusal never sends the reader somewhere the server also refuses.
    */
-  insteadOfContainer?: string;
+  placement?: { first?: string; container?: string };
   /**
    * The operators whose BODY accepts this name, PER POSITION. A name listed here
    * is never valid on its own in that position — measured both ways:
@@ -5112,8 +5114,10 @@ export const NAMES = {
     // collection, and refuses it in every other body. jsmql writes that one shape
     // from `$$.push(…)`, so the refusal names the sugar rather than a stage
     // position the server would refuse in its turn.
-    insteadOfContainer:
-      "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
+    placement: {
+      container:
+        "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
+    },
     filter: unsupported(
       "'$documents' is a pipeline stage, not a filter predicate — a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$documents(…);') or as a chain link ('$$.$documents(…)').",
     ),
@@ -12127,6 +12131,20 @@ export const NAMES = {
     doc: "Performs text search.",
     category: "text",
     where: ["filter"],
+    // MEASURED: a '$match' holding '$text' anywhere in its body — at the top or under an
+    // '$and' — is refused unless it is the pipeline's FIRST stage ("$match with $text is
+    // only allowed as the first pipeline stage"), and inside a '$facet' branch it is
+    // refused outright ("query requires text score metadata, but it is not available").
+    // Both facts are the stage's, so `place` reads them off the body's keys, not the
+    // stage name's row.
+    only: ["stageFirst"],
+    forbiddenIn: ["$facet"],
+    placement: {
+      first:
+        "'$text' reads the text index, and the server reads that index at the START of a pipeline. Put the '$match' that uses it first and filter further in a later '$match'.",
+      container:
+        "A branch has no text score to read. Run the '$text' match as the pipeline's first stage, ahead of the branch.",
+    },
     filter: {
       args: { sig: "search", exact: 1, constant: [0] },
       emit: ({ args, literal }) => {

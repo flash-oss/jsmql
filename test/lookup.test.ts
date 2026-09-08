@@ -2078,16 +2078,16 @@ describe("chained stage calls on $$$.<coll>", () => {
   // the same source the statement path reads.
   it("rejects a stage forbidden inside a $lookup sub-pipeline", () => {
     expect(() => jsmql("$.t = $$$.orders.$out('archive');")).toThrow(
-      "'$out' cannot stand inside '$lookup' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$out' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
     expect(() => jsmql("$.t = $$$.orders.$merge({ into: 'archive' });")).toThrow(
-      "'$merge' cannot stand inside '$lookup' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$merge' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
 
   it("rejects a must-be-first stage that isn't first in the chain", () => {
     expect(() => jsmql("$.t = $$$.orders.$match({ a: 1 }).$documents([{ x: 1 }]);")).toThrow(
-      "'$documents' cannot stand inside '$lookup' — the server refuses this stage in that body. Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
+      "'$documents' cannot stand inside '$lookup' — the server refuses it in that body. Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];').",
     );
   });
 

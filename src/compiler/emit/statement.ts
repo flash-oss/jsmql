@@ -22,7 +22,7 @@ import {
   everyStageName,
   forbiddenInOf,
   immutableTwinOf,
-  insteadOfContainerOf,
+  placementOf,
   mutatorFormOf,
   isStageName,
   onlyOf,
@@ -42,7 +42,7 @@ import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { elementKindOf, kindOf } from "./types.ts";
-import { positionalKeysOf } from "../rows.ts";
+import { positionalKeysOf, positionsOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -344,6 +344,19 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS]: documents }] } }];
 }
 
+/** Every registry name that appears as a KEY anywhere inside an emitted stage's body. */
+function namesWithin(body: unknown, out: Set<string> = new Set()): Set<string> {
+  if (Array.isArray(body)) {
+    for (const el of body) namesWithin(el, out);
+  } else if (typeof body === "object" && body !== null) {
+    for (const [k, v] of Object.entries(body)) {
+      if (k.startsWith("$") && positionsOf(k) !== undefined) out.add(k);
+      namesWithin(v, out);
+    }
+  }
+  return out;
+}
+
 /**
  * The placement a row states, applied. Both rules exist because the server
  * enforces them and no renderer implies either: measured, `$out("o"); $.b = 2;`
@@ -354,12 +367,21 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
  */
 function place(name: string, stage: Stage, env: Env, first: boolean, pos: number): Stage[] {
   const only = onlyOf(name);
-  for (const boundary of env.site.boundaries) {
-    if (forbiddenInOf(name).includes(boundary.stage) || bansNestedOf(boundary.stage).includes(name)) {
-      throw E.forbiddenInContainer(name, boundary.stage, pos, insteadOfContainerOf(name));
+  // A placement rule can belong to an OPERATOR the stage's body holds rather than to the
+  // stage itself: `$text` may only appear in the first `$match` of a pipeline, at any
+  // depth of its body. So every registry name the emitted document mentions is judged,
+  // not just the stage's own.
+  for (const held of [name, ...namesWithin(stage[name])]) {
+    for (const boundary of env.site.boundaries) {
+      if (forbiddenInOf(held).includes(boundary.stage) || bansNestedOf(boundary.stage).includes(held)) {
+        throw E.forbiddenInContainer(held, boundary.stage, pos, placementOf(held).container);
+      }
+    }
+    if (held !== name && onlyOf(held).includes("stageFirst") && !first) {
+      throw E.mustBeFirstStage(held, pos, placementOf(held).first);
     }
   }
-  if (only.includes("stageFirst") && !first) throw E.mustBeFirstStage(name, pos);
+  if (only.includes("stageFirst") && !first) throw E.mustBeFirstStage(name, pos, placementOf(name).first);
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw E.twoTerminalStages(name, Object.keys(already)[0], pos);

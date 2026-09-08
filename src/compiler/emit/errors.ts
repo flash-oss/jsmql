@@ -450,10 +450,11 @@ export const spreadInStageList = (pos: number): CodegenError =>
     pos,
   );
 
-/** A stage the server accepts only as the pipeline's first, written after something else. */
-export const mustBeFirstStage = (name: string, pos: number): CodegenError =>
+/** A name the server accepts only in the pipeline's first stage, written after something else. */
+export const mustBeFirstStage = (name: string, pos: number, why?: string): CodegenError =>
   new CodegenError(
-    `'${name}' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.`,
+    why ??
+      `'${name}' produces the pipeline's source documents, so it has to be the FIRST stage — the server refuses it anywhere else. Move it to the top of the program.`,
     pos,
   );
 
@@ -485,10 +486,10 @@ export const afterTerminalStage = (already: string, pos: number): CodegenError =
     pos,
   );
 
-/** A stage written inside a container its row forbids. */
+/** A name written inside a container its row forbids — the stage itself, or one its body holds. */
 export const forbiddenInContainer = (name: string, container: string, pos: number, instead?: string): CodegenError =>
   new CodegenError(
-    `'${name}' cannot stand inside '${container}' — the server refuses this stage in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
+    `'${name}' cannot stand inside '${container}' — the server refuses it in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
     pos,
   );
 

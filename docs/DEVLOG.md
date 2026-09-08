@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — feat: a placement rule can belong to an operator the stage carries
+
+`$text` reads a text index, and MEASURED the server reads that index only at the
+start of a pipeline: `[{ $sort: … }, { $match: { $text: … } }]` answers "$match
+with $text is only allowed as the first pipeline stage", and so does the same
+`$text` nested under an `$and`. Inside a `$facet` branch it is refused outright
+("query requires text score metadata, but it is not available"). jsmql promised
+both checks in three places and made neither.
+
+The rule is `$text`'s, not `$match`'s, so `place` now judges every registry name
+that appears as a KEY anywhere in an emitted stage's body, not the stage name
+alone. `$text`'s row states `only: ["stageFirst"]` and `forbiddenIn: ["$facet"]`,
+and the check falls out.
+
+A placement refusal for a name like this cannot use the generic sentence — `$text`
+does not "produce the pipeline's source documents" — so a row states the wording
+it needs. The `insteadOfContainer` fact added for `$documents` folds into the same
+one, `placement: { first, container }`:
+
+```
+[ $sort({ x: 1 }), $match({ $text: { $search: "mongo" } }) ]
+→ '$text' reads the text index, and the server reads that index at the START of a
+  pipeline. Put the '$match' that uses it first and filter further in a later '$match'.
+```
+
+The `$where` call form stays refused and a RAW `{ $where: … }` body still passes
+through untouched, which is HR1 — the docs claimed a ban on both.
+
+---
+
 ## 2026-09-09 — fix: a write to a callback's own stream is answered by name
 
 `.push`, `.sort` and every other mutator spelling desugars to `x = …` on its

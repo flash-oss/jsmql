@@ -1219,7 +1219,8 @@ jsmql("[ $limit(-5) ]")
 // ✗ '$limit' must be a positive integer, but got -5.
 
 jsmql("[ $sort({ x: 1 }), $match({ $text: { $search: 'mongo' } }) ]")
-// ✗ A '$match' that uses '$text' must be the first stage in a pipeline.
+// ✗ '$text' reads the text index, and the server reads that index at the START of a
+//   pipeline. Put the '$match' that uses it first and filter further in a later '$match'.
 
 jsmql.expr("$dateAdd({ startDate: $.t, unit: 'fortnight' })")
 // ✗ '$dateAdd' requires the 'amount' field, but it is missing.   (+ unit enum, on the next pass)
@@ -1238,7 +1239,7 @@ What's checked: stage **placement** (source stages like `$collStats`/`$geoNear`/
 must be first; `$out`/`$merge` must be last; stages forbidden inside `$facet`/`$lookup`/`$unionWith`
 sub-pipelines), stage **body shape** (literal type/range/enum/required-key/mutual-exclusivity
 rules — e.g. `$count('')`, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo),
-`$match` query operators (`$text` placement; `$near`/`$where` bans), and **operator arguments**
+`$match` query operators (`$text` placement, at any depth of the body; the `$near` ban; the `$where` call form), and **operator arguments**
 (operand count — `$divide` takes 2; required and unknown object keys with a `Did you mean '…'?`;
 enum slots — `unit`/`startOfWeek`/`$convert.to`/regex flags; and literal types — a non-date in a
 date slot, a non-number in `$abs`, …). Use `jsmql.validate(...)` to get these as a list of
@@ -1689,9 +1690,9 @@ $.numbers.reduceRight((acc, x) => acc + x, 0)
 
 **Note:** In `reduce` and `reduceRight`, the accumulator name is mapped to MongoDB's `$$value`. With a 2-param callback the element rides through `$$this`; with a 3-param callback `(acc, x, i)` the input is zipped with `$range` and both `x` and `i` are bound through a `$let` wrapper.
 
-### Callback parameters `(element, index)`
+### Callback parameters `(element, index, array)`
 
-JavaScript array-method callbacks receive `(element, index, array)`. jsmql supports the first two — `(x)` and `(x, i)` — across `.map`, `.filter`, `.find`, `.findIndex`, `.findLast`, `.findLastIndex`, `.some`, `.every`, `.flatMap`, and `.reduce` / `.reduceRight` (which take a leading `acc`). The third `array` parameter is **rejected at compile time** — the receiver is already in scope at the call site, so re-binding it into every iteration adds no expressive power but doubles the iteration cost.
+JavaScript array-method callbacks receive `(element, index, array)`, and jsmql accepts all three — the third binds the method's own input through a `$let`, so `arr.length` inside the callback is the receiver's size. Naming the index changes what is iterated (the input is zipped with `$range`), so the machinery is emitted only where a parameter is actually read. `.reduce` / `.reduceRight` take a leading `acc` and cap at three parameters. See [Optional chaining](#optional-chaining--) for the fuller treatment.
 
 ```js
 // Index-aware map: pair each element with its position
@@ -1784,7 +1785,14 @@ $.events.toSorted(e => -e.user.name)      // descending, via unary -
 $.events.sort({ distance: -1 });          // statement position → $set with $sortArray
 ```
 
-Comparator-style lambdas (`(a, b) => a.x - b.x`) and key functions more complex than `x => x.path` (optionally negated) are rejected at compile time — use a `{ field: dir }` spec, or `$op($sortArray, { input, sortBy })` for a non-trivial sort.
+A **comparator** is a supported spelling: `(a, b) => a.x - b.x` sorts ascending on `x`, `(a, b) => b.x - a.x` descending, and `||` joins keys — each becomes one `sortBy` key.
+
+```js
+$.items.toSorted((a, b) => a.x - b.x || b.y - a.y)
+// → { $sortArray: { input: "$items", sortBy: { x: 1, y: -1 } } }
+```
+
+A **key function** may name a deep path (`x => x.a.b.c` → `sortBy: { "a.b.c": 1 }`). What is refused is a comparator body that is not one field of each subtracted — the message names the two forms and the `{ field: dir }` spec.
 
 #### lodash iteratee / predicate shorthands
 
@@ -1904,7 +1912,16 @@ new Set($.a).isSubsetOf(new Set($.b))     // { $setIsSubset: ["$a", "$b"] }
 new Set($.a).isSupersetOf(new Set($.b))   // { $setIsSubset: ["$b", "$a"] }   (swap)
 ```
 
-`Set.prototype.symmetricDifference()` and `.isDisjointFrom()` have no MongoDB equivalent — compose manually via `$setDifference` and `$setIntersection`. The set-method argument must itself be a `new Set(...)` literal so that the JS reads consistently.
+```js
+new Set($.a).symmetricDifference(new Set($.b))
+// → { $let: { vars: { jsmqlA: "$a", jsmqlB: "$b" }, in:
+//       { $setDifference: [{ $setUnion: ["$$jsmqlA", "$$jsmqlB"] },
+//                          { $setIntersection: ["$$jsmqlA", "$$jsmqlB"] }] } } }
+new Set($.a).isDisjointFrom(new Set($.b))
+// → { $eq: [{ $size: { $setIntersection: ["$a", "$b"] } }, 0] }
+```
+
+The last two have no single MongoDB operator, so jsmql composes them — each operand is bound once, so a field is read once however the composition uses it. The set-method argument must itself be a `new Set(...)` literal so that the JS reads consistently.
 
 Need `$allElementsTrue` / `$anyElementTrue`? Use the natural JS forms `arr.every(Boolean)` / `arr.some(Boolean)`.
 
@@ -2105,7 +2122,9 @@ Math.log2($.value)                 // { $log: ["$value", 2] }
 Math.log10($.value)                // { $log10: "$value" }
 Math.trunc($.avg)                  // { $trunc: "$avg" }
 Math.sign($.delta)                 // { $cmp: ["$delta", 0] } (-1 / 0 / 1)
-Math.cbrt($.x)                     // { $pow: ["$x", { $divide: [1, 3] }] }
+Math.cbrt($.x)                     // { $multiply: [{ $cmp: ["$x", 0] }, { $pow: [{ $abs: "$x" }, { $divide: [1, 3] }] }] }
+                                   // the sign is factored out: Math.cbrt(-8) is -2 in JavaScript,
+                                   // and $pow of a negative base to a fractional exponent is not that
 Math.hypot($.a, $.b)               // sqrt(a² + b²) via $sqrt + $add + $pow
 Math.random()                      // { $rand: {} }
 
@@ -2189,7 +2208,10 @@ Returns the BSON type name as a string (e.g. `"string"`, `"bool"`, `"objectId"`,
 
 ```js
 Number.isInteger($.n)              // true if $.n is int/long, or a double with no fractional part
-Number.isNaN($.x)                  // { $ne: ["$x", "$x"] }   — NaN is the only value where x !== x
+Number.isNaN($.x)                  // { $and: [{ $isNumber: "$x" }, { $eq: [{ $toString: "$x" }, "NaN"] }] }
+                                   // MongoDB's $eq says NaN == NaN, so JS's self-comparison
+                                   // trick cannot work: the test is a numeric-type check plus
+                                   // a string comparison of the value's own rendering.
 ```
 
 `Number.isFinite()` is **not supported** — MongoDB has no Infinity literal that can be referenced cleanly. For finite-bound checks, write the bounds explicitly (e.g. `$.x > -1e300 && $.x < 1e300`) or use `$convert` with an `onError` clause.
@@ -2275,7 +2297,7 @@ jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObject
 ```js
 // Constant arguments → a real BSON Date, folded at compile time (see note below):
 new Date("2024-01-01")             // Date(2024-01-01T00:00:00Z)
-new Date(2024, 1, 15)              // Date(2024-01-15T00:00:00Z)   (UTC; month 1 = January)
+new Date(2024, 1, 15)              // Date(2024-02-15T00:00:00Z)   (UTC; month 1 = February — months count from 0, as in JS)
 new Date(2024, 11, 31, 23, 59, 58, 999)
                                    // Date(2024-12-31T23:59:58.999Z) — full y/m/d/h/min/s/ms form; December is 11
 new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
@@ -2326,7 +2348,7 @@ Each component getter has a `getUTC*` variant that reads the date in UTC instead
 $.createdAt.getUTCFullYear()       // { $year: "$createdAt" }
 $.createdAt.getUTCMonth()          // { $subtract: [{ $month: "$createdAt" }, 1] }   (January = 0)
 $.createdAt.getUTCDate()           // { $dayOfMonth: "$createdAt" }
-$.createdAt.getUTCDay()            // { $dayOfWeek: "$createdAt" }   (1 = Sunday)
+$.createdAt.getUTCDay()            // { $subtract: [{ $dayOfWeek: "$createdAt" }, 1] }   (0 = Sunday, as in JS)
 $.createdAt.getUTCHours()          // { $hour: "$createdAt" }
 $.createdAt.getUTCMinutes()        // { $minute: "$createdAt" }
 $.createdAt.getUTCSeconds()        // { $second: "$createdAt" }
@@ -2729,7 +2751,18 @@ $accumulator({
 
 ### Window Operators
 
-⚠️ **Watch out:** these are valid only inside the `$setWindowFields` stage. Calling `$rank()` from a `$project` stage produces nonsense MQL — jsmql does not validate the surrounding stage context.
+These are valid only in a `$setWindowFields` **output** slot, and jsmql holds them to it: written anywhere else, the refusal names the stage and the shape.
+
+```js
+$project({ r: $rank() });
+// ✗ $rank is a window operator — only valid inside '$setWindowFields' output slots.
+//   Use $setWindowFields({ partitionBy: …, sortBy: …, output: { <key>: $rank(…) } }) …
+
+$setWindowFields({ sortBy: { t: 1 }, output: { r: $rank() } });
+// → [{ $setWindowFields: { sortBy: { t: 1 }, output: { r: { $rank: {} } } } }]
+```
+
+Every operator below is written in that `output` slot; the shape each one makes is:
 
 ```js
 $rank()                            // { $rank: {} }
@@ -3683,7 +3716,7 @@ Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 - No forgotten cleanup — the compiler appends the `$unset` automatically.
 - `subtotal` (a bare identifier) at call sites reads visually distinct from `$.subtotal` (a real document field).
 
-**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: stages that *replace* the document drop the let. Those stages are `$group`, `$bucket`, `$bucketAuto`, `$replaceRoot`, and `$replaceWith`. Referring to a let after any of these is a compile-time error:
+**Scope rules.** A let is visible from its declaration to the end of the pipeline, with one exception: a stage that *replaces* the document drops the let, because the field carrying it is gone. Which stages those are is a fact on each row of [`src/registry/names.ts`](../src/registry/names.ts) (`replacesDocument`) — `$group` is the one every pipeline meets. Referring to a let after one of them is a compile-time error:
 
 ```js
 jsmql`
@@ -3696,7 +3729,7 @@ jsmql`
 //   or rebind after the stage with another `let`.
 ```
 
-`$project` is **not** in the reshape-clearing set, because expression-mode (`{ x: $.y + 1 }`) and exclusion-mode (`{ a: 0 }`) projections preserve the rest of the document. If you write an inclusion-mode `$project` that omits `__jsmql`, any later let reference will silently coerce to `null` at runtime — same trap as today's manual `$.tmp = …` + `delete` pattern. Place inclusion-mode projections at the end of the pipeline whenever possible.
+`$project` clears the scope in **inclusion** mode only: naming the fields to keep drops `__jsmql` with the rest, so a later let read is the same compile-time error `$group` gives. Expression-mode (`{ x: $.y + 1 }`) and exclusion-mode (`{ a: 0 }`) projections preserve the document, and the let survives them. The row states that as `replacesDocument: "inclusion"`.
 
 **Indexing pitfall.** A let materialises through `$addFields`/`$set`. A `$match` on a let-bound value cannot use an index, and the optimiser cannot push that `$match` past the `$set` that produced the field. Place index-eligible `$match`es on real document fields **before** your `let` bindings:
 
@@ -4279,22 +4312,24 @@ Two points on scope:
 
 ## Template-Tag Form (`` jsmql`…` ``)
 
-For expressions with embedded literal values, call `jsmql` as a template tag:
+For a query with embedded literal values, call `jsmql` as a template tag. The tag
+dispatches on shape exactly as the string form does — no `;` gives a Filter — and
+`jsmql.expr` / `jsmql.pipeline` / `jsmql.update` are tags too:
 
 ```js
 const { jsmql } = require("@koresar/jsmql");
 
 const minAge = 21;
-const expr = jsmql`$.age > ${minAge}`;
-// → { $gt: ["$age", 21] }
+const filter = jsmql`$.age > ${minAge}`;
+// → { age: { $gt: 21 } }
 
 const statuses = ["active", "pending"];
-const expr2 = jsmql`$.status in ${statuses}`;
-// → { $in: ["$status", ["active", "pending"]] }
+const filter2 = jsmql`$.status in ${statuses}`;
+// → { status: { $in: ["active", "pending"] } }
 
 // Complex expression
-const expr3 = jsmql`$.age > ${21} && $.status in ${["active"]}`;
-// → { $and: [{ $gt: ["$age", 21] }, { $in: ["$status", ["active"]] }] }
+const filter3 = jsmql`$.age > ${21} && $.status in ${["active"]}`;
+// → { age: { $gt: 21 }, status: { $in: ["active"] } }
 ```
 
 Template values must be **literals** (numbers, strings, booleans, null, arrays, or plain objects). Field references go in the template string:
@@ -4387,19 +4422,23 @@ jsmql("$.name.trinm()");
 
 ## Examples
 
+Every example here is an **aggregation expression** — what `jsmql.expr(…)` returns, and
+what goes in a stage field. The same source through `jsmql(…)` is a Filter instead: see
+[Filter or Pipeline](#filter-or-pipeline) for the dispatch.
+
 ### Numeric Comparisons
 
 ```js
 // Find adults
-jsmql("$.age >= 18")
+jsmql.expr("$.age >= 18")
 // → { $gte: ["$age", 18] }
 
 // Price range
-jsmql("$.price > 10 && $.price <= 100")
+jsmql.expr("$.price > 10 && $.price <= 100")
 // → { $and: [{ $gt: ["$price", 10] }, { $lte: ["$price", 100] }] }
 
 // Score calculation
-jsmql("($.correct + $.partial * 0.5) / $.total * 100")
+jsmql.expr("($.correct + $.partial * 0.5) / $.total * 100")
 // → { $multiply: [{ $divide: [{ $add: ["$correct", { $multiply: ["$partial", 0.5] }] }, "$total"] }, 100] }
 ```
 
@@ -4407,27 +4446,30 @@ jsmql("($.correct + $.partial * 0.5) / $.total * 100")
 
 ```js
 // Full name
-jsmql('$.firstName + " " + $.lastName')
+jsmql.expr('$.firstName + " " + $.lastName')
 // → { $concat: ["$firstName", " ", "$lastName"] }
 
 // Normalized email
-jsmql("$.email.toLowerCase().trim()")
+jsmql.expr("$.email.toLowerCase().trim()")
 // → { $trim: { input: { $toLower: "$email" } } }
 
 // Check domain
-jsmql('$.email.substr($.email.indexOf("@") + 1)')
-// → { $substrCP: ["$email", { $add: [{ $indexOfCP: ["$email", "@"] }, 1] }, ...] }
+jsmql.expr('$.email.substr($.email.indexOf("@") + 1)')
+// → { $substrCP: ["$email", <the index after "@">, <the rest of the string>] }
+//   — the index is a $switch on the receiver's own type, because `.indexOf` reads an
+//     array and a string alike; see "Type-aware dispatch" above
 ```
 
 ### Conditional Logic
 
 ```js
 // Age category
-jsmql('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
-// → nested $cond chain
+jsmql.expr('$.age < 13 ? "child" : $.age < 18 ? "teen" : "adult"')
+// → { $cond: { if: { $lt: ["$age", 13] }, then: "child",
+//     else: { $cond: { if: { $lt: ["$age", 18] }, then: "teen", else: "adult" } } } }
 
 // Fallback value (chained ?? flattens into a single $ifNull)
-jsmql("$.nickname ?? $.firstName ?? 'Unknown'")
+jsmql.expr("$.nickname ?? $.firstName ?? 'Unknown'")
 // → { $ifNull: ["$nickname", "$firstName", "Unknown"] }
 ```
 
@@ -4435,19 +4477,19 @@ jsmql("$.nickname ?? $.firstName ?? 'Unknown'")
 
 ```js
 // Status filter
-jsmql('$.status in ["active", "pending"]')
+jsmql.expr('$.status in ["active", "pending"]')
 // → { $in: ["$status", ["active", "pending"]] }
 
 // Transform array
-jsmql("$.prices.map(p => p * 1.1)")
+jsmql.expr("$.prices.map(p => p * 1.1)")
 // → { $map: { input: "$prices", as: "p", in: { $multiply: ["$$p", 1.1] } } }
 
 // Filter array
-jsmql("$.items.filter(x => x.qty > 0)")
+jsmql.expr("$.items.filter(x => x.qty > 0)")
 // → { $filter: { input: "$items", as: "x", cond: { $gt: ["$$x.qty", 0] } } }
 
 // Sum array
-jsmql("$.amounts.reduce((acc, x) => acc + x, 0)")
+jsmql.expr("$.amounts.reduce((acc, x) => acc + x, 0)")
 // → { $reduce: { input: "$amounts", initialValue: 0, in: { $add: ["$$value", "$$this"] } } }
 ```
 
@@ -4455,15 +4497,15 @@ jsmql("$.amounts.reduce((acc, x) => acc + x, 0)")
 
 ```js
 // Extract year from date field
-jsmql("$.createdAt.getFullYear()")
+jsmql.expr("$.createdAt.getFullYear()")
 // → { $year: "$createdAt" }
 
 // Days since creation
-jsmql("$dateDiff($.createdAt, new Date(), 'day')")
+jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
 // → { $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }
 
 // Format date
-jsmql('$dateToString($.createdAt, "%Y-%m-%d")')
+jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')
 // → { $dateToString: { date: "$createdAt", format: "%Y-%m-%d" } }
 ```
 
@@ -4471,11 +4513,11 @@ jsmql('$dateToString($.createdAt, "%Y-%m-%d")')
 
 ```js
 // Convert string to number
-jsmql("Number($.stringPrice) * 1.1")
+jsmql.expr("Number($.stringPrice) * 1.1")
 // → { $multiply: [{ $toDouble: "$stringPrice" }, 1.1] }
 
 // Type check
-jsmql("typeof $.value === 'string'")
+jsmql.expr("typeof $.value === 'string'")
 // → { $eq: [{ $type: "$value" }, "string"] }
 ```
 
@@ -4488,8 +4530,8 @@ const statusFilter = jsmql`$.status in ${["active", "pending"]}`;
 const ageFilter = jsmql`$.age > ${21}`;
 // → { $gt: ["$age", 21] }
 
-// Combine using jsmql() for dynamic composition
-const combined = jsmql(`$.age > 21 && $.status in ["active", "pending"]`);
+// Combine using jsmql.expr() for dynamic composition
+const combined = jsmql.expr(`$.age > 21 && $.status in ["active", "pending"]`);
 // → { $and: [{ $gt: ["$age", 21] }, { $in: ["$status", ["active", "pending"]] }] }
 ```
 

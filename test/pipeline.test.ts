@@ -1378,27 +1378,27 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
   // Forbidden-in-sub-pipeline (literal sub-pipeline arrays).
   it("rejects $out inside a $facet sub-pipeline", () => {
     expect(() => jsmql("[ { $facet: { a: [ { $out: 'x' } ] } } ]")).toThrow(
-      "'$out' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$out' cannot stand inside '$facet' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
   it("rejects $merge inside a $lookup sub-pipeline", () => {
     expect(() => jsmql("[ { $lookup: { from: 'c', as: 'r', pipeline: [ { $merge: 'x' } ] } } ]")).toThrow(
-      "'$merge' cannot stand inside '$lookup' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$merge' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
   it("rejects $merge inside a $unionWith sub-pipeline", () => {
     expect(() => jsmql("[ { $unionWith: { coll: 'c', pipeline: [ { $merge: 'x' } ] } } ]")).toThrow(
-      "'$merge' cannot stand inside '$unionWith' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$merge' cannot stand inside '$unionWith' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
   it("rejects a nested $facet", () => {
     expect(() => jsmql("[ { $facet: { a: [ { $facet: { b: [ $count('n') ] } } ] } } ]")).toThrow(
-      "'$facet' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$facet' cannot stand inside '$facet' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
   it("rejects $geoNear inside a $facet sub-pipeline", () => {
     expect(() => jsmql("[ { $facet: { a: [ { $geoNear: { near: [0, 0], distanceField: 'd' } } ] } } ]")).toThrow(
-      "'$geoNear' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$geoNear' cannot stand inside '$facet' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
   it("accepts $geoNear as the FIRST stage of a $lookup sub-pipeline (not over-forbidden)", () => {
@@ -1598,7 +1598,7 @@ describe("$facet branches accept any `$$` chain", () => {
   // Placement is validated against the facet container.
   it("rejects a write stage in a branch, naming $facet", () => {
     expect(() => jsmql('$ = { k: $$.$out("x") };')).toThrow(
-      "'$out' cannot stand inside '$facet' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$out' cannot stand inside '$facet' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
   });
 
@@ -1712,7 +1712,7 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 
   it("rejects a collection write without an internal error", () => {
     expect(() => jsmql(wrap("$$$.arch = $$"))).toThrow(
-      "'$out' cannot stand inside '$lookup' — the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.",
+      "'$out' cannot stand inside '$lookup' — the server refuses it in that body. Run it as a stage of the outer pipeline instead.",
     );
     expect(() => jsmql(wrap("$$$.arch = $$"))).not.toThrow(/internal error/);
   });

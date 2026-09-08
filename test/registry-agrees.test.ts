@@ -72,15 +72,18 @@ describe("registry — `only` and the positions it qualifies", () => {
     expect(unused).toEqual([]);
   });
 
-  it("states `only` on rows that can stand as a stage or a chain link", () => {
-    // Every Only member qualifies a stage or a link — "first stage", "last
-    // stage", "an update-pipeline stage", "a link after a sort". A row that lists
-    // neither position has nothing for the rule to qualify.
+  it("states `only` on a row that can stand as a stage, a chain link, or in a stage's body", () => {
+    // Every Only member qualifies a stage or a link — "first stage", "last stage",
+    // "an update-pipeline stage", "a link after a sort" — and the placement may
+    // belong to an OPERATOR the stage carries rather than to the stage itself:
+    // MEASURED, "$match with $text is only allowed as the first pipeline stage", so
+    // the rule is `$text`'s and the stage it qualifies is whichever `$match` holds it.
+    // A row that stands in none of those three positions has nothing to qualify.
     const stray: string[] = [];
     for (const [name, row] of rows) {
       if (row.only === undefined || row.only.length === 0) continue;
       const w = row.where ?? [];
-      if (!w.includes("stream") && !w.includes("statement")) stray.push(name);
+      if (!w.includes("stream") && !w.includes("statement") && !w.includes("filter")) stray.push(name);
     }
     expect(stray).toEqual([]);
   });

@@ -459,9 +459,9 @@ export function bansNestedOf(name: string): readonly string[] {
   return (row(name) as { bansNested?: readonly string[] } | undefined)?.bansNested ?? [];
 }
 
-/** The way out a container refusal names, when the outer pipeline is not it. */
-export function insteadOfContainerOf(name: string): string | undefined {
-  return (row(name) as { insteadOfContainer?: string } | undefined)?.insteadOfContainer;
+/** How a placement refusal for this name is worded, where the generic sentence is wrong for it. */
+export function placementOf(name: string): { first?: string; container?: string } {
+  return (row(name) as { placement?: { first?: string; container?: string } } | undefined)?.placement ?? {};
 }
 
 /** The extra rules a row states that no renderer implies — where a stage may stand. */
