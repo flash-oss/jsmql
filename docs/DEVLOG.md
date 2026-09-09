@@ -10,6 +10,15 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — docs: the `[]` neutral shows up in the three claims that name it
+
+`scripts/check-doc-claims.mjs`, run after the null-neutral fix, found the three
+prose claims whose MQL now carries the extra `$ifNull`: the README's spread-and-
+`.includes` example, and the two `$switch` blocks in LANGUAGE.md that spell out
+what a dual-receiver `.includes` and `.length` emit.
+
+---
+
 ## 2026-09-09 — chore: the acceptance gate is clean
 
 `scripts/diff-compilers.mjs` exits 0. Every one of the 10993 divergences between

@@ -1599,7 +1599,7 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```js
 $.tags.includes("active")
 // → { $switch: { branches: [
-//       { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["active", "$tags"] } },
+//       { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["active", { $ifNull: ["$tags", []] }] } },
 //       { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] } }
 //     ], default: "$$REMOVE" } }
 ```
@@ -3635,7 +3635,7 @@ jsmql(`[{ $match: typeof $.x === "bool" }]`);
 // → "boolean" is refused, with 'bool' named — see "typeof" under Operators
 jsmql(`[{ $match: $.items.length === 3 }]`);
 // → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
-//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
 //       { case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] }, then: { $strLenCP: { $ifNull: ["$items", ""] } } }
 //     ], default: "$$REMOVE" } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).

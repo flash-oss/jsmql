@@ -75,7 +75,7 @@ jsmql(({ $ }) => {
 
 // Use `?.` where a field might be null — you get `$ifNull` guards exactly there:
 jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
-// → { "$expr": { "$in": ["$userId", { "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }] } }
+// → { "$expr": { "$in": ["$userId", { "$ifNull": [{ "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }, []] }] } }
 
 // `new Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
