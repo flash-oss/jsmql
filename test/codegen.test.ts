@@ -600,6 +600,24 @@ describe("array spread", () => {
     expect(jsmql.expr("$foo([...$.arr])")).toEqual({ $foo: "$arr" });
   });
 
+  // JavaScript spreads a string into its characters; MongoDB has no operator that does.
+  // `[..."abc"]` used to answer the bare string "abc". See docs/DEFERRED.md § B.
+  it("refuses to spread a PROVABLE string, in an array literal and in an object literal", () => {
+    const message =
+      "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, drop the '...'.";
+    expect(() => jsmql.expr('[..."abc"]')).toThrow(message);
+    expect(() => jsmql.expr('[..."abc", "d"]')).toThrow(message);
+    expect(() => jsmql.expr("[...$.s.trim()]")).toThrow(message);
+    expect(() => jsmql.expr('{ ..."abc" }')).toThrow(message);
+    expect(() => jsmql.expr('{ ..."abc", a: 1 }')).toThrow(message);
+  });
+
+  it("a field path proves nothing, so its spread still compiles", () => {
+    // the compiler cannot know the type; the server answers
+    expect(jsmql.expr("[...$.s]")).toEqual("$s");
+    expect(jsmql.expr('[...$.a.split(",")]')).toEqual({ $split: ["$a", ","] });
+  });
+
   it("two spreads emit $concatArrays", () => {
     expect(jsmql.expr("$foo([...$.a, ...$.b])")).toEqual({ $foo: { $concatArrays: ["$a", "$b"] } });
   });

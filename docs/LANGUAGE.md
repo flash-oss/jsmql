@@ -1145,6 +1145,57 @@ A method in neither form is rejected, and the error names the equivalent stage c
 
 **Why the `$$$.<coll> = …` LHS, not `$ = $out(...)`?** jsmql reserves `$ = …` for *root-replacing* sugar (see [Replace root via `$ = <expr>`](#replace-root-via---expr)). `$out` writes elsewhere — it doesn't replace the current document — so the LHS makes the destination visible on the left, mirroring `$lookup` (`$$$.<coll>.find(...)`) and `$unionWith` (`$$.push(...)`).
 
+#### Adding to a collection instead of replacing it — `$merge`
+
+`$out` REPLACES the destination: whatever it held is gone. `$merge` ADDS to it — the
+documents whose `_id` matches are updated, the rest are inserted. jsmql spells the
+difference as `=` against `+=`:
+
+```js
+jsmql("$$$.metrics = $$;")
+// → [{ $out: "metrics" }]                        the collection now holds only these
+
+jsmql("$$$.metrics += $$;")
+// → [{ $merge: "metrics" }]                      what was there is kept
+
+jsmql("$$$.metrics += $$.filter(d => d.active);")
+// → [{ $match: <translated d => d.active> }, { $merge: "metrics" }]
+```
+
+The JavaScript verbs that mean "add to this" write the same stage, and they also take
+an **array** of documents, which `+=` does not:
+
+```js
+jsmql("$$$.metrics.concat($$);")
+// → [{ $merge: "metrics" }]                      the same as `+=`
+
+jsmql("$$$.metrics.concat($.items);")
+jsmql("$$$.metrics.push(...$.items);")
+// both → [{ $set: { "__jsmql.tmp.0": "$items" } },
+//         { $unwind: "$__jsmql.tmp.0" },
+//         { $replaceWith: "$__jsmql.tmp.0" },
+//         { $merge: "metrics" }]
+
+jsmql("$$$.metrics.push($.summary);")
+// → [{ $replaceWith: "$summary" }, { $merge: "metrics" }]
+```
+
+The spread is what tells the two `.push` forms apart, exactly as in JavaScript:
+`.push(...xs)` writes one document per element of `xs`, and `.push(x)` writes `x`
+itself as one document. Pushing a list without the spread is refused, and the message
+names the spread.
+
+`$merge`'s four settings — `on`, `whenMatched`, `whenNotMatched`, `let` — have no
+sugar and need none; write the stage:
+
+```js
+jsmql('$merge({ into: "metrics", on: "_id", whenMatched: "merge" });')
+// → [{ $merge: { into: "metrics", on: "_id", whenMatched: "merge" } }]
+```
+
+Everything the `$out` sugar states above holds for `$merge` too: it must be the last
+stage, it is Pipeline-only, and the destination shapes are the same.
+
 ---
 
 ### System / diagnostic stages: `$$.indexStats()`, `$$$$.currentOp()`, …

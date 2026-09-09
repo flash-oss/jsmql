@@ -47,7 +47,7 @@ A new operator or syntax feature lands as a registry row, and the LANGUAGE.md ta
 | `specs/union-stage.md` | `$$.push(args…)` → `$unionWith` |
 | `specs/replace-root-stage.md` | `$ = <expr>` → `$replaceWith` / `$facet`; hosts the "all root-replacing sugar starts with `$ =`" convention |
 | `specs/replace-stream-stage.md` | `$$ = <expr>` → `$match` (narrow) / `$match`+`$unionWith` (source switch) |
-| `specs/out-stage.md` | `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` |
+| `specs/out-stage.md` | writing a collection: `$$$.<coll> = …` → `$out`, `+= ` / `.concat(…)` / `.push(…)` → `$merge` |
 | `specs/system-stages.md` | `$$.indexStats()` / `$$$$.currentOp(…)` / … → diagnostic / system source stages |
 | `specs/stream-methods.md` | The chainable array-shaped methods a stream chain (`$$.<method>(…)`) accepts, plus the `.reduce` wrap forms |
 | `specs/assert.md` | `assert(condition[, message])` → conditional-error `$match` guard (`$convert` "Unknown type name") |

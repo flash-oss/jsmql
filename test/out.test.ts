@@ -163,7 +163,7 @@ describe("$out — RHS shape errors", () => {
 
   it("RHS not rooted at $$ throws with the supported shapes", () => {
     expect(() => jsmql("$$$.coll = $.someField;")).toThrow(
-      "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+      "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
     );
   });
 
@@ -360,5 +360,100 @@ describe("$out RHS accepts chained stage calls", () => {
         "'.$prject()' is not a method of the stream '$$'. Did you mean '.$project()'? A stage is a link too: '$$.$match(…)'.",
       );
     });
+  });
+});
+
+// ── `$merge` — the collection keeps what it already holds ────────────────────
+//
+// `=` REPLACES a collection (a `$out`) and `+=` ADDS to it (a `$merge`), which the
+// server proves: run both over a collection already holding `{ _id: 99 }` and only
+// `$out` drops it. `.concat()` and `.push(...)` are the same write spelled as the
+// JavaScript verbs, so an ARRAY of documents can be written as well as the stream.
+// See docs/specs/out-stage.md.
+describe("$merge — adding to a collection", () => {
+  it("'+=' writes the stream with $merge, where '=' writes it with $out", () => {
+    expect(jsmql("$$$.metrics += $$;")).toEqual([{ $merge: "metrics" }]);
+    expect(jsmql("$$$.metrics = $$;")).toEqual([{ $out: "metrics" }]);
+    expect(jsmql("$$$$.dw.metrics += $$;")).toEqual([{ $merge: { db: "dw", coll: "metrics" } }]);
+  });
+
+  it("'+=' takes the same stages before it that '=' does", () => {
+    expect(jsmql("$$$.metrics += $$.filter(d => d.active);")).toEqual([
+      {
+        $match: {
+          $expr: {
+            $and: [
+              { $ne: [{ $ifNull: ["$active", null] }, null] },
+              { $ne: ["$active", false] },
+              { $ne: ["$active", ""] },
+              { $ne: ["$active", 0] },
+            ],
+          },
+        },
+      },
+      { $merge: "metrics" },
+    ]);
+  });
+
+  it("'.concat()' and '.push(...)' write the stream the same way", () => {
+    expect(jsmql("$$$.metrics.concat($$);")).toEqual([{ $merge: "metrics" }]);
+    expect(jsmql("$$$.metrics.push(...$$);")).toEqual([{ $merge: "metrics" }]);
+  });
+
+  // An array is not the stream, so its elements become the documents first — the
+  // same three stages `$$ = <array>;` already emits, then the write.
+  it("an ARRAY of documents is written element by element", () => {
+    const stages = [
+      { $set: { "__jsmql.tmp.0": "$items" } },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+      { $merge: "metrics" },
+    ];
+    expect(jsmql("$$$.metrics.concat($.items);")).toEqual(stages);
+    expect(jsmql("$$$.metrics.push(...$.items);")).toEqual(stages);
+  });
+
+  // JavaScript's spread rule, kept: `.push(x)` appends x itself, so x IS the document.
+  it("'.push()' without a spread writes ONE document", () => {
+    expect(jsmql("$$$.metrics.push($.doc);")).toEqual([{ $replaceWith: "$doc" }, { $merge: "metrics" }]);
+    expect(jsmql("$$$.metrics.push({ _id: 9, k: 1 });")).toEqual([
+      { $replaceWith: { _id: 9, k: 1 } },
+      { $merge: "metrics" },
+    ]);
+  });
+
+  it("a written list of documents keeps the element rule the stream form states", () => {
+    expect(() => jsmql("$$$.metrics.push(...[{ a: 1 }, 5]);")).toThrow(
+      "'$$$.<coll>.push(...<array>)' element 2 expects a document, but got a number.",
+    );
+  });
+
+  it("nothing may follow the write, and the message names the stage that is there", () => {
+    expect(() => jsmql("$$$.metrics.concat($$); $.a = 1;")).toThrow(
+      "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+    );
+    expect(() => jsmql("$$$.metrics = $$; $.a = 1;")).toThrow("Nothing can follow '$out':");
+  });
+
+  it("refuses the writes that name no documents, each naming a spelling that works", () => {
+    expect(() => jsmql("$$$.metrics *= $$;")).toThrow(
+      "A collection takes '=' or '+=', not '*=': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').",
+    );
+    expect(() => jsmql("$$$.metrics.concat();")).toThrow(
+      "Nothing to write into the collection: give the stream ('$$$.<coll>.concat($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ … });').",
+    );
+    expect(() => jsmql("$$$.metrics.concat($$, $$);")).toThrow(
+      "'$$$.<coll>.concat()' writes ONE source into the collection, and this names 2. Write them one statement at a time, or join them first ('$$$.<coll>.concat([...a, ...b]);').",
+    );
+    expect(() => jsmql("$$$.metrics.concat($.s.trim());")).toThrow(
+      "'$$$.<coll>.concat(<array>)' writes MANY documents into the collection — a string is one value.",
+    );
+    expect(() => jsmql("$$$.metrics.push(5);")).toThrow(
+      "'$$$.<coll>.push(<value>)' writes that value AS one document, and a number is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+    );
+    // the case the spread exists for: a LIST pushed without one would be a single document
+    expect(() => jsmql("$$$.metrics.push([{ a: 1 }]);")).toThrow(
+      "'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'),",
+    );
   });
 });

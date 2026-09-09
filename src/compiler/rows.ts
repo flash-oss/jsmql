@@ -475,6 +475,11 @@ export function unionsOf(name: string): boolean {
   return (row(name) as { unions?: true } | undefined)?.unions === true;
 }
 
+/** Does this method WRITE documents into a collection — `$$$.<coll>.concat(…);` — a `$merge`? */
+export function mergesIntoOf(name: string): boolean {
+  return (row(name) as { mergesInto?: true } | undefined)?.mergesInto === true;
+}
+
 /** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
 export function collapsesOf(name: string): true | "unlessRawBody" | null {
   return (row(name) as { collapses?: true | "unlessRawBody" } | undefined)?.collapses ?? null;

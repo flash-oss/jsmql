@@ -441,7 +441,7 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
     // must evaluate to an object". The row states the element kind, so the refusal is
     // at compile time and names the two spellings that do work.
     expect(() => jsmql("[ $$ = Object.entries($.scores) ]")).toThrow(
-      /makes the stream from the array's ELEMENTS, one document each, and these elements are arrays/,
+      /makes documents from the array's ELEMENTS, one each, and these elements are arrays/,
     );
     // The way out the message names, taken:
     expect(jsmql("[ $$ = Object.entries($.scores).map((v) => ({ value: v })) ]")).toEqual([

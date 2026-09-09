@@ -24798,7 +24798,7 @@
       "src": "$$$.coll = $.someField;",
       "kind": "message",
       "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
-      "now": "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+      "now": "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of documents, name them: '$$$.<coll>.conca",
       "reason": "message: both compilers refuse `$$$.coll = $.someField;` with a CodegenError, and both name the same two legal right-hand sides, `$$$.<coll> = $$` and `$$$.<coll> = $$.filter(…)`. Only the wording changes."
     },
     "pipeline\u0000$$$.coll = $$.filter(o => o.x === $.threshold);": {
@@ -27654,7 +27654,7 @@
       "src": "[ $$ = Object.entries($.scores) ]",
       "kind": "message",
       "was": "'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSort",
-      "now": "'$$ = …' makes the stream from the array's ELEMENTS, one document each, and these elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));' — or write to a field of the document you have ('",
+      "now": "'$$ = …' makes documents from the array's ELEMENTS, one each, and these elements are arrays. Put each under a field — '<array>.map((v) => ({ value: v }))' — or write to a field of the document you have ('$.<field> = <arr",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "pipeline\u0000[ $$ = $.items.filter(x => x.qty > 0) ]": {
@@ -60486,7 +60486,7 @@
       "src": "$$$.coll = $.someField;",
       "kind": "message",
       "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
-      "now": "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+      "now": "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of documents, name them: '$$$.<coll>.conca",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "expr\u0000$$$.coll = $.someField;": {
@@ -60518,7 +60518,7 @@
       "src": "$$$.coll = $.someField;",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\"The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\"A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.\",\"pos\":11,\"c",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of do",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "jsmql\u0000$$$.coll = $$.filter(o => o.x === $.threshold);": {
@@ -62358,7 +62358,7 @@
       "src": "[ $$ = Object.entries($.scores) ]",
       "kind": "message",
       "was": "'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may head the chain (e.g. '.filter', '.toSort",
-      "now": "'$$ = …' makes the stream from the array's ELEMENTS, one document each, and these elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));' — or write to a field of the document you have ('",
+      "now": "'$$ = …' makes documents from the array's ELEMENTS, one each, and these elements are arrays. Put each under a field — '<array>.map((v) => ({ value: v }))' — or write to a field of the document you have ('$.<field> = <arr",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "expr\u0000[ $$ = Object.entries($.scores) ]": {
@@ -62390,7 +62390,7 @@
       "src": "[ $$ = Object.entries($.scores) ]",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\"'$$ = …' RHS must be '$$.<streamMethod>…' (narrow/transform the current stream) or '$$$.<coll>.<streamMethod>…' (switch source to another collection). Any lodash stream method may hea",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$ = …' makes the stream from the array's ELEMENTS, one document each, and these elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));' — or write t",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$ = …' makes documents from the array's ELEMENTS, one each, and these elements are arrays. Put each under a field — '<array>.map((v) => ({ value: v }))' — or write to a field of the",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "jsmql\u0000[ $$ = Object.entries($.scores).map((v) => ({ value: v })) ]": {
@@ -88656,6 +88656,1166 @@
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":[1,2,3],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$f",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
       "reason": "Intended, this change. A predicate that answers a plain value now folds, reading truthiness the way the emitted condition spells it (not missing, not null, not false, not \"\", not 0). Measured on mongod against the reference document for [1,2,3], [0,1,\"\",\"a\",null] and [\"a\",\"\"]: the folded value equals the value the `$filter` returns."
+    },
+    "jsmql\u0000[...\"abc\"]": {
+      "entry": "jsmql",
+      "src": "[...\"abc\"]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"abc\",null]},null]},{\"$ne\":[\"abc\",false]},{\"$ne\":[\"abc\",\"\"]},{\"$ne\":[\"abc\",0]}]}}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "expr\u0000[...\"abc\"]": {
+      "entry": "expr",
+      "src": "[...\"abc\"]",
+      "kind": "now-rejected",
+      "was": "\"abc\"",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "filter\u0000[...\"abc\"]": {
+      "entry": "filter",
+      "src": "[...\"abc\"]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"abc\",null]},null]},{\"$ne\":[\"abc\",false]},{\"$ne\":[\"abc\",\"\"]},{\"$ne\":[\"abc\",0]}]}}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000[...\"abc\"]": {
+      "entry": "pipeline",
+      "src": "[...\"abc\"]",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "update\u0000[...\"abc\"]": {
+      "entry": "update",
+      "src": "[...\"abc\"]",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "validate\u0000[...\"abc\"]": {
+      "entry": "validate",
+      "src": "[...\"abc\"]",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <st",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "jsmql\u0000[...\"abc\", \"d\"]": {
+      "entry": "jsmql",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},false]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},\"\"]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},0]}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "expr\u0000[...\"abc\", \"d\"]": {
+      "entry": "expr",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "now-rejected",
+      "was": "{\"$concatArrays\":[\"abc\",[\"d\"]]}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "filter\u0000[...\"abc\", \"d\"]": {
+      "entry": "filter",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},false]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},\"\"]},{\"$ne\":[{\"$concatArrays\":[\"abc\",[\"d\"]]},0]}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000[...\"abc\", \"d\"]": {
+      "entry": "pipeline",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "update\u0000[...\"abc\", \"d\"]": {
+      "entry": "update",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "validate\u0000[...\"abc\", \"d\"]": {
+      "entry": "validate",
+      "src": "[...\"abc\", \"d\"]",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <st",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "jsmql\u0000[...$.s.trim()]": {
+      "entry": "jsmql",
+      "src": "[...$.s.trim()]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "expr\u0000[...$.s.trim()]": {
+      "entry": "expr",
+      "src": "[...$.s.trim()]",
+      "kind": "now-rejected",
+      "was": "{\"$trim\":{\"input\":\"$s\"}}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "filter\u0000[...$.s.trim()]": {
+      "entry": "filter",
+      "src": "[...$.s.trim()]",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$trim\":{\"input\":\"$s\"}},null]},null]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},false]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},\"\"]},{\"$ne\":[{\"$trim\":{\"input\":\"$s\"}},0]}]}}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000[...$.s.trim()]": {
+      "entry": "pipeline",
+      "src": "[...$.s.trim()]",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "update\u0000[...$.s.trim()]": {
+      "entry": "update",
+      "src": "[...$.s.trim()]",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "validate\u0000[...$.s.trim()]": {
+      "entry": "validate",
+      "src": "[...$.s.trim()]",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <st",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "jsmql\u0000{ ...\"abc\" }": {
+      "entry": "jsmql",
+      "src": "{ ...\"abc\" }",
+      "kind": "now-rejected",
+      "was": "\"abc\"",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "expr\u0000{ ...\"abc\" }": {
+      "entry": "expr",
+      "src": "{ ...\"abc\" }",
+      "kind": "now-rejected",
+      "was": "\"abc\"",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "filter\u0000{ ...\"abc\" }": {
+      "entry": "filter",
+      "src": "{ ...\"abc\" }",
+      "kind": "now-rejected",
+      "was": "\"abc\"",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000{ ...\"abc\" }": {
+      "entry": "pipeline",
+      "src": "{ ...\"abc\" }",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "update\u0000{ ...\"abc\" }": {
+      "entry": "update",
+      "src": "{ ...\"abc\" }",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "validate\u0000{ ...\"abc\" }": {
+      "entry": "validate",
+      "src": "{ ...\"abc\" }",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"Spread elements in objects are not supported in MQL output\",\"pos\":2,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "jsmql\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "jsmql",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "now-rejected",
+      "was": "{\"$mergeObjects\":[\"abc\",{\"a\":1}]}",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "expr\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "expr",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "now-rejected",
+      "was": "{\"$mergeObjects\":[\"abc\",{\"a\":1}]}",
+      "now": "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charA",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "filter\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "filter",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "now-rejected",
+      "was": "{\"$mergeObjects\":[\"abc\",{\"a\":1}]}",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "pipeline",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "update\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "update",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "Spread elements in objects are not supported in MQL output",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "validate\u0000{ ...\"abc\", a: 1 }": {
+      "entry": "validate",
+      "src": "{ ...\"abc\", a: 1 }",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"Spread elements in objects are not supported in MQL output\",\"pos\":2,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change. JavaScript spreads a string into its characters and MongoDB has no operator that does, so the reference emitted the string UNCHANGED — `[...\"abc\"]` answered the bare string \"abc\", silently — or an invalid `{\"$concatArrays\": [\"abc\", [\"d\"]]}` where a sibling followed. The spread is now refused wherever the operand is provably a string, and the refusal names the spelling that returns the characters. Recorded as a decision in docs/DEFERRED.md § B."
+    },
+    "pipeline\u0000[...$.s]": {
+      "entry": "pipeline",
+      "src": "[...$.s]",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+      "reason": "Intended, and not this change: a new corpus source. A FIELD path proves no type, so its spread still compiles — the compiler cannot know what the field holds. Both rows are the reworded pipeline/update shape refusals already accepted across the corpus."
+    },
+    "update\u0000[...$.s]": {
+      "entry": "update",
+      "src": "[...$.s]",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. A FIELD path proves no type, so its spread still compiles — the compiler cannot know what the field holds. Both rows are the reworded pipeline/update shape refusals already accepted across the corpus."
+    },
+    "pipeline\u0000[...$.a.split(\",\")]": {
+      "entry": "pipeline",
+      "src": "[...$.a.split(\",\")]",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
+      "reason": "Intended, and not this change: a new corpus source. A FIELD path proves no type, so its spread still compiles — the compiler cannot know what the field holds. Both rows are the reworded pipeline/update shape refusals already accepted across the corpus."
+    },
+    "update\u0000[...$.a.split(\",\")]": {
+      "entry": "update",
+      "src": "[...$.a.split(\",\")]",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. A FIELD path proves no type, so its spread still compiles — the compiler cannot know what the field holds. Both rows are the reworded pipeline/update shape refusals already accepted across the corpus."
+    },
+    "jsmql\u0000$$$.metrics += $$;": {
+      "entry": "jsmql",
+      "src": "$$$.metrics += $$;",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics += $$;": {
+      "entry": "expr",
+      "src": "$$$.metrics += $$;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics += $$;": {
+      "entry": "filter",
+      "src": "$$$.metrics += $$;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics += $$;": {
+      "entry": "pipeline",
+      "src": "$$$.metrics += $$;",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics += $$;": {
+      "entry": "update",
+      "src": "$$$.metrics += $$;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics += $$;": {
+      "entry": "validate",
+      "src": "$$$.metrics += $$;",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics = $$;": {
+      "entry": "expr",
+      "src": "$$$.metrics = $$;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "filter\u0000$$$.metrics = $$;": {
+      "entry": "filter",
+      "src": "$$$.metrics = $$;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "update\u0000$$$.metrics = $$;": {
+      "entry": "update",
+      "src": "$$$.metrics = $$;",
+      "kind": "message",
+      "was": "jsmql.update() rejected '$out' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "jsmql\u0000$$$$.dw.metrics += $$;": {
+      "entry": "jsmql",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$merge\":{\"db\":\"dw\",\"coll\":\"metrics\"}}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$$.dw.metrics += $$;": {
+      "entry": "expr",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$$.dw.metrics += $$;": {
+      "entry": "filter",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$$.dw.metrics += $$;": {
+      "entry": "pipeline",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$merge\":{\"db\":\"dw\",\"coll\":\"metrics\"}}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$$.dw.metrics += $$;": {
+      "entry": "update",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$$.dw.metrics += $$;": {
+      "entry": "validate",
+      "src": "$$$$.dw.metrics += $$;",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]}]}}},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "expr",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "filter",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "now-accepted",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "[{\"$match\":{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$active\",null]},null]},{\"$ne\":[\"$active\",false]},{\"$ne\":[\"$active\",\"\"]},{\"$ne\":[\"$active\",0]}]}}},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "update",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics += $$.filter(d => d.active);": {
+      "entry": "validate",
+      "src": "$$$.metrics += $$.filter(d => d.active);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.concat($$);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.concat($$);": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.concat($$);": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.concat($$);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.concat($$);": {
+      "entry": "update",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.concat($$);": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat($$);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.push(...$$);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.push(...$$);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.push(...$$);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.push(...$$);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.push(...$$);": {
+      "entry": "update",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.push(...$$);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push(...$$);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.concat($.items);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$set\":{\"__jsmql.tmp.0\":\"$items\"}},{\"$unwind\":\"$__jsmql.tmp.0\"},{\"$replaceWith\":\"$__jsmql.tmp.0\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.concat($.items);": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.concat($.items);": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.concat($.items);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$set\":{\"__jsmql.tmp.0\":\"$items\"}},{\"$unwind\":\"$__jsmql.tmp.0\"},{\"$replaceWith\":\"$__jsmql.tmp.0\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.concat($.items);": {
+      "entry": "update",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.concat($.items);": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat($.items);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.push(...$.items);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$set\":{\"__jsmql.tmp.0\":\"$items\"}},{\"$unwind\":\"$__jsmql.tmp.0\"},{\"$replaceWith\":\"$__jsmql.tmp.0\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.push(...$.items);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.push(...$.items);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.push(...$.items);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$set\":{\"__jsmql.tmp.0\":\"$items\"}},{\"$unwind\":\"$__jsmql.tmp.0\"},{\"$replaceWith\":\"$__jsmql.tmp.0\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.push(...$.items);": {
+      "entry": "update",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.push(...$.items);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push(...$.items);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.push($.doc);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$replaceWith\":\"$doc\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.push($.doc);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.push($.doc);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.push($.doc);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$replaceWith\":\"$doc\"},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.push($.doc);": {
+      "entry": "update",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.push($.doc);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push($.doc);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$replaceWith\":{\"_id\":9,\"k\":1}},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "expr\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "expr",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "filter\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "filter",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "pipeline\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "now-accepted",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "[{\"$replaceWith\":{\"_id\":9,\"k\":1}},{\"$merge\":\"metrics\"}]",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "update\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "update",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "validate\u0000$$$.metrics.push({ _id: 9, k: 1 });": {
+      "entry": "validate",
+      "src": "$$$.metrics.push({ _id: 9, k: 1 });",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-005). `$out` REPLACES a collection and `$merge` ADDS to it, and jsmql could only spell the first: the reference refuses `+=` and both verb spellings. Measured on mongod over a `metrics` collection already holding `{_id: 99}` — after `=` the document is gone, after `+=` it is still there — and every spelling was run end to end, with the documents it writes compared against what the source says."
+    },
+    "jsmql\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(...<array>)' element 2 expects a document, but got a number.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(...<array>)' element 2 expects a document, but got a number.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "update",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.push(...[{ a: 1 }, 5]);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push(...[{ a: 1 }, 5]);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.push(...<array>)' element 2 expects a document, but got a number.\",\"pos\":31,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "update",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.concat($$); $.a = 1;": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat($$); $.a = 1;",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"Nothing can follow '$merge': it writes the pipeline's output and the server requires it last. Move this statement above it.\",\"pos\":24,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "jsmql",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.",
+      "now": "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "expr\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "expr",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "filter\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "filter",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "pipeline\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "pipeline",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.",
+      "now": "Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "update\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "update",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "message",
+      "was": "'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "validate\u0000$$$.metrics = $$; $.a = 1;": {
+      "entry": "validate",
+      "src": "$$$.metrics = $$; $.a = 1;",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"'$out' must be the last stage in a pipeline. Move this statement before the '$$$.<coll> = …' write (at position 0), or remove it.\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"Nothing can follow '$out': it writes the pipeline's output and the server requires it last. Move this statement above it.\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, and not this change: a new corpus source. `$$$.<coll> = $$` emits the same `[{\"$out\": \"metrics\"}]` it always did; the rows are the reworded pipeline/update shape refusals already accepted across the corpus, and the placement message now names whichever stage is actually there."
+    },
+    "jsmql\u0000$$$.metrics *= $$;": {
+      "entry": "jsmql",
+      "src": "$$$.metrics *= $$;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A collection takes '=' or '+=', not '*=': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics *= $$;": {
+      "entry": "expr",
+      "src": "$$$.metrics *= $$;",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out' s",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics *= $$;": {
+      "entry": "filter",
+      "src": "$$$.metrics *= $$;",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow '$out' sugar ('$$$.<coll> = …' / '$$$$.<db>.<coll> = …') — '$out' is a pipeline stage. Use jsmql() (in Pipeline mode — add ';' or wrap in a stage array) or jsmql.pipeline() to compose '$out'",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics *= $$;": {
+      "entry": "pipeline",
+      "src": "$$$.metrics *= $$;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A collection takes '=' or '+=', not '*=': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics *= $$;": {
+      "entry": "update",
+      "src": "$$$.metrics *= $$;",
+      "kind": "message",
+      "was": "The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)' to pre-filter before writing.",
+      "now": "A document-form update writes a field of the document: '$.a = …', '$.a.b += 1', 'delete $.a'.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics *= $$;": {
+      "entry": "validate",
+      "src": "$$$.metrics *= $$;",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"The right-hand side of '$$$.<coll> = …' must start with '$$' (the current pipeline). Write '$$$.<coll> = $$' to write the current stream as-is, or '$$$.<coll> = $$.filter(<predicate>)",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"A collection takes '=' or '+=', not '*=': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matche",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.concat();": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat();",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "Nothing to write into the collection: give the stream ('$$$.<coll>.concat($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.concat();": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat();",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.concat();": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat();",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.concat();": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat();",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "Nothing to write into the collection: give the stream ('$$$.<coll>.concat($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.concat();": {
+      "entry": "update",
+      "src": "$$$.metrics.concat();",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.concat();": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat();",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"Nothing to write into the collection: give the stream ('$$$.<coll>.concat($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one docum",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.concat()' writes ONE source into the collection, and this names 2. Write them one statement at a time, or join them first ('$$$.<coll>.concat([...a, ...b]);').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.concat()' writes ONE source into the collection, and this names 2. Write them one statement at a time, or join them first ('$$$.<coll>.concat([...a, ...b]);').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "update",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.concat($$, $$);": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat($$, $$);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.concat()' writes ONE source into the collection, and this names 2. Write them one statement at a time, or join them first ('$$$.<coll>.concat([...a, ...b]);').\",\"pos\":11,\"",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.concat(<array>)' writes MANY documents into the collection — a string is one value. Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or O",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "expr",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "filter",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.concat(<array>)' writes MANY documents into the collection — a string is one value. Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or O",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "update",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.concat($.s.trim());": {
+      "entry": "validate",
+      "src": "$$$.metrics.concat($.s.trim());",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.concat(<array>)' writes MANY documents into the collection — a string is one value. Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents (",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.push(5);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push(5);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(<value>)' writes that value AS one document, and a number is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.push(5);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push(5);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.push(5);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push(5);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.push(5);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push(5);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(<value>)' writes that value AS one document, and a number is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.push(5);": {
+      "entry": "update",
+      "src": "$$$.metrics.push(5);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.push(5);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push(5);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.push(<value>)' writes that value AS one document, and a number is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "jsmql",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "expr\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "expr",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "message",
+      "was": "jsmql.expr() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "filter\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "filter",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "message",
+      "was": "jsmql.filter() does not allow lookup syntax ('$$$.<coll>.<method>(...)') — joins are Pipeline-only. Use jsmql() (in Pipeline mode) or jsmql.pipeline() for cross-collection queries.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "pipeline\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "pipeline",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "message",
+      "was": "A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bind it ('const <name> = $$$.metrics.…'",
+      "now": "'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "update\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "update",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "message",
+      "was": "jsmql.update() does not allow lookup syntax ('$$$.<coll>.<method>(...)'): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Run the lookup in a regula",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "validate\u0000$$$.metrics.push([{ a: 1 }]);": {
+      "entry": "validate",
+      "src": "$$$.metrics.push([{ a: 1 }]);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('",
+      "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
     }
   }
 }

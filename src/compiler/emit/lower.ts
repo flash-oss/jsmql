@@ -305,6 +305,11 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
   for (const el of elements) {
     if (el.type === "SpreadElement") {
       flush();
+      // JavaScript spreads a STRING into its characters. MongoDB has no operator that
+      // does, and `$concatArrays` refuses a string outright, so a provable one is
+      // refused here rather than answered wrongly — measured, `[..."abc"]` used to
+      // lower to the bare string "abc". See docs/DEFERRED.md § B.
+      if (kindOf(el.argument, inner) === "string") throw E.spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);
     } else if (isExpr(el)) group.push(lowerValue(el, inner));
@@ -354,6 +359,9 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
   for (const e of entries) {
     if (e.type === "SpreadElement") {
       flush();
+      // The same refusal the array literal makes: JavaScript spreads a string into
+      // index-keyed entries, and `$mergeObjects` takes documents only.
+      if (kindOf(e.argument, inner) === "string") throw E.spreadOfString(e.argument.pos);
       operands.push(lowerValue(e.argument, inner));
     } else group.push(e);
   }

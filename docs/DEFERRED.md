@@ -9,7 +9,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - Untagged-marker gate: every occurrence of a deferral phrase in the live surface → must carry a tag, OR be listed in `test/deferred-allowlist.txt` (with a one-line reason). Allowlist entries that no longer match any phrase fail the test — so the allowlist shrinks over time and cannot grow stale.
 
 **Conventions.**
-- Tag format: `[DEF-NNN]` — literal. Optional human label inside: `[DEF-005: merge]`. Match regex is `\[DEF-\d{3}\]`.
+- Tag format: `[DEF-NNN]` — literal. Optional human label inside: `[DEF-013: schema]`. Match regex is `\[DEF-\d{3}\]`.
 - When you ship an item: delete its row AND strip every `[DEF-NNN]` tag in the same commit.
 - When you reject a feature with a "not yet" error: add the row AND a tag in the same commit.
 - When a decision is "won't implement": add a row to the §B Decisions section. Don't add a `[DEF-NNN]` tag — the codebase explanation lives in the spec; this file just records that we considered and decided against.
@@ -19,18 +19,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 ---
 
 ## §A. Open — to implement
-
-### DEF-005 — `$merge` sugar (`$$$.coll += $$;`)
-
-- **What's blocked.** Writing the result of a pipeline to a collection with merge semantics (upsert / merge into existing docs) rather than `$out`'s full replace.
-- **Target lowering.** Default: `$$$.metrics += $$;` → `[{ $merge: "metrics" }]`. With pre-filter: `$$$.metrics += $$.filter(d => d.active);` → `[{ $match: { active: true } }, { $merge: "metrics" }]`.
-- **Why blocked.** Default semantics are easy (whole-doc merge into `_id`). The four merge-control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a syntax-design pass — should they be a config-bearing assignment (`$$$.metrics += { source: $$, on: "_id" }`), method chains (`$$.mergeInto($$$.metrics, { on: … })`), or stay only available via `$op($merge, …)`?
-- **Attempted approaches.** Three spellings surveyed and rejected: `$$$.coll <<= $$` (an opaque sigil), `$$.mergeInto($$$.coll)` (reverses destination-on-left), and `$$$.coll += { source: $$, on: … }` (overloads `+=` with a config object).
-- **Success criteria.** `$$$.metrics += $$;` lowers to `[{ $merge: "metrics" }]`. `$op($merge, {…})` remains the recommended path for non-default options.
-- **Rejection site(s).** Spec only.
-- **Spec.** `docs/specs/out-stage.md` § Deferred bullet 2.
-- **Status.** design-only
-- **Effort.** M
 
 ### DEF-012 — Index-pitfall warning channel via `validate()`
 
@@ -154,6 +142,26 @@ Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation ov
 ### `!expr` via De Morgan in `$match`
 
 Negation has subtle null/missing interactions in MongoDB. A silent index/non-index flip driven by data shape is exactly the surprise jsmql exists to prevent. `!expr` itself lowers to the query language's own negation, `$nor`; what is rejected is DISTRIBUTING the negation into each clause. `$op($not, …)` stays as the explicit escape. Documented in [`docs/specs/emit-pass.md`](specs/emit-pass.md) § The filter target. See `feedback_no_silent_output_drift.md` in user memory for the broader principle.
+
+### Spreading a STRING into its characters (`[..."abc"]`)
+
+JavaScript spreads a string into one element per character — `[..."abc"]` is `["a","b","c"]`, and `{ ..."ab" }` is `{ 0: "a", 1: "b" }`. MongoDB has no operator that does it. `$concatArrays` takes arrays only and `$mergeObjects` takes documents only, so there is nothing to lower the spread to.
+
+Emitting the string unchanged is what the compiler used to do, and it is worse than refusing: `[..."abc"]` answered the bare string `"abc"`, silently, with no error at compile time or run time. Where a sibling element follows, the emitted `{ "$concatArrays": ["abc", ["d"]] }` is refused by the server instead — the same shape, found later.
+
+The spread is therefore refused wherever the operand is PROVABLY a string: a string literal, or an expression whose row measures a string return. A field path proves nothing, so `[...$.s]` still compiles — the compiler cannot know, and the server answers. The refusal names the spelling that does produce the characters, `$range(0, <string>.length).map(i => <string>.charAt(i))`, which reads per code point and so agrees with JavaScript on a multi-byte character.
+
+Reconsider only if MongoDB gains a string-to-array operator.
+
+### Multi-binding `let a = …, b = …;`
+
+One `let` statement declares one binding. The idea was a comma-separated list inside one statement, emitted as a single `$set` stage. Rejected on two counts, both measured.
+
+The single stage is **wrong** wherever a binding reads the one before it. `$set` evaluates every field against the stage's INPUT document, so a sibling added in the same stage is not visible. Measured on a running mongod over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] } } }]` answers `{ a: 10, b: null }`, where the two-stage form answers `{ a: 10, b: 11 }`. Combining is therefore correct only when no binding depends on an earlier one — which would make the emitted stage count depend on whether the author happened to write a dependency, the silent output drift rejected elsewhere in this section.
+
+What is left is one stage boundary. `let userId = $.userId; let total = $.amount * 1.1; $match(total > 100);` is 182 bytes of compact MQL against the 171 a combined `$set` would hold — eleven bytes, for a third spelling of something two already say: the statement form above, and the bracketed pipeline `[ let a = …, let b = …, … ]`, whose comma already separates statements and which emits the identical pipeline.
+
+Reconsider only if MongoDB adds a stage whose fields evaluate left to right.
 
 ### `$let`-as-optimisation (peephole)
 

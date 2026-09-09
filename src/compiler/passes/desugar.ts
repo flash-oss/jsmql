@@ -41,7 +41,7 @@ import {
   receiverFamily,
 } from "../rows.ts";
 import { freshParam } from "./fresh.ts";
-import { readsAContextRef } from "./naming.ts";
+import { chainBase, readsAContextRef } from "./naming.ts";
 import { isSlotLayout } from "../../registry/vocabulary.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
@@ -95,6 +95,12 @@ const COMPOUND: ReadonlyMap<string, BinaryOp> = new Map(
  *   $ = $ + 1  today → [{"$replaceWith":{"$add":["$$ROOT",1]}}]
  * Rewriting first would turn the first into the second and lose the message.
  */
+/** Is the write target a collection — `$$$.<coll>`, `$$$$.<db>.<coll>` — rather than a field? */
+function writesACollection(target: Expr): boolean {
+  const base = chainBase(target) as { type: string };
+  return base.type === "DatabaseRef" || base.type === "ClusterRef";
+}
+
 function refuseNonScalarTarget(target: object, op: AssignOp): void {
   const t = target as { type: string; path?: string };
   const what = t.type === "CollectionRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
@@ -114,6 +120,10 @@ const compoundAssign: Rule = {
     if (n.type !== "AssignExpr" || n.op === undefined) return node;
     const binop = COMPOUND.get(n.op);
     if (binop === undefined) return node;
+    // A COLLECTION is not a scalar and `+=` on one is not arithmetic: it names the
+    // stage that ADDS to what the collection holds, where `=` replaces it. The emit
+    // phase reads the spelling, so the rewrite has to leave it alone.
+    if (writesACollection(n.target as Expr)) return node;
     refuseNonScalarTarget(n.target as object, n.op);
     return {
       type: "AssignExpr",

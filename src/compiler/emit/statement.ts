@@ -29,6 +29,7 @@ import {
   replacesDocumentOf,
   stageBodyRuleOf,
   pipelineOverOf,
+  mergesIntoOf,
   unionsOf,
 } from "../rows.ts";
 import { consult, everyName, listedIn } from "./consult.ts";
@@ -330,7 +331,7 @@ const holdsSpread = (list: Extract<Expr, { type: "ArrayLiteral" }>): boolean =>
  * unioned in. The empty list is that first half on its own. A list holding a
  * `$$.reduce` is the reducer WRAP, a different road.
  */
-function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env): Stage[] {
+function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env, written = "$$ = [ … ]"): Stage[] {
   // `$$ = [{ k: $$.reduce(…) }]` — the stream folded to one document.
   if (isReduceWrap(list)) return reduceWrapStages(list);
   if (holdsStreamReduce(list)) throw E.reduceWrapMisplaced(list.pos);
@@ -340,7 +341,7 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   // meets the same element rule `$documents([{ a: 1 }, 5])` meets.
   const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
-  checkSlots("$$ = [ … ]", sel.rule.args, [list], false);
+  checkSlots(written, sel.rule.args, [list], false);
   const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS]: documents }] } }];
 }
@@ -441,6 +442,55 @@ function targetPath(op: UpdateOp, env: Env): string {
   throw E.notAWriteTarget(op.pos);
 }
 
+/**
+ * The stages that make a value the STREAM — one document per element.
+ *
+ * `$$ = <value>;` is this, and so is every write into a collection from a value, so
+ * the two spellings emit the same stages by construction rather than by coincidence.
+ * A chain on the stream, on the callback's own stream, or on another collection is the
+ * STREAM road whatever kind its last link returns: a `$lookup` yields an array, and
+ * `$$ = $$$.orders.filter(p)` is still a source switch, not a value.
+ *
+ * Any value that is not a chain is read as the ARRAY it must be: `$.items`,
+ * `[...$.items]` and `Object.entries($.scores)` are one road, because they say one
+ * thing — the stream is these elements, one document each. `$unwind` needs a
+ * materialised path, so the array is parked in a scratch slot first.
+ *
+ * `valueEnv` is the env the VALUE is read under, which differs by spelling: the
+ * position pass marks the `$$ =` edge STREAM because a chain is the usual spelling
+ * there, and an array has to be read as the value it is.
+ */
+function becomeStream(
+  value: Expr,
+  env: Env,
+  valueEnv: Env,
+  first: boolean,
+  written = "$$ = …",
+  lead?: string,
+  how?: string,
+): Stage[] {
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
+  const chainOn = chainBase(value) as { type: string };
+  const streamRoad =
+    chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn as Expr, env);
+  // A kind the registry PROVES is not a list says something else, and MEASURED the
+  // server refuses it: `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
+  // answers "'replacement document' must evaluate to an object".
+  const kind = streamRoad ? "stream" : kindOf(value, env);
+  if (kind !== "stream" && kind !== "array" && kind !== "unknown")
+    throw E.notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
+  if (kind === "stream") return streamStages(value, env, first);
+  // A stream holds DOCUMENTS. Where the registry shows what ONE element is, an element
+  // that is not a document is refused here rather than by the server: MEASURED,
+  // `$replaceWith` of a string answers "'replacement document' must evaluate to an object".
+  const element = elementKindOf(value, env);
+  if (element !== "unknown" && element !== "object")
+    throw E.streamElementsNotDocuments(ELEMENT_NOUN[element] ?? `${element}s`, written, value.pos);
+  const slot = env.chain.slot();
+  const arr = lowerValue(value, valueEnv);
+  return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
+}
+
 // ── the out road ─────────────────────────────────────────────────────────────
 
 /** The `$out` namespace a write target names — `"c"`, `{ db, coll }` — or null when it is not one. */
@@ -464,18 +514,75 @@ function outTarget(t: Expr): string | { db: string; coll: string } | null {
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
 }
 
-/** The stream's stages, then the `$out` — filed as the pipeline's last stage. */
+/**
+ * The stream's stages, then the stage that writes it — filed as the pipeline's last.
+ *
+ * `=` REPLACES the collection and `+=` ADDS to it, which is the difference between
+ * `$out` and `$merge`: `$out` drops whatever the collection held, `$merge` updates the
+ * documents whose `_id` matches and inserts the rest. Anything the settings change —
+ * `on`, `whenMatched`, `whenNotMatched`, `let` — is written as the stage itself,
+ * `$merge({ into: …, on: … })`; the sugar covers the plain case only.
+ */
 function outStages(
   op: Extract<UpdateOp, { type: "AssignExpr" }>,
   target: string | { db: string; coll: string },
   env: Env,
   first: boolean,
 ): Stage[] {
+  if (op.op !== "=" && op.op !== "+=") throw E.writeToCollectionOp(op.op, op.pos);
+  const name = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs) as { type: string };
   if (base.type !== "CollectionRef") throw E.outNeedsStream(rhs.pos);
   const stages = rhs.type === "CollectionRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
-  return [...stages, ...place("$out", { $out: target }, env, first && stages.length === 0, op.pos)];
+  return [...stages, ...place(name, { [name]: target }, env, first && stages.length === 0, op.pos)];
+}
+
+/**
+ * `$$$.<coll>.concat(<documents>);` and `$$$.<coll>.push(…);` — the documents written
+ * INTO another collection, a `$merge`.
+ *
+ * The two verbs keep their JavaScript meanings. `.concat(xs)` splices a list in, so
+ * every element of `xs` becomes a document; `.push(...xs)` says the same with the
+ * spread; and `.push(x)` without one appends x itself, so x IS the document. A chain
+ * on `$$` is the stream, and goes to the collection as it stands.
+ *
+ * `$merge` keeps what the collection already holds — it updates the documents whose
+ * `_id` matches and inserts the rest — which is what `.concat` / `.push` mean and what
+ * separates them from `$$$.<coll> = $$`, a `$out` that drops everything first.
+ */
+function mergeStages(node: Extract<Expr, { type: "MethodCall" }>, env: Env, first: boolean): Stage[] {
+  const target = outTarget(node.object);
+  if (target === null) internalError("a collection write whose receiver names no collection");
+  if (node.args.length === 0) throw E.mergeNeedsArgument(node.name, node.pos);
+  if (node.args.length > 1) throw E.mergeOneSource(node.name, node.args.length, node.pos);
+  const arg = node.args[0];
+  const spread = arg.type === "SpreadElement";
+  const source = (spread ? arg.argument : arg) as Expr;
+  const inner = childEnv(env, node, "args");
+  const spelling = `$$$.<coll>.${node.name}(${spread ? "...<array>" : "<array>"})`;
+  const stages =
+    // `.push(<document>)` — the one spelling that does NOT read a list: the value is
+    // the document, exactly as `$ = <document>;` reads it.
+    node.name === "push" && !spread
+      ? oneDocumentStages(source, inner)
+      : becomeStream(
+          source,
+          inner,
+          inner.at({ at: "value" }),
+          first,
+          spelling,
+          `'${spelling}' writes MANY documents into the collection`,
+          "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ … });').",
+        );
+  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
+}
+
+/** `$$$.<coll>.push(<document>);` — one document per document of the stream. */
+function oneDocumentStages(value: Expr, env: Env): Stage[] {
+  const kind = kindOf(value, env);
+  if (kind !== "object" && kind !== "unknown") throw E.mergeNotADocument(KIND_NOUN[kind] ?? `a ${kind}`, value.pos);
+  return [{ $replaceWith: lowerValue(value, env.at({ at: "value" })) }];
 }
 
 // ── the facet road ───────────────────────────────────────────────────────────
@@ -652,35 +759,9 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       // A chain on the stream, on the callbacks own stream, or on another collection is
       // the STREAM road, whatever kind its last link returns: a `$lookup` yields an array
       // and `$$ = $$$.orders.filter(p)` is still a source switch, not a value.
-      const chainOn = chainBase(op.value) as { type: string };
-      const streamRoad =
-        chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn as Expr, inner);
-      // Any value that is not a chain is read as the ARRAY it must be: `$$ = $.items;`,
-      // `$$ = [...$.items];` and `$$ = Object.entries($.scores);` are one road, because
-      // they say one thing — the stream is these elements, one document each. A kind
-      // the registry PROVES is not a list says something else, and MEASURED the server
-      // refuses it: `[{ $set: { s: 5 } }, { $unwind: "$s" }, { $replaceWith: "$s" }]`
-      // answers "'replacement document' must evaluate to an object".
-      const kind = !streamRoad ? kindOf(op.value, inner) : "stream";
-      if (kind !== "stream" && kind !== "array" && kind !== "unknown")
-        throw E.notAStreamChain(op.value.pos, KIND_NOUN[kind] ?? `a ${kind}`);
-      if (kind !== "stream") {
-        // A stream holds DOCUMENTS. Where the registry shows what ONE element is,
-        // an element that is not a document is refused here rather than by the
-        // server: MEASURED, `$replaceWith` of a string answers "'replacement
-        // document' must evaluate to an object".
-        const element = elementKindOf(op.value, inner);
-        if (element !== "unknown" && element !== "object") {
-          throw E.streamElementsNotDocuments(ELEMENT_NOUN[element] ?? `${element}s`, op.value.pos);
-        }
-        const slot = inner.chain.slot();
-        // The position pass marks this edge STREAM, because `$$ = <chain>` is the usual
-        // spelling here; an array is a VALUE, and is read as one.
-        const arr = lowerValue(op.value, childEnv(inner, op, "value").at({ at: "value" }));
-        out.push({ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
-        continue;
-      }
-      out.push(...streamStages(op.value, inner, first && out.length === 0));
+      out.push(
+        ...becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0),
+      );
       continue;
     }
     if (op.type === "DeleteStmt") {
@@ -950,6 +1031,10 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
             .filter((s) => diagnosticOf(s)?.scope === scope)
             .map((s) => s.slice(1));
           throw E.notAStageOnRef(node.name, sigil, spelledOnIt, node.pos);
+        }
+        // `$$$.<coll>.concat(<documents>);` — the documents written into that collection.
+        if ((base.type === "DatabaseRef" || base.type === "ClusterRef") && mergesIntoOf(row)) {
+          return mergeStages(node, env, first);
         }
         throw E.noDestination(node.pos);
       }

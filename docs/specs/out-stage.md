@@ -1,19 +1,54 @@
-# `$$$.<coll> = …` / `$$$$.<db>.<coll> = …` → `$out` stage
+# Writing a collection — `$out` and `$merge`
 
 ## Overview
 
-`$out` writes the current aggregation pipeline's documents to a destination
-collection — MongoDB's canonical "save the result" stage. jsmql exposes
-this as an assignment-shaped sugar so the destination is visible at a
-glance:
+MongoDB writes a pipeline's documents into a collection with two stages, and the
+difference is what happens to the documents already there. `$out` REPLACES the
+collection: everything it held is gone. `$merge` ADDS to it: the documents whose
+`_id` matches are updated, and the rest are inserted. jsmql spells the difference
+as `=` against `+=`, so the destination and the intent are both visible at a glance:
 
 ```
 $$$.warehouse_orders = $$;
 // → [{ $out: "warehouse_orders" }]
 
+$$$.metrics += $$;
+// → [{ $merge: "metrics" }]
+
 $$$$.dw.archive = $$.filter(u => !u.active);
 // → [{ $match: <translated u => !u.active> }, { $out: { db: "dw", coll: "archive" } }]
 ```
+
+`$merge` has a second spelling, in the JavaScript verbs that mean "add to this":
+
+```
+$$$.metrics.concat($$.filter(d => d.active));
+// → [{ $match: <translated d => d.active> }, { $merge: "metrics" }]
+```
+
+The verbs keep their JavaScript meanings, which is what lets them write an ARRAY of
+documents where `+=` takes only the stream. `.concat(xs)` splices a list in, so every
+element of `xs` becomes a document; `.push(...xs)` says the same with the spread; and
+`.push(x)` without one appends x itself, so x IS the document:
+
+```
+$$$.metrics.concat($.items);
+$$$.metrics.push(...$.items);
+// both → [{ $set: { "__jsmql.tmp.0": "$items" } },
+//         { $unwind: "$__jsmql.tmp.0" },
+//         { $replaceWith: "$__jsmql.tmp.0" },
+//         { $merge: "metrics" }]
+
+$$$.metrics.push($.summary);
+// → [{ $replaceWith: "$summary" }, { $merge: "metrics" }]
+```
+
+Those first three stages are the ones `$$ = <array>;` already emits — one function
+builds both, so the two spellings cannot drift apart.
+
+The sugar covers the PLAIN merge only. `$merge`'s four settings — `on`,
+`whenMatched`, `whenNotMatched`, `let` — are written as the stage itself, which needs
+no sugar: `$merge({ into: "metrics", on: "_id", whenMatched: "merge" });`.
 
 The LHS names *where* documents are written using the existing context-ref
 prefixes (`$$$` = same-database, `$$$$` = cross-database / cluster). The
@@ -58,6 +93,14 @@ See [`docs/LANGUAGE.md#out-write-the-pipeline-to-a-collection`](../LANGUAGE.md#o
 | `$$$$.dw.archive = $$.filter(u => !u.active);` | `[{ $match: <translated body> }, { $out: { db: "dw", coll: "archive" } }]` |
 | `$$$.top10 = $$.$sort({ score: -1 }).$limit(10);` | `[{ $sort: { score: -1 } }, { $limit: 10 }, { $out: "top10" }]` (chained stages) |
 | `$match(<pred>); $$$.coll = $$;` | `[{ $match: <pred> }, { $out: "coll" }]` (preceding stages compose normally) |
+| `$$$.metrics += $$;` | `[{ $merge: "metrics" }]` (`+=` ADDS; `=` replaces) |
+| `$$$$.dw.metrics += $$;` | `[{ $merge: { db: "dw", coll: "metrics" } }]` |
+| `$$$.metrics += $$.filter(d => d.active);` | `[{ $match: <translated body> }, { $merge: "metrics" }]` |
+| `$$$.metrics.concat($$);` | `[{ $merge: "metrics" }]` (the verb spelling of `+=`) |
+| `$$$.metrics.push(...$$);` | `[{ $merge: "metrics" }]` |
+| `$$$.metrics.concat($.items);` | `[{ $set: … }, { $unwind: … }, { $replaceWith: … }, { $merge: "metrics" }]` (an ARRAY, element by element) |
+| `$$$.metrics.push(...$.items);` | the same four stages |
+| `$$$.metrics.push($.summary);` | `[{ $replaceWith: "$summary" }, { $merge: "metrics" }]` (no spread — ONE document) |
 
 ## The target
 
@@ -115,15 +158,6 @@ Adding a chain method is not a `$out`-specific change: give the method's row a `
 The parser ([`src/compiler/parse/parser.ts`](../../src/compiler/parse/parser.ts)) accepts a write target rooted at `$$$` / `$$$$` through `MemberAccess` / `IndexAccess` steps — a shape check only; the segment-count and computed-bracket refusals are the emit phase's — and a bare `$$` as a value, so `$$$.coll = $$` has its RHS. The typo `$$foo` (no separator, an identifier next) is still refused at parse time, and bare `$$$` / `$$$$` have no meaning anywhere.
 
 No new tokens, no new AST nodes.
-
-## Deferred
-
-- **`$merge` sugar.** MongoDB has both `$out` (full replace) and
-  `$merge` (upsert / merge into existing docs). The corresponding sugar
-  might look like `$$$.coll += $$;` (compound assign — "merge into") to
-  preserve the destination-on-the-left mental model, but the four merge-
-  control fields (`on`, `whenMatched`, `whenNotMatched`, `let`) need a
-  more careful design pass. Out of scope for now.
 
 ## Design notes
 

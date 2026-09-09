@@ -188,6 +188,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   collapses?: true | "unlessRawBody";
   /** On the stream this method UNIONS documents in — `push` as a statement, `concat` as a link — a `$unionWith` per source. */
   unions?: true;
+  /**
+   * On a COLLECTION reference this method WRITES the documents into that collection —
+   * `$$$.<coll>.concat(<documents>);` — a `$merge`, the stage that keeps what the
+   * collection already holds. The sibling of `unions`, and a separate fact because it
+   * names a different stage on a different receiver: `$$.push(…)` adds to the stream,
+   * `$$$.<coll>.push(…)` adds to a collection on disk.
+   */
+  mergesInto?: true;
   params?: CallbackParams;
   /**
    * The argument slots that take an ITERATEE — a function of one element — and
@@ -6960,6 +6968,7 @@ export const NAMES = {
 
   concat: name({
     unions: true,
+    mergesInto: true,
     doc: "'.concat()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "string", "stream"],
@@ -7862,6 +7871,7 @@ export const NAMES = {
 
   push: name({
     unions: true,
+    mergesInto: true,
     doc: "'.push()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],

@@ -10,6 +10,63 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — feat: a collection can be ADDED to, not only replaced
+
+MongoDB writes a pipeline's documents into a collection with two stages, and the
+difference is what happens to the documents already there. `$out` REPLACES the
+collection; `$merge` updates the documents whose `_id` matches and inserts the rest.
+jsmql could only spell the first one. It now spells both, and the difference is the
+assignment operator:
+
+    $$$.metrics = $$;    →  [{ $out: "metrics" }]
+    $$$.metrics += $$;   →  [{ $merge: "metrics" }]
+
+Measured on a running mongod over a `metrics` collection already holding
+`{ _id: 99 }`: after `=` the document is gone, after `+=` it is still there. That is
+the whole distinction, and it is what makes `+=` the right spelling — `=` replaces a
+value and `+=` adds to it, in the language jsmql borrows its syntax from.
+
+Two more spellings write the same stage, in the JavaScript verbs that mean "add to
+this": `$$$.metrics.concat(…)` and `$$$.metrics.push(…)`. They exist because `+=`
+takes only the stream, and an ARRAY of documents is a thing developers have. The
+verbs keep their JavaScript meanings, which is what settles the argument rules
+without inventing any: `.concat(xs)` splices a list in, `.push(...xs)` says the same
+with the spread, and `.push(x)` without one appends x itself, so x IS the document.
+`$$$.metrics.push([{ a: 1 }])` is therefore refused, and the refusal names the spread
+— the one place the `...` carries meaning rather than decoration.
+
+The array road reuses the stages `$$ = <array>;` already emits, through one function
+([`becomeStream`](src/compiler/emit/statement.ts)) that both spellings call, so the
+two cannot drift apart. That extraction is most of the diff. The rest is one row fact
+— `mergesInto`, the sibling of `unions`, a separate field because it names a
+different stage on a different receiver — and one branch in the desugar pass: a
+compound assignment on a COLLECTION is not arithmetic, so `+=` has to survive to the
+emit phase instead of being rewritten to `c = c + …`.
+
+The sugar covers the plain merge only. `$merge`'s four settings — `on`,
+`whenMatched`, `whenNotMatched`, `let` — are written as the stage itself, which needs
+no sugar and already worked: `$merge({ into: "metrics", on: "_id" });`. That answers
+the design question the deferred row parked, and closes it.
+
+---
+
+## 2026-09-09 — decision: a string is not spread into its characters
+
+`[..."abc"]` is `["a","b","c"]` in JavaScript. MongoDB has no operator that does it —
+`$concatArrays` takes arrays only, `$mergeObjects` takes documents only — so there is
+nothing to lower the spread to, and the compiler was emitting the string unchanged:
+`[..."abc"]` answered the bare string `"abc"`, silently, with no error at compile time
+or at run time. With a sibling element it was worse in a quieter way, emitting
+`{ "$concatArrays": ["abc", ["d"]] }` for the server to reject later.
+
+Both spellings now refuse a spread whose operand is PROVABLY a string, and the
+refusal names `$range(0, <string>.length).map(i => <string>.charAt(i))`, which reads
+per code point and so agrees with JavaScript on a multi-byte character. A field path
+proves nothing, so `[...$.s]` still compiles: the compiler cannot know what the field
+holds, and refusing on a guess would reject working programs.
+
+---
+
 ## 2026-09-09 — feat: the elements as a sort key, a negative splice start, and five deferred rows closed
 
 Three deferred rows ship together because measuring each one turned up a defect

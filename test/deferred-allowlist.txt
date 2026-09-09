@@ -33,11 +33,6 @@ docs/CLAUDE.md::"what did we decide against?"
 docs/LANGUAGE.md::features not yet implemented or rejected
 
 # -----------------------------------------------------------------------------
-# The one $out deferral: $merge sugar (DEF-005, tag in DEFERRED.md).
-# -----------------------------------------------------------------------------
-docs/specs/out-stage.md::Out of scope for now.
-
-# -----------------------------------------------------------------------------
 # Spec-section headers (categorical — their child bullets carry the tags)
 # -----------------------------------------------------------------------------
 docs/specs/union-stage.md::Out of scope — the explicit

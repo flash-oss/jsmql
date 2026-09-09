@@ -485,6 +485,13 @@ export const noStages = (pos: number): CodegenError =>
     pos,
   );
 
+/** `[..."abc"]` — JavaScript spreads a string into characters; MongoDB has no such operator. */
+export const spreadOfString = (pos: number): CodegenError =>
+  new CodegenError(
+    "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does — '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, drop the '...'.",
+    pos,
+  );
+
 /** A statement after the stage that writes the pipeline's output. */
 export const afterTerminalStage = (already: string, pos: number): CodegenError =>
   new CodegenError(
@@ -534,18 +541,19 @@ export const writeToOwnStream = (name: string, pos: number): CodegenError =>
   );
 
 /** `$$ = <array whose elements the registry proves are not documents>`. */
-export const streamElementsNotDocuments = (noun: string, pos: number): CodegenError =>
+export const streamElementsNotDocuments = (noun: string, written: string, pos: number): CodegenError =>
   new CodegenError(
-    `'$$ = …' makes the stream from the array's ELEMENTS, one document each, and these elements are ${noun}. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));' — or write to a field of the document you have ('$.<field> = <array>;').`,
+    `'${written}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field — '<array>.map((v) => ({ value: v }))' — or write to a field of the document you have ('$.<field> = <array>;').`,
     pos,
   );
 
 /** `$$ = <something that is neither a chain on the stream nor a list of documents>`. */
-export const notAStreamChain = (pos: number, noun?: string): CodegenError =>
-  new CodegenError(
-    `'$$ = …' replaces the STREAM, so the right side has to be MANY documents${noun === undefined ? "" : ` — ${noun} is one value`}. Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').`,
-    pos,
-  );
+export const notAStreamChain = (
+  pos: number,
+  noun?: string,
+  lead = "'$$ = …' replaces the STREAM, so the right side has to be MANY documents",
+  how = "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').",
+): CodegenError => new CodegenError(`${lead}${noun === undefined ? "" : ` — ${noun} is one value`}. ${how}`, pos);
 
 /** A link in a stream chain whose name is not a method the stream has, nor a stage. */
 export const notAStreamLink = (name: string, candidates: readonly string[], pos: number): CodegenError => {
@@ -716,6 +724,13 @@ export const unionNeedsArgument = (pos: number): CodegenError =>
     pos,
   );
 
+/** `$$$.c.concat();` — the collection write names no documents. */
+export const mergeNeedsArgument = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `Nothing to write into the collection: give the stream ('$$$.<coll>.${name}($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ … });').`,
+    pos,
+  );
+
 /** `$ = { a: …, a: … }` — JavaScript keeps the last; two branches under one name is a lost branch. */
 export const facetDuplicate = (key: string, pos: number): CodegenError =>
   new CodegenError(
@@ -845,7 +860,28 @@ export const unionArg = (kind: string, pos: number): CodegenError =>
 /** `$$$.c = $.x` — a collection is written from the stream. */
 export const outNeedsStream = (pos: number): CodegenError =>
   new CodegenError(
-    "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(…)' after more stages. Anything else has no documents to write.",
+    "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('… = $$.filter(…)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
+    pos,
+  );
+
+/** `$$$.c.push(5)` — one pushed value IS the document written. */
+export const mergeNotADocument = (noun: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$$.<coll>.push(<value>)' writes that value AS one document, and ${noun} is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: … });').`,
+    pos,
+  );
+
+/** `$$$.c *= $$` — only `=` and `+=` write a collection. */
+export const writeToCollectionOp = (op: string, pos: number): CodegenError =>
+  new CodegenError(
+    `A collection takes '=' or '+=', not '${op}': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').`,
+    pos,
+  );
+
+/** `$$$.c.concat($$, $$)` — one source per write. */
+export const mergeOneSource = (name: string, count: number, pos: number): CodegenError =>
+  new CodegenError(
+    `'$$$.<coll>.${name}()' writes ONE source into the collection, and this names ${count}. Write them one statement at a time, or join them first ('$$$.<coll>.${name}([...a, ...b]);').`,
     pos,
   );
 
