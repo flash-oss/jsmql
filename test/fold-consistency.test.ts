@@ -312,11 +312,20 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     await client?.close();
   });
 
-  // The contract is a VALUE contract: wherever the MQL lowering yields a value,
-  // the fold must yield the same value. When the lowering ERRORS on an input
-  // (a pre-existing lowering limitation — e.g. `$substrCP` on ""), there is no value
-  // to disagree with, so the case is skipped; the fold still produces the correct
-  // literal.
+  // The contract is a VALUE contract: wherever the MQL lowering yields a value, the
+  // fold must yield the same value.
+  //
+  // A case the server REFUSES has no value to disagree with — but it is also a document
+  // jsmql emitted and the server would not run, which HR3 forbids, so it cannot simply
+  // be skipped. Eight `.concat("!", "?")` cases hid behind that skip for exactly as long
+  // as it was silent. Each refusal is therefore named here, with the reason it is
+  // allowed to stand, and a shape that is not on this list turns the suite red.
+  const SERVER_REFUSES: Readonly<Record<string, string>> = {
+    // lodash pads the shorter list with `undefined`; `$arrayToObject` refuses the pair
+    // that has no value ("$arrayToObject requires an array of size 2 arrays"). The same
+    // unequal-length reading the `zipWith` fold is withheld for.
+    "[1,2,3,4,5].zipObject([10, 20, 30, 40])": "unequal lengths — the missing pair has no value",
+  };
   const SERVER_ERROR = Symbol("server-error");
   async function serverValue(call: string, val: unknown): Promise<unknown> {
     try {
@@ -338,6 +347,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
   const asBag = (v: unknown): unknown => (Array.isArray(v) ? [...v].map((x) => JSON.stringify(x)).sort() : v);
 
   let compared = 0;
+  const refused: string[] = [];
   const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases];
 
   for (const { lit, val, call } of ALL_CASES) {
@@ -345,7 +355,11 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
       const folded = foldedValue(lit, call);
       if (folded === NOT_FOLDED) return; // withheld fold → runtime; nothing to compare
       const server = await serverValue(call, val);
-      if (server === SERVER_ERROR) return; // lowering errors on this input → no value to compare
+      if (server === SERVER_ERROR) {
+        // named above, or the suite says so — an unlisted refusal is MQL that cannot run
+        refused.push(lit + call);
+        return;
+      }
       compared += 1;
       if (UNORDERED_RESULT.test(call)) {
         // MongoDB does not define the order `$setUnion` / `$setIntersection` /
@@ -373,5 +387,15 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
     // literal spelling), and a `.flat()` or a `.min()` over a receiver whose elements are
     // not one comparable type. Measured 2026-09-09: 756 of 785 compare.
     expect(compared).toBeGreaterThanOrEqual(Math.floor(ALL_CASES.length * 0.95));
+  });
+
+  it("every case the server REFUSES is one this suite already knows about", () => {
+    // A refusal is a document jsmql emitted that mongod will not run. Skipping it
+    // quietly is how the multi-argument `.concat()` defect survived eight cases.
+    if (!db) {
+      expect(refused).toEqual([]);
+      return;
+    }
+    expect([...new Set(refused)].sort()).toEqual(Object.keys(SERVER_REFUSES).sort());
   });
 });

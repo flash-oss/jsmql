@@ -7607,6 +7607,28 @@ describe("array .concat", () => {
   it("on array literal → $concatArrays", () => {
     expect(jsmql.expr("[1, 2].concat([3, 4])")).toEqual([1, 2, 3, 4]);
   });
+  // MEASURED: the server folds a run of ADJACENT constant operands inside `$concat` /
+  // `$concatArrays` while it OPTIMISES, and raises there when a folded constant is the
+  // wrong type for that operator — before any `$switch` branch is chosen, so the guard
+  // cannot save it and neither can `$literal`. Each argument is therefore rendered the
+  // way JavaScript renders it for the family that runs.
+  it("renders each argument for the family that runs, so two constants can stand together", () => {
+    expect(jsmql.expr('$.s.concat("!", "?")')).toEqual({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$s" }, ["array"]] }, then: { $concatArrays: ["$s", ["!"], ["?"]] } },
+          { case: { $in: [{ $type: "$s" }, ["string"]] }, then: { $concat: ["$s", "!", "?"] } },
+        ],
+        default: "$$REMOVE",
+      },
+    });
+  });
+  it("a proven scalar is the one-element array it stands for, as JavaScript's concat has it", () => {
+    expect(jsmql.expr("$.a.split(',').concat(2)")).toEqual({ $concatArrays: [{ $split: ["$a", ","] }, [2]] });
+    expect(jsmql.expr("$.s.trim().concat(1, 2)")).toEqual({
+      $concat: [{ $trim: { input: "$s" } }, { $toString: 1 }, { $toString: 2 }],
+    });
+  });
   it("on known string → $concat", () => {
     expect(jsmql.expr("$.first.trim().concat($.last)")).toEqual({ $concat: [{ $trim: { input: "$first" } }, "$last"] });
   });

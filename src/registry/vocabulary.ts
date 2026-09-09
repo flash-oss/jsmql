@@ -886,6 +886,15 @@ export type ExprIn = {
   keys: readonly string[];
   /** Lower an expression to the MQL of its VALUE. */
   value: (e: Expr) => unknown;
+  /**
+   * The kind an expression PROVABLY has, or "unknown" — the same proof the receiver
+   * dispatch reads, offered for an ARGUMENT. An operator that takes one BSON type reads
+   * it to render an argument of another type the way JavaScript renders it: MEASURED,
+   * the server folds a run of ADJACENT constant operands inside `$concat` /
+   * `$concatArrays` while it optimises, and raises there when a folded constant is the
+   * wrong type — before any `$switch` branch is chosen, so a guard cannot save it.
+   */
+  kind: (e: Expr) => Kind | "unknown";
   /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
   truth: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`, the parameter bound as `$$as` (`ref`). */

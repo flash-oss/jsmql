@@ -89816,6 +89816,126 @@
       "was": "{\"valid\":false,\"errors\":[{\"message\":\"A '$$$.metrics.<chain>' statement has no destination — reading another collection produces a value, so it needs somewhere to go. Assign it to a field ('$.<field> = $$$.metrics.…'), bi",
       "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$$$.<coll>.push(<value>)' writes that value AS one document, and an array is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('",
       "reason": "Intended, this change (DEF-005). The refusal is reworded because `+=` now writes a collection: the message names both operators and the two verb spellings that take an ARRAY of documents, where the reference named only `=`. The refusals that are new — a wrong operator, no argument, two sources, a value that is not documents, a list pushed without the spread — each name a spelling that works."
+    },
+    "jsmql\u0000$.s.concat(\"!\", \"?\")": {
+      "entry": "jsmql",
+      "src": "$.s.concat(\"!\", \"?\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"$s\",\"!\",\"?\"]},\"else\":{\"$concat\":[\"$s\",\"!\",\"?\"]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatAr",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[\"!\"],[\"?\"]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",\"!",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "expr\u0000$.s.concat(\"!\", \"?\")": {
+      "entry": "expr",
+      "src": "$.s.concat(\"!\", \"?\")",
+      "kind": "output",
+      "was": "{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"$s\",\"!\",\"?\"]},\"else\":{\"$concat\":[\"$s\",\"!\",\"?\"]}}}",
+      "now": "{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[\"!\"],[\"?\"]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",\"!\",\"?\"]}}],\"default\":\"$$REMOVE\"}}",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "filter\u0000$.s.concat(\"!\", \"?\")": {
+      "entry": "filter",
+      "src": "$.s.concat(\"!\", \"?\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatArrays\":[\"$s\",\"!\",\"?\"]},\"else\":{\"$concat\":[\"$s\",\"!\",\"?\"]}}},null]},null]},{\"$ne\":[{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$concatAr",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$concatArrays\":[\"$s\",[\"!\"],[\"?\"]]}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\"]]},\"then\":{\"$concat\":[\"$s\",\"!",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "pipeline\u0000$.s.concat(\"!\", \"?\")": {
+      "entry": "pipeline",
+      "src": "$.s.concat(\"!\", \"?\")",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "update\u0000$.s.concat(\"!\", \"?\")": {
+      "entry": "update",
+      "src": "$.s.concat(\"!\", \"?\")",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "'.concat()' has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "jsmql\u0000$.a.split(',').concat(2)": {
+      "entry": "jsmql",
+      "src": "$.a.split(',').concat(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},null]},null]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},false]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},false]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},\"\"]},{",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "expr\u0000$.a.split(',').concat(2)": {
+      "entry": "expr",
+      "src": "$.a.split(',').concat(2)",
+      "kind": "output",
+      "was": "{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]}",
+      "now": "{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]}",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "filter\u0000$.a.split(',').concat(2)": {
+      "entry": "filter",
+      "src": "$.a.split(',').concat(2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},null]},null]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},false]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},2]},\"\"]},{\"$ne\":",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},null]},null]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},false]},{\"$ne\":[{\"$concatArrays\":[{\"$split\":[\"$a\",\",\"]},[2]]},\"\"]},{",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "pipeline\u0000$.a.split(',').concat(2)": {
+      "entry": "pipeline",
+      "src": "$.a.split(',').concat(2)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "update\u0000$.a.split(',').concat(2)": {
+      "entry": "update",
+      "src": "$.a.split(',').concat(2)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "jsmql\u0000$.s.trim().concat(1, 2)": {
+      "entry": "jsmql",
+      "src": "$.s.trim().concat(1, 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},null]},null]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},false]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},\"\"]},{\"$ne\":[{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},{\"$toString\":1},{\"$toString\":2}]},null]},null]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},{\"$toString\":1},{\"$toString\":2}]},false]},{\"$ne\":[{\"",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "expr\u0000$.s.trim().concat(1, 2)": {
+      "entry": "expr",
+      "src": "$.s.trim().concat(1, 2)",
+      "kind": "output",
+      "was": "{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]}",
+      "now": "{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},{\"$toString\":1},{\"$toString\":2}]}",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "filter\u0000$.s.trim().concat(1, 2)": {
+      "entry": "filter",
+      "src": "$.s.trim().concat(1, 2)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},null]},null]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},false]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},1,2]},\"\"]},{\"$ne\":[{\"",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},{\"$toString\":1},{\"$toString\":2}]},null]},null]},{\"$ne\":[{\"$concat\":[{\"$trim\":{\"input\":\"$s\"}},{\"$toString\":1},{\"$toString\":2}]},false]},{\"$ne\":[{\"",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "pipeline\u0000$.s.trim().concat(1, 2)": {
+      "entry": "pipeline",
+      "src": "$.s.trim().concat(1, 2)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
+    },
+    "update\u0000$.s.trim().concat(1, 2)": {
+      "entry": "update",
+      "src": "$.s.trim().concat(1, 2)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. `.concat()` with two or more arguments emitted MQL the server refuses: MEASURED, mongod folds a run of ADJACENT constant operands inside `$concat` / `$concatArrays` while it optimises and raises there on a wrong type — \"$concatArrays only supports arrays, not string\" — before any `$switch` branch is chosen, so neither the guard nor `$literal` protects the dead branch. Each argument is now rendered the way JavaScript renders it for the family that runs: a proven non-array becomes the one-element array `$concatArrays` accepts, and a proven array is joined and a proven non-string stringified for `$concat`. Fifteen shapes were run on mongod against JavaScript`s own answer for the same input, and all fifteen agree; a receiver that is neither string nor array still answers $$REMOVE."
     }
   }
 }

@@ -1638,7 +1638,16 @@ $.items.toSpliced(1, 0, "x", "y")
                            // immutable insert — insert items without removing
 $.items.toSpliced(2)       // no count removes everything from index 2 on, as JavaScript does
 $.items.toSpliced(-1, 1)   // a negative start counts from the END, and both ends clamp
-[1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
+[1, 2].concat([3, 4])      // [1, 2, 3, 4]                          (every operand a literal — folded)
+$.csv.split(",").concat(2, 3)
+                           // { $concatArrays: [{ $split: … }, [2], [3]] }  — a proven array
+                           //   receiver, and a scalar argument becomes the one-element array
+                           //   it stands for, which is what JavaScript's `.concat` does and
+                           //   the only operand `$concatArrays` accepts
+$.s.trim().concat(1, 2)    // { $concat: [{ $trim: … }, { $toString: 1 }, { $toString: 2 }] }
+                           //   — a proven string receiver stringifies each argument, as
+                           //   JavaScript does. A receiver that proves neither keeps both
+                           //   readings under the runtime `$switch` below.
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
 $.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)

@@ -364,6 +364,23 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.slice(1, 3)", (d) => d.a.slice(1, 3))).toMatchObject({ $switch: {} });
     expect(compiled("$.csv.slice(2)", (d) => d.csv.slice(2))).toMatchObject({ $switch: {} });
     expect(compiled("$.a.concat($.b)", (d) => d.a.concat(d.b))).toMatchObject({ $switch: {} });
+    // Several arguments, and each rendered the way JavaScript renders it for the family
+    // that runs: `$concatArrays` takes arrays only, `$concat` takes strings only, and the
+    // server folds a run of ADJACENT constant operands while it optimises — so a proven
+    // scalar becomes the one-element array it stands for, and a proven array is joined.
+    expect(compiled('$.csv.concat("!", "?")', (d) => d.csv.concat("!", "?"))).toMatchObject({ $switch: {} });
+    expect(compiled('$.a.concat("!", "?")', (d) => d.a.concat("!", "?"))).toMatchObject({ $switch: {} });
+    expect(compiled("$.a.concat([9], [8])", (d) => d.a.concat([9], [8]))).toMatchObject({ $switch: {} });
+    expect(compiled("$.a.concat(2, 3)", (d) => d.a.concat(2, 3))).toMatchObject({ $switch: {} });
+    expect(compiled("$.csv.concat(1, 2)", (d) => d.csv.concat(1, 2))).toMatchObject({ $switch: {} });
+    expect(compiled('$.a.concat($.b, "!", "?")', (d) => d.a.concat(d.b, "!", "?"))).toMatchObject({ $switch: {} });
+    // a receiver the row PROVES, so one family and no test at run time
+    expect(compiled("$.s.trim().concat(1, 2)", (d) => d.s.trim().concat(1, 2))).toEqual({
+      $concat: [{ $trim: { input: "$s" } }, { $toString: 1 }, { $toString: 2 }],
+    });
+    expect(compiled('$.csv.split(",").concat("!", "?")', (d) => d.csv.split(",").concat("!", "?"))).toEqual({
+      $concatArrays: [{ $split: ["$csv", ","] }, ["!"], ["?"]],
+    });
     expect(compiled("$.a.size()", (d) => d.a.length)).toMatchObject({ $switch: {} });
     expect(compiled("$.o.size()", (d) => Object.keys(d.o).length)).toMatchObject({ $switch: {} });
     // `.lastIndexOf` states one emitting family — the string form is refused — so it

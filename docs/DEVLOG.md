@@ -10,6 +10,52 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix: `.concat()` with several arguments emitted MQL the server refuses
+
+`$.s.concat("!", "?")` killed the pipeline. One argument was fine, three field paths
+were fine, and two string literals were not:
+
+    Failed to optimize pipeline :: caused by :: $concatArrays only supports arrays, not string
+
+The cause is not the argument count. MongoDB folds a run of ADJACENT CONSTANT operands
+inside `$concat` and `$concatArrays` while it OPTIMISES, and raises there when a folded
+constant is the wrong type for that operator. `$.s.concat("!", $.t, "?")` runs, because
+the field path between the two constants breaks the run. The receiver is operand 0 and
+is never constant, which is why a single argument could never trigger it.
+
+Two things follow, and both had to be measured rather than assumed. First, "optimise"
+is before any document moves, so the `$switch` that picks the string reading from the
+array reading does NOT protect its own dead branch — verified with a `$type` guard that
+can never be true, which still failed. Second, `$literal` does not block the fold
+either. There is no wrapper that keeps a bad branch alive: its operands have to be
+type-correct.
+
+So each argument is now rendered the way JavaScript renders it for the family that
+runs. `$concatArrays` takes arrays only, and JavaScript's `[1].concat(2)` is `[1, 2]`,
+so a proven non-array becomes the one-element array it stands for. `$concat` takes
+strings only, and JavaScript's `"a".concat(2)` is `"a2"`, so a proven non-string goes
+through `$toString` and a proven array is joined element by element. An argument that
+proves nothing stays as written, and the server decides it. Fifteen shapes were run on
+mongod against JavaScript's own answer for the same input; all fifteen agree, and a
+receiver that is neither string nor array still answers `$$REMOVE`.
+
+The row reads the proof through a new `ExprIn` service, `kind`, which hands a cell the
+same proof the receiver dispatch already reads. The cell previously carried a one-line
+copy of that logic (`args[0].type === "ArrayLiteral"`), which is the drift the service
+removes. The defect also reached the proven-receiver road — `[1].concat(2)` and
+`$.s.trim().concat(1, 2)` both failed with no `$switch` in sight — so narrowing the
+dispatch would not have been a fix; only the operand rendering is.
+
+`test/fold-consistency.test.ts` had been running eight of the failing shapes since
+before the defect existed, and passing. Its comparison treated a server rejection as
+"a pre-existing lowering limitation" and returned green. That is precisely the
+assumption HR3 forbids, so a refusal is now a named entry with a written reason, and
+an unlisted one turns the suite red — checked by removing the one entry and watching
+it fail. Exactly one shape is listed: a `zipObject` over lists of unequal length, where
+`$arrayToObject` refuses the pair that has no value.
+
+---
+
 ## 2026-09-09 — feat: a collection can be ADDED to, not only replaced
 
 MongoDB writes a pipeline's documents into a collection with two stages, and the

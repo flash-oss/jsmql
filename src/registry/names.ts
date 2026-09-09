@@ -6980,27 +6980,49 @@ export const NAMES = {
         stream: unsupported(
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(…);').",
         ),
+        // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
+        // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
+        // else becomes the one-element array it stands for — JavaScript's own answer, and
+        // the only operand the operator accepts. MEASURED: the server folds a run of
+        // ADJACENT constant operands while it optimises and raises there on a wrong type,
+        // so `$.s.concat("!", "?")` used to kill the pipeline before a branch was chosen.
+        // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => ({ $concatArrays: [recv, ...args.map((a) => value(a))] }),
+          emit: ({ recv, args, value, kind }) => ({
+            $concatArrays: [
+              recv,
+              ...args.map((a) => {
+                const k = kind(a);
+                return k === "array" || k === "unknown" ? value(a) : [value(a)];
+              }),
+            ],
+          }),
         },
+        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
+        // only. An argument PROVEN to be an array is joined element by element, and any
+        // other proven non-string goes through `$toString` — JavaScript's answer in both
+        // cases. An argument that proves nothing stays as written.
         string: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) =>
-            args.length === 1 && args[0].type === "ArrayLiteral"
-              ? {
-                  $concat: [
-                    recv,
-                    {
-                      $reduce: {
-                        input: value(args[0]),
-                        initialValue: "",
-                        in: { $concat: ["$$value", { $toString: "$$this" }] },
-                      },
+          emit: ({ recv, args, value, kind }) => ({
+            $concat: [
+              recv,
+              ...args.map((a) => {
+                const k = kind(a);
+                if (k === "array") {
+                  return {
+                    $reduce: {
+                      input: value(a),
+                      initialValue: "",
+                      in: { $concat: ["$$value", { $toString: "$$this" }] },
                     },
-                  ],
+                  };
                 }
-              : { $concat: [recv, ...args.map((a) => value(a))] },
+                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
+              }),
+            ],
+          }),
         },
       },
       uncertain: () => "$$REMOVE",
