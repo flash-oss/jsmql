@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix: the DEVLOG merge resolver could not read a DEVLOG over a megabyte
+
+`scripts/merge-devlog.mjs` reads the three conflict stages with `spawnSync`, whose default
+output ceiling is one megabyte. This file passed that size, so the read failed with ENOBUFS
+and the script reported "cannot read stage 2 … Is docs/DEVLOG.md actually conflicted?" — the
+opposite of what had happened, on a file that WAS conflicted. The ceiling is now explicit, and
+a spawn failure is reported as itself rather than as a missing conflict.
+
+Found by using the tool: the merge that brought the site branch in stopped on this file, and
+the resolver refused it.
+
+---
+
 ## 2026-09-09 — chore: the acceptance gate is clean
 
 `scripts/diff-compilers.mjs` exits 0. Every one of the 10993 divergences between
