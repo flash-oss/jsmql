@@ -118,7 +118,6 @@ test/
   fixtures/            Deterministic dataset + dedicated read-only mongod (:27018) for integration.test.ts. See test/fixtures/CLAUDE.md.
 scripts/
   generate-globals.mjs          Generates src/globals.ts from the registry (via src/compiler/rows.ts) and the spec YAML; runs on prebuild / pretest.
-  diff-compilers.mjs            The acceptance gate: the working tree against the reference checkout, every divergence classified and reasoned. See docs/specs/differential-harness.md.
   build-cjs.mjs                 Bundles dist/cjs/*.cjs via esbuild for the `require` condition.
   merge-devlog.mjs              Auto-resolve a docs/DEVLOG.md merge conflict.
   regen-expectations.mjs        Rewrite a suite's expected MQL with the compiler's answers (reviewed as a diff); convert-expectations.mjs flips the polarity of the cases it lists.

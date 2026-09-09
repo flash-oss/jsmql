@@ -34,14 +34,6 @@ Runs as `prebuild`, so `npm run build` always refreshes both artifacts. Also hoo
 
 Bundles `src/index.ts`, `src/globals.ts`, `src/mongoose.ts`, and `src/cli.ts` into `dist/cjs/{index,globals,mongoose,cli}.cjs` via esbuild, targeting `node14`, so the package's `require` condition resolves to a working CommonJS module. Also copies the ESM `.d.ts` files to sibling `.d.cts` files for `moduleResolution: nodenext` consumers (the `cli` entry is an executable, not an importable type, so it's excluded from that mirror loop), and drops a `dist/cjs/package.json` with `"type": "commonjs"` so Node treats the `.cjs` files as CJS regardless of the parent `"type": "module"`. The `cli` entry is the `jsmql` bin: esbuild preserves its `#!/usr/bin/env node` shebang, the build passes `define: { __JSMQL_VERSION__: <package.json version> }` to inline the version, and the script `chmod`s `dist/cjs/cli.cjs` to `0o755`. Runs as the second half of `npm run build` (after `tsc`). The CJS bundle is covered by the `dist/cjs/index.cjs loads via require()` and `dist/cjs/cli.cjs runs as the jsmql bin` cases in [`test/smoke.test.ts`](../test/smoke.test.ts).
 
-### `diff-compilers.mjs`
-
-Runs a **reference** compiler (a separate checkout, default: the main checkout this worktree hangs off) and the working-tree compiler over one corpus, and reports every disagreement. Invoked as `npm run diff:compilers`; `--verbose` prints accepted rows too, `--ref <path>` picks a different reference, `--accept` records the current divergences into `test/accepted-divergences.json` for classification. `--cur <module>` compares a module whose named exports are the entry points — the new compiler in `src/compiler/index.ts` — and `--entry <name>` narrows the run to one entry; under `--cur` a statement-shaped source is a verified SKIP, not a divergence (see docs/specs/emit-pass.md § The acceptance gate).
-
-Exists because the test suite cannot catch a refactor that changes meaning — the assertions get rewritten along with the code. The reference is not editable from the branch doing the changing, so it is the only thing here that can.
-
-Exit code is 1 while any divergence is unclassified, or while a recorded row still carries a `TODO` reason. The corpus is harvested from `test/*.test.ts` string literals plus a generated set; when a change moves a shape the suite never spelled, add it to the `EDGES` list in the script. See [`docs/specs/differential-harness.md`](../docs/specs/differential-harness.md).
-
 ### `merge-devlog.mjs`
 
 Auto-resolves `git merge` conflicts on `docs/DEVLOG.md`. Splits both sides on `---`, dedupes by date+title heading, sorts newest-first, and stages the result. Run when `git merge` reports a conflict on the devlog; falls back to a manual conflict only when a past entry was edited differently on both sides.
@@ -56,7 +48,7 @@ Two reviewers' tools for the suites, run by hand and never on a hook. `regen-exp
 
 ### `check-doc-claims.mjs`
 
-`node scripts/check-doc-claims.mjs [file …]` (default: `README.md`, `docs/LANGUAGE.md`, `docs/LANG_RULES.md`, and every file in `docs/specs/`) re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler and prints the pairs that disagree. A doc example is a promise about what jsmql emits, and prose has no test to keep it honest — this is what catches the promise the compiler stopped keeping. An AUDIT tool, not a gate, and it is read the way `diff-compilers.mjs` output is read: it parses markdown, so it reports false positives — a template-tag source it cannot run, a claim showing one stage of a longer pipeline, host code around a `jsmql(…)` call — and a human classifies each. It skips a claim that elides anything (`…`, `/* … */`, `<…>`), which is illustrative by construction.
+`node scripts/check-doc-claims.mjs [file …]` (default: `README.md`, `docs/LANGUAGE.md`, `docs/LANG_RULES.md`, and every file in `docs/specs/`) re-derives every `<jsmql source>  // → <MQL>` pair in the prose from the compiler and prints the pairs that disagree. A doc example is a promise about what jsmql emits, and prose has no test to keep it honest — this is what catches the promise the compiler stopped keeping. An AUDIT tool, not a gate: it parses markdown, so it reports false positives — a template-tag source it cannot run, a claim showing one stage of a longer pipeline, host code around a `jsmql(…)` call — and a human classifies each. It skips a claim that elides anything (`…`, `/* … */`, `<…>`), which is illustrative by construction.
 
 ## Conventions
 

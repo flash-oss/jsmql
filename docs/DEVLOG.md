@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-10 — chore: the differential harness is retired
+
+`scripts/diff-compilers.mjs` compared a REFERENCE compiler against the working tree,
+and its reference was the main checkout. The main checkout now holds the compiler the
+harness was built to prove, so it compares the tree against itself and reports zero
+divergence — it cannot fail, and a gate that cannot fail is worse than no gate,
+because it still reads like one.
+
+Gone with it: `test/accepted-divergences.json`, ten megabytes and 11,263 classified
+rows, meaningless once there is nothing to diverge FROM; `docs/specs/differential-harness.md`;
+and the `diff:compilers` script. Nothing executed any of them — four suites named the
+script in a header comment and that was all — so the deletion changes no behaviour.
+The classifications live on in this file, and in git history.
+
+What proves the compiler now is what proved it all along beside the harness: the
+suites that run each construct on a live mongod and compare the server's answer with
+JavaScript's own for the same input — `compiler-methods`, `compiler-fold-agrees`,
+`compiler-returns-agrees`, `compiler-js-agreement`, `compiler-query-expr-agreement`,
+`compiler-join`, `compiler-update`, and `integration`. A `toEqual` proves what jsmql
+EMITS; only the server proves the document runs.
+
+---
+
 ## 2026-09-09 — fix: the DEVLOG merge resolver could not read a DEVLOG over a megabyte
 
 `scripts/merge-devlog.mjs` reads the three conflict stages with `spawnSync`, whose default

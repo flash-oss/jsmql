@@ -7,9 +7,8 @@
 // Where JavaScript and MongoDB cannot agree (a local-time accessor on a server that
 // knows no client timezone), the case says so and asserts the MongoDB answer.
 //
-// The wider net is `scripts/diff-compilers.mjs --entry expr`, which compares every
-// harvested expression with the reference compiler. Self-skips (green) when no mongod
-// is reachable, with the all-or-nothing guard.
+// Self-skips (green) when no mongod is reachable, with the all-or-nothing guard: a
+// suite that quietly degrades to compile-only looks exactly like one that passed.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";

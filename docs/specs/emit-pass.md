@@ -647,15 +647,12 @@ function read without a call, a `let` a document-replacing stage dropped. Each
 refusal is in `errors.ts`, worded once, and every rejection that comes from a
 row quotes the row.
 
-## The acceptance gate
+## What proves the value target
 
-`node scripts/diff-compilers.mjs --cur src/compiler/index.ts --entry expr`
-compares the new `expr` with the shipped one over the harvested corpus. A
-statement-shaped source — one the
-expression parser refuses and the statement parser accepts, or one the shipped
-`expr` answers with a pipeline — is the statement slice's, and skipped. Every
-other divergence is a row in `test/accepted-divergences.json` with a reason:
-`equivalent` (the fold settles a constant), `intended` (the `$switch` dispatch,
-the `jsmql` mint prefix), `shippedBug` (a measured server fact the shipped
-compiler contradicted), `message` (a reworded refusal), or `statement slice`.
-The gate is green at zero unclassified rows.
+The suites that run it on a live mongod and compare the server's answer with
+JavaScript's own for the same input: [`test/compiler-methods.test.ts`](../../test/compiler-methods.test.ts)
+per method cell, [`test/compiler-fold-agrees.test.ts`](../../test/compiler-fold-agrees.test.ts)
+for a folded constant against its runtime lowering, and
+[`test/compiler-returns-agrees.test.ts`](../../test/compiler-returns-agrees.test.ts) for
+each row's measured `returns`. A `toEqual` proves what jsmql EMITS; only the server
+proves the document runs (HR3).

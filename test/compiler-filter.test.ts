@@ -1,9 +1,7 @@
 // Phase 5 of src/compiler/ — the filter target, end to end.
 //
-// A JSMQL predicate and the query document the compiler emits. The reference
-// compiler's outputs where the two agree, and the ruled shape where they differ:
-// `||` lowers PER BRANCH, so a leaf's query form never depends on its sibling.
-// The wider net is scripts/diff-compilers.mjs --cur … --entry filter.
+// A JSMQL predicate and the query document the compiler emits. `||` lowers PER
+// BRANCH, so a leaf's query form never depends on its sibling.
 
 import { describe, expect, it } from "vitest";
 import { filter } from "../src/compiler/index.ts";

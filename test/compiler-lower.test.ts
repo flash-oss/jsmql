@@ -1,9 +1,8 @@
 // Phase 5 of src/compiler/ — the value target, end to end.
 //
-// Each case is a JSMQL input and the MQL the compiler emits for it. The
-// expectations are the reference compiler's outputs where the two agree, and the
-// registry's stated shape where they differ by design (the `$switch` dispatch,
-// the `jsmql`-prefixed mint). The wider net is scripts/diff-compilers.mjs --cur.
+// Each case is a JSMQL input and the MQL the compiler emits for it. The expectation
+// is the shape the registry states — the `$switch` dispatch a receiver of unprovable
+// family takes, and the `jsmql`-prefixed mint every expression variable carries.
 
 import { describe, expect, it } from "vitest";
 import { expr } from "../src/compiler/index.ts";

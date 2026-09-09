@@ -1,9 +1,8 @@
 // Phase 5 of src/compiler/ — the statement target, end to end.
 //
-// A JSMQL program and the pipeline the compiler emits. Two statements never
-// merge: the `;` the developer wrote is the stage boundary and the `,` is the
-// merge, so one source keeps one output. The wider net is
-// scripts/diff-compilers.mjs --cur … --entry pipeline.
+// A JSMQL program and the pipeline the compiler emits. Two statements never merge:
+// the `;` the developer wrote is the stage boundary and the `,` is the merge, so one
+// source keeps one output.
 //
 // The second describe runs every pipeline this file asserts against a live
 // mongod, because a green `toEqual` proves what the compiler EMITS and never
