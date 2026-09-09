@@ -405,12 +405,12 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(fn({ min: 21 })).toEqual({ age: { $gte: 21 } });
   });
 
-  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). The
-  // old positional shapes — a bare `$`, a bare doc identifier, the two-slot
-  // `($, { $op })`, and the three-slot `(params, $, { $op })` — are rejected.
+  // The arrow entry form is `({ $ }) => …` (a single destructured toolbox). Every
+  // positional shape — a bare `$`, a bare doc identifier, the two-slot
+  // `($, { $op })`, and the three-slot `(params, $, { $op })` — is rejected.
   // (String inputs route through the same `parseFunctionInput` path as live
   // arrows without tripping the toolbox param type in this .ts file.)
-  it("rejects the old bare-`$` arrow entry form `($) => …`", () => {
+  it("rejects the bare-`$` arrow entry form `($) => …`", () => {
     expect(() => jsmql.compile("($) => $.age > 18")).toThrow(/object destructure pattern/);
   });
 
@@ -418,15 +418,15 @@ describe("`function` keyword — parity with the arrow form", () => {
     expect(() => jsmql.compile("(doc) => doc.age > 18")).toThrow(/object destructure pattern/);
   });
 
-  it("rejects the old two-slot ops-hint form `($, { $op }) => …`", () => {
+  it("rejects the two-slot ops-hint form `($, { $op }) => …`", () => {
     expect(() => jsmql.compile("($, { $dateDiff }) => $.age > 18")).toThrow(/object destructure pattern/);
   });
 
-  it("rejects the old three-slot compile form `(params, $, { $op }) => …`", () => {
+  it("rejects the three-slot compile form `(params, $, { $op }) => …`", () => {
     expect(() => jsmql.compile("({ minAge }, $, { $match }) => $.age > minAge")).toThrow(/object destructure pattern/);
   });
 
-  it("rejects the old `function ($) { … }` entry form", () => {
+  it("rejects the `function ($) { … }` entry form", () => {
     expect(() => jsmql.compile("function ($) { return $.age > 18 }")).toThrow(/object destructure pattern/);
   });
 

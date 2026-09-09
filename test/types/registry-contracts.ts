@@ -63,12 +63,12 @@ export const filterOnlyNull: Filter<false> = { args: A, emit: () => null };
 export const notATruth: Truth = { $gt: ["$a", 1] };
 export const readTruth = (input: ExprIn): Truth => input.truth(input.args[0]);
 
-// ── the old renderer surface is gone ─────────────────────────────────────────
+// ── a cell has no renderer surface ───────────────────────────────────────────
 
 // @ts-expect-error — `gen` is the `value` service
-export const oldGen: Value<"array"> = { args: A, emit: ({ gen }) => gen };
+export const noGen: Value<"array"> = { args: A, emit: ({ gen }) => gen };
 // @ts-expect-error — `hoists` is the `hoist` service a renderer calls
-export const oldHoists: Value<"array"> = { args: A, hoists: () => [], emit: () => 1 };
+export const noHoists: Value<"array"> = { args: A, hoists: () => [], emit: () => 1 };
 
 // ── the naming brands: a string is not a variable, a read is not a binder ────
 

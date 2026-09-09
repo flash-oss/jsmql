@@ -833,8 +833,8 @@ describe("let bindings — Object.assign mutation", () => {
   });
 
   it("allowed on a `const` binding — mutating a const-bound object is legal JS (only rebinding isn't)", () => {
-    // This is the reported bug: `const result = {}; Object.assign(result, …)`
-    // must NOT throw, even though `result = …` on a const would.
+    // `const result = {}; Object.assign(result, …)` must NOT throw, even though
+    // `result = …` on a const would.
     expect(jsmql("const result = {}; Object.assign(result, { a: $.foo });")).toEqual([
       { $set: { "__jsmql.var.result": {} } },
       { $set: { "__jsmql.var.result": { $mergeObjects: ["$__jsmql.var.result", { a: "$foo" }] } } },

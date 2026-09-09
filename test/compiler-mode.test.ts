@@ -1,6 +1,6 @@
 // Phase 5 of src/compiler/ — value versus truth.
 //
-// The truthiness check is the shipped shape, kept exactly; the truth table it
+// The truthiness check is one fixed four-way shape; the truth table it
 // implements is measured on mongod against JavaScript's own `Boolean(v)` for
 // every value class the language can produce (NaN excepted: not supported).
 
@@ -25,26 +25,26 @@ async function reachable(): Promise<boolean> {
 }
 const up = await reachable();
 
-const SHIPPED_TRUTHY = {
+const JS_TRUTHY = {
   $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }],
 };
 
 describe("compiler/emit/mode — the truthiness check", () => {
-  it("is the shipped shape, exactly", () => {
-    expect(jsTruthy("$a")).toEqual(SHIPPED_TRUTHY);
+  it("is the four-way JavaScript check, exactly", () => {
+    expect(jsTruthy("$a")).toEqual(JS_TRUTHY);
   });
 
   it("passes a boolean-returning value through unchanged", () => {
     expect(truthOf({ $gt: ["$a", 1] }, true)).toEqual({ $gt: ["$a", 1] });
-    expect(truthOf("$a", false)).toEqual(SHIPPED_TRUTHY);
+    expect(truthOf("$a", false)).toEqual(JS_TRUTHY);
   });
 
-  it("flattens nested $and / $or, as the reference compiler does for `a && b ? … : …`", () => {
+  it("flattens nested $and / $or, so `a && b ? … : …` keeps one level", () => {
     const t = and(jsTruthy("$a"), jsTruthy("$b"));
     expect((t as unknown as { $and: unknown[] }).$and).toHaveLength(8);
     expect(or(or(truthOf(1, true), truthOf(2, true)), truthOf(3, true))).toEqual({ $or: [1, 2, 3] });
     expect(not(truthOf({ $gt: ["$a", 1] }, true))).toEqual({ $not: { $gt: ["$a", 1] } });
-    expect(asValue(jsTruthy("$a"))).toEqual(SHIPPED_TRUTHY);
+    expect(asValue(jsTruthy("$a"))).toEqual(JS_TRUTHY);
   });
 });
 

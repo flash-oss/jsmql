@@ -350,8 +350,7 @@ type MongoSpec<
    *   { $group: { _id: { $sum: ["$x","$y"] }, s: "…" } }   accepted
    *   { $group: { _id: null, s: { $sum: ["$x","$y"] } } }
    *     → "The $sum accumulator is a unary operator"
-   * Three of the four positions a body can hold were unstated before, and the
-   * shipped compiler emits a document mongod refuses for each of them:
+   * A body position left unstated emits a document mongod refuses:
    * `$group` output (above), `$geoNear.query` and
    * `$graphLookup.restrictSearchWithMatch` (both → "unknown top level operator:
    * $eq", because a query slot is not an expression slot).
@@ -6985,7 +6984,7 @@ export const NAMES = {
         // else becomes the one-element array it stands for — JavaScript's own answer, and
         // the only operand the operator accepts. MEASURED: the server folds a run of
         // ADJACENT constant operands while it optimises and raises there on a wrong type,
-        // so `$.s.concat("!", "?")` used to kill the pipeline before a branch was chosen.
+        // so an operand left unwrapped kills the pipeline before a branch is chosen.
         // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -13502,7 +13501,7 @@ export const NAMES = {
       byArgs: {
         // Never folded: `Number("3")` is a DOUBLE on the server, and a folded `3` would
         // be an int. The constant converts like anything else; a string the server
-        // cannot parse is the server's own error, as in the shipped compiler.
+        // cannot parse is the server's own error.
         constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         otherwise: unsupported("'Number(x)' takes exactly one value."),

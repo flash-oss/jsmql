@@ -57,7 +57,7 @@ The shorthands are one desugar rule — `iterateeShorthand` in [src/compiler/pas
 
 Where the object spelling is already claimed it keeps its richer meaning: `.orderBy({ field: dir })` and `.sort`/`.toSorted({ field: dir })` are direction specs, `.groupBy({ _id, … })` is the `$group` body (so `.groupBy` is the one group-keyed method without a matches-object shorthand).
 
-**A collapsing terminal is a key FORM, never a spelling.** `.groupBy(<key>)` collapses to one object and `.groupBy({ _id, … })` does not, so the test is "not an object literal": a recognised-key narrowing broke twice, once on a string key and once on an arrow.
+**A collapsing terminal is a key FORM, never a spelling.** `.groupBy(<key>)` collapses to one object and `.groupBy({ _id, … })` does not, so the test is "not an object literal": a narrowing that recognises key spellings instead misses a string key and an arrow, both of which are keys.
 
 ## Registered methods
 
@@ -287,7 +287,7 @@ the reason names `.filter(p).take(1)` / `.slice(n, n + 1)`, and for `.find` on
 3. Add a case to [test/compiler-statement.test.ts](../../test/compiler-statement.test.ts) (the root stream) and [test/compiler-join.test.ts](../../test/compiler-join.test.ts) (a `$$$.<coll>` head), run on `mongod` and compared with JavaScript's answer.
 4. Document the method in [docs/LANGUAGE.md](../LANGUAGE.md) and add a [DEVLOG.md](../DEVLOG.md) entry.
 
-A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it) and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which rewrote the preceding stage AND fell back to `_id` when it was absent — a wrong answer with no diagnostic. Read, don't rewrite; refuse, don't guess.
+A cell that needs what the chain emitted before it reads `sortedBy()` — the last `$sort`'s spec — and never rewrites an earlier stage. `.takeWhile` / `.dropWhile` are the readers, and they show the safe shape: they **read** the sort (never rewrite it) and **refuse** when there is none (never guess one). The contrast is the "from the end" family (§ below), which could only work by rewriting the preceding stage AND falling back to `_id` when it is absent — a wrong answer with no diagnostic. Read, don't rewrite; refuse, don't guess.
 
 ## Bare-statement stream chains
 

@@ -11,10 +11,10 @@
 //   $.a === 1 && $.q * $.p > 100           → { a: 1, $expr: { $gt: [{ $multiply: ["$q", "$p"] }, 100] } }
 //   $.tags === "red" || $.q * $.p > 100    → { $or: [{ tags: "red" }, { $expr: { $gt: [...] } }] }
 //
-// The last line is the developer's ruling: `||` lowers PER BRANCH. The shipped
-// compiler wrapped the whole disjunction in `$expr` as soon as one side needed it,
-// and `{ $expr: { $eq: ["$tags", "red"] } }` does not match `tags: ["red", "blue"]`
-// where `{ tags: "red" }` does — the left leaf's answer changed with its sibling.
+// The last line is the developer's ruling: `||` lowers PER BRANCH. Wrapping the
+// whole disjunction in `$expr` as soon as one side needs it changes the OTHER
+// side's answer: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+// `tags: ["red", "blue"]` where `{ tags: "red" }` does.
 
 import type { Expr, QueryDoc, Truth } from "../../registry/vocabulary.ts";
 import { queryOwnValue } from "../../registry/vocabulary.ts";

@@ -128,8 +128,8 @@ export function foldNewDate(args: readonly unknown[]): Evaluation {
  *
  * ONE number is a YEAR here, where `new Date(n)` reads it as milliseconds:
  * `Date.UTC(2020)` is 1577836800000 in JavaScript and `$toLong($dateFromParts
- * { year: 2020 })` in the shipped compiler. Routed through the parts form so
- * the two spellings cannot disagree.
+ * { year: 2020 })` here. Routed through the parts form so the two spellings
+ * cannot disagree.
  */
 export function foldDateUTC(args: readonly unknown[]): Evaluation {
   const parts = args.length === 1 && typeof args[0] === "number" ? [args[0], 0] : args;

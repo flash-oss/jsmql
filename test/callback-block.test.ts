@@ -130,9 +130,9 @@ describe("a stage-free callback block is the JavaScript value form", () => {
   });
 
   it("`{ return <expr> }` on the predicate/transform chain methods is the expression", () => {
-    // `.takeWhile`/`.dropWhile` already accepted this shape; `.flatMap` used to
-    // reject any block, which made `d => { return d.items; }` an error while the
-    // identical JavaScript `d => d.items` compiled.
+    // The three take the same shape: `d => { return d.items; }` compiles exactly as
+    // the identical JavaScript `d => d.items` does. A method that rejected the block
+    // form would make one spelling an error and its twin legal.
     for (const [block, expr] of [
       [`$$ = $$.toSorted("t").takeWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").takeWhile(d => d.a > 1);`],
       [`$$ = $$.toSorted("t").dropWhile(d => { return d.a > 1; });`, `$$ = $$.toSorted("t").dropWhile(d => d.a > 1);`],

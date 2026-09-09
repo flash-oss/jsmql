@@ -70,9 +70,9 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(hexes(rows)).toEqual(ids(ID.user, [1, 2, 3, 6, 8]));
   });
 
-  // The reported `.endsWith()` bug, end-to-end. `$substrCP` aborts the executor
-  // on a negative start, and `$strLenCP` aborts on a missing/null input, so
-  // before the fix this query returned NO rows — it killed the whole command.
+  // `.endsWith()` end-to-end. `$substrCP` aborts the executor on a negative start,
+  // and `$strLenCP` aborts on a missing/null input, so a lowering that hits either
+  // returns NO rows — it kills the whole command.
   // The dataset hits every hazard at once: u4's "kat@nasa.gov" (12) is SHORTER
   // than the 13-char needle (→ negative index), u5's email is null, and u9 has
   // no email field at all. A `toEqual` on emitted MQL can't catch this class;
@@ -82,9 +82,9 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
     expect(hexes(rows)).toEqual(ids(ID.user, [7])); // Joan Clarke, the only match
   });
 
-  // The user-reported predicate verbatim: every email is shorter than the
-  // 19-char needle, so EVERY document takes the negative-index path. Matching
-  // nothing is the correct answer; aborting is what it used to do.
+  // Every email is shorter than the 19-char needle, so EVERY document takes the
+  // negative-index path. Matching nothing is the correct answer; aborting the
+  // query is not.
   it("filter: .endsWith() with a needle longer than every value matches nothing, without aborting", async () => {
     const rows = await find("users", `$.email.endsWith("@flash-payments.com")`);
     expect(rows).toEqual([]);
@@ -138,10 +138,10 @@ describe.skipIf(!ready)("integration: jsmql MQL against a live MongoDB", () => {
   });
 
   // Variable capture: a lowering that `$let`-binds its receiver and then splices
-  // a user argument into the body used to shadow that argument's lambda param —
-  // here `s.qty`, the padStart target, which resolved against the padded string
-  // instead of the element. It produced WRONG VALUES rather than errors, so a
-  // `toEqual` on emitted MQL is no protection; only running it is.
+  // a user argument into the body must not shadow that argument's lambda param —
+  // here `s.qty`, the padStart target, which would resolve against the padded
+  // string instead of the element. That gives WRONG VALUES rather than errors, so
+  // a `toEqual` on emitted MQL is no protection; only running it is.
   it("pipeline: an argument referencing the lambda param is not captured by the internal $let", async () => {
     const rows = (await aggregate(
       "orders",
@@ -211,9 +211,9 @@ $$ = $$.toSorted((a, b) => b.revenue - a.revenue).slice(0, 3);`,
   // Value-mode array `.slice` is JS-faithful: start/end are INDICES (end
   // exclusive) and negatives count from the end — NOT MQL `$slice`'s
   // position+count semantics. Slices a 3-element array projected from an order's
-  // items. The old count-based lowering got `.slice(1)` / `.slice(1, -1)` wrong
-  // (and emitted a negative count mongod rejects); this asserts the fix runs on
-  // a real server. Expected values derived from a live run (HR3).
+  // items. A count-based lowering reads `.slice(1)` / `.slice(1, -1)` wrong and
+  // emits a negative count mongod rejects, so this runs the real thing on a real
+  // server. Expected values derived from a live run (HR3).
   it("expr: array .slice matches Array.prototype.slice (indices, end-exclusive)", async () => {
     const id = ID.order(15).toHexString();
     const [row] = await aggregate(

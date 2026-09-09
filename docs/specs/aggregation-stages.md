@@ -31,11 +31,12 @@ $$.$match({ status: "shipped" }).$sort({ total: -1 }).$limit(5);
 const top = $$$.orders.$match({ status: "shipped" }).$group({ _id: "$region", n: $sum(1) }).$limit(3);
 ```
 
-Why it exists: stage calls worked at statement position and JS chain methods worked in
-both, leaving one empty cell — a chain could not reach a stage. That matters most for the
-stages with **no JavaScript spelling** (`$group`, `$unwind`, `$setWindowFields`,
-`$bucket`, `$graphLookup`, …), which in a value position (`const x = $$$.<coll>.…`) were
-previously reachable only by nesting an `.aggregate((o) => { … })` block.
+Why it exists: stage calls stand at statement position and JS chain methods stand in
+both, which would leave one empty cell — a chain that cannot reach a stage. That matters
+most for the stages with **no JavaScript spelling** (`$group`, `$unwind`,
+`$setWindowFields`, `$bucket`, `$graphLookup`, …), which in a value position
+(`const x = $$$.<coll>.…`) are otherwise reachable only by nesting an
+`.aggregate((o) => { … })` block.
 
 **Surface.**
 

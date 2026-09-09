@@ -1554,11 +1554,10 @@ const _afterResolves: [DanglingAfter] extends [never] ? true : DanglingAfter = t
 /**
  * Every `composedInto` owner must be a rule in this same file.
  *
- * The audit that was missing. Without it a cell could name an owner that never
- * touches it, and two did: `methodCall` and `operatorCall` both pointed at
- * `strictEquality`, which does not consume either — while both render natively
- * on their own. A dangling pointer read as "this is handled elsewhere" and
- * hid two whole native query forms.
+ * Without it a cell can name an owner that never touches it — `methodCall` and
+ * `operatorCall` both pointing at `strictEquality`, which consumes neither,
+ * while both render natively on their own. A dangling pointer reads as "this is
+ * handled elsewhere" and hides two whole native query forms.
  */
 type CellName = "filter" | "expr" | "stream" | "statement";
 

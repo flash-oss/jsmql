@@ -468,9 +468,9 @@ describe("$match translation — === undefined / !== undefined → $exists", () 
   });
 
   it("is an existence test in expression position too, not an error", () => {
-    // This used to throw. `$type` distinguishes a missing field ("missing") from a
-    // present-but-null one ("null"), which is exactly the line `$exists` draws — so the
-    // expression language CAN express existence, and now does.
+    // `$type` distinguishes a missing field ("missing") from a present-but-null one
+    // ("null"), which is exactly the line `$exists` draws — so the expression language
+    // CAN express existence, and does.
     expect(jsmql.expr("$.x === undefined ? 1 : 2")).toEqual({
       $cond: { if: { $eq: [{ $type: "$x" }, "missing"] }, then: 1, else: 2 },
     });
@@ -498,13 +498,13 @@ describe("$match translation — typeof: 'boolean' → 'bool' mapping", () => {
 describe("$match translation — .length vs natural number → string-or-array $expr", () => {
   // `.length` (and the JS-identical `["length"]`) compared against a natural
   // number is the *length* of a string-or-array. It residualises into `$expr`
-  // so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch — which,
-  // unlike the old array-only `$size` peephole, also matches strings.
+  // so codegen emits the runtime `$isArray`/`$size`/`$strLenCP` dispatch, which matches
+  // strings as well as arrays — an array-only `$size` peephole would not.
   // The string branch coerces: `$strLenCP` aborts the query on a missing field,
   // where `$size` on the array side is already shielded by the `$isArray` test.
-  // Three-way: reading "not an array" as "string" made `$strLenCP` abort the query on a
-  // numerically-typed field. Missing/null still reach the string branch, where the `$ifNull`
-  // makes them 0 — a deliberate answer this fix preserves.
+  // Three-way, because reading "not an array" as "string" makes `$strLenCP` abort the query
+  // on a numerically-typed field. Missing/null reach the string branch, where the `$ifNull`
+  // makes them 0 — a deliberate answer.
   const lenCond = (path: string) => ({
     $cond: {
       if: { $isArray: `$${path}` },

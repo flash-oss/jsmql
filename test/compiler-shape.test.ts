@@ -1,10 +1,8 @@
 // Phase 4 of src/compiler/ — which document a program becomes.
 //
-// The reference compiler answers this with four stacked auto-wrap heuristics in
-// `lowerWithCtx`, each a special case with its own paragraph of reasoning. The
-// rule here asks the ROW instead, and the second suite below is what says the two
-// agree: every input the test suite feeds the compiler, compared against the
-// document it actually returned.
+// The rule asks the ROW rather than stacking auto-wrap special cases, and the
+// second suite below is what holds it to the emitted document: every input the
+// test suite feeds the compiler, compared against the document it returned.
 
 import { describe, expect, it } from "vitest";
 import { readdirSync, readFileSync } from "node:fs";
@@ -86,7 +84,7 @@ describe("compiler/passes/shape — a bracketed literal is decided by its first 
   });
 });
 
-// ── the differential ─────────────────────────────────────────────────────────
+// ── the whole-corpus check ───────────────────────────────────────────────────
 
 /** Every source the test suite feeds the compiler. */
 function corpus(): string[] {
@@ -105,19 +103,19 @@ function corpus(): string[] {
 }
 
 /**
- * A program that STARTS with a binding, which the reference compiler may fold away
- * before it decides the shape.
+ * A program that STARTS with a binding, which folding may remove before the
+ * emitted document is decided.
  *
  * `const a = 1; $.x === a` compiles to `{ "x": 1 }`: the value is a compile-time
  * constant, so it is inlined and one expression is left. `let` folds too — it is
- * the VALUE that has to be constant, not the keyword. The rule here decides
- * before any folding, so it answers pipeline, and a binding that does not fold
- * really is one: `let a = $.n; $.x === a` is a pipeline in both compilers, which
- * is why it never reaches this list. The divergence closes when folding lands.
+ * the VALUE that has to be constant, not the keyword. This pass runs BEFORE any
+ * folding, so it answers pipeline, and a binding that does not fold really is
+ * one: `let a = $.n; $.x === a` is a pipeline either way, which is why it never
+ * reaches this list.
  */
 const startsWithABinding = (src: string): boolean => /^\s*(?:const|let)\s/.test(src) && src.includes(";");
 
-describe("compiler/passes/shape — agrees with the reference compiler", () => {
+describe("compiler/passes/shape — agrees with the document the compiler returns", () => {
   it("gives the same answer for every input the suite compiles", () => {
     const differ: string[] = [];
     let compared = 0;
@@ -126,13 +124,13 @@ describe("compiler/passes/shape — agrees with the reference compiler", () => {
       try {
         actual = Array.isArray(jsmql(src)) ? "pipeline" : "filter";
       } catch {
-        continue; // an input the reference compiler refuses says nothing about shape
+        continue; // an input the compiler refuses says nothing about shape
       }
       let mine: string;
       try {
         mine = shape(src);
       } catch {
-        continue; // an input the new parser refuses is the parser suite's business
+        continue; // an input the parser refuses is the parser suite's business
       }
       compared++;
       if (mine !== actual && !startsWithABinding(src)) differ.push(`${mine} vs ${actual}: ${src.slice(0, 70)}`);

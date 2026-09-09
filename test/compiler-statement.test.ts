@@ -271,8 +271,8 @@ describe("compiler/emit/statement — bindings between stages", () => {
       { $set: { "__jsmql.var.x": "$a" } },
       { $replaceWith: { y: "$__jsmql.var.x" } },
     ]);
-    // measured: `$count` and an INCLUSION `$project` drop the field; the shipped
-    // compiler emitted a read of a field that was no longer there.
+    // measured: `$count` and an INCLUSION `$project` drop the field, so a later
+    // read of it would resolve against nothing — the compiler refuses instead.
     expect(() => pipeline('let t = $.a; $count("n"); $.b = t;')).toThrow(/can't be read after `\$count`/);
     expect(() => pipeline("let t = $.a; $project({ a: 1 }); $.b = t;")).toThrow(/can't be read after `\$project`/);
     // an EXCLUSION `$project` keeps it

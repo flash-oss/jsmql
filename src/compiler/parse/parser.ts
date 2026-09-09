@@ -670,7 +670,7 @@ class Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not — JavaScript
-   * refuses them, and so did the shipped compiler.
+   * refuses them, and so does JSMQL.
    */
   private requirePlace(target: Parsed, pos: number, op: string): void {
     const t = target.expr.type;

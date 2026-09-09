@@ -1,6 +1,6 @@
 // Phase 5 of src/compiler/ — the environment record.
 //
-// Three invariants, each the negative of a shipped context bug:
+// Three invariants, each the negative of a context bug:
 //   a lambda body inherits EVERYTHING from its surroundings — a transition changes one thing
 //   the HR1 gate is one predicate with a stated truth table
 //   a chain closes in one order: stages, cleanup, terminal — nothing after `$out`

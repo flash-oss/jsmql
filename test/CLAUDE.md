@@ -56,7 +56,7 @@ Guards the landing page (`index.html`), the `CNAME` that binds it to jsmql.js.or
 
 ### `compiler-query-expr-agreement.test.ts` — the query road and the expression road
 
-The same gate as `query-expr-agreement.test.ts`, for `src/compiler/`: the new `filter(src)` and the new `expr(src)` (under `$expr`) run over one fixture on a live mongod and must select the same documents, except for the divergences the language documents — those live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row rather than landing silently. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row here whenever you give a name or a production a query cell.
+The same gate as `query-expr-agreement.test.ts`, for `src/compiler/`: `filter(src)` and `expr(src)` (under `$expr`) run over one fixture on a live mongod and must select the same documents, except for the divergences the language documents — those live in a `DIVERGE` table with a reason each and are asserted to STILL differ, so a repair moves a row rather than landing silently. Self-skips (green) when no mongod is reachable, with the all-or-nothing coverage guard. Add a row here whenever you give a name or a production a query cell.
 
 ### `compiler-js-agreement.test.ts` — the filter target against JavaScript itself
 

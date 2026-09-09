@@ -1,8 +1,8 @@
 // Phase 2 of src/compiler/ — the Pratt parser driven by productions.ts.
 //
-// Two properties matter. It must parse everything the old compiler accepts, and
-// it must REFUSE the JavaScript-syntax forms the old parser wrongly allowed. The
-// old MQL is guidance, not a target; the old parser's ACCEPTANCE is the floor.
+// Two properties matter. It must parse every source the test suite compiles, and
+// it must REFUSE the forms that are a SyntaxError in JavaScript itself — every
+// jsmql program is valid JavaScript syntax.
 
 import { readdirSync, readFileSync } from "node:fs";
 import { describe, expect, it } from "vitest";
@@ -37,8 +37,8 @@ const only = (src: string): { type: string } & Record<string, unknown> => {
   return n.type === "Pipeline" && n.stmts?.length === 1 ? (n.stmts[0] as typeof n) : n;
 };
 
-describe("compiler/parse — parses everything the old compiler accepts", () => {
-  it("has no input the old compiler compiles and the new parser cannot read", () => {
+describe("compiler/parse — parses every source the suite compiles", () => {
+  it("has no input the compiler accepts and the parser cannot read", () => {
     const failures: string[] = [];
     for (const src of harvestInputs()) {
       let oldOk = true;
@@ -63,8 +63,8 @@ describe("compiler/parse — parses everything the old compiler accepts", () => 
   });
 });
 
-describe("compiler/parse — the JavaScript forms the old parser wrongly accepted", () => {
-  // Each of these is a SyntaxError under `node --check`, and each compiled before.
+describe("compiler/parse — the forms JavaScript itself refuses", () => {
+  // Each of these is a SyntaxError under `node --check`, so jsmql refuses it too.
   const refused: [string, RegExp][] = [
     ["$.a ?? $.b || $.c", /without parentheses/],
     ["$.a || $.b ?? $.c", /without parentheses/],
@@ -349,7 +349,7 @@ describe("compiler/parse — a reserved word is a legal name", () => {
       expect(entry.key.name, word).toBe(word);
       expect((parseExpression(`$.${word}`) as { path: string }).path, word).toBe(word);
     }
-    // The raw `$let` document, which the reference compiler could not parse at all.
+    // The raw `$let` document, in both the document and the call spelling.
     expect(() => parseExpression('{ $let: { vars: { x: 1 }, in: "$$x" } }')).not.toThrow();
     expect(() => parseExpression('$let({ vars: { x: 1 }, in: "$$x" })')).not.toThrow();
   });
@@ -419,8 +419,8 @@ describe("compiler/parse — one statement loop", () => {
   const shape = (p: Program): string => JSON.stringify(p, (k, v) => (k === "pos" ? 0 : v));
 
   it("gives an entry block exactly the meaning of the same text at the top level", () => {
-    // The entry block and the top level used to have separate loops, and only
-    // the top-level one read a trailing `;` as "this is a pipeline".
+    // One statement loop reads both, so a trailing `;` says "this is a pipeline"
+    // inside an entry block exactly as it does at the top level.
     for (const src of [
       "$.a > 1",
       "$.a > 1;",

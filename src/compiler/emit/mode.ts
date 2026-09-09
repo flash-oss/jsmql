@@ -26,7 +26,7 @@ import type { Truth } from "../../registry/vocabulary.ts";
 const mint = (doc: unknown): Truth => doc as Truth;
 
 /**
- * JavaScript's truthiness of a lowered value. The shipped shape, kept exactly:
+ * JavaScript's truthiness of a lowered value:
  *   $.a ? 1 : 2  →  {$cond:{if:{$and:[{$ne:[{$ifNull:["$a",null]},null]},{$ne:["$a",false]},{$ne:["$a",""]},{$ne:["$a",0]}]},…}}
  * The `$ifNull` folds missing into null, so one comparison covers both.
  */
@@ -55,7 +55,7 @@ const operandsOf = (op: "$and" | "$or", t: Truth): readonly Truth[] => {
   return Array.isArray(inner) ? (inner as Truth[]) : [t];
 };
 
-/** `a && b` read for truth. Nested `$and`s are flattened into one, as the shipped compiler does. */
+/** `a && b` read for truth. Nested `$and`s are flattened into one. */
 export const and = (...ts: readonly Truth[]): Truth => mint({ $and: ts.flatMap((t) => operandsOf("$and", t)) });
 
 /** `a || b` read for truth. Nested `$or`s are flattened into one. */

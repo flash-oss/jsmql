@@ -205,8 +205,8 @@ describe("$out — multi-method RHS chains", () => {
 });
 
 // `.reject` is `.filter` negated, and the pair stays in lockstep in every container.
-// A `$out` chain used to wire up only `.filter`, so the obvious next thing a user
-// writes ("archive everything that ISN'T expired") hit the unknown-method error.
+// A `$out` chain that wired up only `.filter` would meet the obvious next thing a user
+// writes ("archive everything that ISN'T expired") with an unknown-method error.
 describe("$out — .reject is .filter negated", () => {
   // Every predicate spelling, same negated $match — matching what a `$$ =` chain emits.
   const NEGATED = { $match: { $nor: [{ archived: true }] } };

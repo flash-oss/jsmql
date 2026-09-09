@@ -36,8 +36,8 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
   });
 
   it("folds a constant subexpression with no declaration in sight", () => {
-    // The reference compiler folds a declaration's value and nothing else, so
-    // `$.x === 1 + 2` computes the 3 on every document it reads.
+    // Folding is not limited to a declaration's value: `$.x === 1 + 2` computes
+    // the 3 once here rather than on every document the server reads.
     expect(shape("$.x === 1 + 2")).toBe(shape("$.x === 3"));
     expect(shape("$.x === (1 in [1, 2])")).toBe(shape("$.x === true"));
   });
@@ -51,8 +51,8 @@ describe("compiler/passes/fold — a constant declaration becomes its value", ()
   });
 
   it("feeds the desugar rules, which feed it back", () => {
-    // The reference compiler refuses this outright: the shorthand check runs
-    // before the constant reaches the slot.
+    // The fold runs before the shorthand check, so the constant reaches the slot
+    // and the shorthand reads as if it had been written literally.
     expect(shape('const k = "name"; $.f = $.items.map(k);')).toBe(shape("$.f = $.items.map(x => x.name);"));
     expect(shape("const spec = { active: true }; $.f = $.items.filter(spec);")).toBe(
       shape("$.f = $.items.filter(x => x.active === true);"),
@@ -117,7 +117,7 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   });
 
   it("refuses a call whose argument count is wrong, so the error still happens", () => {
-    // Folding it away is how the reference compiler loses the arity error.
+    // Folding it away would lose the arity error, so the fold declines it.
     expect(valueOf('"abc".toUpperCase(1)')).toBe("(not constant)");
     expect(valueOf('"hello".charAt()')).toBe("(not constant)");
   });
@@ -453,8 +453,9 @@ describe("compiler/passes/fold — a declared function called with constants", (
 
 describe("compiler/passes/fold — the folds the server contradicted", () => {
   it("reads one number in Date.UTC as a YEAR, as JavaScript and $dateFromParts do", () => {
-    // `Date.UTC(2020)` is 1577836800000; the reference compiler emits
-    // `$toLong($dateFromParts{year:2020})` and mongod agrees. It folded to 2020.
+    // `Date.UTC(2020)` is 1577836800000: one number is a YEAR, not a millisecond
+    // count. `$toLong($dateFromParts{year:2020})` is what mongod answers, and the
+    // fold has to match it rather than pass the 2020 through.
     const r = evaluate(parseExpression("Date.UTC(2020)"), new Map());
     expect(r).toEqual({ ok: true, value: Date.UTC(2020, 0) });
   });

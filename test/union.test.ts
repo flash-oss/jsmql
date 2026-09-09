@@ -247,7 +247,7 @@ describe("$$.push — error positions", () => {
 });
 
 // An error must never recommend syntax that doesn't work at the position the
-// user is writing in. Two ways that used to happen on a `$$` chain.
+// user is writing in. Two ways a `$$` chain can get that wrong.
 describe("chain errors only ever name syntax that works here", () => {
   it("never suggests the exact name the user typed", () => {
     const msg = (() => {
@@ -279,7 +279,7 @@ describe("chain errors only ever name syntax that works here", () => {
     expect(jsmql("$ = { k: $$.push(...$$$.archive) };")).toEqual([{ $facet: { k: [{ $unionWith: "archive" }] } }]);
   });
 
-  // `.pop` used to be answered with `.push`, which isn't a chain method either.
+  // A near-miss must not be answered with `.push`, which isn't a chain method either.
   it("suggests a real chain method for a near-miss", () => {
     expect(() => jsmql("$$ = $$.dropp();")).toThrow(
       "'.dropp()' is not a method of the stream '$$'. Did you mean '.drop()'? A stage is a link too: '$$.$match(…)'.",

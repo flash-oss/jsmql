@@ -29,7 +29,7 @@ A new operator or syntax feature lands as a registry row, and the LANGUAGE.md ta
 | `specs/architecture.md` | The five phases over the registry, end to end; where each construct is owned |
 | `specs/desugar-pass.md` | Sugar → explicit nodes before any lowering runs; the load-bearing precedence between overlapping forms |
 | `specs/position-pass.md` | The seven positions: where each one comes from, how a stage row lays out its body, and why an accumulator slot takes one operand |
-| `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the query cells and the per-branch `$or`, the acceptance gate |
+| `specs/emit-pass.md` | The emit phase's value and filter targets: the reading order, the receiver proof and runtime dispatch, operand shapes, the checks, the query cells and the per-branch `$or` |
 | `specs/grammar.md` | Formal grammar (EBNF) the parser in `src/compiler/parse/` accepts |
 | `specs/operator-registry.md` | Operator-shape registry: how it works, how to add/modify entries |
 | `specs/aggregation-stages.md` | Pipeline-stage authoring through `jsmql()`: detection, lowering, sub-pipeline recursion, the `$match` body rule |

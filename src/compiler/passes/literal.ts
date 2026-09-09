@@ -22,11 +22,10 @@ import { ObjectId } from "../../objectid.ts";
 /**
  * Can this value be written as a literal at all?
  *
- * ONE boundary for the whole pass. The shipped compiler checks in three places
- * with three different answers — arithmetic throws, a number method falls back
- * to runtime, and `.sum()` emits the value — so `[1e308, 1e308].sum()` reaches
- * the driver as `Infinity` while `1e308 * 10` is refused. Asking once removes
- * the question of which policy applies where.
+ * ONE boundary for the whole pass. Checked in three places — arithmetic, a
+ * number method, `.sum()` — the three answers drift apart, and
+ * `[1e308, 1e308].sum()` reaches the driver as `Infinity` while `1e308 * 10`
+ * is refused. Asking once removes the question of which policy applies where.
  */
 export function isSpellable(value: unknown): boolean {
   return asLiteral(value, 0) !== null;

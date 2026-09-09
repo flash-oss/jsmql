@@ -1,8 +1,8 @@
-// Phase 2 groundwork — the tree src/compiler/parse/ will build.
+// Phase 2 of src/compiler/ — the tree src/compiler/parse/ builds.
 //
 // The AST lives in the registry and imports nothing, so `NodeName` is DERIVED
-// from it. These tests pin the two properties that made it worth rewriting: it is
-// name-blind, and it covers exactly what the productions claim to build.
+// from it. These tests pin its two properties: it is name-blind, and it covers
+// exactly what the productions claim to build.
 
 import { describe, expect, it } from "vitest";
 import { PRODUCTIONS } from "../src/registry/productions.ts";

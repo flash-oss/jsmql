@@ -1,9 +1,8 @@
 // Phase 5 — EMIT. The one record every lowering runs under.
 //
-// The shipped compiler carried its context as a record of 23 fields, 21 of them
-// optional, and every context bug it had took the same shape: a literal that
-// listed most of the fields and lost one, invisibly, so a `jsmql.compile`
-// parameter resolved inside `.map` and threw inside `.reduce`. Nothing here is
+// A context of optional fields invites one bug, over and over: a literal that
+// lists most of the fields and loses one, invisibly, so a `jsmql.compile`
+// parameter resolves inside `.map` and throws inside `.reduce`. Nothing here is
 // optional, nothing here is a literal a caller can write, and a lambda body
 // inherits everything because the only way to make an Env is from an Env.
 //

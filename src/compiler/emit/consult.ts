@@ -61,8 +61,8 @@ const CELL_OF: Readonly<Record<Position, string>> = {
  * `target`, `stageBody` and `stageEntry` are waypoints, not positions: nothing
  * is evaluated on the left of `=`, and the inside of a stage body is on the way
  * to a position rather than one itself. Answered from `CELL_OF`, so every
- * position the registry has is a position here — a hand-written switch listed
- * three and silently dropped the four phase 4 added later.
+ * position the registry has is a position here — a hand-written switch answers
+ * for the positions it lists and silently drops every one added after it.
  */
 export function positionOf(where: Where): Position | null {
   return where.at in CELL_OF ? (where.at as Position) : null;

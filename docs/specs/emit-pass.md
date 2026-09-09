@@ -2,7 +2,7 @@
 
 The fifth phase of `src/compiler/`: a settled tree to its MQL. This spec owns
 the VALUE target (`jsmql.expr`), the FILTER target (`jsmql.filter`, a `$match`
-body), the modules under `src/compiler/emit/`, and the acceptance gate. The registry states what the language has; this phase
+body) and the modules under `src/compiler/emit/`. The registry states what the language has; this phase
 says how a document is built, and only where a row cannot — see
 `src/compiler/CLAUDE.md` for that boundary.
 
@@ -121,10 +121,10 @@ $.items.some(i => i.q > 2)             // → {"items":{"$elemMatch":{"q":{"$gt"
 $abs($.delta)                          // → {"$expr":<truth of $abs>}            a value operator is a predicate through its truth
 ```
 
-The reference compiler wrapped the whole `||` in `$expr` as soon as one branch
-needed it, and `{ $expr: { $eq: ["$tags", "red"] } }` does not match
-`tags: ["red", "blue"]` where `{ tags: "red" }` does — the left leaf's answer
-changed with its sibling. Per branch, each branch means what the same predicate
+Wrapping the whole `||` in `$expr` as soon as one branch needs it changes what
+the other branches mean: `{ $expr: { $eq: ["$tags", "red"] } }` does not match
+`tags: ["red", "blue"]` where `{ tags: "red" }` does, so a leaf's answer would
+depend on its sibling. Per branch, each branch means what the same predicate
 means alone.
 
 Per branch also changes WHEN a branch runs. The server picks the order of the
@@ -376,8 +376,8 @@ The scope THREADS through the program: each statement answers the Env the next
 one is lowered under. A stage whose row states `replacesDocument` takes every
 field-carried binding with it — `true` for `$group`, `$replaceWith`, `$count`
 and their kind, `"inclusion"` for a `$project` whose body names fields to keep
-— and a read after that is refused naming the stage, where the reference compiler
-emitted a read of a field that was no longer there. The way back is the one
+— and a read after that is refused naming the stage, rather than emitting a read
+of a field the stage took away. The way back is the one
 JavaScript allows: `x = …` on a dropped `let` writes its slot again and the next
 statement reads it; a dropped `const` can only be carried as a field of the new
 document. Every name that has no value here — a dropped binding, a callback's
@@ -464,8 +464,8 @@ read-only from inside — `$.x = …` is refused naming `o.x = …` — `$$.leng
 root count, materialised on the root pipeline and carried in by `let`, and
 `$$.filter(…)` inside a body is refused naming `coll`. A nested
 `$$$.items.filter(…)` inside a predicate is hoisted inside the body's own chain,
-whose close runs its own cleanup, so no scratch leaks into the joined array (the
-reference compiler leaked `__jsmql.tmp` there).
+whose close runs its own cleanup, so no `__jsmql.tmp` scratch leaks into the
+joined array.
 
 ### The facet, union and out roads, the source stages, and declared functions
 

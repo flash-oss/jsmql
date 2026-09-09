@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-10 — docs: the prose stops describing a compiler that no longer exists
+
+CLAUDE.md's rule is that every file says WHAT JSMQL IS, and only this one says how it
+got here. The rewrite left 121 sentences breaking it, across 43 files — comments and
+test titles that explained a shape by naming "the shipped compiler", "the reference
+compiler", "the old lexer", or what something "used to" do. A reader who never saw the
+old compiler could not use any of them.
+
+Almost none were deleted. The rule says rewrite rather than delete, because most of
+these carried a real fact inside the historical framing, and the fact is the reason
+the comment exists. `emit/filter.ts` explained the per-branch `||` ruling by saying
+what the old compiler did wrong; it now states the fact directly — wrapping a whole
+disjunction in `$expr` changes the OTHER side's answer, because
+`{ $expr: { $eq: ["$tags", "red"] } }` does not match `tags: ["red", "blue"]` where
+`{ tags: "red" }` does. `passes/literal.ts` argued for one spellability boundary by
+listing three places the old compiler disagreed with itself; it now states the
+inconsistency as the rule, with the same two inputs. Nine test titles lost "the
+reported case" and "the reported bug" — a bug report is not a description of what a
+test proves — and one constant stopped being called `SHIPPED_TRUTHY`.
+
+---
+
 ## 2026-09-10 — chore: the differential harness is retired
 
 `scripts/diff-compilers.mjs` compared a REFERENCE compiler against the working tree,

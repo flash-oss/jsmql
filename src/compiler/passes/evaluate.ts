@@ -547,8 +547,8 @@ function familyOfValue(value: unknown): Family | undefined {
 /**
  * A method call on constants.
  *
- * Three gates before any rule runs, and each closes a hole the shipped compiler
- * has. The ARITY is checked from the row, so `'abc'.toUpperCase(1)` does not fold
+ * Three gates before any rule runs, each closing a hole a fold can fall through.
+ * The ARITY is checked from the row, so `'abc'.toUpperCase(1)` does not fold
  * away the error it should raise. Every rule runs inside a try/catch, so a
  * `RangeError` from a JavaScript built-in never reaches the user as a compile
  * error with no position. And the RESULT must be spellable, so `Infinity` and

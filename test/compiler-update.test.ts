@@ -1,4 +1,4 @@
-// The NEW compiler's update-document target: the object form of an update,
+// The update-document target: the object form of an update,
 // `updateOne(filter, { $set: … })`. Each document is asserted as MQL and, when a
 // mongod is reachable, applied to a fixture with `updateMany` and the result
 // compared with what JavaScript would leave behind. Self-skips (green) without a

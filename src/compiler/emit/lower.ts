@@ -307,8 +307,8 @@ function arrayLiteral(node: Expr, elements: readonly ArrayElement[], env: Env): 
       flush();
       // JavaScript spreads a STRING into its characters. MongoDB has no operator that
       // does, and `$concatArrays` refuses a string outright, so a provable one is
-      // refused here rather than answered wrongly — measured, `[..."abc"]` used to
-      // lower to the bare string "abc". See docs/DEFERRED.md § B.
+      // refused here rather than answered wrongly — unguarded, `[..."abc"]` lowers
+      // to the bare string "abc". See docs/DEFERRED.md § B.
       if (kindOf(el.argument, inner) === "string") throw E.spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);

@@ -4,8 +4,8 @@
 // receiver family. A `case "foo":` for a name the registry does not list on that
 // family would ADD a method to the language — `const n = "abc".foo(); $.x === n`
 // would fold where the compiler must refuse — and a `case` for a name whose row
-// says `call: false` folds a CALL of something that is only ever READ, which is
-// exactly how `"abc".length()` folded to 3. Nothing linked the two files, so this
+// says `call: false` folds a CALL of something that is only ever READ — which is
+// how `"abc".length()` would fold to 3. Nothing else links the two files, so this
 // reads the case labels out of the source and holds them against the rows.
 
 import { readFileSync } from "node:fs";

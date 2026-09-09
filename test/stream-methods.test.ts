@@ -626,8 +626,8 @@ describe(".countBy(field) → object collapse", () => {
 describe(".keyBy(field) → object collapse", () => {
   // lodash `_.keyBy(coll, "email")` → the OBJECT `{ <email>: <last doc> }`; the stream
   // form collapses to that single object (mirroring value-mode `$.arr.keyBy(...)`),
-  // last-wins via `$last`. Works over the whole `$$` stream, unlike before (it used to
-  // be value-position-only). Verified on mongod.
+  // last-wins via `$last`. Works over the whole `$$` stream, not only in value
+  // position. Verified on mongod.
   it("collapses to the lodash object { <key>: <last doc> } (last wins)", () => {
     expect(jsmql('$$ = $$.keyBy("email");')).toEqual([
       { $group: { _id: "$email", __jsmqlTmp: { $last: "$$ROOT" } } },
@@ -1451,10 +1451,10 @@ describe("$$ = [$$.reduce((acc, d) => ({...acc, [d.<k>]: <v>}), {})] — dict-bu
     ]);
   });
 
-  it("falls through to the static-key object-reducer when keys mix computed + static (existing error path)", () => {
-    // `({ ...acc, [d.id]: d.name, count: acc.count + 1 })` is no longer pure
-    // dict-build; the existing object-reducer path picks it up and reports
-    // "computed keys aren't supported" with the precise error.
+  it("falls through to the static-key object-reducer when keys mix computed + static", () => {
+    // `({ ...acc, [d.id]: d.name, count: acc.count + 1 })` is not a pure dict-build,
+    // so the object-reducer path picks it up and reports "computed keys aren't
+    // supported" with the precise error.
     expect(() =>
       jsmql("$$ = [$$.reduce((acc, d) => ({ ...acc, [d.id]: d.name, count: acc.count + 1 }), { count: 0 })];"),
     ).toThrow(
@@ -1526,7 +1526,7 @@ describe("$$ = $$.reduce((acc, d) => (cond ? acc.concat(d.<path>) : acc), []) �
     expect(jsmql("$$ = $$.reduce((acc, d) => acc.concat(d), []);")).toEqual([{ $replaceWith: "$$ROOT" }]);
   });
 
-  it("the legacy bracketed form is rejected — a stream needn't be wrapped in `[ ]`", () => {
+  it("the bracketed form is rejected — a stream needn't be wrapped in `[ ]`", () => {
     expect(() => jsmql("$$ = [$$.reduce((acc, d) => acc.concat(d.contactDetails), [])];")).toThrow(
       "'$$ = [$$.reduce(…)]' folds to one document, so the reducer returns a document: '(acc, d) => ({ ...acc, total: acc.total + d.amount })'. For one value write '$$ = [{ total: $$.reduce(…) }]'.",
     );
@@ -1880,7 +1880,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   });
 
   it("each key-slot error names the method it was called on, not a sibling", () => {
-    // `.keyBy`/`.uniqBy` used to demonstrate `.countBy("status")` in their own errors.
+    // `.keyBy`/`.uniqBy` must not demonstrate a sibling like `.countBy("status")` in their own errors.
     expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(
       "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
     );

@@ -1661,10 +1661,10 @@ describe("`$$` predicate spellings are interchangeable in every container", () =
 
 // A predicate error names the receiver the developer wrote. The `$$ = $$$.<coll>.…`
 // source switch lowers its `.filter`/`.reject` through the same helpers the local
-// `$$` chain uses, so the messages used to say `$$.filter` for a `$$$.<coll>.filter`
-// call. That is not only cosmetic: the arity message tells the developer what to
-// write, and `$$.filter(o => …)` reads the CURRENT stream, so following the advice
-// changes which collection the query reads.
+// `$$` chain uses, so the message must not fall back to `$$.filter` for a
+// `$$$.<coll>.filter` call. That is not only cosmetic: the arity message tells the
+// developer what to write, and `$$.filter(o => …)` reads the CURRENT stream, so
+// following the wrong advice changes which collection the query reads.
 describe("a predicate error names the receiver as written", () => {
   const RECEIVERS: [string, string][] = [
     ["$$", "$$"],
@@ -1724,9 +1724,10 @@ describe("assignment sugar inside a literal sub-pipeline array", () => {
 });
 
 describe("a lookup inside a literal sub-pipeline array", () => {
-  // It used to HOIST: the `$lookup` landed in the outer pipeline and the reference to its
-  // result stayed inside, where the stream is a different collection whose documents never
-  // carry the outer scratch slot. The field read as missing, on every document, silently.
+  // Hoisting is what makes it wrong: the `$lookup` would land in the outer pipeline while
+  // the reference to its result stayed inside, where the stream is a different collection
+  // whose documents never carry the outer scratch slot. The field would read as missing, on
+  // every document, silently.
   const NAMES = /isn't available inside a literal sub-pipeline array|can't be written|no destination|has no 'let'/;
   it("is rejected in every sub-pipeline container", () => {
     expect(() => jsmql('$unionWith({ coll: "c", pipeline: [$.o = $$$.orders.find(o => o.uid === 1)] });')).toThrow(

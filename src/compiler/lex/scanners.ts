@@ -104,9 +104,9 @@ const ESCAPES: Readonly<Record<string, string>> = { n: "\n", t: "\t", r: "\r", b
  * `\xHH`, `\uHHHH` and `\u{H…}`; any other character stands for itself, so
  * `\\` is a backslash and `\"` a quote.
  *
- * The single decoder for every quoted form. A string and a template used to
- * decode separately, and the template copy dropped the backslash and KEPT the
- * letter — `\`a\nb\`` read as "anb"; and both read `"\x41"` as "x41". One
+ * The single decoder for every quoted form. Decoded separately, a string and a
+ * template drift: a copy that drops the backslash and KEEPS the letter reads
+ * `\`a\nb\`` as "anb", and one with no `\xHH` rule reads `"\x41"` as "x41". One
  * decoder, one answer.
  */
 export function decodeEscape(src: string, i: number): { text: string; next: number } {
@@ -174,8 +174,8 @@ export function scanRegex(src: string, start: number): RegexScan {
     pattern += ch;
     i++;
   }
-  // The old lexer let an unterminated regex reach end-of-input silently. A token
-  // that ran off the end is not a token, so it is refused here.
+  // A token that ran off the end is not a token: an unterminated regex that
+  // reaches end-of-input is refused here rather than answered silently.
   if (!closed) throw new LexError("Unterminated regex literal", start);
   let flags = "";
   while (i < src.length && /[gimsuy]/.test(src[i])) {

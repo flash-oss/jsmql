@@ -45,9 +45,9 @@ function positionOfNode(src: string, node: string, root: Where = STATEMENT): str
 describe("compiler/passes/position — a stage body is laid out by its own row", () => {
   /**
    * Each case is a slot mongod treats differently from an ordinary expression
-   * slot, with the measurement that proves it. Before the row stated its layout
-   * every one of these arrived at `value`, and the first three are documents
-   * mongod refuses outright — which the reference compiler emits today.
+   * slot, with the measurement that proves it. Without the row's stated layout
+   * every one of these reads as `value`, and the first three then become
+   * documents mongod refuses outright.
    */
   const SLOTS: [string, string, Position][] = [
     // {$group:{_id:null,s:{$sum:["$x","$y"]}}} → "The $sum accumulator is a unary operator"
@@ -99,9 +99,9 @@ describe("compiler/passes/position — a stage body is laid out by its own row",
 
   it("lays out a stage body by the NAME the node carries, in every spelling", () => {
     // Three spellings of one stage — a call, a chained link, a raw document —
-    // name the same row and read the same layout. The chained spelling used to
-    // bypass it: `$$.$group({…, s: $sum($.x, $.y)})` was checked as a two-operand
-    // expression (legal) and emitted the document mongod refuses.
+    // name the same row and read the same layout. Were the chained spelling to
+    // bypass it, `$$.$group({…, s: $sum($.x, $.y)})` would check as a two-operand
+    // expression (legal) and emit the document mongod refuses.
     expect(positionOfNode("$$ = $$.$group({_id: null, s: $sum($.x)});", "$sum(…)")).toBe("group");
     expect(positionOfNode("$$ = $$.$match($.a > 1);", "BinaryExpr")).toBe("filter");
     // The raw document holds two object literals: the stage document itself, at
@@ -201,7 +201,7 @@ describe("compiler/rows — the body-layout resolver", () => {
     // Both facts at once: the position a leaf here would hold, and whether an
     // object here must keep descending. `$merge("out")` needs the first with the
     // second true — a string body under a layout that names `whenMatched` has no
-    // keys to descend into, and used to stay unpositioned.
+    // keys to descend into, and must still get a position.
     expect(bodySlotAt("$setWindowFields", [])).toEqual({ at: "value", otherwise: "value", deeper: true });
     expect(bodySlotAt("$setWindowFields", ["output"])).toEqual({ at: "value", otherwise: "value", deeper: true });
     expect(bodySlotAt("$setWindowFields", ["output", "r"])).toEqual({
@@ -270,8 +270,8 @@ describe("registry — exactly the stages state a body layout", () => {
   });
 
   it("reaches all seven positions across the registry and the walk", () => {
-    // Three of the seven were unreachable before this pass could resolve a body
-    // path, so the count is the finding, not a statistic.
+    // Three of the seven are reachable only once a body path resolves, so the
+    // count is the finding, not a statistic.
     const reached = new Set<string>(["filter", "value", "updateDoc"]); // by seed
     for (const row of Object.values(NAMES) as Row[]) {
       for (const at of Object.values(row.bodyPositions ?? {})) for (const one of positionsIn(at)) reached.add(one);

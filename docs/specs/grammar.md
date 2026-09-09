@@ -142,8 +142,8 @@ FIELD_SEGMENT  = IDENT | KEYWORD                             (* KEYWORD: every r
 context_ref    = ( "$$" | "$$$" | "$$$$" )                   (* bare prefix tokens — collection / database / cluster *)
                (* parser sanity-guards: next token must be `.` or `[`.
                   Postfix `.name` / `[expr]` composes via the standard
-                  postfix rule above. Codegen currently throws — the syntax
-                  is reserved; semantics land in a future release. See
+                  postfix rule above. Codegen throws — the syntax is
+                  reserved and has no lowering. See
                   docs/specs/context-references.md. *)
 
 array_literal  = "[" array_elements? "]"
@@ -327,7 +327,7 @@ When the chain cannot be one path — the receiver is an `IndexAccess` (`$.items
 
 - `$.items[0].name` → `MemberAccess(IndexAccess(FieldRef("items"), 0), "name")` → `{ $getField: { field: "name", input: <the bracket access: $arrayElemAt on an array, $substrCP on a string, $getField otherwise> } }`
 
-(For numeric array indices specifically, this is the supported replacement for the previously-accepted-but-not-valid-JS form `$.items.0.name`. See "Strict-JS-subset rule" above.)
+(For numeric array indices specifically, bracket access is the only form: `$.items.0.name` is not valid JavaScript, so jsmql does not accept it. See "Strict-JS-subset rule" above.)
 
 ## Built-in call vs bare reference
 

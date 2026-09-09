@@ -109,7 +109,7 @@ function exprCanTakeStringArg(name: string): boolean {
   return (positionsOf(name) ?? []).includes("value") && operandShapeOf(name) !== "none";
 }
 
-describe("literal pass-through — the reported $unwind bug and siblings", () => {
+describe("literal pass-through — every $unwind spelling and its siblings", () => {
   it("all three $unwind forms (+ raw object form) produce the identical document", () => {
     const expected = [{ $unwind: "$items" }];
     expect(jsmql(`$unwind("$items");`)).toEqual([{ $unwind: "$items" }]); // string call form
@@ -249,10 +249,10 @@ describe("literal pass-through — every stage in the registry", () => {
 });
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Server-rejection regressions found by replaying generated MQL against a real
-// mongod (see test/CLAUDE.md → "Never assert MQL the MongoDB server would
-// reject"). Each shape below WAS emitted by jsmql at some point and rejected by
-// MongoDB; these lock in the corrected, runnable shapes.
+// Server-rejection guards, each shape found by replaying generated MQL against a
+// real mongod (see test/CLAUDE.md → "Never assert MQL the MongoDB server would
+// reject"). Each is a shape MongoDB rejects; these lock in the runnable form so a
+// lowering cannot drift back into it.
 // ─────────────────────────────────────────────────────────────────────────────
 
 /**
@@ -279,7 +279,7 @@ function collectVarNames(node: unknown, into: string[] = []): string[] {
 const VALID_VAR = /^[a-z]/; // MongoDB user-variable first-char rule (matches safeVarName)
 const VALID_REGEX_OPTS = /^[imsx]*$/; // MongoDB $regex* options (no JS g/u/y/d/v)
 
-/** Inputs that previously produced server-invalid MQL, with how to compile them. */
+/** Inputs whose MQL a server rejects if it is built wrong, with how to compile them. */
 const REGRESSION_INPUTS: Array<{ label: string; mql: () => unknown }> = [
   {
     label: "$lookup auto-let on $._id (pipeline form)",
