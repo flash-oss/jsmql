@@ -2129,7 +2129,18 @@ var NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "string, delimiter", exact: 2 },
+      args: {
+        sig: "string, delimiter",
+        exact: 2,
+        // MEASURED: the server refuses an empty delimiter ("$split requires a non-empty
+        // separator"), the same fact the '.split()' row states.
+        nonEmpty: {
+          1: {
+            noun: "separator character",
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+          }
+        }
+      },
       emit: ({ name: name2, args, value }) => ({ [name2]: args.map(value) })
     },
     group: unsupported("'$split' is not valid in a $group output position \u2014 see its 'where'."),
@@ -6330,7 +6341,19 @@ var NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", exact: 1 },
+      args: {
+        sig: "separator",
+        exact: 1,
+        // MEASURED: `{ $split: ["$s", ""] }` is refused ("$split requires a non-empty
+        // separator"), and MongoDB has no split-into-characters operator to fall back on,
+        // so the empty separator is refused here rather than emitted.
+        nonEmpty: {
+          0: {
+            noun: "separator character",
+            instead: "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'."
+          }
+        }
+      },
       emit: ({ recv, args, value }) => ({ $split: [recv, value(args[0])] })
     },
     stream: unsupported("'.split()' has no stream form: it produces a value, not a stream of documents."),
@@ -6786,6 +6809,7 @@ var NAMES = {
   }),
   concat: name({
     unions: true,
+    mergesInto: true,
     doc: "'.concat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "string", "stream"],
@@ -6797,24 +6821,49 @@ var NAMES = {
         stream: unsupported(
           "'.concat()' on '$$' is a chain of stages, not a value: write it as a statement ('$$.concat(\u2026);')."
         ),
+        // JavaScript's `Array.prototype.concat` SPLICES an array argument and APPENDS any
+        // other one; `$concatArrays` takes arrays only. An argument PROVEN to be something
+        // else becomes the one-element array it stands for — JavaScript's own answer, and
+        // the only operand the operator accepts. MEASURED: the server folds a run of
+        // ADJACENT constant operands while it optimises and raises there on a wrong type,
+        // so `$.s.concat("!", "?")` used to kill the pipeline before a branch was chosen.
+        // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => ({ $concatArrays: [recv, ...args.map((a) => value(a))] })
+          emit: ({ recv, args, value, kind }) => ({
+            $concatArrays: [
+              recv,
+              ...args.map((a) => {
+                const k = kind(a);
+                return k === "array" || k === "unknown" ? value(a) : [value(a)];
+              })
+            ]
+          })
         },
+        // `String.prototype.concat` STRINGIFIES each argument; `$concat` takes strings
+        // only. An argument PROVEN to be an array is joined element by element, and any
+        // other proven non-string goes through `$toString` — JavaScript's answer in both
+        // cases. An argument that proves nothing stays as written.
         string: {
           args: { sig: "...items", atLeast: 1, spread: true },
-          emit: ({ recv, args, value }) => args.length === 1 && args[0].type === "ArrayLiteral" ? {
+          emit: ({ recv, args, value, kind }) => ({
             $concat: [
               recv,
-              {
-                $reduce: {
-                  input: value(args[0]),
-                  initialValue: "",
-                  in: { $concat: ["$$value", { $toString: "$$this" }] }
+              ...args.map((a) => {
+                const k = kind(a);
+                if (k === "array") {
+                  return {
+                    $reduce: {
+                      input: value(a),
+                      initialValue: "",
+                      in: { $concat: ["$$value", { $toString: "$$this" }] }
+                    }
+                  };
                 }
-              }
+                return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
+              })
             ]
-          } : { $concat: [recv, ...args.map((a) => value(a))] }
+          })
         }
       },
       uncertain: () => "$$REMOVE"
@@ -6873,7 +6922,7 @@ var NAMES = {
     params: { value: ["value"], stream: ["value", "value"] },
     iterateeSlots: {
       array: {
-        sortSpec: '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, and no argument is the natural order'
+        sortSpec: '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, `(a, b) => a - b` orders the elements themselves, and no argument is the natural order'
       },
       stream: {
         sortSpec: '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys; a stream has no natural order, so a key is required'
@@ -6883,11 +6932,12 @@ var NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] },
+      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator', allowed: [0, 1] },
       emit: ({ recv, args, sortSpec, callback: callback2, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         const cb = callback2(ask.key, "value");
         const p = bind("p");
         return {
@@ -6938,6 +6988,7 @@ var NAMES = {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0], false);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         const cb = callback2(ask.key, "value");
         const p = bind("p");
         return {
@@ -6986,6 +7037,7 @@ var NAMES = {
       emit: ({ recv, args, orderBy, callback: callback2, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         const cb = callback2(ask.key, "value");
         const p = bind("p");
         return {
@@ -7024,34 +7076,41 @@ var NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
-        // JavaScript counts a negative start from the end; resolving one needs the receiver's length. [DEF-035]
-        slotRange: { 0: [0, Infinity], 1: [0, Infinity] }
+        // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
+        // typo far more often than an intent, so the count stays closed while the start opens.
+        slotRange: { 1: [0, Infinity] }
       },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const start = bind("start");
         const tail = bind("tailStart");
         const items = args.slice(2).map((a) => value(a));
-        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : start.ref;
+        const size = { $size: arr.ref };
+        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : size;
+        const rest = { $subtract: [size, tail.ref] };
         return {
           $let: {
-            vars: { [arr.as]: recv, [start.as]: value(args[0]) },
+            vars: { [arr.as]: recv },
             in: {
+              // A `$let` variable cannot see a sibling in its own `vars` block (measured:
+              // "Use of undefined variable"), and a start counted from the end reads the
+              // receiver's length, so each binding sits one level inside the last.
               $let: {
-                vars: { [tail.as]: tailStart },
+                vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size) },
                 in: {
-                  $concatArrays: [
-                    { $slice: [arr.ref, start.ref] },
-                    items,
-                    {
-                      // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
-                      $cond: [
-                        { $gt: [{ $subtract: [{ $size: arr.ref }, tail.ref] }, 0] },
-                        { $slice: [arr.ref, tail.ref, { $subtract: [{ $size: arr.ref }, tail.ref] }] },
-                        []
+                  $let: {
+                    vars: { [tail.as]: tailStart },
+                    in: {
+                      $concatArrays: [
+                        { $slice: [arr.ref, start.ref] },
+                        items,
+                        {
+                          // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
+                          $cond: [{ $gt: [rest, 0] }, { $slice: [arr.ref, tail.ref, rest] }, []]
+                        }
                       ]
                     }
-                  ]
+                  }
                 }
               }
             }
@@ -7632,6 +7691,7 @@ var NAMES = {
   }),
   push: name({
     unions: true,
+    mergesInto: true,
     doc: "'.push()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -14592,6 +14652,9 @@ function picksOneOf(name2) {
 function unionsOf(name2) {
   return row(name2)?.unions === true;
 }
+function mergesIntoOf(name2) {
+  return row(name2)?.mergesInto === true;
+}
 function collapsesOf(name2) {
   return row(name2)?.collapses ?? null;
 }
@@ -16076,12 +16139,36 @@ var MATH = {
   min: (xs) => Math.min(...xs),
   max: (xs) => Math.max(...xs),
   // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-  round: ([x]) => bankersRound(x)
+  round: ([x]) => roundToPlaces(x, 0)
 };
-function bankersRound(n2) {
-  const floor = Math.floor(n2);
-  if (n2 - floor !== 0.5) return Math.round(n2);
-  return floor % 2 === 0 ? floor : floor + 1;
+function roundToPlaces(n2, places) {
+  if (!Number.isFinite(n2) || n2 === 0) return n2;
+  const { digits: digits2, exponent } = exactDecimal(n2);
+  const shift = exponent + places;
+  if (shift >= 0) return n2;
+  const unit = 10n ** BigInt(-shift);
+  const whole = digits2 / unit;
+  const rest = digits2 % unit;
+  const half = unit / 2n;
+  const rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
+  let spelt = rounded.toString();
+  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
+  const body = places > 0 ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}` : places < 0 && rounded !== 0n ? spelt + "0".repeat(-places) : spelt;
+  return Number(`${n2 < 0 ? "-" : ""}${body}`);
+}
+function exactDecimal(n2) {
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, Math.abs(n2));
+  const high = bits.getUint32(0);
+  const raw = high >>> 20 & 2047;
+  let mantissa = BigInt(high & 1048575) << 32n | BigInt(bits.getUint32(4));
+  let power = -1074;
+  if (raw !== 0) {
+    mantissa |= 1n << 52n;
+    power = raw - 1075;
+  }
+  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
+  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
 }
 function foldNamespaceCall(namespace, name2, args) {
   const values = args.map(valueOf);
@@ -16233,8 +16320,8 @@ function lodashString(s, name2, args) {
     case "lowerFirst":
       return ok2(asciiLower(s.slice(0, 1)) + s.slice(1));
     case "truncate": {
-      if (a === null || typeof a !== "object" || Array.isArray(a)) return NO2;
-      const options = a;
+      if (a !== void 0 && (a === null || typeof a !== "object" || Array.isArray(a))) return NO2;
+      const options = a === void 0 ? {} : a;
       for (const key of Object.keys(options)) if (key !== "length" && key !== "omission") return NO2;
       const limit = options.length === void 0 ? 30 : options.length;
       const omission = options.omission === void 0 ? "..." : options.omission;
@@ -16332,9 +16419,13 @@ function numberMethod(n2, name2, args) {
     case "round":
     case "ceil":
     case "floor": {
-      if (a !== void 0 && a !== 0) return NO2;
-      if (name2 === "round") return ok2(bankersRound(n2));
-      return ok2(name2 === "ceil" ? Math.ceil(n2) : Math.floor(n2));
+      if (a !== void 0 && !Number.isInteger(a)) return NO2;
+      const places = a ?? 0;
+      if (name2 === "round") return ok2(roundToPlaces(n2, places));
+      const scale = 10 ** places;
+      const scaled = name2 === "ceil" ? Math.ceil(n2 * scale) : Math.floor(n2 * scale);
+      const answer = scaled / scale;
+      return Number.isFinite(answer) ? ok2(answer) : NO2;
     }
     case "clamp":
       if (typeof a !== "number") return NO2;
@@ -16414,10 +16505,12 @@ function countArg(a) {
   return isInt32(a) ? a : null;
 }
 var numbersIn = (xs) => xs.filter((v) => typeof v === "number");
+var comparableStrings = (keys) => keys.every((k) => typeof k === "string" && !/[\uD800-\uDFFF]/.test(k));
 function sortByKeys(xs, keys, descending = false) {
   const kind = (k) => typeof k === "number" ? "number" : typeof k === "string" ? "string" : "other";
   if (keys.some((k) => kind(k) === "other")) return null;
   if (new Set(keys.map(kind)).size > 1) return null;
+  if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return null;
   const paired = xs.map((v, i) => ({ v, k: keys[i], i }));
   paired.sort((p, q) => {
     if (p.k === q.k) return p.i - q.i;
@@ -16426,14 +16519,59 @@ function sortByKeys(xs, keys, descending = false) {
   });
   return paired.map((p) => p.v);
 }
+function sortAsk(name2, values) {
+  const direction = (v) => v === void 0 || v === 1 || v === "asc" ? 1 : v === -1 || v === "desc" ? -1 : null;
+  const [first, second] = values;
+  const keys = [];
+  if (name2 === "orderBy" && isPlainObject2(first)) {
+    if (second !== void 0) return null;
+    for (const [field, v] of Object.entries(first)) {
+      const d = direction(v);
+      if (d === null || field === "" || field.startsWith("$")) return null;
+      keys.push({ field, direction: d });
+    }
+    return keys.length === 0 ? null : keys;
+  }
+  const fields = typeof first === "string" ? [first] : Array.isArray(first) ? first : null;
+  if (fields === null || fields.length === 0) return null;
+  if (!fields.every((f) => typeof f === "string" && f !== "" && !f.startsWith("$"))) return null;
+  if (name2 === "sortBy" && second !== void 0) return null;
+  const directions = second === void 0 ? [] : Array.isArray(second) ? second : [second];
+  for (const [i, field] of fields.entries()) {
+    const d = name2 === "sortBy" ? 1 : direction(directions[i]);
+    if (d === null) return null;
+    keys.push({ field, direction: d });
+  }
+  return keys;
+}
+function readField(doc, field) {
+  let cursor = doc;
+  for (const segment of field.split(".")) {
+    if (!isPlainObject2(cursor)) return void 0;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+function sortByFields(xs, keys) {
+  const columns = keys.map((k) => xs.map((x) => readField(x, k.field)));
+  for (const column of columns) {
+    if (!column.every((v) => typeof v === "number") && !comparableStrings(column)) return NO2;
+  }
+  const order = xs.map((_, i) => i);
+  order.sort((i, j) => {
+    for (const [c, key] of keys.entries()) {
+      const left = columns[c][i];
+      const right = columns[c][j];
+      if (left !== right) return (left < right ? -1 : 1) * key.direction;
+    }
+    return i - j;
+  });
+  return ok2(order.map((i) => xs[i]));
+}
 function arrayMethod(xs, name2, args) {
   const [a, b] = args.map(valueOf);
   const fn = fnOf(args[0]);
-  const predicate = (f) => (v, i) => {
-    const verdict = f(v, i, xs);
-    if (typeof verdict !== "boolean") throw NOT_A_BOOLEAN;
-    return verdict;
-  };
+  const predicate = (f) => (v, i) => truthy(f(v, i, xs));
   switch (name2) {
     case "size":
       return ok2(xs.length);
@@ -16515,9 +16653,13 @@ function arrayMethod(xs, name2, args) {
     case "min":
     case "max": {
       if (xs.length === 0) return ok2(null);
-      if (!xs.every((v) => typeof v === "number")) return NO2;
-      const ns = xs;
-      return ok2(name2 === "min" ? Math.min(...ns) : Math.max(...ns));
+      if (xs.every((v) => typeof v === "number")) {
+        const ns = xs;
+        return ok2(name2 === "min" ? Math.min(...ns) : Math.max(...ns));
+      }
+      if (!comparableStrings(xs)) return NO2;
+      const ss = xs;
+      return ok2(ss.reduce((best, v) => (name2 === "min" ? v < best : v > best) ? v : best));
     }
     case "sumBy":
     case "meanBy": {
@@ -16530,9 +16672,10 @@ function arrayMethod(xs, name2, args) {
     case "maxBy": {
       if (fn === void 0 || xs.length === 0) return NO2;
       const keys = xs.map((v, i) => fn(v, i, xs));
-      if (!keys.every((k) => typeof k === "number")) return NO2;
-      const best = keys.reduce(
-        (bi, k, i) => (name2 === "minBy" ? k < keys[bi] : k > keys[bi]) ? i : bi,
+      if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return NO2;
+      const ordered = keys;
+      const best = ordered.reduce(
+        (bi, k, i) => (name2 === "minBy" ? k < ordered[bi] : k > ordered[bi]) ? i : bi,
         0
       );
       return ok2(xs[best]);
@@ -16641,6 +16784,10 @@ function arrayMethod(xs, name2, args) {
       return ok2(xs.filter((v) => v !== 0 && v !== "" && v !== null && v !== false && v !== void 0));
     case "flatten":
       return ok2(xs.flat());
+    case "flat":
+      if (a !== void 0 && a !== 1) return NO2;
+      if (!xs.every((v) => Array.isArray(v))) return NO2;
+      return ok2(xs.flat());
     case "zip": {
       const lists2 = [xs, ...args.map(valueOf)];
       if (!lists2.every((l) => Array.isArray(l))) return NO2;
@@ -16707,28 +16854,29 @@ function arrayMethod(xs, name2, args) {
       return ok2(out);
     }
     // ── ordering ────────────────────────────────────────────────────────────
-    case "sortBy": {
-      const keys = fn === void 0 ? [...xs] : keyedBy(xs, fn);
-      if (keys === null) return NO2;
-      const sorted = sortByKeys(xs, keys);
-      return sorted === null ? NO2 : ok2(sorted);
-    }
+    case "sortBy":
     case "orderBy": {
-      const by = fnOf(args[0]);
-      const direction = valueOf(args[1]);
-      const descending = direction === "desc" || direction === -1;
-      if (direction !== void 0 && !descending && direction !== "asc" && direction !== 1) return NO2;
-      const keys = by === void 0 ? [...xs] : keyedBy(xs, by);
-      if (keys === null) return NO2;
-      const sorted = sortByKeys(xs, keys, descending);
-      return sorted === null ? NO2 : ok2(sorted);
+      if (fn !== void 0) {
+        const direction = name2 === "orderBy" ? valueOf(args[1]) : void 0;
+        const descending = direction === "desc" || direction === -1;
+        if (direction !== void 0 && !descending && direction !== "asc" && direction !== 1) return NO2;
+        const keys = keyedBy(xs, fn);
+        if (keys === null) return NO2;
+        const sorted = sortByKeys(xs, keys, descending);
+        return sorted === null ? NO2 : ok2(sorted);
+      }
+      if (args.length === 0) {
+        const sorted = sortByKeys(xs, [...xs]);
+        return sorted === null ? NO2 : ok2(sorted);
+      }
+      const ask = sortAsk(name2, args.map(valueOf));
+      return ask === null ? NO2 : sortByFields(xs, ask);
     }
     default:
       return NO2;
   }
 }
 var NOT_A_KEY = /* @__PURE__ */ Symbol("value cannot be an object key");
-var NOT_A_BOOLEAN = /* @__PURE__ */ Symbol("predicate did not answer with a boolean");
 
 // src/compiler/passes/inject.ts
 function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
@@ -17767,6 +17915,10 @@ var fingerprint = (program) => JSON.stringify(program, (k, v) => k === "pos" ? 0
 var COMPOUND = new Map(
   ASSIGN_OPS.filter((op) => op.length > 1 && op.endsWith("=")).map((op) => [op, op.slice(0, -1)])
 );
+function writesACollection(target) {
+  const base = chainBase(target);
+  return base.type === "DatabaseRef" || base.type === "ClusterRef";
+}
 function refuseNonScalarTarget(target, op) {
   const t = target;
   const what = t.type === "CollectionRef" ? "'$$'" : t.type === "FieldRef" && t.path === "" ? "bare '$'" : null;
@@ -17784,6 +17936,7 @@ var compoundAssign = {
     if (n2.type !== "AssignExpr" || n2.op === void 0) return node;
     const binop = COMPOUND.get(n2.op);
     if (binop === void 0) return node;
+    if (writesACollection(n2.target)) return node;
     refuseNonScalarTarget(n2.target, n2.op);
     return {
       type: "AssignExpr",
@@ -18727,6 +18880,10 @@ var noStages = (pos) => new CodegenError(
   "This program produces no stages, so it would leave the documents untouched. Write at least one statement that reads or changes them.",
   pos
 );
+var spreadOfString = (pos) => new CodegenError(
+  "'...' spreads a string into its characters in JavaScript, and MongoDB has no operator that does \u2014 '$concatArrays' takes arrays only. For one character per element write '$range(0, <string>.length).map(i => <string>.charAt(i))'; to keep the string whole, drop the '...'.",
+  pos
+);
 var afterTerminalStage = (already, pos) => new CodegenError(
   `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
   pos
@@ -18751,14 +18908,11 @@ var writeToOwnStream = (name2, pos) => new CodegenError(
   `'${name2}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(\u2026)' ('${name2}.concat([{ \u2026 }]);'), keep some with '.filter(\u2026)', or run a stage on it ('${name2}.$match(\u2026);').`,
   pos
 );
-var streamElementsNotDocuments = (noun, pos) => new CodegenError(
-  `'$$ = \u2026' makes the stream from the array's ELEMENTS, one document each, and these elements are ${noun}. Put each under a field \u2014 '$$ = <array>.map((v) => ({ value: v }));' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
+var streamElementsNotDocuments = (noun, written, pos) => new CodegenError(
+  `'${written}' makes documents from the array's ELEMENTS, one each, and these elements are ${noun}. Put each under a field \u2014 '<array>.map((v) => ({ value: v }))' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
   pos
 );
-var notAStreamChain = (pos, noun) => new CodegenError(
-  `'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').`,
-  pos
-);
+var notAStreamChain = (pos, noun, lead = "'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents", how = "Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').") => new CodegenError(`${lead}${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. ${how}`, pos);
 var notAStreamLink = (name2, candidates, pos) => {
   const spell4 = (s) => {
     const runsOn = runsOnFor(s);
@@ -18856,6 +19010,10 @@ var unionNeedsArgument = (pos) => new CodegenError(
   "Nothing to add to the stream: give a document ('$$.push({ \u2026 })'), another collection ('$$.push(...$$$.<coll>)'), or one of its documents ('$$.push($$$.<coll>.find(pred))').",
   pos
 );
+var mergeNeedsArgument = (name2, pos) => new CodegenError(
+  `Nothing to write into the collection: give the stream ('$$$.<coll>.${name2}($$);'), an array of documents ('$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'), or one document ('$$$.<coll>.push({ \u2026 });').`,
+  pos
+);
 var facetDuplicate = (key, pos) => new CodegenError(
   `'${key}' names two '$facet' branches, and JavaScript would keep only the last. Give each branch its own name.`,
   pos
@@ -18930,7 +19088,19 @@ var unionArg = (kind, pos) => new CodegenError(
   pos
 );
 var outNeedsStream = (pos) => new CodegenError(
-  "A collection is written from the stream: '$$$.<coll> = $$' writes it as it stands, '$$$.<coll> = $$.filter(\u2026)' after more stages. Anything else has no documents to write.",
+  "A collection is written from the stream: '$$$.<coll> = $$' replaces it, '$$$.<coll> += $$' adds to it, and either takes more stages first ('\u2026 = $$.filter(\u2026)'). To write an ARRAY of documents, name them: '$$$.<coll>.concat(<array>);' or '$$$.<coll>.push(...<array>);'.",
+  pos
+);
+var mergeNotADocument = (noun, pos) => new CodegenError(
+  `'$$$.<coll>.push(<value>)' writes that value AS one document, and ${noun} is not a document. Spread a list of them ('$$$.<coll>.push(...<array>);'), or put the value under a field ('$$$.<coll>.push({ value: \u2026 });').`,
+  pos
+);
+var writeToCollectionOp = (op, pos) => new CodegenError(
+  `A collection takes '=' or '+=', not '${op}': '$$$.<coll> = $$' REPLACES what the collection holds (a '$out'), and '$$$.<coll> += $$' ADDS to it, updating the documents whose '_id' matches (a '$merge').`,
+  pos
+);
+var mergeOneSource = (name2, count, pos) => new CodegenError(
+  `'$$$.<coll>.${name2}()' writes ONE source into the collection, and this names ${count}. Write them one statement at a time, or join them first ('$$$.<coll>.${name2}([...a, ...b]);').`,
   pos
 );
 var outNeedsCollection = (pos) => new CodegenError(
@@ -20187,6 +20357,14 @@ function keyFunctionSpec(arg, method) {
   if (path === null) return { kind: "computed", key: arg, dir };
   return { kind: "keys", spec: { [path]: dir } };
 }
+var wholeElementDir = (body, a, b) => {
+  if (body.type !== "BinaryExpr" || body.op !== "-") return null;
+  const { left, right } = body;
+  if (left.type !== "Ident" || right.type !== "Ident") return null;
+  if (left.name === a && right.name === b) return 1;
+  if (left.name === b && right.name === a) return -1;
+  return null;
+};
 function comparatorSpec(arg, method) {
   const [a, b] = arg.params;
   if (arg.body === void 0) {
@@ -20195,6 +20373,8 @@ function comparatorSpec(arg, method) {
       arg.pos
     );
   }
+  const whole = wholeElementDir(arg.body, a, b);
+  if (whole !== null) return { kind: "whole", dir: whole, params: [a, b], pos: arg.body.pos };
   const spec = {};
   const terms = [];
   const split = (e) => {
@@ -20204,10 +20384,12 @@ function comparatorSpec(arg, method) {
     } else terms.push(e);
   };
   split(arg.body);
+  const single2 = terms.length === 1;
+  const orWhole = single2 ? ` To order the elements themselves, drop the field: '${a} - ${b}'.` : "";
   for (const t of terms) {
     if (t.type !== "BinaryExpr" || t.op !== "-") {
       throw new CodegenError(
-        `.${method}((${a}, ${b}) => \u2026) compares one field of each: '${a}.age - ${b}.age', or '${b}.age - ${a}.age' for descending. Join keys with '||'.`,
+        `.${method}((${a}, ${b}) => \u2026) compares one field of each: '${a}.age - ${b}.age', or '${b}.age - ${a}.age' for descending. Join keys with '||'.${orWhole}`,
         t.pos
       );
     }
@@ -20219,17 +20401,17 @@ function comparatorSpec(arg, method) {
     else if (lb !== null && ra !== null && lb === ra) spec[lb] = -1;
     else {
       throw new CodegenError(
-        `.${method}((${a}, ${b}) => \u2026) subtracts the SAME field of both parameters: '${a}.age - ${b}.age'.`,
+        `.${method}((${a}, ${b}) => \u2026) subtracts the SAME field of both parameters: '${a}.age - ${b}.age'.${orWhole}`,
         t.pos
       );
     }
   }
-  return spec;
+  return { kind: "keys", spec };
 }
 function sortSpecOf(arg, method, objects = true) {
   if (arg.type === "Lambda") {
     if (arg.params.length === 1) return keyFunctionSpec(arg, method);
-    if (arg.params.length === 2) return { kind: "keys", spec: comparatorSpec(arg, method) };
+    if (arg.params.length === 2) return comparatorSpec(arg, method);
     throw new CodegenError(
       `.${method}() takes a key function ('x => x.age') or a comparator ('(a, b) => a.age - b.age'), and this arrow has ${arg.params.length} parameters.`,
       arg.pos
@@ -20244,7 +20426,7 @@ function orderBySpec(keys, orders, method) {
     const dir = sortDirection(orders);
     if (dir === null)
       throw new CodegenError(`.${method}(keyFn, order) takes 1, -1, "asc" or "desc" as the order.`, orders.pos);
-    if (ask.kind === "computed") return { ...ask, dir };
+    if (ask.kind !== "keys") return { ...ask, dir };
     return { kind: "keys", spec: Object.fromEntries(Object.keys(ask.spec).map((k) => [k, dir])) };
   }
   if (keys.type === "ObjectLiteral") {
@@ -20278,6 +20460,17 @@ function orderBySpec(keys, orders, method) {
     spec[n2] = dirs[i] ?? 1;
   });
   return { kind: "keys", spec };
+}
+function streamSortAsk(ask, method) {
+  if (ask.kind !== "whole") return ask;
+  const [a, b] = ask.params;
+  const body = ask.dir === 1 ? `${a} - ${b}` : `${b} - ${a}`;
+  const named = ask.dir === 1 ? `${a}.age - ${b}.age` : `${b}.age - ${a}.age`;
+  const key = ask.dir === 1 ? "d.age" : "-d.age";
+  throw new CodegenError(
+    `.${method}((${a}, ${b}) => ${body}) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.${method}((${a}, ${b}) => ${named})', or '.${method}(d => ${key})'.`,
+    ask.pos
+  );
 }
 
 // src/compiler/emit/mql.ts
@@ -20967,6 +21160,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     args,
     keys,
     value,
+    kind: (e) => kindOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
@@ -21188,8 +21382,8 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
       if (stages === void 0) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => sortSpecOf(e, name2, objects),
-    orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2),
+    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);
@@ -21396,6 +21590,7 @@ function arrayLiteral(node, elements, env) {
   for (const el of elements) {
     if (el.type === "SpreadElement") {
       flush();
+      if (kindOf(el.argument, inner) === "string") throw spreadOfString(el.argument.pos);
       const v = lowerValue(el.argument, inner);
       operands.push(chainHasOptional(el.argument) ? { $ifNull: [v, []] } : v);
     } else if (isExpr2(el)) group.push(lowerValue(el, inner));
@@ -21440,6 +21635,7 @@ function objectLiteral(node, entries, env) {
   for (const e of entries) {
     if (e.type === "SpreadElement") {
       flush();
+      if (kindOf(e.argument, inner) === "string") throw spreadOfString(e.argument.pos);
       operands.push(lowerValue(e.argument, inner));
     } else group.push(e);
   }
@@ -22424,14 +22620,14 @@ function isInclusion(body) {
 }
 var DOCUMENTS2 = "$documents";
 var holdsSpread = (list) => list.elements.some((e) => e.type === "SpreadElement");
-function documentsStages(list, env) {
+function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
   if (isReduceWrap(list)) return reduceWrapStages(list);
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
   const dropAll = { $match: { $expr: false } };
   if (list.elements.length === 0) return [dropAll];
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
-  checkSlots("$$ = [ \u2026 ]", sel.rule.args, [list], false);
+  checkSlots(written, sel.rule.args, [list], false);
   const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
@@ -22495,6 +22691,21 @@ function targetPath(op, env) {
   if (t.type === "CollectionRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
 }
+function becomeStream(value, env, valueEnv, first, written = "$$ = \u2026", lead, how) {
+  if (value.type === "ArrayLiteral" && !holdsSpread(value)) return documentsStages(value, env, written);
+  const chainOn = chainBase(value);
+  const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(value) || onOwnStream(chainOn, env);
+  const kind = streamRoad ? "stream" : kindOf(value, env);
+  if (kind !== "stream" && kind !== "array" && kind !== "unknown")
+    throw notAStreamChain(value.pos, KIND_NOUN[kind] ?? `a ${kind}`, lead, how);
+  if (kind === "stream") return streamStages(value, env, first);
+  const element2 = elementKindOf2(value, env);
+  if (element2 !== "unknown" && element2 !== "object")
+    throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, written, value.pos);
+  const slot = env.chain.slot();
+  const arr = lowerValue(value, valueEnv);
+  return [{ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref }];
+}
 function outTarget(t) {
   const base = chainBase(t);
   if (base.type !== "DatabaseRef" && base.type !== "ClusterRef") return null;
@@ -22515,11 +22726,43 @@ function outTarget(t) {
   return need === 1 ? segments[0] : { db: segments[0], coll: segments[1] };
 }
 function outStages(op, target, env, first) {
+  if (op.op !== "=" && op.op !== "+=") throw writeToCollectionOp(op.op, op.pos);
+  const name2 = op.op === "=" ? "$out" : "$merge";
   const rhs = op.value;
   const base = chainBase(rhs);
   if (base.type !== "CollectionRef") throw outNeedsStream(rhs.pos);
   const stages = rhs.type === "CollectionRef" ? [] : streamStages(rhs, childEnv(env, op, "value"), first);
-  return [...stages, ...place("$out", { $out: target }, env, first && stages.length === 0, op.pos)];
+  return [...stages, ...place(name2, { [name2]: target }, env, first && stages.length === 0, op.pos)];
+}
+function mergeStages(node, env, first) {
+  const target = outTarget(node.object);
+  if (target === null) internalError("a collection write whose receiver names no collection");
+  if (node.args.length === 0) throw mergeNeedsArgument(node.name, node.pos);
+  if (node.args.length > 1) throw mergeOneSource(node.name, node.args.length, node.pos);
+  const arg = node.args[0];
+  const spread = arg.type === "SpreadElement";
+  const source = spread ? arg.argument : arg;
+  const inner = childEnv(env, node, "args");
+  const spelling = `$$$.<coll>.${node.name}(${spread ? "...<array>" : "<array>"})`;
+  const stages = (
+    // `.push(<document>)` — the one spelling that does NOT read a list: the value is
+    // the document, exactly as `$ = <document>;` reads it.
+    node.name === "push" && !spread ? oneDocumentStages(source, inner) : becomeStream(
+      source,
+      inner,
+      inner.at({ at: "value" }),
+      first,
+      spelling,
+      `'${spelling}' writes MANY documents into the collection`,
+      "Name the stream ('$$$.<coll>.concat($$);'), an array whose elements are the documents ('$$$.<coll>.push(...$.items);'), or ONE document ('$$$.<coll>.push({ \u2026 });')."
+    )
+  );
+  return [...stages, ...place("$merge", { $merge: target }, env, false, node.pos)];
+}
+function oneDocumentStages(value, env) {
+  const kind = kindOf(value, env);
+  if (kind !== "object" && kind !== "unknown") throw mergeNotADocument(KIND_NOUN[kind] ?? `a ${kind}`, value.pos);
+  return [{ $replaceWith: lowerValue(value, env.at({ at: "value" })) }];
 }
 function isFacet(doc) {
   return doc.entries.some((e) => e.type === "KeyValueEntry" && isStreamChain(e.value));
@@ -22615,22 +22858,9 @@ function writeStages(uf, env, first) {
         out.push(...documentsStages(op.value, inner));
         continue;
       }
-      const chainOn = chainBase(op.value);
-      const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn, inner);
-      const kind = !streamRoad ? kindOf(op.value, inner) : "stream";
-      if (kind !== "stream" && kind !== "array" && kind !== "unknown")
-        throw notAStreamChain(op.value.pos, KIND_NOUN[kind] ?? `a ${kind}`);
-      if (kind !== "stream") {
-        const element2 = elementKindOf2(op.value, inner);
-        if (element2 !== "unknown" && element2 !== "object") {
-          throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, op.value.pos);
-        }
-        const slot = inner.chain.slot();
-        const arr = lowerValue(op.value, childEnv(inner, op, "value").at({ at: "value" }));
-        out.push({ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });
-        continue;
-      }
-      out.push(...streamStages(op.value, inner, first && out.length === 0));
+      out.push(
+        ...becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0)
+      );
       continue;
     }
     if (op.type === "DeleteStmt") {
@@ -22797,6 +23027,9 @@ function stageStatement(node, env, first) {
           const scope = base.type === "ClusterRef" ? "cluster" : "database";
           const spelledOnIt = everyStageName().filter((s) => diagnosticOf(s)?.scope === scope).map((s) => s.slice(1));
           throw notAStageOnRef(node.name, sigil, spelledOnIt, node.pos);
+        }
+        if ((base.type === "DatabaseRef" || base.type === "ClusterRef") && mergesIntoOf(row2)) {
+          return mergeStages(node, env, first);
         }
         throw noDestination(node.pos);
       }
