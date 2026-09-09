@@ -43,7 +43,7 @@ row's claim. On a row with two or more it is dispatched at runtime:
 ```js
 $.x.length
 // → {$switch:{branches:[
-//      {case:{$in:[{$type:"$x"},["array"]]},then:{$size:"$x"}},
+//      {case:{$in:[{$type:"$x"},["array"]]},then:{$size:{$ifNull:["$x",[]]}}},
 //      {case:{$in:[{$type:"$x"},["string","null","missing"]]},then:{$strLenCP:{$ifNull:["$x",""]}}}],
 //    default:"$$REMOVE"}}
 ```

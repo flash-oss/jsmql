@@ -448,6 +448,7 @@ function lex(src) {
 
 // src/registry/vocabulary.ts
 var GROUP_SLOT = "__jsmqlTmp";
+var LENGTH_SLOT = "__jsmql.length";
 var shorthand = (test) => {
   const keys = Object.keys(test);
   if (keys.length !== 1 || keys[0] !== "$eq") return test;
@@ -876,9 +877,12 @@ var queryOnlyClause = ({ name: name2, args, fieldPath: fieldPath2, literal: lite
 });
 var logicalList = ({ name: name2, args, query }) => {
   const list = args.length === 1 && args[0].type === "ArrayLiteral" ? args[0].elements.filter(isExprNode) : args;
+  if (list.length === 0) return null;
   return { [name2]: list.map(query) };
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
+var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var norList = (input) => logicalList(input) ?? { $nor: [] };
 var lodashDifference = ({ recv, args, value, bind }) => {
   const other = value(args[0]);
   const item = bind("item");
@@ -893,6 +897,9 @@ function groupedByKey(input, it, bind) {
 }
 var fromIsNotJsmql = unsupported(
   "'Array.from(\u2026)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it for a value per index, '$range(0, n).map(i => \u2026)'. To build an array from one you already have, call '.map(\u2026)' on that array."
+);
+var NO_IS_FINITE = unsupported(
+  `Number.isFinite($.x) is not supported: jsmql has no syntax for an Infinity or NaN literal to compare against. Three ways round it: check the BSON type with '$type($.x)' and reject the "double" values you know to be non-finite at the source; substitute a sentinel with '$op($convert, { input: $.x, to: "double", onError: 0 })'; or constrain to a known range ('$.x > -1e300 && $.x < 1e300') where the domain allows it.`
 );
 var NAMES = {
   $abs: mongo({
@@ -1155,7 +1162,6 @@ var NAMES = {
     category: "arithmetic",
     returns: "number",
     where: ["value"],
-    minVersion: "8.1",
     shape: "single",
     filter: viaFallback,
     expr: { args: { sig: "operand", exact: 1, slotType: { 0: "number" } }, emit: single },
@@ -2015,6 +2021,7 @@ var NAMES = {
     doc: "Applies a regular expression to a string and returns information on all matched substrings.",
     category: "string",
     returns: "array",
+    elementKind: "object",
     where: ["value"],
     shape: {
       object: {
@@ -2117,6 +2124,7 @@ var NAMES = {
     doc: "Splits a string into substrings based on a delimiter and returns an array of substrings.",
     category: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2638,6 +2646,7 @@ var NAMES = {
     doc: "Converts a document to an array of documents representing key-value pairs.",
     category: "array",
     returns: "array",
+    elementKind: "object",
     where: ["value"],
     shape: "single",
     filter: viaFallback,
@@ -2656,6 +2665,7 @@ var NAMES = {
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
     category: "array",
     returns: "array",
+    elementKind: "number",
     where: ["value"],
     shape: "array",
     filter: viaFallback,
@@ -2783,6 +2793,7 @@ var NAMES = {
     doc: "Merges two or more arrays element-wise into a single array of arrays.",
     category: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     shape: {
       object: {
@@ -3851,7 +3862,6 @@ var NAMES = {
     doc: "Defines variables for use within the scope of a subexpression and returns the result.",
     category: "variable",
     params: ["binding"],
-    paramsRepeat: true,
     binds: { keysOf: "vars", visibleIn: ["in"] },
     returns: "unknown",
     where: ["value"],
@@ -4006,7 +4016,6 @@ var NAMES = {
     category: "miscellaneous",
     returns: "binData",
     where: ["value"],
-    minVersion: "8.3",
     shape: {
       object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] }
     },
@@ -4027,7 +4036,6 @@ var NAMES = {
     category: "miscellaneous",
     returns: "string",
     where: ["value"],
-    minVersion: "8.3",
     shape: {
       object: { required: ["input", "algorithm"], optional: [], closed: true, positional: ["input", "algorithm"] }
     },
@@ -5035,6 +5043,13 @@ var NAMES = {
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value" },
     forbiddenIn: ["$facet", "$lookup", "$unionWith"],
+    // MEASURED: the server takes `$documents` inside a `$unionWith` that names NO
+    // collection, and refuses it in every other body. jsmql writes that one shape
+    // from `$$.push(…)`, so the refusal names the sugar rather than a stage
+    // position the server would refuse in its turn.
+    placement: {
+      container: "Append the documents to the stream instead ('$$.push({ a: 1 });'), or start the stream from them ('$$ = [{ a: 1 }, { a: 2 }];')."
+    },
     filter: unsupported(
       "'$documents' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$documents(\u2026);') or as a chain link ('$$.$documents(\u2026)')."
     ),
@@ -5060,6 +5075,12 @@ var NAMES = {
     body: { required: [], optional: [], closed: false },
     bodyPositions: { "": "value", "*": "statement" },
     forbiddenIn: ["$facet"],
+    // MEASURED: `$documents` reaches through a `$unionWith` that a `$lookup` or another
+    // `$unionWith` accepts — both run — and a facet branch refuses it at any depth:
+    // "$documents inside of $unionWith is not allowed to be used within a $facet stage".
+    // A `$unionWith` that NAMES a collection is fine in a branch, so the ban is the
+    // literal-documents form alone.
+    bansNested: ["$documents"],
     filter: unsupported(
       "'$facet' is a pipeline stage, not a filter predicate \u2014 a predicate says which documents to keep, not what stages to run. Write it as a pipeline statement ('$facet(\u2026);') or as a chain link ('$$.$facet(\u2026)')."
     ),
@@ -6305,6 +6326,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -6443,6 +6465,18 @@ var NAMES = {
     where: ["value", "filter"],
     // A field against a regex LITERAL → a live RegExp the driver sends as a BSON regex, which
     // is what an index reads. A string pattern or a computed regex keeps the expression fallback.
+    //
+    // `{ s: { $regex: /re/ } }`, not the shorter `{ s: /re/ }`. Both select the same
+    // documents at every query site, MEASURED on mongod 8.3.7 — find, $match, $not,
+    // $nor, a $lookup / $unionWith / $facet sub-pipeline, $graphLookup's
+    // restrictSearchWithMatch, an update filter, distinct, a view. The operator form
+    // is the one that survives where they differ, and both differences are positions
+    // jsmql emits into: a SIBLING operator on the same field
+    // (`{ s: { $regex: /^a/, $ne: "zzz" } }`, which the bare form has no room for)
+    // and `$elemMatch`, which needs an object ("$elemMatch needs an Object"). The two
+    // places the bare form is required instead — an element of `$in` or `$all`
+    // ("cannot nest $ under $in") — no regex reaches: a regex literal is only an
+    // argument to `.match` and its siblings, never an element of a written list.
     filter: {
       args: { sig: "regexp", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3 }) => {
@@ -6609,11 +6643,13 @@ var NAMES = {
     on: ["array", "string"],
     returns: "bool",
     where: ["value", "filter"],
-    // Two query forms. `$.tags.includes("x")` → { tags: "x" }: MongoDB's "equals, or is an
-    // array containing" — what `.includes` means on an array, and indexed. On a STRING field
-    // the query form is equality where the expression form is a substring test; a receiver
-    // jsmql can prove is a string never reaches this cell. `["a","b"].includes($.s)` →
-    // { s: { $in: […] } }. Anything else keeps the expression fallback.
+    // A query document is what an INDEX is read through, so the query form is the
+    // indexable one: `$.tags.includes("x")` → { tags: "x" }, MongoDB's "equals, or is
+    // an array containing" — exactly what `.includes` means on an array, and a plain
+    // equality on any other field. `["a","b"].includes($.s)` → { s: { $in: […] } }.
+    // The substring reading a STRING receiver has belongs to the expression form below,
+    // where no index is at stake; `.match(/x/)` is the query spelling that asks for it.
+    // Anything else keeps the expression fallback.
     filter: {
       args: { sig: "searchElement", exact: 1 },
       emit: ({ recv, args, pathOf: pathOf3, constant }) => {
@@ -6622,11 +6658,7 @@ var NAMES = {
         if (path !== null) {
           const c = constant(args[0]);
           if (c === null) return null;
-          const contains = { [path]: { $eq: c.value, $type: "array" } };
-          const v = c.value;
-          if (typeof v !== "string" && typeof v !== "number") return contains;
-          const substring = queryOwnValue(path, { $regex: escapeForRegex(String(v)) });
-          return { $or: [contains, substring] };
+          return queryOwnValue(path, { $eq: c.value });
         }
         if (recv.type !== "ArrayLiteral") return null;
         const target = pathOf3(args[0]);
@@ -6650,7 +6682,7 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), recv] })
+          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), arrayOrEmpty(recv)] })
         },
         string: {
           args: {
@@ -7754,6 +7786,7 @@ var NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7795,6 +7828,7 @@ var NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9374,6 +9408,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9928,6 +9963,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9950,6 +9986,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9987,8 +10024,8 @@ var NAMES = {
     iterateeSlots: {
       array: { arrowOnly: "the callback takes one parameter per zipped array and a shorthand cannot stand in for it" }
     },
-    paramsRepeat: true,
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10148,6 +10185,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10424,6 +10462,7 @@ var NAMES = {
     call: true,
     on: "object",
     returns: "array",
+    elementKind: "array",
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10513,6 +10552,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    elementKind: "string",
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv, bind }) => wordsExpr(recv, bind) },
@@ -10728,7 +10768,6 @@ var NAMES = {
     doc: "'.round()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["number", "Math"],
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -10753,7 +10792,6 @@ var NAMES = {
     doc: "'.ceil()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["number", "Math"],
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -10778,7 +10816,6 @@ var NAMES = {
     doc: "'.floor()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["number", "Math"],
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -11690,7 +11727,22 @@ var NAMES = {
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     category: "boolean",
     where: ["filter"],
-    filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
+    // MEASURED: `find({ $nor: [] })` is refused ("$nor argument must be a non-empty
+    // array"), and `$nor` has no expression form to fall back to — so the empty list
+    // is refused here rather than emitted.
+    filter: {
+      args: {
+        sig: "predicates",
+        atLeast: 1,
+        nonEmpty: {
+          0: {
+            noun: "predicate",
+            instead: "'none of nothing' is every document, which an empty filter ('{}') already says."
+          }
+        }
+      },
+      emit: norList
+    },
     expr: unsupported(
       "'$nor' is a query operator with no aggregation-expression form. '$nor' is a top-level query operator: write it as the whole filter, e.g. '{ $nor: \u2026 }'."
     ),
@@ -11727,6 +11779,18 @@ var NAMES = {
     doc: "Performs text search.",
     category: "text",
     where: ["filter"],
+    // MEASURED: a '$match' holding '$text' anywhere in its body — at the top or under an
+    // '$and' — is refused unless it is the pipeline's FIRST stage ("$match with $text is
+    // only allowed as the first pipeline stage"), and inside a '$facet' branch it is
+    // refused outright ("query requires text score metadata, but it is not available").
+    // Both facts are the stage's, so `place` reads them off the body's keys, not the
+    // stage name's row.
+    only: ["stageFirst"],
+    forbiddenIn: ["$facet"],
+    placement: {
+      first: "'$text' reads the text index, and the server reads that index at the START of a pipeline. Put the '$match' that uses it first and filter further in a later '$match'.",
+      container: "A branch has no text score to read. Run the '$text' match as the pipeline's first stage, ahead of the branch."
+    },
     filter: {
       args: { sig: "search", exact: 1, constant: [0] },
       emit: ({ args, literal: literal2 }) => {
@@ -11746,7 +11810,14 @@ var NAMES = {
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
     where: [],
-    // MEASURED: { $match: { $where: … } } → $where is not allowed in this context; find() runs it only where server-side JavaScript is enabled
+    // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled, and
+    // an aggregation `$match` refuses it at any depth of the body — "$where is not
+    // allowed in this context". A raw `{ $where: … }` filter therefore passes through
+    // (HR1) and the same document written into a `$match` is refused here.
+    forbiddenIn: ["$match"],
+    placement: {
+      container: `Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query, in a '$match' or a 'find' filter alike.`
+    },
     filter: unsupported(
       `'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL \u2014 '$.x > 1', '$.tags.includes("a")' \u2014 and it runs as a query.`
     ),
@@ -11992,7 +12063,6 @@ var NAMES = {
     doc: "'assert(condition[, message]);' \u2014 a guard stage that fails the pipeline when the condition is false. A user-declared function named 'assert' wins over it.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: false,
     returns: "unknown",
     where: ["statement"],
     filter: unsupported("'assert(...)' emits a guard stage; it is not a filter predicate."),
@@ -12123,24 +12193,15 @@ var NAMES = {
     on: "Number",
     returns: "bool",
     where: [],
-    filter: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    ),
-    expr: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    ),
-    stream: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    ),
-    statement: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    ),
-    group: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    ),
-    window: unsupported(
-      'Number.isFinite($.x) is not yet supported in jsmql [DEF-022] \u2014 there is no syntax for Infinity/NaN literals to compare against. Workarounds: (1) check the BSON type with $type($.x) and reject "double" values you know to be non-finite at the source, (2) use $op($convert, { input: $.x, to: "double", onError: 0 }) to substitute a sentinel for any non-finite value, (3) constrain to a known range (e.g. $.x > -1e300 && $.x < 1e300) if your domain allows it. See docs/DEFERRED.md.'
-    )
+    // One refusal in every position — the name is legal nowhere. The tracking id
+    // stays in this comment and out of the message: a developer reading the error
+    // has no use for it. [DEF-022]
+    filter: NO_IS_FINITE,
+    expr: NO_IS_FINITE,
+    stream: NO_IS_FINITE,
+    statement: NO_IS_FINITE,
+    group: NO_IS_FINITE,
+    window: NO_IS_FINITE
   }),
   isArray: name({
     doc: "'Array.isArray(value)' \u2014 emits $isArray.",
@@ -12224,7 +12285,6 @@ var NAMES = {
     doc: `The JavaScript Object namespace. A receiver only \u2014 jsmql.expr("Object") is "Expected '.' but got end of input".`,
     token: "Ident",
     provides: "namespace",
-    family: "Object",
     where: [],
     filter: unsupported("'Object' is a namespace, not a test. Compare a member: 'Object.keys($.d).length > 0'."),
     expr: unsupported("'Object' is a namespace, not a value. Write a member: 'Object.keys($.doc)'."),
@@ -12237,7 +12297,6 @@ var NAMES = {
     doc: "Converts a value to a string. Emits $toString.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: true,
     returns: "string",
     where: ["value"],
     filter: viaFallback,
@@ -12253,7 +12312,6 @@ var NAMES = {
     doc: "Converts a value to a boolean, using JavaScript truthiness. Emits the four-clause JavaScript truthiness $and.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: true,
     returns: "bool",
     where: ["value"],
     filter: viaFallback,
@@ -12271,7 +12329,6 @@ var NAMES = {
     doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: false,
     returns: "number",
     where: [],
     filter: unsupported(
@@ -12297,7 +12354,6 @@ var NAMES = {
     doc: "Parsed, then refused: 'Number()' is jsmql's one numeric conversion.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: false,
     returns: "number",
     where: [],
     filter: unsupported(
@@ -12324,7 +12380,6 @@ var NAMES = {
     doc: "'Math.abs(value)' \u2014 emits $abs.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12340,7 +12395,6 @@ var NAMES = {
     doc: "'Math.sqrt(value)' \u2014 emits $sqrt.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12358,7 +12412,6 @@ var NAMES = {
     doc: "'Math.exp(value)' \u2014 emits $exp.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12374,7 +12427,6 @@ var NAMES = {
     doc: "'Math.log(value)' \u2014 emits $ln.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12390,7 +12442,6 @@ var NAMES = {
     doc: "'Math.log2(value)' \u2014 emits {$log:[x,2]}.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12408,7 +12459,6 @@ var NAMES = {
     doc: "'Math.log10(value)' \u2014 emits $log10.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12426,7 +12476,6 @@ var NAMES = {
     doc: "'Math.trunc(value)' \u2014 emits $trunc.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12444,7 +12493,6 @@ var NAMES = {
     doc: "'Math.sign(value)' \u2014 emits {$cmp:[x,0]}.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12462,7 +12510,6 @@ var NAMES = {
     doc: "'Math.cbrt(value)' \u2014 emits {$pow:[x,1/3]}.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12480,7 +12527,6 @@ var NAMES = {
     doc: "'Math.sin(value)' \u2014 emits $sin.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12496,7 +12542,6 @@ var NAMES = {
     doc: "'Math.cos(value)' \u2014 emits $cos.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12512,7 +12557,6 @@ var NAMES = {
     doc: "'Math.tan(value)' \u2014 emits $tan.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12528,7 +12572,6 @@ var NAMES = {
     doc: "'Math.asin(value)' \u2014 emits $asin.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12546,7 +12589,6 @@ var NAMES = {
     doc: "'Math.acos(value)' \u2014 emits $acos.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12564,7 +12606,6 @@ var NAMES = {
     doc: "'Math.atan(value)' \u2014 emits $atan.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12582,7 +12623,6 @@ var NAMES = {
     doc: "'Math.sinh(value)' \u2014 emits $sinh.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12600,7 +12640,6 @@ var NAMES = {
     doc: "'Math.cosh(value)' \u2014 emits $cosh.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12618,7 +12657,6 @@ var NAMES = {
     doc: "'Math.tanh(value)' \u2014 emits $tanh.",
     call: true,
     on: "Math",
-    asReference: true,
     returns: "number",
     where: ["value"],
     filter: viaFallback,
@@ -12788,7 +12826,6 @@ var NAMES = {
     doc: 'The JavaScript Math namespace. A receiver only \u2014 `jsmql.expr("Math")` errors.',
     token: "Ident",
     provides: "namespace",
-    family: "Math",
     // MEASURED: bare `Math` is "Expected '.' but got end of input at position 4".
     // It is a receiver and nothing else, so no position lists it.
     where: [],
@@ -12821,7 +12858,6 @@ var NAMES = {
     doc: "The current collection, as a stream of documents. Every value-position use is refused as statement-only.",
     token: "DoubleDollar",
     provides: "collection",
-    family: "stream",
     // MEASURED: `$$ = $$.take(1);` → [{"$limit":1}] (stream) and
     // `$$.push(...$$$.a);` → [{"$unionWith":"a"}] (statement). Bare `$$` in a
     // value slot is refused — "'$$' (current collection) is statement-only" —
@@ -12855,7 +12891,6 @@ var NAMES = {
     doc: "Cluster scope, for the diagnostic source stages: `$$$$.currentOp(...)`.",
     token: "QuadDollar",
     provides: "cluster",
-    family: "cluster",
     // MEASURED: `$$$$.db2.c = $$;` → [{"$out":{"db":"db2","coll":"c"}}], a
     // statement. There is no stream form — a cross-database READ is refused
     // outright ("Cross-database reads aren't supported"), so listing "stream"
@@ -12876,7 +12911,6 @@ var NAMES = {
     // MEASURED: `Date("2024-01-01")` and `Date()` are both "Unknown function 'Date(...)'".
     // `new` is REQUIRED, not optional.
     newKeyword: "required",
-    asReference: false,
     provides: "Date",
     returns: "date",
     where: ["value"],
@@ -12911,7 +12945,6 @@ var NAMES = {
     doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
     token: "Ident",
     newKeyword: "optional",
-    asReference: true,
     returns: "objectId",
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
@@ -12935,7 +12968,6 @@ var NAMES = {
     doc: "A set of values, for the set operations. Folds to a plain array \u2014 MongoDB has no set type.",
     token: "Ident",
     newKeyword: "required",
-    asReference: false,
     // A value built by this constructor is a receiver of the `set` family: the
     // set operations (`.union`, `.difference`) are names on it.
     family: "set",
@@ -12959,7 +12991,6 @@ var NAMES = {
     doc: "Converts a value to a number.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: true,
     provides: "Number",
     returns: "number",
     where: ["value"],
@@ -12983,7 +13014,6 @@ var NAMES = {
     doc: "The Array namespace. Nothing on it is jsmql; see its refusal.",
     token: "Ident",
     newKeyword: "forbidden",
-    asReference: false,
     provides: "Array",
     returns: "array",
     where: [],
@@ -13016,7 +13046,10 @@ var NAMES = {
       perFamily: {
         // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
         // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
-        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : recv }) },
+        array: {
+          args: { sig: "", none: true },
+          emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : arrayOrEmpty(recv) })
+        },
         // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
           args: { sig: "", none: true },
@@ -13027,7 +13060,7 @@ var NAMES = {
         // statement and reads the field it wrote.
         stream: {
           args: { sig: "", none: true },
-          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }], "__jsmql.length")
+          emit: ({ hoist }) => hoist([{ $setWindowFields: { output: { [LENGTH_SLOT]: { $count: {} } } } }], LENGTH_SLOT)
         }
       },
       // Stated, not derived: a receiver that is neither array nor string yields $$REMOVE.
@@ -13773,8 +13806,8 @@ var PRODUCTIONS = {
     tokens: [".", "(", ")", ",", "identifier"],
     spelling: "Class.method()",
     // `Math.max(a, b)` is a MethodCall whose object is the name `Math`; `Math.PI` is a
-    // MemberAccess. Seven node types collapsed here — the parser no longer knows
-    // which namespace it is looking at.
+    // MemberAccess. Every namespace shares these two node types: the parser does not
+    // know which namespace it is looking at, and does not need to.
     becomes: ["MethodCall", "MemberAccess"],
     on: "any",
     returns: "unknown",
@@ -14428,6 +14461,9 @@ function receiverFamily(receiverName, onStream, name2) {
 function elementsOf(name2) {
   return row(name2)?.elements;
 }
+function elementKindOf(name2) {
+  return row(name2)?.elementKind;
+}
 function argCountOf(name2, family) {
   const cell = row(name2)?.expr;
   if (cell === null || typeof cell !== "object") return void 0;
@@ -14462,6 +14498,9 @@ function acceptsArgumentCount(name2, count, family) {
   if (rule.allowed !== void 0) return rule.allowed.includes(count);
   if (rule.atLeast !== void 0) return count >= rule.atLeast;
   return true;
+}
+function positionsOf(name2) {
+  return row(name2)?.where;
 }
 function lists(name2, where) {
   return row(name2)?.where.includes(where) === true;
@@ -14540,6 +14579,12 @@ function productionForNode(nodeType) {
 }
 function forbiddenInOf(name2) {
   return row(name2)?.forbiddenIn ?? [];
+}
+function bansNestedOf(name2) {
+  return row(name2)?.bansNested ?? [];
+}
+function placementOf(name2) {
+  return row(name2)?.placement ?? {};
 }
 function picksOneOf(name2) {
   return row(name2)?.picksOne ?? null;
@@ -15023,7 +15068,7 @@ var Parser = class _Parser {
    * parsed to the same tree, and nothing downstream could tell them apart.
    *
    * ONE rule for the top level and the entry block, so `({ $ }) => { X }` means
-   * exactly what `X` means — the two used to differ on the `;`.
+   * exactly what `X` means, `;` included.
    */
   collapse(stmts, sawSemi) {
     if (stmts.length === 1 && !sawSemi) {
@@ -18162,7 +18207,7 @@ function bindingSlot(name2) {
 function tmpSlot(n2) {
   return `${JSMQL_NS}.tmp.${n2}`;
 }
-var LENGTH_SLOT = `${JSMQL_NS}.length`;
+var LENGTH_SLOT2 = `${JSMQL_NS}.length`;
 var GROUP_TMP = `${JSMQL_NS}Tmp`;
 function sanitizeVarSegment(name2) {
   return name2.replace(/[^A-Za-z0-9_]/g, "_");
@@ -18521,7 +18566,7 @@ var callableAsValue = (spelled3, pos) => new CodegenError(
   pos
 );
 var functionAsValue = (name2, pos) => new CodegenError(
-  `'${name2}' is a reusable function \u2014 call it with '${name2}(...)'. A function can't be used as a value (passing it to another function isn't supported); inline the call instead. [DEF-032]`,
+  `'${name2}' is a reusable function, and a function is not a value MQL can carry. Call it \u2014 '${name2}(x)' \u2014 or, to hand it to a higher-order method, write the lambda that calls it: '.map((x) => ${name2}(x))'.`,
   pos
 );
 var droppedBinding = (ref, pos) => new CodegenError(ref.message, pos);
@@ -18670,8 +18715,8 @@ var spreadInStageList = (pos) => new CodegenError(
   "A pipeline is written out stage by stage; '...' cannot spread stages into it. List each stage.",
   pos
 );
-var mustBeFirstStage = (name2, pos) => new CodegenError(
-  `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage \u2014 the server refuses it anywhere else. Move it to the top of the program.`,
+var mustBeFirstStage = (name2, pos, why) => new CodegenError(
+  why ?? `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage \u2014 the server refuses it anywhere else. Move it to the top of the program.`,
   pos
 );
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
@@ -18686,8 +18731,12 @@ var afterTerminalStage = (already, pos) => new CodegenError(
   `Nothing can follow '${already}': it writes the pipeline's output and the server requires it last. Move this statement above it.`,
   pos
 );
-var forbiddenInContainer = (name2, container, pos) => new CodegenError(
-  `'${name2}' cannot stand inside '${container}' \u2014 the server refuses this stage in that body. Run it as a stage of the outer pipeline instead.`,
+var forbiddenInContainer = (name2, container, pos, instead) => new CodegenError(
+  `'${name2}' cannot stand inside '${container}' \u2014 the server refuses it in that body. ${instead ?? "Run it as a stage of the outer pipeline instead."}`,
+  pos
+);
+var bannedNested = (spelled3, stage, container, instead, pos) => new CodegenError(
+  `'${spelled3}' makes a '${stage}' stage, and the server refuses that anywhere inside a '${container}' \u2014 however deeply it is nested. ${instead}`,
   pos
 );
 var notAMongoType = (spelling, aliases, pos) => {
@@ -18698,8 +18747,16 @@ var notAMongoType = (spelling, aliases, pos) => {
     pos
   );
 };
-var notAStreamChain = (pos) => new CodegenError(
-  "'$$ = \u2026' replaces the stream with a chain on it: '$$ = $$.filter(d => d.x > 1).take(10);'. Write the right side as a chain that starts from '$$'.",
+var writeToOwnStream = (name2, pos) => new CodegenError(
+  `'${name2}' is the body's own stream, and a stream is not a value a statement writes to. Append documents with '.concat(\u2026)' ('${name2}.concat([{ \u2026 }]);'), keep some with '.filter(\u2026)', or run a stage on it ('${name2}.$match(\u2026);').`,
+  pos
+);
+var streamElementsNotDocuments = (noun, pos) => new CodegenError(
+  `'$$ = \u2026' makes the stream from the array's ELEMENTS, one document each, and these elements are ${noun}. Put each under a field \u2014 '$$ = <array>.map((v) => ({ value: v }));' \u2014 or write to a field of the document you have ('$.<field> = <array>;').`,
+  pos
+);
+var notAStreamChain = (pos, noun) => new CodegenError(
+  `'$$ = \u2026' replaces the STREAM, so the right side has to be MANY documents${noun === void 0 ? "" : ` \u2014 ${noun} is one value`}. Write a chain that starts from '$$' ('$$ = $$.filter(d => d.x > 1).take(10);'), a list of documents ('$$ = [{ a: 1 }, { a: 2 }];'), or an array whose elements are the documents ('$$ = $.items;').`,
   pos
 );
 var notAStreamLink = (name2, candidates, pos) => {
@@ -19028,6 +19085,13 @@ var Chain = class {
      * emitted, so nothing can land after it and the cleanup always precedes it.
      */
     this.terminal = null;
+    /**
+     * The field paths a materialiser has already stamped and that are still FRESH —
+     * see docs/specs/stream-length.md § Compute-once / reuse / recompute. A second read
+     * of a stamped path costs no stage; a stage whose row does not state
+     * `preservesCount` clears the set, so the next read stamps again.
+     */
+    this.stamped = /* @__PURE__ */ new Set();
     this.isPipeline = isPipeline;
   }
   /** A fresh `__jsmql.tmp.<n>` scratch slot. */
@@ -19035,11 +19099,41 @@ var Chain = class {
     this.dirty = true;
     return scratchSlot(this.slots++);
   }
+  /**
+   * A mark for a lowering that may be TAKEN BACK. A chain that goes on after a join
+   * lowers the body twice, and the first attempt's hoists are discarded — so the
+   * stamps it took have to go with them, or the second attempt reuses a field the
+   * discarded stage was going to write.
+   */
+  mark() {
+    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped) };
+  }
+  /** Undo everything hoisted and stamped since `mark`. */
+  rewind(m) {
+    this.hoisted.length = m.hoisted;
+    this.stamped = new Set(m.stamped);
+  }
   /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
   hoist(stages, reads) {
-    this.hoisted.push(...stages);
-    this.dirty = true;
+    if (!this.stamped.has(reads)) {
+      this.hoisted.push(...stages);
+      this.stamped.add(reads);
+      this.dirty = true;
+    }
     return "$" + reads;
+  }
+  /**
+   * A statement's stages have landed. A stage that does not state `preservesCount`
+   * changes how many documents there are, or what fields they carry, so every stamp
+   * taken before it now says something that is no longer true.
+   */
+  advance(stages) {
+    for (const stage of stages) {
+      if (!preservesCountOf(Object.keys(stage)[0])) {
+        this.stamped.clear();
+        return;
+      }
+    }
   }
   /** Move the hoisted stages into the emitted list — called before the statement that triggered them. */
   flush() {
@@ -19700,6 +19794,24 @@ function resolveReturns(r, receiver, family, elements = "unknown") {
   if (byFamily === "element") return elements;
   return byFamily;
 }
+function elementKindOf2(node, env) {
+  if (node.type === "ArrayLiteral") {
+    let one = null;
+    for (const el of node.elements) {
+      if (el.type === "SpreadElement") return "unknown";
+      const k = kindOf(el, env);
+      if (k === "unknown" || one !== null && k !== one) return "unknown";
+      one = k;
+    }
+    return one ?? "unknown";
+  }
+  const named = node.type === "MethodCall" || node.type === "OperatorCall" ? namedRow(node) ?? node.name : node.type === "MemberAccess" && isCallable(node.name) ? node.name : null;
+  if (named !== null) {
+    const stated = elementKindOf(named);
+    if (stated !== void 0) return stated;
+  }
+  return elementsRead(node, env);
+}
 function elementsRead(node, env) {
   if (node.type !== "Ident" || !env.scope.has(node.name)) return "unknown";
   return env.lookup(node.name, node.pos).elements;
@@ -19898,8 +20010,30 @@ function lookupOf(node, env, S, over = "$lookup") {
     pos
   };
 }
+function compactPair(l) {
+  if (l.let === null || l.pipeline.length !== 1) return null;
+  const vars = Object.entries(l.let);
+  if (vars.length !== 1) return null;
+  const [name2, read] = vars[0];
+  if (typeof read !== "string" || !read.startsWith("$") || read.startsWith("$$")) return null;
+  const match = l.pipeline[0].$match;
+  if (match === void 0 || Object.keys(match).length !== 1) return null;
+  const eq = match.$expr?.$eq;
+  if (!Array.isArray(eq) || eq.length !== 2) return null;
+  const variable = `$$${name2}`;
+  const foreign = eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null;
+  if (typeof foreign !== "string" || !foreign.startsWith("$") || foreign.startsWith("$$")) return null;
+  return { localField: read.slice(1), foreignField: foreign.slice(1) };
+}
 function lookupStage(l, as) {
   const body = { from: l.from };
+  const pair = l.one === "find" ? null : compactPair(l);
+  if (pair !== null) {
+    body.localField = pair.localField;
+    body.foreignField = pair.foreignField;
+    body.as = as;
+    return { $lookup: body };
+  }
   if (l.let !== null) body.let = l.let;
   body.pipeline = l.pipeline;
   body.as = as;
@@ -19934,10 +20068,10 @@ function joinValue(node, env, S) {
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
 function joinWrite(node, path, env, S) {
-  const marks = [env.chain, env.rootChain].map((c) => [c, c.hoisted.length]);
+  const marks = [env.chain, env.rootChain].map((c) => [c, c.mark()]);
   const l = lookupOf(node, env, S);
   if (!l.complete) {
-    for (const [c, n2] of marks) c.hoisted.length = n2;
+    for (const [c, m] of marks) c.rewind(m);
     return null;
   }
   const stages = [lookupStage(l, path)];
@@ -20537,12 +20671,7 @@ function chainOf(node, op) {
   return out;
 }
 function includesChain(path, values) {
-  const contains = { [path]: { $all: values, $type: "array" } };
-  const needles = values.filter((v) => typeof v === "string" || typeof v === "number");
-  if (needles.length !== values.length) return contains;
-  const [first, ...rest] = needles.map((v) => escapeForRegex(String(v)));
-  const substrings = rest.length === 0 ? queryOwnValue(path, { $regex: first }) : { $and: [queryOwnValue(path, { $regex: first }), ...rest.map((r) => ({ [path]: { $regex: r } }))] };
-  return { $or: [contains, substrings] };
+  return { [path]: { $all: values } };
 }
 function extractIncludesChain(node, env) {
   const leaves = chainOf(node, "&&");
@@ -20714,13 +20843,14 @@ function readsParam(node, name2) {
   if (n2.type === "Ident" && n2.name === name2) return true;
   return Object.entries(n2).some(([k, v]) => k !== "type" && readsParam(v, name2));
 }
-function arrayCallback(cb, recv, env, read, name2) {
+function arrayCallback(cb, recv, recvNode, env, read, name2) {
   if (cb.type !== "Lambda" || cb.body === void 0) throw notAnArrowCallback(name2, cb.pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name2, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
+  const element2 = recvNode === void 0 ? "unknown" : elementKindOf2(recvNode, env);
   const usesIndex = index !== void 0 && readsParam(cb.body, index);
   if (!usesIndex) {
-    const bound = env.param(elem ?? "_", "unknown", cb.pos);
+    const bound = elem === void 0 ? env.fresh("unused") : env.param(elem, element2, cb.pos);
     let bodyEnv2 = bound.env;
     const vars2 = {};
     if (arr !== void 0) {
@@ -20740,7 +20870,7 @@ function arrayCallback(cb, recv, env, read, name2) {
   const pair = env.fresh("pair");
   let bodyEnv = pair.env;
   const vars = {};
-  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  const x = bodyEnv.param(elem, element2, cb.pos);
   vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
   bodyEnv = x.env;
   const i = bodyEnv.param(index, "number", cb.pos);
@@ -20828,7 +20958,7 @@ function elementsCallback(cb, count, env, read, name2) {
   });
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map()) {
+function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
   return {
@@ -20840,7 +20970,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth),
-    callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name2),
+    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name2),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name2),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name2),
     sortSpec: (e, objects) => sortSpecOf(e, name2, objects),
@@ -21061,7 +21191,6 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     sortSpec: (e, objects = true) => sortSpecOf(e, name2, objects),
     orderBy: (keys2, orders) => orderBySpec(keys2, orders, name2),
     slot: () => env.chain.slot().path,
-    prevStages: before,
     bind: (hint2) => {
       const b = env.fresh(hint2);
       return { as: b.as, ref: b.ref };
@@ -21472,7 +21601,9 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
     }
     checkSlots(name2, sel.rule.args, exprArgs);
     const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
-    return sel.rule.emit(exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ));
+    return sel.rule.emit(
+      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode)
+    );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");
@@ -21818,6 +21949,7 @@ function exprBlock(node, env, ret) {
 }
 
 // src/compiler/emit/union.ts
+var DOCUMENTS = "$documents";
 function writtenDocuments(e) {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
   const out = [];
@@ -21833,6 +21965,16 @@ function unionStages(args, env, node, S) {
   let docs = [];
   const flushDocs = () => {
     if (docs.length === 0) return;
+    for (const boundary of env.site.boundaries) {
+      if (!bansNestedOf(boundary.stage).includes(DOCUMENTS)) continue;
+      throw bannedNested(
+        `.${node.type === "MethodCall" ? node.name : "push"}(<document>)`,
+        DOCUMENTS,
+        boundary.stage,
+        "Append another collection instead ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.",
+        node.pos
+      );
+    }
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
@@ -22263,6 +22405,7 @@ function letStages(decl, env) {
   return { stages: [{ $set: { [slot.path]: value } }], env: bind(kindOf(decl.value, env)) };
 }
 function afterStages(stages, env) {
+  env.chain.advance(stages);
   let out = env;
   for (const stage of stages) {
     const name2 = Object.keys(stage)[0];
@@ -22279,19 +22422,44 @@ function isInclusion(body) {
   const entries = Object.entries(body).filter(([k]) => k !== "_id");
   return entries.length > 0 && entries.every(([, v]) => v === 1 || v === true);
 }
-function documentsStages(list, env, first) {
+var DOCUMENTS2 = "$documents";
+var holdsSpread = (list) => list.elements.some((e) => e.type === "SpreadElement");
+function documentsStages(list, env) {
   if (isReduceWrap(list)) return reduceWrapStages(list);
   if (holdsStreamReduce(list)) throw reduceWrapMisplaced(list.pos);
-  if (list.elements.length === 0) return [{ $match: { $expr: false } }];
-  const call = { type: "OperatorCall", name: "$documents", args: [list], pos: list.pos };
-  return stageStatement(call, env, first);
+  const dropAll = { $match: { $expr: false } };
+  if (list.elements.length === 0) return [dropAll];
+  const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
+  if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
+  checkSlots("$$ = [ \u2026 ]", sel.rule.args, [list], false);
+  const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
+  return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
+}
+function namesWithin(body, out = /* @__PURE__ */ new Set()) {
+  if (Array.isArray(body)) {
+    for (const el of body) namesWithin(el, out);
+  } else if (typeof body === "object" && body !== null) {
+    for (const [k, v] of Object.entries(body)) {
+      if (k.startsWith("$") && positionsOf(k) !== void 0) out.add(k);
+      namesWithin(v, out);
+    }
+  }
+  return out;
 }
 function place(name2, stage, env, first, pos) {
   const only = onlyOf(name2);
-  for (const boundary of env.site.boundaries) {
-    if (forbiddenInOf(name2).includes(boundary.stage)) throw forbiddenInContainer(name2, boundary.stage, pos);
+  for (const held of [name2, ...namesWithin(stage[name2])]) {
+    const containers = held === name2 ? env.site.boundaries.map((b) => b.stage) : [name2, ...env.site.boundaries.map((b) => b.stage)];
+    for (const container of containers) {
+      if (forbiddenInOf(held).includes(container) || bansNestedOf(container).includes(held)) {
+        throw forbiddenInContainer(held, container, pos, placementOf(held).container);
+      }
+    }
+    if (held !== name2 && onlyOf(held).includes("stageFirst") && !first) {
+      throw mustBeFirstStage(held, pos, placementOf(held).first);
+    }
   }
-  if (only.includes("stageFirst") && !first) throw mustBeFirstStage(name2, pos);
+  if (only.includes("stageFirst") && !first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
@@ -22322,6 +22490,7 @@ function targetPath(op, env) {
     }
     if (b.ref.kind === "dropped") throw droppedBinding(b.ref, t.pos);
   }
+  if (t.type === "Ident" && onOwnStream(t, env)) throw writeToOwnStream(t.name, t.pos);
   if (t.type === "Ident") throw new UnknownIdentifierError(t.name, t.pos);
   if (t.type === "CollectionRef") return STREAM_TARGET;
   throw notAWriteTarget(op.pos);
@@ -22392,12 +22561,24 @@ function pathsRead(node, into) {
   return into;
 }
 var replacesWhole = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && Object.getPrototypeOf(v) === Object.prototype && Object.keys(v).every((k) => !k.startsWith("$"));
+var ELEMENT_NOUN = {
+  number: "numbers",
+  string: "strings",
+  bool: "booleans",
+  array: "arrays",
+  date: "dates",
+  objectId: "ObjectIds",
+  binData: "binary data"
+};
 var KIND_NOUN = {
   number: "a number",
   string: "a string",
   bool: "a boolean",
   array: "an array",
+  object: "a document",
   date: "a date",
+  objectId: "an ObjectId",
+  binData: "binary data",
   null: "null"
 };
 var touches = (x, y) => x === y || x === "" || y === "" || x.startsWith(`${y}.`) || y.startsWith(`${x}.`);
@@ -22430,13 +22611,20 @@ function writeStages(uf, env, first) {
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw cannotDeleteRoot(op.pos);
       flush();
-      if (op.value.type === "ArrayLiteral") {
-        out.push(...documentsStages(op.value, inner, first && out.length === 0));
+      if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
+        out.push(...documentsStages(op.value, inner));
         continue;
       }
       const chainOn = chainBase(op.value);
       const streamRoad = chainOn.type === "CollectionRef" || readsAnotherCollection(op.value) || onOwnStream(chainOn, inner);
-      if (!streamRoad && kindOf(op.value, inner) === "array") {
+      const kind = !streamRoad ? kindOf(op.value, inner) : "stream";
+      if (kind !== "stream" && kind !== "array" && kind !== "unknown")
+        throw notAStreamChain(op.value.pos, KIND_NOUN[kind] ?? `a ${kind}`);
+      if (kind !== "stream") {
+        const element2 = elementKindOf2(op.value, inner);
+        if (element2 !== "unknown" && element2 !== "object") {
+          throw streamElementsNotDocuments(ELEMENT_NOUN[element2] ?? `${element2}s`, op.value.pos);
+        }
         const slot = inner.chain.slot();
         const arr = lowerValue(op.value, childEnv(inner, op, "value").at({ at: "value" }));
         out.push({ $set: { [slot.path]: arr } }, { $unwind: slot.ref }, { $replaceWith: slot.ref });

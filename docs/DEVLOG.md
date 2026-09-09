@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — chore: the published bundle carries the fixes it is supposed to
+
+`dist/jsmql.js` is the one build output GitHub Pages serves, and `playground.html`
+imports it — so the playground compiles with whatever that file holds. A `src/`
+edit does not trigger the sync hook (deliberately watcher-free), and the bundle had
+fallen six commits behind: the live page was compiling `.includes` the old way, and
+the dist-gated cases in `test/smoke.test.ts` were passing against the same stale
+bundle, which makes their green no evidence at all about the current compiler.
+
+Rebuilt, re-synced and re-run: the eleven smoke cases pass against a fresh `dist/`,
+and the bundle answers `["a","b"].map(k => $.m[k])` with the plain `$getField`,
+`$.items.map(x => x).length` with the `[]` neutral, and one correlated equality with
+the `localField` pair. `playground.html` is unchanged — its island carries each
+example's SOURCE, and the page compiles in the reader's browser.
+
+---
+
 ## 2026-09-09 — docs: the `[]` neutral shows up in the three claims that name it
 
 `scripts/check-doc-claims.mjs`, run after the null-neutral fix, found the three
