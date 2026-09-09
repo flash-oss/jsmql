@@ -1128,6 +1128,30 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
       ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
     );
   });
+
+  // `$sortArray` takes a direction on its own; a `$sort` STAGE takes a field name and
+  // nothing else (measured: `{ $sort: 1 }` → "the $sort key specification must be an object").
+  it("the whole element as the key is rejected on a stream, per method and direction", () => {
+    expect(() => jsmql("$$.toSorted((a, b) => a - b);")).toThrow(
+      ".toSorted((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
+    );
+    expect(() => jsmql("$$.sort((a, b) => b - a);")).toThrow(
+      ".sort((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d.age)'.",
+    );
+    expect(() => jsmql("$$.sortBy((a, b) => a - b);")).toThrow(
+      ".sortBy((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d => d.age)'.",
+    );
+    expect(() => jsmql("$$.orderBy((a, b) => b - a);")).toThrow(
+      ".orderBy((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderBy(d => -d.age)'.",
+    );
+  });
+
+  it("each alternative the whole-element refusal names does compile", () => {
+    expect(jsmql("$$.toSorted((a, b) => a.age - b.age);")).toEqual([{ $sort: { age: 1 } }]);
+    expect(jsmql("$$.toSorted(d => d.age);")).toEqual([{ $sort: { age: 1 } }]);
+    expect(jsmql("$$.sort((a, b) => b.age - a.age);")).toEqual([{ $sort: { age: -1 } }]);
+    expect(jsmql("$$.sort(d => -d.age);")).toEqual([{ $sort: { age: -1 } }]);
+  });
 });
 
 describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {

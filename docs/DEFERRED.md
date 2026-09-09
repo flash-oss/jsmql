@@ -32,30 +32,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Status.** design-only
 - **Effort.** M
 
-### DEF-006 — `jsmql.updateDoc()` — classic-form update operators
-
-- **What's blocked.** The classic-form update operators (`$inc`, `$push`, `$rename`, `$pull`, `$pullAll`, `$pop`, `$min`, `$max`, `$mul`, `$currentDate`). `jsmql.update()` already emits the pipeline-form (`$set`/`$unset` array) — this is the *other* update shape.
-- **Target lowering.** New entry point `jsmql.updateDoc(input)` returns a single object: `{ $inc: { count: 1 } }`, `{ $push: { tags: "vip" } }`, etc.
-- **Why blocked.** Whole new entry point + ~10 operator pattern matchers + the decision about `$bit` / `$addToSet` (no idiomatic JS shape — keep as `$op($bit, …)`).
-- **Attempted approaches.** None — the pattern table is designed (each write spelling to its update operator) but no code.
-- **Success criteria.** `jsmql.updateDoc("$.count += 1")` → `{ $inc: { count: 1 } }`. Multi-statement combinations work: `"$.count += 1, $.tags.push('vip'), delete $.tmp"` → `{ $inc: …, $push: …, $unset: { tmp: "" } }`. Same target with conflicting operators throws.
-- **Rejection site(s).** No code — the API just doesn't exist. `docs/CLAUDE.md` "Future work areas" paragraph mentions update operators.
-- **Spec.** Will need `docs/specs/update-doc.md` when work begins.
-- **Status.** design-only
-- **Effort.** L (full new entry point + 10 pattern matchers + tests)
-
-### DEF-010 — Multi-binding `let a = …, b = …;`
-
-- **What's blocked.** Comma-separated bindings inside one `let` statement.
-- **Target lowering.** Single `$set` stage with both bindings: `let a = $.x, b = a + 1;` → `{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] } } }`. Left-to-right evaluation order matches JS.
-- **Why blocked.** Comma disambiguation against the update-filter `,` separator (`$.a = 1, $.b = 2`). The two are syntactically distinguishable (let-binding follows `let <Ident>`, update follows `=`/`+=`/etc.) but the parser doesn't currently route on that.
-- **Attempted approaches.** None.
-- **Success criteria.** `let userId = $.userId, total = $.amount * 1.1; $match(...);` lowers to one combined `$set` + `$match`. `let a = …; let b = …;` continues to work and produces equivalent (two `$set` stages, slightly worse).
-- **Rejection site(s).** The Deferred bullet in [`docs/specs/let-bindings.md`](specs/let-bindings.md), which carries the `[DEF-010]` tag.
-- **Spec.** `docs/specs/let-bindings.md` § Deferred bullet 3.
-- **Status.** open
-- **Effort.** S
-
 ### DEF-012 — Index-pitfall warning channel via `validate()`
 
 - **What's blocked.** A `let` binding before an indexable `$match` blocks the match from using the index. The compiler could surface a warning, but `validate()` has no warning channel — only errors.
@@ -71,7 +47,7 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 ### DEF-013 — Schema / metadata threading (`jsmql.bind({ db, collection })`)
 
 - **What's blocked.** jsmql compiles statelessly — it doesn't know the current collection's name, so a self-join (`$$.find()` / `$$.filter()`) can't resolve its `$lookup.from`.
-- **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update` + `.updateDoc`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
+- **Target lowering.** New entry point `jsmql.bind({ collection, db })` returns a new callable shaped like `jsmql` (callable + `.compile` + `.validate` + `.expr` + `.filter` + `.pipeline` + `.update`), with `boundCollection` / `boundDb` threaded into `GenerateCtx`. Mongoose plugin uses it automatically with the model's `collection.name`.
 - **Why blocked.** Needs a new public-API entry point + a new `GenerateCtx` slot + the resolution rule in `$$.find`/`$$.filter` lowering.
 - **Attempted approaches.** None.
 - **Success criteria.** `const bound = jsmql.bind({ collection: "users" }); bound("$$.find(u => u.parentId === $._id);")` lowers to `$lookup` with `from: "users"`.
@@ -103,18 +79,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** `docs/specs/globals-generation.md`.
 - **Status.** design-only
 - **Effort.** M
-
-### DEF-019 — `.toSorted(comparator)` two-param arrow recognition
-
-- **What's blocked.** `.toSorted((a, b) => a.x - b.x)` and its `||`-joined form both ship. What is left is the WHOLE-ELEMENT comparator, `(a, b) => a - b`, which sorts an array of scalars.
-- **Target lowering.** `(a, b) => a - b` → `sortBy: 1`; `(a, b) => b - a` → `sortBy: -1`.
-- **Why blocked.** A recogniser for the two shapes, distinguished from the field form the same cell already reads. Easy.
-- **Attempted approaches.** None.
-- **Success criteria.** Both shapes lower as above; a body that is not one field of each subtracted keeps the shape-specific refusal.
-- **Rejection site(s).** The comparator cell on the `toSorted` row in `src/registry/names.ts`, whose message names the two supported forms: ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'."
-- **Spec.** [`docs/LANGUAGE.md`](LANGUAGE.md#array-methods) § Array methods.
-- **Status.** design-only — small win
-- **Effort.** S
 
 ### DEF-022 — `Number.isFinite($.x)` (Infinity / NaN comparison)
 
@@ -151,30 +115,6 @@ This file is the antidote to "I keep forgetting about them". Every "not yet supp
 - **Spec.** `docs/specs/reusable-functions.md` § Deferred.
 - **Status.** open
 - **Effort.** M
-
-### DEF-034 — Constant folding for the array and string reshapers
-
-- **What's blocked.** A constant expression whose every operand is a literal settles to its value at compile time, and a few reshapers do not: `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands instead of the answer.
-- **Target lowering.** `$.r = [[1, 2], [3]].flat();` → `[{ $set: { r: [1, 2, 3] } }]`, the way `[3, 1, 2].sortBy(x => x)` already settles to `[1, 2, 3]`.
-- **Why blocked.** Each reshaper needs its JavaScript answer written as an evaluator in `src/compiler/passes/fold-methods.ts`, and each must agree with the server for every input the fold admits — the fold is only correct where MongoDB and JavaScript answer alike, which is why the unequal-length `zipWith`, a mixed-type comparison and an empty read are withheld on purpose.
-- **Attempted approaches.** The families that DO fold are stated as evaluators; these are the ones nobody wrote yet. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor of 0.85.
-- **Success criteria.** The floor rises, and each newly folded family agrees with the server's answer for the same input (`test/compiler-fold-agrees.test.ts` compares on mongod).
-- **Rejection site(s).** None — the compiler emits correct, larger MQL. The floor comment in `test/fold-consistency.test.ts` carries the tag.
-- **Spec.** [`docs/specs/desugar-pass.md`](specs/desugar-pass.md) — the fold runs between the desugar rounds.
-- **Status.** open
-- **Effort.** S per family.
-
-### DEF-035 — A negative start for `.toSpliced()`
-
-- **What's blocked.** JavaScript counts a negative start from the end (`[1, 2, 3].toSpliced(-1, 1)` → `[1, 2]`); jsmql refuses it.
-- **Target lowering.** The start is resolved against the receiver's length before it reaches `$slice`, so `-1` means `$size - 1`, matching what `.slice(-3)` already does.
-- **Why blocked.** The row states `slotRange` from 0, one fact for every slot; a from-the-end start needs the length in hand, which makes the emitted document a `$let` over the receiver rather than a direct `$slice` — the cost has to be paid only when the argument is actually negative.
-- **Attempted approaches.** None.
-- **Success criteria.** `$.a.toSpliced(-1, 1)` compiles, and `test/compiler-methods.test.ts` shows the server's answer equal to JavaScript's for a negative start, a negative start past the length, and a zero count.
-- **Rejection site(s).** The `slotRange` refusal on the `toSpliced` row in `src/registry/names.ts`, tagged `[DEF-035]`.
-- **Spec.** `docs/LANGUAGE.md` § Array methods.
-- **Status.** open
-- **Effort.** S
 
 ---
 

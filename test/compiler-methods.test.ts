@@ -304,6 +304,19 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.pairs.fromPairs()", () => ({ k: 1 }))).toMatchObject({ $arrayToObject: {} });
     expect(compiled("$.a.toReversed()", (d) => d.a.toReversed())).toEqual({ $reverseArray: "$a" });
     expect(compiled("$.a.toSorted()", (d) => d.a.toSorted())).toEqual({ $sortArray: { input: "$a", sortBy: 1 } });
+    // `(a, b) => a - b` names no field, so the elements themselves are the key
+    expect(compiled("$.a.toSorted((a, b) => a - b)", (d) => d.a.toSorted((a, b) => a - b))).toEqual({
+      $sortArray: { input: "$a", sortBy: 1 },
+    });
+    expect(compiled("$.a.toSorted((a, b) => b - a)", (d) => d.a.toSorted((a, b) => b - a))).toEqual({
+      $sortArray: { input: "$a", sortBy: -1 },
+    });
+    expect(compiled("$.a.sortBy((a, b) => a - b)", (d) => d.a.toSorted((a, b) => a - b))).toEqual({
+      $sortArray: { input: "$a", sortBy: 1 },
+    });
+    expect(compiled("$.a.orderBy((a, b) => a - b, -1)", (d) => d.a.toSorted((a, b) => b - a))).toEqual({
+      $sortArray: { input: "$a", sortBy: -1 },
+    });
     expect(compiled("$.docs.toSorted({ v: -1 })", (d) => d.docs.toSorted((p, q) => q.v - p.v))).toEqual({
       $sortArray: { input: "$docs", sortBy: { v: -1 } },
     });
@@ -327,6 +340,18 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.with(2, 9)", (d) => d.a.with(2, 9))).toMatchObject({ $let: {} });
     expect(compiled("$.a.toSpliced(3, 0, 4)", (d) => d.a.toSpliced(3, 0, 4))).toMatchObject({ $let: {} });
     expect(compiled("$.a.toSpliced(0, 3)", (d) => d.a.toSpliced(0, 3))).toMatchObject({ $let: {} });
+    // a start counted from the end, and the two ends JavaScript clamps
+    expect(compiled("$.a.toSpliced(-1, 1)", (d) => d.a.toSpliced(-1, 1))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(-2, 1, 9)", (d) => d.a.toSpliced(-2, 1, 9))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(-10, 1)", (d) => d.a.toSpliced(-10, 1))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(-1, 0)", (d) => d.a.toSpliced(-1, 0))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(10, 1)", (d) => d.a.toSpliced(10, 1))).toMatchObject({ $let: {} });
+    // the count left out removes everything from the start on
+    expect(compiled("$.a.toSpliced(2)", (d) => d.a.toSpliced(2))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(0)", (d) => d.a.toSpliced(0))).toMatchObject({ $let: {} });
+    expect(compiled("$.a.toSpliced(-1)", (d) => d.a.toSpliced(-1))).toMatchObject({ $let: {} });
+    // a start read at run time: the sign is not known until the server sees it
+    expect(compiled("$.a.toSpliced($.neg, 1)", (d) => d.a.toSpliced(d.neg, 1))).toMatchObject({ $let: {} });
   });
 
   it("dispatches a method two prototypes share on the receiver's type at run time", () => {

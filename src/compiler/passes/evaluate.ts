@@ -371,7 +371,7 @@ function logical(op: string, left: unknown, right: unknown): Evaluation {
 }
 
 /** JavaScript's truthiness, which is what the lowering emits — measured. */
-const truthy = (v: unknown): boolean => Boolean(v);
+export const truthy = (v: unknown): boolean => Boolean(v);
 
 /**
  * `x in [ … ]` is MEMBERSHIP in JSMQL — `$in` — and not JavaScript's key test.
@@ -588,8 +588,8 @@ function methodCall(node: Any, env: Constants, depth: number): Evaluation {
       ? foldNamespaceCall(receiverNode.name as string, name, args)
       : foldInstanceCall(receiverValue, name, args);
   } catch (e) {
-    // A non-constant callback, a predicate that did not answer with a boolean,
-    // or a built-in that threw. None of them fold; none of them are errors here —
+    // A non-constant callback, a value with no key spelling, or a built-in that
+    // threw. None of them fold; none of them are errors here —
     // except a callback whose answer has no literal, which is worth saying.
     if (e instanceof UnspellableInCallback) return unspellable(e.what);
     return NOT_CONSTANT;

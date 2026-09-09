@@ -10,6 +10,74 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — feat: the elements as a sort key, a negative splice start, and five deferred rows closed
+
+Three deferred rows ship together because measuring each one turned up a defect
+beside it, and the fixes belong with the features that exposed them.
+
+`.toSorted((a, b) => a - b)` now sorts by the ELEMENTS rather than by a field. It
+emits `{ $sortArray: { input, sortBy: 1 } }`, which is the document the no-argument
+form already emits, and `b - a` gives `-1`. `.sortBy` and `.orderBy` take the same
+shape. A STREAM refuses it, and that refusal is load-bearing rather than
+conservative: a `$sort` stage sorts by field NAME, and the server says so twice —
+`{ $sort: 1 }` is "the $sort key specification must be an object", and
+`{ $sort: { $literal: 1 } }` is "FieldPath field names may not start with '$'". The
+guard therefore sits in the StageIn constructor at
+[src/compiler/emit/inputs.ts](src/compiler/emit/inputs.ts), not on the row:
+[src/registry/names.ts](src/registry/names.ts) never throws and imports no error
+class, so narrowing the stream road's ask to `StageSortAsk` is what lets TypeScript
+prove `sortStages` can never receive the new kind. One divergence is accepted on
+purpose: `$sortArray` with a bare direction runs on ANY array and orders it by BSON
+rules, where JavaScript's `a - b` yields NaN on a non-number and leaves the order
+alone. The developer wrote a numeric comparator, so jsmql honours the token they
+typed and MongoDB answers the rest — the "JS SYNTAX, not JS BEHAVIOUR" reading.
+
+`.toSpliced()` now counts a negative start from the end, through the same
+`resolveSliceIndex` helper `.slice` uses. Measuring the old cell found two defects
+that had nothing to do with negatives. `$.a.toSpliced(2)` was an IDENTITY — it
+answered `[1,2,3]` where JavaScript answers `[1,2]` — because the omitted
+deleteCount fell back to the start instead of the end. And a negative start read at
+run time compiled happily and returned garbage: `$.a.toSpliced($.i, 1)` with
+`i = -1` answered `[3,1,2,3]`, because a two-argument `$slice` reads a negative
+count as "the last n". All 24 shapes now equal JavaScript's answer on a live
+mongod. The bindings nest one level deeper than before, because a `$let` variable
+cannot see a sibling in its own `vars` block and a start counted from the end has
+to read the receiver's length.
+
+`.split("")` is now refused. It emitted `{ $split: [<string>, ""] }`, which mongod
+rejects outright — "$split requires a non-empty separator" — so the compiler was
+knowingly emitting MQL that cannot run, on the method road and through the direct
+`$split(…)` operator alike. The registry already carried the fact this needed
+(`nonEmpty`), and the refusal names the one spelling that actually returns a
+string's characters: `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`,
+which answers per code point and so agrees with JavaScript on "café".
+
+Constant folding covers six more families — `.flat()`, `.truncate()`, `.ceil(p)`,
+`.floor(p)`, `.round(p)`, `.min()`/`.max()` over strings, `.sortBy("field")`, and a
+predicate that answers a plain value — taking the gate in
+[test/fold-consistency.test.ts](test/fold-consistency.test.ts) from 700 of 793
+cases to 756 of 785. Two of those fixed a fold that DISAGREED with the server, which
+is the worst kind of bug this pass can have: `[3, 1, 2].sortBy("x")` folded to
+`[1,2,3]` where the server leaves the list alone, because a non-lambda argument was
+read as a direction instead of as a field name; and `(-0.5).round()` folded to `+0`
+where the server answers `-0`. `$round` rounds in DECIMAL, and scaling by
+`10 ** places` decides on a perturbed number — `(2.675).round(2)` is 2.68 that way
+and 2.67 on the server — so the rounding decision is now made on the double's exact
+value as an integer. What still does not fold is withheld on purpose and says why:
+a read that can find nothing, a zip over lists of unequal length, and an answer of
+`-0`, which has no literal spelling.
+
+Two rows closed without code. DEF-006 asked for a `jsmql.updateDoc()` entry point;
+`jsmql.update()` already IS the classic update-document form, and every operator
+the row listed answers. DEF-010 asked for `let a = …, b = …;` in one statement, and
+its own proposed output is wrong: `$set` evaluates every field against the stage's
+INPUT document, so on `{ x: 10 }` the combined stage answers `b: null` where two
+stages answer `b: 11`. Combining would be correct only when no binding reads an
+earlier one, which would make the stage count depend on what the author happened to
+write.
+
+---
+
 ## 2026-09-09 — chore: the published bundle carries the fixes it is supposed to
 
 `dist/jsmql.js` is the one build output GitHub Pages serves, and `playground.html`

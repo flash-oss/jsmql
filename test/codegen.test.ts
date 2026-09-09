@@ -2410,6 +2410,17 @@ describe("method arg-count errors (one formatter over the row's `args`)", () => 
   it("exact count names the parameters in the signature", () => {
     expect(() => jsmql.expr("$.s.charAt()")).toThrow("'.charAt(index)' requires exactly 1 argument, got 0");
     expect(() => jsmql.expr('$.s.split("a", "b")')).toThrow("'.split(separator)' requires exactly 1 argument, got 2");
+  });
+  // MEASURED on mongod: `{ $split: ["$s", ""] }` is "$split requires a non-empty separator",
+  // and MongoDB has no operator that splits a string into its characters (HR3).
+  it(".split() refuses an empty separator on both roads, and names a spelling that works", () => {
+    const message =
+      "needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.";
+    expect(() => jsmql.expr('$.s.split("")')).toThrow(`'.split()' ${message}`);
+    expect(() => jsmql.expr('"abc".split("")')).toThrow(`'.split()' ${message}`);
+    expect(() => jsmql.expr('$split($.s, "")')).toThrow(`'$split' ${message}`);
+    // the spelling the refusal names does compile, and answers per code point
+    expect(jsmql.expr("$range(0, $.s.length).map(i => $.s.charAt(i))")).toMatchObject({ $map: {} });
     expect(() => jsmql.expr('$.s.replace("a")')).toThrow(
       "'.replace(find, replacement)' requires exactly 2 arguments, got 1",
     );
@@ -4348,7 +4359,9 @@ describe("block-body arrow lambdas (→ nested $let)", () => {
     it("object-form operators keep the receiver unwrapped (no splicing there)", () => {
       // `input:` is a named value slot, not an argument list — wrapping would break it.
       expect(jsmql.expr("[1, 2].map(a => a)")).toEqual([1, 2]);
-      expect(jsmql.expr("[1, 2].filter(a => a)")).toMatchObject({ $filter: { input: [1, 2], as: "a" } });
+      // a constant predicate folds the whole call away, so the shape is read through one
+      // the fold declines: `$$ROOT` is not a value the pass can carry
+      expect(jsmql.expr("[1, 2].filter(a => a === $.n)")).toMatchObject({ $filter: { input: [1, 2], as: "a" } });
     });
   });
 
@@ -4466,8 +4479,16 @@ describe("immutable array methods", () => {
   it(".toSorted() with no comparator → ascending", () => {
     expect(jsmql.expr("$.scores.toSorted()")).toEqual({ $sortArray: { input: "$scores", sortBy: 1 } });
   });
-  it(".toSorted with comparator throws helpful error", () => {
-    expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toThrow(
+  it(".toSorted((a, b) => a - b) sorts by the elements themselves", () => {
+    expect(jsmql.expr("$.scores.toSorted((a, b) => a - b)")).toEqual({ $sortArray: { input: "$scores", sortBy: 1 } });
+    expect(jsmql.expr("$.scores.toSorted((a, b) => b - a)")).toEqual({ $sortArray: { input: "$scores", sortBy: -1 } });
+  });
+  it(".toSorted() takes the whole element only as the whole body", () => {
+    // a `||` joins KEYS, and an element that IS the key admits no tiebreaker
+    expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - b || a.k - b.k)")).toThrow(
+      ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+    );
+    expect(() => jsmql.expr("$.scores.toSorted((a, b) => a - c)")).toThrow(
       ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
     );
   });
@@ -4594,28 +4615,33 @@ describe("array method additions", () => {
   it(".toSpliced(s, dc, ...items) builds a 3-piece $concatArrays", () => {
     expect(jsmql.expr('$.xs.toSpliced(1, 2, "a", "b")')).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs", jsmqlStart: 1 },
+        vars: { jsmqlArr: "$xs" },
         in: {
           $let: {
-            vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 2] } },
+            vars: { jsmqlStart: { $min: [1, { $size: "$$jsmqlArr" }] } },
             in: {
-              $concatArrays: [
-                { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
-                ["a", "b"],
-                {
-                  $cond: [
-                    { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 2] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    ["a", "b"],
                     {
-                      $slice: [
-                        "$$jsmqlArr",
-                        "$$jsmqlTailStart",
-                        { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
                       ],
                     },
-                    [],
                   ],
                 },
-              ],
+              },
             },
           },
         },
@@ -4625,37 +4651,78 @@ describe("array method additions", () => {
   it(".toSpliced(s) with no deleteCount removes to end", () => {
     expect(jsmql.expr("$.xs.toSpliced(2)")).toEqual({
       $let: {
-        vars: { jsmqlArr: "$xs", jsmqlStart: 2 },
+        vars: { jsmqlArr: "$xs" },
         in: {
           $let: {
-            vars: { jsmqlTailStart: "$$jsmqlStart" },
+            vars: { jsmqlStart: { $min: [2, { $size: "$$jsmqlArr" }] } },
             in: {
-              $concatArrays: [
-                { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
-                [],
-                {
-                  $cond: [
-                    { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+              $let: {
+                vars: { jsmqlTailStart: { $size: "$$jsmqlArr" } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
                     {
-                      $slice: [
-                        "$$jsmqlArr",
-                        "$$jsmqlTailStart",
-                        { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
                       ],
                     },
-                    [],
                   ],
                 },
-              ],
+              },
             },
           },
         },
       },
     });
   });
-  it(".toSpliced with negative start literal throws", () => {
-    expect(() => jsmql.expr("$.xs.toSpliced(-1, 1)")).toThrow(
-      "'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.",
+  it(".toSpliced counts a negative start from the end", () => {
+    expect(jsmql.expr("$.xs.toSpliced(-1, 1)")).toEqual({
+      $let: {
+        vars: { jsmqlArr: "$xs" },
+        in: {
+          $let: {
+            vars: { jsmqlStart: { $max: [{ $subtract: [{ $size: "$$jsmqlArr" }, 1] }, 0] } },
+            in: {
+              $let: {
+                vars: { jsmqlTailStart: { $add: ["$$jsmqlStart", 1] } },
+                in: {
+                  $concatArrays: [
+                    { $slice: ["$$jsmqlArr", "$$jsmqlStart"] },
+                    [],
+                    {
+                      $cond: [
+                        { $gt: [{ $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] }, 0] },
+                        {
+                          $slice: [
+                            "$$jsmqlArr",
+                            "$$jsmqlTailStart",
+                            { $subtract: [{ $size: "$$jsmqlArr" }, "$$jsmqlTailStart"] },
+                          ],
+                        },
+                        [],
+                      ],
+                    },
+                  ],
+                },
+              },
+            },
+          },
+        },
+      },
+    });
+  });
+  it(".toSpliced still refuses a negative deleteCount", () => {
+    expect(() => jsmql.expr("$.xs.toSpliced(1, -1)")).toThrow(
+      "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
     );
   });
   it(".with(i, v) replaces an element by index", () => {

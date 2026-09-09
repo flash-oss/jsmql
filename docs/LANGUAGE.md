@@ -1458,6 +1458,9 @@ $.name.substring(1)                // { $substrCP: ["$name", 1, { $max: [0, { $s
 "hello".slice(1, 3)                // { $substrCP: ["hello", 1, 2] }   — `.slice` on a string-typed receiver
 "hello".slice(-3)                  // { $substrCP: ["hello", 2, 3] }   — negative counts from end (folded: "hello" is 5 long)
 $.csv.split(",")                   // { $split: ["$csv", ","] }
+$.csv.split("")                    // REFUSED: MongoDB's `$split` needs a non-empty separator, and it
+                                   // has no split-into-characters form. For one character per element
+                                   // write `$range(0, $.csv.length).map(i => $.csv.charAt(i))`.
 $.email.toLowerCase().indexOf("@") // { $indexOfCP: [{ $toLower: "$email" }, "@"] }
 $.text.replace("old", "new")       // { $replaceOne: { input: "$text", find: "old", replacement: "new" } }
 $.text.replaceAll(" ", "_")        // { $replaceAll: { input: "$text", find: " ", replacement: "_" } }
@@ -1572,10 +1575,18 @@ $.scores.toSorted(s => s.value)
                            // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }
 $.scores.toSorted(s => -s.value)
                            // { $sortArray: { input: "$scores", sortBy: { value: -1 } } } (descending)
+$.scores.toSorted((a, b) => a.value - b.value)
+                           // { $sortArray: { input: "$scores", sortBy: { value: 1 } } }  — a comparator
+$.scores.toSorted((a, b) => a - b)
+                           // { $sortArray: { input: "$scores", sortBy: 1 } }   — the ELEMENTS are the key
+$.scores.toSorted((a, b) => b - a)
+                           // { $sortArray: { input: "$scores", sortBy: -1 } }  (descending)
 $.items.with(0, 99)        // immutable index-set — replace element at index, returns new array (ES2023)
 $.items.toSpliced(1, 2)    // immutable splice — remove 2 items starting at 1 (ES2023)
 $.items.toSpliced(1, 0, "x", "y")
                            // immutable insert — insert items without removing
+$.items.toSpliced(2)       // no count removes everything from index 2 on, as JavaScript does
+$.items.toSpliced(-1, 1)   // a negative start counts from the END, and both ends clamp
 [1, 2].concat([3, 4])      // { $concatArrays: [[1, 2], [3, 4]] }   (array-typed)
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)

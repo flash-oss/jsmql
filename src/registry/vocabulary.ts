@@ -955,7 +955,11 @@ export type MongoExprIn = Pick<ExprIn, "name" | "recv" | "args" | "keys" | "valu
  */
 export type SortAsk =
   | { readonly kind: "keys"; readonly spec: Readonly<Record<string, 1 | -1>> }
-  | { readonly kind: "computed"; readonly key: Expr; readonly dir: 1 | -1 };
+  | { readonly kind: "computed"; readonly key: Expr; readonly dir: 1 | -1 }
+  | { readonly kind: "whole"; readonly dir: 1 | -1; readonly params: readonly [string, string]; readonly pos: number };
+
+/** A sort ask a `$sort` STAGE can carry: never the whole element, which has no field name. */
+export type StageSortAsk = Exclude<SortAsk, { kind: "whole" }>;
 
 export type StageIn = {
   /** This entry's own key. See FilterIn.name. */
@@ -994,9 +998,9 @@ export type StageIn = {
    * `objects: false` refuses the spec form, where the method reads an object as
    * a lodash matcher (`.sortBy`).
    */
-  sortSpec: (e: Expr, objects?: boolean) => SortAsk;
+  sortSpec: (e: Expr, objects?: boolean) => StageSortAsk;
   /** lodash's `orderBy(keys, orders)`, the two arguments as one ask. */
-  orderBy: (keys: Expr, orders: Expr | undefined) => SortAsk;
+  orderBy: (keys: Expr, orders: Expr | undefined) => StageSortAsk;
   /** A fresh `__jsmql.tmp.<n>` scratch field path; the chain's cleanup drops it. */
   slot: () => string;
   bind: (hint: string) => { as: string; ref: string };

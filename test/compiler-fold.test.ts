@@ -127,10 +127,30 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
     expect(valueOf('"hello".repeat(-1)')).toBe("(not constant)");
   });
 
-  it("refuses a predicate that does not answer with a boolean", () => {
-    // JavaScript's truthiness and MongoDB's part company on `""` and `0`.
-    expect(valueOf("[1, 2].some(x => 1)")).toBe("(not constant)");
-    expect(valueOf('[1, 2].filter(x => "yes")')).toBe("(not constant)");
+  it("reads a predicate's answer the way the emitted condition does", () => {
+    // The array lowering writes JavaScript's truthiness out as four `$ne`s, so a
+    // predicate answering a plain value folds — measured against the server, both ways.
+    expect(valueOf("[1, 2].some(x => 1)")).toBe(true);
+    expect(valueOf('[1, 2].filter(x => "yes")')).toEqual([1, 2]);
+    expect(valueOf('[0, 1, "", "a", null].filter(x => x)')).toEqual([1, "a"]);
+  });
+
+  it("rounds in DECIMAL, the way $round does", () => {
+    // Scaling by `10 ** places` makes the rounding decision on a perturbed number:
+    // `(2.675).round(2)` is 2.68 that way and 2.67 on the server, because 2.675 is
+    // really 2.67499999999999982. Each of these is measured against mongod.
+    expect(valueOf("(2.675).round(2)")).toBe(2.67);
+    expect(valueOf("(1.005).round(2)")).toBe(1);
+    expect(valueOf("(8.835).round(2)")).toBe(8.84);
+    expect(valueOf("(99.995).round(2)")).toBe(100);
+    expect(valueOf("(-2.675).round(2)")).toBe(-2.67);
+    expect(valueOf("(12345).round(-2)")).toBe(12300);
+    // a half goes to the EVEN neighbour, at any place
+    expect(valueOf("(2.5).round()")).toBe(2);
+    expect(valueOf("(-2.5).round()")).toBe(-2);
+    // and a negative number rounding to zero answers -0, which has no literal spelling
+    expect(valueOf("(-0.5).round()")).toBe("(not constant)");
+    expect(valueOf("(-0.4).round()")).toBe("(not constant)");
   });
 
   it("refuses arithmetic JavaScript cannot hold exactly", () => {
@@ -178,10 +198,6 @@ describe("compiler/passes/fold — what a fold may not produce", () => {
   });
 
   it("refuses what it cannot compute the way the server would", () => {
-    // Reproducing `$round`'s decimal arithmetic by scaling makes the rounding
-    // decision on a perturbed number: `(2.675).round(2)` is 2.68 that way, 2.67
-    // on the server. A place count other than zero stays runtime.
-    expect(valueOf("(2.675).round(2)")).toBe("(not constant)");
     // `-0` is a DOUBLE to the driver where the same arithmetic gives an int `0`.
     expect(valueOf("0 * -7")).toBe("(not constant)");
     // `$toString` of a double and JavaScript's own formatting differ on exponents.

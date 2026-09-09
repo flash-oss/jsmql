@@ -1614,7 +1614,7 @@
       "src": "[1,2,3].some(x => x)",
       "kind": "output",
       "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
-      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":true}",
       "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
     },
     "jsmql\u0000[1,2,3].every(x => x)": {
@@ -1622,7 +1622,7 @@
       "src": "[1,2,3].every(x => x)",
       "kind": "output",
       "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
-      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":true}",
       "reason": "Intended, an HR3 fix that also makes the two targets AGREE. `.some()` / `.every()` mapped the predicate over the raw receiver, and `$anyElementTrue` / `$allElementsTrue` abort the whole command on a non-array — so ONE document missing the field killed the query. The same predicate in Filter position lowers to `$elemMatch`, which simply does not match. The two targets answered differently and one of the answers was 'your query is dead'. The `$map` input is now `$ifNull[recv, []]`, so a missing receiver gives `false` for `.some` and `true` for `.every` — matching `$elemMatch` AND JavaScript's own `[].some` / `[].every`. Verified on a live mongod over docs with a match, a non-match, an empty array and a missing field: both targets select [1] and [1,3,4] respectively. Only `$ifNull` — a receiver that is PRESENT but wrongly typed still aborts, which is the line the rest of the array surface draws, and changing that is a separate decision."
     },
     "expr\u0000[1,2,3].take(2)": {
@@ -1662,14 +1662,6 @@
       "src": "[1,2,3].map(x => x)",
       "kind": "output",
       "was": "{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}}",
-      "now": "[1,2,3]",
-      "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
-    },
-    "expr\u0000[1,2,3].sortBy('t')": {
-      "entry": "expr",
-      "src": "[1,2,3].sortBy('t')",
-      "kind": "output",
-      "was": "{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}}",
       "now": "[1,2,3]",
       "reason": "equivalent: the fold settles a constant expression to its value; the shipped compiler lowered the same constants to an operator the server evaluates to that value."
     },
@@ -1854,14 +1846,6 @@
       "src": "[1,2,3].map(x => x)",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},null]},null]},{\"$ne\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},false]},{\"$ne\":[{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":\"$$x\"}},\"\"]",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
-      "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
-    },
-    "filter\u0000[1,2,3].sortBy('t')": {
-      "entry": "filter",
-      "src": "[1,2,3].sortBy('t')",
-      "kind": "output",
-      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\"",
       "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
       "reason": "equivalent: the fold settles a constant expression to its value inside the filter's $expr truthiness check; the shipped lowered the same constants to an operator the server evaluates to that value."
     },
@@ -5118,7 +5102,7 @@
       "src": "[1,2,3].some(x => x)",
       "kind": "output",
       "was": "{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
-      "now": "{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "true",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000[1,2,3].every(x => x)": {
@@ -5126,7 +5110,7 @@
       "src": "[1,2,3].every(x => x)",
       "kind": "output",
       "was": "{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
-      "now": "{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}",
+      "now": "true",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "expr\u0000\"abc\".take(2)": {
@@ -5750,7 +5734,7 @@
       "src": "[1,2,3].some(x => x)",
       "kind": "output",
       "was": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
-      "now": "{\"$expr\":{\"$anyElementTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":true}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000[1,2,3].every(x => x)": {
@@ -5758,7 +5742,7 @@
       "src": "[1,2,3].every(x => x)",
       "kind": "output",
       "was": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":[1,2,3],\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
-      "now": "{\"$expr\":{\"$allElementsTrue\":{\"$map\":{\"input\":{\"$ifNull\":[[1,2,3],[]]},\"as\":\"x\",\"in\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}}}",
+      "now": "{\"$expr\":true}",
       "reason": "intended: the value cell's shape, measured byte-equal with the shipped output for every accepted spelling (test/compiler-methods.test.ts runs each on mongod against the JavaScript answer); a difference is a constant the fold settled, a minted variable's injective name, or the query road's `$expr` over the cell."
     },
     "filter\u0000\"abc\".take(2)": {
@@ -7652,9 +7636,9 @@
     "expr\u0000$.scores.toSorted((a, b) => a - b)": {
       "entry": "expr",
       "src": "$.scores.toSorted((a, b) => a - b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": "{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}}",
       "reason": "message: both compilers refuse `$.scores.toSorted((a, b) => a - b)`; only the wording changes. The new text names the required comparator shape with the user's own parameter names and carries a real `.pos` (30) at the subtraction, where the old text pointed at `$op($sortArray, …)`."
     },
     "expr\u0000$.items.findLastIndex(x => x.active)": {
@@ -7678,7 +7662,7 @@
       "src": "$.xs.toSpliced(1, 2, \"a\", \"b\")",
       "kind": "output",
       "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[\"a\",\"b\"],{\"$slice\":[\"$$jsmqlArr\",\"$",
-      "now": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[\"a\",\"b\"],{\"$cond\":[{\"$gt\":[{\"$subtrac",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr",
       "reason": "shippedBug: fifteen of the 201 sources compile to MQL mongod refuses under the old compiler — `$arrayToObject` with two operands for `Object.fromEntries([[\"a\",1],[\"b\",2]])`, \"Third argument to $slice must be positive: 0\" for `.toSpliced` / `.splice` / `.with`, and `$size` of null for `.size()` / `.zip()` / `.fill` — while the new documents run and return JavaScript's answer, and the old also answered `Math.cbrt(-27)` as null (now -3), `new Date(2024,1,15)` as January (now February, JS months count from 0), and `.maxBy(\"x\")` with the LAST tied element (now the first, which is lodash's). The other 186 rows are shape-only or documented decisions: 54 differ solely by a consistently renamed binder, and 190 of 201 return byte-identical documents on mongod."
     },
     "expr\u0000$.xs.toSpliced(2)": {
@@ -7686,15 +7670,15 @@
       "src": "$.xs.toSpliced(2)",
       "kind": "output",
       "was": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[],{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlTailStart\",{\"$",
-      "now": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[],{\"$cond\":[{\"$gt\":[{\"$subtract\":[{\"$size\":\"$$jsmq",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[2,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$size\":\"$$jsmqlArr\"}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$",
       "reason": "shippedBug: fifteen of the 201 sources compile to MQL mongod refuses under the old compiler — `$arrayToObject` with two operands for `Object.fromEntries([[\"a\",1],[\"b\",2]])`, \"Third argument to $slice must be positive: 0\" for `.toSpliced` / `.splice` / `.with`, and `$size` of null for `.size()` / `.zip()` / `.fill` — while the new documents run and return JavaScript's answer, and the old also answered `Math.cbrt(-27)` as null (now -3), `new Date(2024,1,15)` as January (now February, JS months count from 0), and `.maxBy(\"x\")` with the LAST tied element (now the first, which is lodash's). The other 186 rows are shape-only or documented decisions: 54 differ solely by a consistently renamed binder, and 190 of 201 return byte-identical documents on mongod."
     },
     "expr\u0000$.xs.toSpliced(-1, 1)": {
       "entry": "expr",
       "src": "$.xs.toSpliced(-1, 1)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSpliced() with a negative start index isn't supported — MongoDB $slice's position arg is non-negative.",
-      "now": "'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.",
+      "now": "{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",1]}},\"in\":{\"$concatArrays\":[{\"$s",
       "reason": "message: both compilers refuse `$.xs.toSpliced(-1, 1)`; only the wording changes. The new message states the accepted range for argument 1 and sets `.pos` at the `-1`, instead of naming MongoDB's `$slice` position argument."
     },
     "expr\u0000$.xs.with(1, 99)": {
@@ -11060,9 +11044,9 @@
     "filter\u0000$.scores.toSorted((a, b) => a - b)": {
       "entry": "filter",
       "src": "$.scores.toSorted((a, b) => a - b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},\"\"]},{",
       "reason": "message: both compilers refuse `$.scores.toSorted((a, b) => a - b)`; only the wording changes. The new text names the required comparator shape with the user's own parameter names and carries a real `.pos` (30) at the subtraction, where the old text pointed at `$op($sortArray, …)`."
     },
     "filter\u0000$.items.findLastIndex(x => x.active)": {
@@ -11086,7 +11070,7 @@
       "src": "$.xs.toSpliced(1, 2, \"a\", \"b\")",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"",
       "reason": "shippedBug: fifteen of the 201 sources compile to MQL mongod refuses under the old compiler — `$arrayToObject` with two operands for `Object.fromEntries([[\"a\",1],[\"b\",2]])`, \"Third argument to $slice must be positive: 0\" for `.toSpliced` / `.splice` / `.with`, and `$size` of null for `.size()` / `.zip()` / `.fill` — while the new documents run and return JavaScript's answer, and the old also answered `Math.cbrt(-27)` as null (now -3), `new Date(2024,1,15)` as January (now February, JS months count from 0), and `.maxBy(\"x\")` with the LAST tied element (now the first, which is lodash's). The other 186 rows are shape-only or documented decisions: 54 differ solely by a consistently renamed binder, and 190 of 201 return byte-identical documents on mongod."
     },
     "filter\u0000$.xs.toSpliced(2)": {
@@ -11094,15 +11078,15 @@
       "src": "$.xs.toSpliced(2)",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[],{\"$slice",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[],{\"$cond\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[2,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$size\":\"$$jsmqlArr\"}},\"in\":{\"$conc",
       "reason": "shippedBug: fifteen of the 201 sources compile to MQL mongod refuses under the old compiler — `$arrayToObject` with two operands for `Object.fromEntries([[\"a\",1],[\"b\",2]])`, \"Third argument to $slice must be positive: 0\" for `.toSpliced` / `.splice` / `.with`, and `$size` of null for `.size()` / `.zip()` / `.fill` — while the new documents run and return JavaScript's answer, and the old also answered `Math.cbrt(-27)` as null (now -3), `new Date(2024,1,15)` as January (now February, JS months count from 0), and `.maxBy(\"x\")` with the LAST tied element (now the first, which is lodash's). The other 186 rows are shape-only or documented decisions: 54 differ solely by a consistently renamed binder, and 190 of 201 return byte-identical documents on mongod."
     },
     "filter\u0000$.xs.toSpliced(-1, 1)": {
       "entry": "filter",
       "src": "$.xs.toSpliced(-1, 1)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSpliced() with a negative start index isn't supported — MongoDB $slice's position arg is non-negative.",
-      "now": "'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlS",
       "reason": "message: both compilers refuse `$.xs.toSpliced(-1, 1)`; only the wording changes. The new message states the accepted range for argument 1 and sets `.pos` at the `-1`, instead of naming MongoDB's `$slice` position argument."
     },
     "filter\u0000$.xs.with(1, 99)": {
@@ -17785,14 +17769,6 @@
       "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
       "reason": "message: both compilers refuse all 1164 sources for the same reason — jsmql.pipeline() gets a value, not a pipeline — and each throws a CodegenError whose .pos falls inside the source and whose text names the way out (the old one names jsmql.filter()/jsmql() and the $match(…) wrap; the new one names jsmql() and jsmql.expr()). Only the wording moves: the refusal now lives in the compiler's notAPipeline (src/compiler/emit/errors.ts:463), while the public entry src/index.ts keeps the API-named phrasing that docs/specs/strict-shape-entries.md:38 shows."
     },
-    "pipeline\u0000[1, 2].filter(a => a)": {
-      "entry": "pipeline",
-      "src": "[1, 2].filter(a => a)",
-      "kind": "message",
-      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
-      "reason": "message: both compilers refuse all 1164 sources for the same reason — jsmql.pipeline() gets a value, not a pipeline — and each throws a CodegenError whose .pos falls inside the source and whose text names the way out (the old one names jsmql.filter()/jsmql() and the $match(…) wrap; the new one names jsmql() and jsmql.expr()). Only the wording moves: the refusal now lives in the compiler's notAPipeline (src/compiler/emit/errors.ts:463), while the public entry src/index.ts keeps the API-named phrasing that docs/specs/strict-shape-entries.md:38 shows."
-    },
     "pipeline\u0000[[1, 2], [3]].join(\",\")": {
       "entry": "pipeline",
       "src": "[[1, 2], [3]].join(\",\")",
@@ -17910,7 +17886,7 @@
       "src": "$.scores.toSorted((a, b) => a - b)",
       "kind": "message",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
       "reason": "message: both compilers refuse all 1164 sources for the same reason — jsmql.pipeline() gets a value, not a pipeline — and each throws a CodegenError whose .pos falls inside the source and whose text names the way out (the old one names jsmql.filter()/jsmql() and the $match(…) wrap; the new one names jsmql() and jsmql.expr()). Only the wording moves: the refusal now lives in the compiler's notAPipeline (src/compiler/emit/errors.ts:463), while the public entry src/index.ts keeps the API-named phrasing that docs/specs/strict-shape-entries.md:38 shows."
     },
     "pipeline\u0000$.items.toReversed().map(x => x.name)": {
@@ -17990,7 +17966,7 @@
       "src": "$.xs.toSpliced(-1, 1)",
       "kind": "message",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
       "reason": "message: both compilers refuse all 1164 sources for the same reason — jsmql.pipeline() gets a value, not a pipeline — and each throws a CodegenError whose .pos falls inside the source and whose text names the way out (the old one names jsmql.filter()/jsmql() and the $match(…) wrap; the new one names jsmql() and jsmql.expr()). Only the wording moves: the refusal now lives in the compiler's notAPipeline (src/compiler/emit/errors.ts:463), while the public entry src/index.ts keeps the API-named phrasing that docs/specs/strict-shape-entries.md:38 shows."
     },
     "pipeline\u0000$.xs.with(1, 99)": {
@@ -18190,7 +18166,7 @@
       "src": "$.xs.splice(1, 2)",
       "kind": "now-accepted",
       "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
-      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[],{\"$cond\":[{\"$gt\":[{\"",
+      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slic",
       "reason": "shippedBug: the shipped compiler's own jsmql() already compiles the eleven mutator sources to exactly the $set pipeline the new compiler now returns, yet its jsmql.pipeline() refused them as \"a bare expression that would lower to a Filter document\" and named jsmql.filter(), which throws its own \".sort() mutates the array\" error — so the strict entry contradicted the road the same compiler took and left no working call, against the strict-shape contract that the entries \"add no lowering of their own: they narrow what is accepted\". The two Object.assign($.a, …) keys now read the semicolon-less call as JavaScript's mutating assign, the same statement reading the mutators get, instead of the old truthiness filter that silently dropped the mutation."
     },
     "pipeline\u0000$.xs.push(1)": {
@@ -19926,7 +19902,7 @@
       "src": "$.events.splice(0, 2, 99);",
       "kind": "output",
       "was": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[99],{\"$slice",
-      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[99],{\"$cond\":[",
+      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlS",
       "reason": "shippedBug: fifteen of the 201 sources compile to MQL mongod refuses under the old compiler — `$arrayToObject` with two operands for `Object.fromEntries([[\"a\",1],[\"b\",2]])`, \"Third argument to $slice must be positive: 0\" for `.toSpliced` / `.splice` / `.with`, and `$size` of null for `.size()` / `.zip()` / `.fill` — while the new documents run and return JavaScript's answer, and the old also answered `Math.cbrt(-27)` as null (now -3), `new Date(2024,1,15)` as January (now February, JS months count from 0), and `.maxBy(\"x\")` with the LAST tied element (now the first, which is lodash's). The other 186 rows are shape-only or documented decisions: 54 differ solely by a consistently renamed binder, and 190 of 201 return byte-identical documents on mongod."
     },
     "pipeline\u0000$.events.fill(0);": {
@@ -26630,7 +26606,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x + b.x);",
       "kind": "message",
       "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
-      "now": ".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'.",
+      "now": ".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'. To order the elements themselves, drop the field: 'a - b'.",
       "reason": "message: both compilers refuse the comparator body `a.x + b.x`; the new text shows the two shapes that work with a concrete field name instead of a placeholder."
     },
     "pipeline\u0000$$ = $$.toSorted((a, b) => a.x - b.y);": {
@@ -26638,7 +26614,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x - b.y);",
       "kind": "message",
       "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
       "reason": "message: both compilers refuse the comparator `a.x - b.y`; the new text diagnoses the actual fault — the two parameters must give the SAME field — where the old one restated the whole grammar."
     },
     "pipeline\u0000$$ = $$.flatMap(d => d.items.map(x => x * 2));": {
@@ -36713,14 +36689,6 @@
       "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
       "reason": "Intended: 'jsmql.update()' is the update DOCUMENT ({ $set, $inc, $unset, … }, constants only) that 'updateOne(filter, update)' takes; the reference returned the aggregation-PIPELINE update form. Both refuse this source — it is neither a write nor an update operator — and the new message lists the four spellings a document-form update accepts and names the pipeline form for anything computed. See docs/specs/update-filter.md."
     },
-    "update\u0000[1, 2].filter(a => a)": {
-      "entry": "update",
-      "src": "[1, 2].filter(a => a)",
-      "kind": "message",
-      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
-      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
-      "reason": "Intended: 'jsmql.update()' is the update DOCUMENT ({ $set, $inc, $unset, … }, constants only) that 'updateOne(filter, update)' takes; the reference returned the aggregation-PIPELINE update form. Both refuse this source — it is neither a write nor an update operator — and the new message lists the four spellings a document-form update accepts and names the pipeline form for anything computed. See docs/specs/update-filter.md."
-    },
     "jsmql\u0000[[1, 2], [3]].join(\",\")": {
       "entry": "jsmql",
       "src": "[[1, 2], [3]].join(\",\")",
@@ -37028,9 +36996,9 @@
     "jsmql\u0000$.scores.toSorted((a, b) => a - b)": {
       "entry": "jsmql",
       "src": "$.scores.toSorted((a, b) => a - b)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":1}},\"\"]},{",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "update\u0000$.scores.toSorted((a, b) => a - b)": {
@@ -37046,7 +37014,7 @@
       "src": "$.scores.toSorted((a, b) => a - b)",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.\",\"pos\":30,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "update\u0000$.items.toReversed().map(x => x.name)": {
@@ -37134,7 +37102,7 @@
       "src": "$.xs.toSpliced(1, 2, \"a\", \"b\")",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"",
       "reason": "Intended, and it closes an HR3 hole wider than the previous reason claimed: the reference emitted MQL the server refuses. Its tail slice was `{$slice:[arr, tailStart, {$max:[0, size - tailStart]}]}`, and a three-argument `$slice` rejects a count of 0 (measured: \"Third argument to $slice must be positive: 0\"), which aborts the whole command. Measured on mongod, the reference fails on EVERY case I tried, not only when the deletion reaches the end — `toSpliced(1,2,\"a\",\"b\")`, `toSpliced(0,0,\"a\")` and `toSpliced(2,5,\"a\")` all abort, because the head `{$slice:[arr,0,start]}` hits the same rule when `start` is 0. The working tree guards the tail with `{$cond:[{$gt:[remaining,0]},{$slice:[…]},[]]}` and writes the head as the two-argument `{$slice:[arr,start]}`; over four receivers it returns `[3,\"a\",\"b\"]`, `[1,\"a\",\"b\"]`, `[\"a\",\"a\",\"b\",\"d\"]`, `[1,\"a\",\"b\",9]` — exactly JavaScript's own `.toSpliced(1,2,\"a\",\"b\")` on those receivers — and matches JavaScript on the other two shapes as well. The two-argument head form is not a hazard for a negative start: both compilers refuse a negative `toSpliced` start at compile time."
     },
     "update\u0000$.xs.toSpliced(1, 2, \"a\", \"b\")": {
@@ -37150,7 +37118,7 @@
       "src": "$.xs.toSpliced(2)",
       "kind": "output",
       "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[],{\"$slice",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":2},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":\"$$jsmqlStart\"},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[],{\"$cond\":[",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[2,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$size\":\"$$jsmqlArr\"}},\"in\":{\"$conc",
       "reason": "Intended: an HR3 fix — the reference emits a document mongod refuses on most arrays. Two slices changed. The head went from {$slice:[arr,0,start]} to {$slice:[arr,start]}, which returns the same first-N elements for a non-negative start, and the start IS non-negative because both compilers refuse a negative one at compile time (I checked `$.xs.toSpliced(-2)` on both). The tail gained a `$cond` guard on size-tailStart>0 in place of {$max:[0,…]} as the count, and that guard is the fix: MEASURED, a `$slice` count of 0 is rejected with \"Third argument to $slice must be positive: 0\". Over xs of [1,2,3,4] / [1,2] / [1] / []: the reference ABORTS on the last three (any array of two or fewer elements drives the count to 0) while the working tree returns [1,2,3,4] / [1,2] / [1] / []; on the one document where the reference runs, both answer [1,2,3,4]. Same value where the old one worked, plus it runs everywhere. Worth flagging separately, and I confirmed it in Node: BOTH compilers disagree with JavaScript here — [1,2,3,4].toSpliced(2) is [1,2], because an omitted deleteCount deletes to the end, and both emit a deleteCount of 0. That defect is pre-existing and unchanged by this refactor."
     },
     "update\u0000$.xs.toSpliced(2)": {
@@ -37164,9 +37132,9 @@
     "jsmql\u0000$.xs.toSpliced(-1, 1)": {
       "entry": "jsmql",
       "src": "$.xs.toSpliced(-1, 1)",
-      "kind": "message",
+      "kind": "now-accepted",
       "was": ".toSpliced() with a negative start index isn't supported — MongoDB $slice's position arg is non-negative.",
-      "now": "'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$max\":[{\"$subtract\":[{\"$size\":\"$$jsmqlArr\"},1]},0]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlS",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "update\u0000$.xs.toSpliced(-1, 1)": {
@@ -37182,7 +37150,7 @@
       "src": "$.xs.toSpliced(-1, 1)",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSpliced() with a negative start index isn't supported — MongoDB $slice's position arg is non-negative.\",\"pos\":15,\"code\":\"CODEGEN_ERROR\"}]}",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'toSpliced' argument 1 must be a number from 0 to Infinity — got -1.\",\"pos\":15,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "jsmql\u0000$.xs.with(1, 99)": {
@@ -37558,7 +37526,7 @@
       "src": "$.xs.splice(1, 2)",
       "kind": "output",
       "was": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[],{\"$slice\":[\"$$jsmq",
-      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\",\"jsmqlStart\":1},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[],{\"$cond\":[{\"$gt\":[{\"",
+      "now": "[{\"$set\":{\"xs\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$xs\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":{\"$min\":[1,{\"$size\":\"$$jsmqlArr\"}]}},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slic",
       "reason": "Intended, and it fixes invalid MQL. The reference's tail slice was `{$slice:[arr, tailStart, {$max:[0, size-tailStart]}]}`, whose third argument becomes 0 as soon as the array is shorter than `start+count`. I MEASURED that mongod refuses a three-argument `$slice` with a count of 0 outright (\"Third argument to $slice must be positive: 0\"), and the reference's whole pipeline therefore returned NOTHING over the collection — it errored, it did not merely mis-slice. The new form writes the head as the two-argument `$slice[arr, start]` (a count of 0 IS valid in that form — measured, it returns `[]`) and guards the tail with `$cond`. Over `[[10,20,30,40,50],[10,20],[10],[],[1,2,3]]` the new pipeline answers `[[10,40,50],[10],[10],[],[1]]`, identical to JavaScript's `splice(1,2)`; `splice(0,2)` likewise answers `[[30,40,50],[],[],[],[3]]`, identical to JavaScript, where the reference again errored."
     },
     "expr\u0000$.xs.splice(1, 2)": {
@@ -41110,7 +41078,7 @@
       "src": "$.events.splice(0, 2, 99);",
       "kind": "output",
       "was": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",0,\"$$jsmqlStart\"]},[99],{\"$slice",
-      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\",\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlStart\"]},[99],{\"$cond\":[",
+      "now": "[{\"$set\":{\"events\":{\"$let\":{\"vars\":{\"jsmqlArr\":\"$events\"},\"in\":{\"$let\":{\"vars\":{\"jsmqlStart\":0},\"in\":{\"$let\":{\"vars\":{\"jsmqlTailStart\":{\"$add\":[\"$$jsmqlStart\",2]}},\"in\":{\"$concatArrays\":[{\"$slice\":[\"$$jsmqlArr\",\"$$jsmqlS",
       "reason": "Intended: an HR3 fix, and here the reference's document never runs at all. With start = 0 its head slice is {$slice:[arr,0,0]}, and MEASURED that is rejected with \"Third argument to $slice must be positive: 0\" for EVERY document; its tail count {$max:[0,size-tailStart]} hits the same rejection whenever the array is shorter than start+2. The working tree writes the head as {$slice:[arr,start]} and guards the tail with {$cond:[{$gt:[{$subtract:[size,tailStart]},0]},{$slice:[…]},[]]}. MEASURED on mongod over events of [a,b,c,d] / [a,b,c] / [a,b] / [a] / []: the reference is rejected on all five, the working tree returns [99,\"c\",\"d\"] / [99,\"c\"] / [99] / [99] / [99] — identical to what Node's splice(0,2,99) leaves on the same arrays, which I ran to compare. A crash replaced by JavaScript's own answer."
     },
     "expr\u0000$.events.splice(0, 2, 99);": {
@@ -77294,7 +77262,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x + b.x);",
       "kind": "message",
       "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
-      "now": ".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'.",
+      "now": ".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'. To order the elements themselves, drop the field: 'a - b'.",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "expr\u0000$$ = $$.toSorted((a, b) => a.x + b.x);": {
@@ -77326,7 +77294,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x + b.x);",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes a",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'.\",\"pos\":31,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) compares one field of each: 'a.age - b.age', or 'b.age - a.age' for descending. Join keys with '||'. To order the elements themselves, drop the field: 'a - b'.\"",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "jsmql\u0000$$ = $$.toSorted((a, b) => a.x - b.y);": {
@@ -77334,7 +77302,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x - b.y);",
       "kind": "message",
       "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
-      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
       "reason": "Wording only — both compilers refuse this source, and only the message differs. The new one follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "expr\u0000$$ = $$.toSorted((a, b) => a.x - b.y);": {
@@ -77366,7 +77334,7 @@
       "src": "$$ = $$.toSorted((a, b) => a.x - b.y);",
       "kind": "output",
       "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes a",
-      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.\",\"pos\":31,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.\",\"pos\":31,\"code\":\"CODEGEN_ERROR\"}]}",
       "reason": "Wording only — both compilers refuse this source, and the difference is inside a `validate()` result rather than a throw. The new message follows the DX rules in CLAUDE.md: it names the position, and where a rewrite exists it names that too."
     },
     "expr\u0000$$ = $$.flatMap(d => d.items);": {
@@ -85841,14 +85809,6 @@
       "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
       "reason": "Intended: 'jsmql.update()' is the update DOCUMENT ({ $set, $inc, $unset, … }, constants only) that 'updateOne(filter, update)' takes; the reference returned the aggregation-PIPELINE update form. Both refuse this source — it is neither a write nor an update operator — and the new message lists the four spellings a document-form update accepts and names the pipeline form for anything computed. See docs/specs/update-filter.md."
     },
-    "jsmql\u0000[1,2,3].sortBy('t')": {
-      "entry": "jsmql",
-      "src": "[1,2,3].sortBy('t')",
-      "kind": "output",
-      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\":1}}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":[1,2,3],\"sortBy\":{\"t\"",
-      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
-      "reason": "Equivalent: the fold settles a constant expression to its value at compile time, where the reference emitted the operator over literal operands and let the server compute it. Every folded family is measured against the server's own answer for the same input (`test/compiler-fold-agrees.test.ts`), and a family whose answers could differ is withheld on purpose."
-    },
     "update\u0000[1,2,3].sortBy('t')": {
       "entry": "update",
       "src": "[1,2,3].sortBy('t')",
@@ -87944,6 +87904,758 @@
       "was": "{\"$expr\":{\"$in\":[\"$userId\",{\"$concatArrays\":[\"$moderators\",\"$room.mods\",[\"root\"]]}]}}",
       "now": "{\"$expr\":{\"$in\":[\"$userId\",{\"$ifNull\":[{\"$concatArrays\":[\"$moderators\",\"$room.mods\",[\"root\"]]},[]]}]}}",
       "reason": "Intended: `$in` and `$size` are the two array operators that ABORT the whole command on null — MEASURED, the other eight ($map, $filter, $slice, $reduce, $setUnion, $sortArray, $arrayElemAt, $concatArrays) answer null in turn. A reader over a MISSING field answers null, so a value the compiler proved is an array can still be null at run time: `$.items.map(x => x).length` aborted with \"The argument to $size must be an array, but was of type: null\". Both operands now take the `[]` neutral, and the answer for a missing field is 0 / false — what JavaScript gives for an empty array. One extra operator, in the two places the server would otherwise refuse the query outright."
+    },
+    "jsmql\u0000$.s.split(\"\")": {
+      "entry": "jsmql",
+      "src": "$.s.split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"$s\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},0]}]}}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "expr\u0000$.s.split(\"\")": {
+      "entry": "expr",
+      "src": "$.s.split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$split\":[\"$s\",\"\"]}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "filter\u0000$.s.split(\"\")": {
+      "entry": "filter",
+      "src": "$.s.split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"$s\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},0]}]}}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "pipeline\u0000$.s.split(\"\")": {
+      "entry": "pipeline",
+      "src": "$.s.split(\"\")",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "update\u0000$.s.split(\"\")": {
+      "entry": "update",
+      "src": "$.s.split(\"\")",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "'.split()' has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "validate\u0000$.s.split(\"\")": {
+      "entry": "validate",
+      "src": "$.s.split(\"\")",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "jsmql\u0000\"abc\".split(\"\")": {
+      "entry": "jsmql",
+      "src": "\"abc\".split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"abc\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},0]}]}}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "expr\u0000\"abc\".split(\"\")": {
+      "entry": "expr",
+      "src": "\"abc\".split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$split\":[\"abc\",\"\"]}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "filter\u0000\"abc\".split(\"\")": {
+      "entry": "filter",
+      "src": "\"abc\".split(\"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"abc\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"abc\",\"\"]},0]}]}}",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "pipeline\u0000\"abc\".split(\"\")": {
+      "entry": "pipeline",
+      "src": "\"abc\".split(\"\")",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "update\u0000\"abc\".split(\"\")": {
+      "entry": "update",
+      "src": "\"abc\".split(\"\")",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "validate\u0000\"abc\".split(\"\")": {
+      "entry": "validate",
+      "src": "\"abc\".split(\"\")",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'.split()' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "jsmql\u0000$split($.s, \"\")": {
+      "entry": "jsmql",
+      "src": "$split($.s, \"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"$s\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},0]}]}}",
+      "now": "'$split' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "expr\u0000$split($.s, \"\")": {
+      "entry": "expr",
+      "src": "$split($.s, \"\")",
+      "kind": "now-rejected",
+      "was": "{\"$split\":[\"$s\",\"\"]}",
+      "now": "'$split' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "filter\u0000$split($.s, \"\")": {
+      "entry": "filter",
+      "src": "$split($.s, \"\")",
+      "kind": "now-rejected",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$split\":[\"$s\",\"\"]},null]},null]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},false]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},\"\"]},{\"$ne\":[{\"$split\":[\"$s\",\"\"]},0]}]}}",
+      "now": "'$split' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "pipeline\u0000$split($.s, \"\")": {
+      "entry": "pipeline",
+      "src": "$split($.s, \"\")",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'$split' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "update\u0000$split($.s, \"\")": {
+      "entry": "update",
+      "src": "$split($.s, \"\")",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "'$split' is not valid in an update document — see its 'where'.",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "validate\u0000$split($.s, \"\")": {
+      "entry": "validate",
+      "src": "$split($.s, \"\")",
+      "kind": "output",
+      "was": "{\"valid\":true,\"errors\":[]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'$split' needs at least one separator character — an empty string has none. MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.le",
+      "reason": "Intended, this change. The reference emits `{\"$split\": [<string>, \"\"]}`, which mongod refuses outright — measured: \"$split requires a non-empty separator\" — so the reference is producing MQL that cannot run (HR3). The row now refuses the empty separator at compile time and names the spelling that does work, `$range(0, $.<field>.length).map(i => $.<field>.charAt(i))`, verified on the server to answer [\"a\",\"b\",\"c\"] for \"abc\" and [\"c\",\"a\",\"f\",\"é\"] for \"café\", per code point, as JavaScript does."
+    },
+    "jsmql\u0000$range(0, $.s.length).map(i => $.s.charAt(i))": {
+      "entry": "jsmql",
+      "src": "$range(0, $.s.length).map(i => $.s.charAt(i))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$size\":\"$s\"},\"else\":{\"$strLenCP\":{\"$ifNull\":[\"$s\",\"\"]}}}}]},\"as\":\"i\",\"in\":{\"$cond\":{\"if\":{\"$lt\":[\"$$i\",0]},\"th",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$size\":{\"$ifNull\":[\"$s\",[]]}}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\",\"nul",
+      "reason": "Intended, and not this change: a new corpus source (the spelling the `.split(\"\")` refusal now names). The `.length` reading of an unproven receiver became a `$switch` over `$type` earlier in this refactor, where the reference wrote a `$cond` over `$isArray`; the `$ifNull` neutrals came with the same change. The two entry-point messages are the reworded pipeline/update refusals already accepted across the corpus."
+    },
+    "expr\u0000$range(0, $.s.length).map(i => $.s.charAt(i))": {
+      "entry": "expr",
+      "src": "$range(0, $.s.length).map(i => $.s.charAt(i))",
+      "kind": "output",
+      "was": "{\"$map\":{\"input\":{\"$range\":[0,{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$size\":\"$s\"},\"else\":{\"$strLenCP\":{\"$ifNull\":[\"$s\",\"\"]}}}}]},\"as\":\"i\",\"in\":{\"$cond\":{\"if\":{\"$lt\":[\"$$i\",0]},\"then\":\"\",\"else\":{\"$substrCP\":[\"$s\",\"$$i\"",
+      "now": "{\"$map\":{\"input\":{\"$range\":[0,{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$size\":{\"$ifNull\":[\"$s\",[]]}}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\",\"null\",\"missing\"]]},\"then\":{\"$strLenCP\":{\"",
+      "reason": "Intended, and not this change: a new corpus source (the spelling the `.split(\"\")` refusal now names). The `.length` reading of an unproven receiver became a `$switch` over `$type` earlier in this refactor, where the reference wrote a `$cond` over `$isArray`; the `$ifNull` neutrals came with the same change. The two entry-point messages are the reworded pipeline/update refusals already accepted across the corpus."
+    },
+    "filter\u0000$range(0, $.s.length).map(i => $.s.charAt(i))": {
+      "entry": "filter",
+      "src": "$range(0, $.s.length).map(i => $.s.charAt(i))",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,{\"$cond\":{\"if\":{\"$isArray\":\"$s\"},\"then\":{\"$size\":\"$s\"},\"else\":{\"$strLenCP\":{\"$ifNull\":[\"$s\",\"\"]}}}}]},\"as\":\"i\",\"in\":{\"$cond\":{\"if\":{\"$lt\":[\"$$i\",0]},\"th",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$map\":{\"input\":{\"$range\":[0,{\"$switch\":{\"branches\":[{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"array\"]]},\"then\":{\"$size\":{\"$ifNull\":[\"$s\",[]]}}},{\"case\":{\"$in\":[{\"$type\":\"$s\"},[\"string\",\"nul",
+      "reason": "Intended, and not this change: a new corpus source (the spelling the `.split(\"\")` refusal now names). The `.length` reading of an unproven receiver became a `$switch` over `$type` earlier in this refactor, where the reference wrote a `$cond` over `$isArray`; the `$ifNull` neutrals came with the same change. The two entry-point messages are the reworded pipeline/update refusals already accepted across the corpus."
+    },
+    "pipeline\u0000$range(0, $.s.length).map(i => $.s.charAt(i))": {
+      "entry": "pipeline",
+      "src": "$range(0, $.s.length).map(i => $.s.charAt(i))",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, and not this change: a new corpus source (the spelling the `.split(\"\")` refusal now names). The `.length` reading of an unproven receiver became a `$switch` over `$type` earlier in this refactor, where the reference wrote a `$cond` over `$isArray`; the `$ifNull` neutrals came with the same change. The two entry-point messages are the reworded pipeline/update refusals already accepted across the corpus."
+    },
+    "update\u0000$range(0, $.s.length).map(i => $.s.charAt(i))": {
+      "entry": "update",
+      "src": "$range(0, $.s.length).map(i => $.s.charAt(i))",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source (the spelling the `.split(\"\")` refusal now names). The `.length` reading of an unproven receiver became a `$switch` over `$type` earlier in this refactor, where the reference wrote a `$cond` over `$isArray`; the `$ifNull` neutrals came with the same change. The two entry-point messages are the reworded pipeline/update refusals already accepted across the corpus."
+    },
+    "pipeline\u0000[1, 2].filter(a => a === $.n)": {
+      "entry": "pipeline",
+      "src": "[1, 2].filter(a => a === $.n)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, and not this change: a new corpus source. Both rows are the reworded `jsmql.pipeline()` and `jsmql.update()` refusals already accepted across the corpus; the expression itself compiles identically."
+    },
+    "update\u0000[1, 2].filter(a => a === $.n)": {
+      "entry": "update",
+      "src": "[1, 2].filter(a => a === $.n)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. Both rows are the reworded `jsmql.pipeline()` and `jsmql.update()` refusals already accepted across the corpus; the expression itself compiles identically."
+    },
+    "jsmql\u0000[[1, 2], [3]].flat().join(\",\")": {
+      "entry": "jsmql",
+      "src": "[[1, 2], [3]].flat().join(\",\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$reduce\":{\"input\":[[1,2],[3]],\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}},\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"1,2,3\",null]},null]},{\"$ne\":[\"1,2,3\",false]},{\"$ne\":[\"1,2,3\",\"\"]},{\"$ne\":[\"1,2,3\",0]}]}}",
+      "reason": "Intended, this change. `[[1, 2], [3]].flat()` now settles at compile time, so the whole chain folds to the string \"1,2,3\" instead of nesting two `$reduce`s over literal operands. Measured on mongod: the reference document answers \"1,2,3\" as well, so the value is unchanged and only the size is."
+    },
+    "expr\u0000[[1, 2], [3]].flat().join(\",\")": {
+      "entry": "expr",
+      "src": "[[1, 2], [3]].flat().join(\",\")",
+      "kind": "output",
+      "was": "{\"$reduce\":{\"input\":{\"$reduce\":{\"input\":[[1,2],[3]],\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}},\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then\":{\"$toString\":\"$$this\"},\"else\":{\"$con",
+      "now": "\"1,2,3\"",
+      "reason": "Intended, this change. `[[1, 2], [3]].flat()` now settles at compile time, so the whole chain folds to the string \"1,2,3\" instead of nesting two `$reduce`s over literal operands. Measured on mongod: the reference document answers \"1,2,3\" as well, so the value is unchanged and only the size is."
+    },
+    "filter\u0000[[1, 2], [3]].flat().join(\",\")": {
+      "entry": "filter",
+      "src": "[[1, 2], [3]].flat().join(\",\")",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$reduce\":{\"input\":{\"$reduce\":{\"input\":[[1,2],[3]],\"initialValue\":[],\"in\":{\"$concatArrays\":[\"$$value\",\"$$this\"]}}},\"initialValue\":\"\",\"in\":{\"$cond\":{\"if\":{\"$eq\":[\"$$value\",\"\"]},\"then",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"1,2,3\",null]},null]},{\"$ne\":[\"1,2,3\",false]},{\"$ne\":[\"1,2,3\",\"\"]},{\"$ne\":[\"1,2,3\",0]}]}}",
+      "reason": "Intended, this change. `[[1, 2], [3]].flat()` now settles at compile time, so the whole chain folds to the string \"1,2,3\" instead of nesting two `$reduce`s over literal operands. Measured on mongod: the reference document answers \"1,2,3\" as well, so the value is unchanged and only the size is."
+    },
+    "jsmql\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "jsmql",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "now-accepted",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},\"\"]",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "expr\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "expr",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "now-accepted",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": "{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}}",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "filter\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "filter",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "now-accepted",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},null]},null]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},false]},{\"$ne\":[{\"$sortArray\":{\"input\":\"$scores\",\"sortBy\":-1}},\"\"]",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "pipeline\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "pipeline",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "jsmql.pipeline() expects a Pipeline (the stage array `db.coll.aggregate(pipeline)` takes), but received a bare expression that would lower to a Filter (`$.age > 18`). Use jsmql.filter() for a Filter, or wrap the predicat",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "update\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "update",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, …) or as the second argument to $let.",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "validate\u0000$.scores.toSorted((a, b) => b - a)": {
+      "entry": "validate",
+      "src": "$.scores.toSorted((a, b) => b - a)",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, this change (DEF-019). `(a, b) => a - b` names no field, so the ELEMENTS are the sort key, which `$sortArray` takes as a bare direction. The reference refused the two-parameter arrow. Measured on mongod over [3,1,2]: sortBy 1 answers [1,2,3] and sortBy -1 answers [3,2,1], each equal to JavaScript`s own `.toSorted((a,b) => a - b)` / `((a,b) => b - a)`."
+    },
+    "jsmql\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "jsmql",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "expr\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "expr",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "filter\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "filter",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "pipeline\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "pipeline",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "update\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "update",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, …) or as the second argument to $let.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "validate\u0000$.scores.toSorted((a, b) => a - b || a.k - b.k)": {
+      "entry": "validate",
+      "src": "$.scores.toSorted((a, b) => a - b || a.k - b.k)",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'.\",\"pos\":30,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "jsmql\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "jsmql",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "expr\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "expr",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "filter\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "filter",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "message",
+      "was": ".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "pipeline\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "pipeline",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": ".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "update\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "update",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "A function (=>) is only valid as the callback to an iterating array method (.map, .filter, .some, .every, .find, .reduce, …) or as the second argument to $let.",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "validate\u0000$.scores.toSorted((a, b) => a - c)": {
+      "entry": "validate",
+      "src": "$.scores.toSorted((a, b) => a - c)",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted() key function takes exactly 1 parameter ('x => x.field'). For comparator-style sorts use $op($sortArray, { input, sortBy }).\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) subtracts the SAME field of both parameters: 'a.age - b.age'. To order the elements themselves, drop the field: 'a - b'.\",\"pos\":30,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change (DEF-019). The refusal is reworded because the comparator reader now recognises the whole-element form: a bare `a - b` is accepted, and a term under a `||` still needs a field of each parameter, since an element that IS the key admits no tiebreaker. The message names the new form only where it is actually open, which is why the `||` case does not mention it."
+    },
+    "jsmql\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "jsmql",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "message",
+      "was": ".toSpliced() with a negative deleteCount isn't supported — MongoDB $slice's length arg is non-negative.",
+      "now": "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "expr\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "expr",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "message",
+      "was": ".toSpliced() with a negative deleteCount isn't supported — MongoDB $slice's length arg is non-negative.",
+      "now": "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "filter\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "filter",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "message",
+      "was": ".toSpliced() with a negative deleteCount isn't supported — MongoDB $slice's length arg is non-negative.",
+      "now": "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "pipeline\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "pipeline",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "message",
+      "was": "jsmql.pipeline() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.fil",
+      "now": "'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "update\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "update",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "message",
+      "was": "jsmql.update() expects a Pipeline (one or more aggregation stages — `;`-separated, a top-level stage call, or a stage-array literal), but received a bare expression that would lower to a Filter document. Call jsmql.filte",
+      "now": "'.toSpliced()' has no document-form update: an update document sets, increments, renames, unsets, or pushes and pops. Use the pipeline form for anything computed.",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "validate\u0000$.xs.toSpliced(1, -1)": {
+      "entry": "validate",
+      "src": "$.xs.toSpliced(1, -1)",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSpliced() with a negative deleteCount isn't supported — MongoDB $slice's length arg is non-negative.\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\"'toSpliced' argument 2 must be a number from 0 to Infinity — got -1.\",\"pos\":18,\"code\":\"CODEGEN_ERROR\"}]}",
+      "reason": "Intended, this change (DEF-035). Slot 0 no longer carries a lower bound — a negative start now counts from the end — so the remaining range refusal is slot 1, and the message renumbers from `argument 1` to `argument 2`. A negative deleteCount stays refused: JavaScript reads it as 0, and it is a typo far more often than an intent."
+    },
+    "jsmql\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "jsmql",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".toSorted((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "expr\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "expr",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "filter\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "filter",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "pipeline\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "pipeline",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".toSorted((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSorted(d => d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "update\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "update",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "validate\u0000$$.toSorted((a, b) => a - b);": {
+      "entry": "validate",
+      "src": "$$.toSorted((a, b) => a - b);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes a",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.toSorted((a, b) => a.age - b.age)', or '.toSo",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "jsmql\u0000$$.sort((a, b) => b - a);": {
+      "entry": "jsmql",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".sort((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "expr\u0000$$.sort((a, b) => b - a);": {
+      "entry": "expr",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "filter\u0000$$.sort((a, b) => b - a);": {
+      "entry": "filter",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "pipeline\u0000$$.sort((a, b) => b - a);": {
+      "entry": "pipeline",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": ".sort((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "update\u0000$$.sort((a, b) => b - a);": {
+      "entry": "update",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren't supported on streams.",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "validate\u0000$$.sort((a, b) => b - a);": {
+      "entry": "validate",
+      "src": "$$.sort((a, b) => b - a);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".sort((a, b) => …) accepts only 'a.<field> - b.<field>' (ascending) or 'b.<field> - a.<field>' (descending) terms, combined with '||' for compound sorts. Other comparator shapes aren'",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".sort((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sort((a, b) => b.age - a.age)', or '.sort(d => -d",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "jsmql\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "jsmql",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "message",
+      "was": ".sortBy(...) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": ".sortBy((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d => d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "expr\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "expr",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "message",
+      "was": ".sortBy(...) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "filter\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "filter",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "pipeline\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "pipeline",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "message",
+      "was": ".sortBy(...) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": ".sortBy((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d => d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "update\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "update",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "message",
+      "was": ".sortBy(...) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "validate\u0000$$.sortBy((a, b) => a - b);": {
+      "entry": "validate",
+      "src": "$$.sortBy((a, b) => a - b);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".sortBy(...) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.\",\"pos\":10,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".sortBy((a, b) => a - b) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.sortBy((a, b) => a.age - b.age)', or '.sortBy(d",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "jsmql\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "jsmql",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "message",
+      "was": ".orderBy(keys) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": ".orderBy((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderBy(d => -d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "expr\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "expr",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "message",
+      "was": ".orderBy(keys) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "filter\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "filter",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "pipeline\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "pipeline",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "message",
+      "was": ".orderBy(keys) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": ".orderBy((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderBy(d => -d.age)'.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "update\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "update",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "message",
+      "was": ".orderBy(keys) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "validate\u0000$$.orderBy((a, b) => b - a);": {
+      "entry": "validate",
+      "src": "$$.orderBy((a, b) => b - a);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".orderBy(keys) takes a single-parameter key iteratee '(d) => <key expr>', got 2 parameters.\",\"pos\":11,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":false,\"errors\":[{\"message\":\".orderBy((a, b) => b - a) sorts by the WHOLE element, and a stream carries documents that MongoDB sorts by field NAME. Name the field: '.orderBy((a, b) => b.age - a.age)', or '.orderB",
+      "reason": "Intended, this change (DEF-019). The whole-element comparator is accepted on an ARRAY and refused on a STREAM, because a `$sort` stage sorts by field name — measured: `{ $sort: 1 }` is \"the $sort key specification must be an object\" and `{ $sort: { $literal: 1 } }` is \"FieldPath field names may not start with `$`\". The new message names both spellings that do work, and both are asserted to compile."
+    },
+    "jsmql\u0000$$.toSorted(d => d.age);": {
+      "entry": "jsmql",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "now-accepted",
+      "was": ".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "[{\"$sort\":{\"age\":1}}]",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "expr\u0000$$.toSorted(d => d.age);": {
+      "entry": "expr",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "filter\u0000$$.toSorted(d => d.age);": {
+      "entry": "filter",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "pipeline\u0000$$.toSorted(d => d.age);": {
+      "entry": "pipeline",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "now-accepted",
+      "was": ".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "[{\"$sort\":{\"age\":1}}]",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "update\u0000$$.toSorted(d => d.age);": {
+      "entry": "update",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "message",
+      "was": ".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "validate\u0000$$.toSorted(d => d.age);": {
+      "entry": "validate",
+      "src": "$$.toSorted(d => d.age);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".toSorted((a, b) => …) comparator requires a two-parameter arrow (got 1 params).\",\"pos\":12,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "expr\u0000$$.sort((a, b) => b.age - a.age);": {
+      "entry": "expr",
+      "src": "$$.sort((a, b) => b.age - a.age);",
+      "kind": "now-rejected",
+      "was": "[{\"$sort\":{\"age\":-1}}]",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "filter\u0000$$.sort((a, b) => b.age - a.age);": {
+      "entry": "filter",
+      "src": "$$.sort((a, b) => b.age - a.age);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "update\u0000$$.sort((a, b) => b.age - a.age);": {
+      "entry": "update",
+      "src": "$$.sort((a, b) => b.age - a.age);",
+      "kind": "message",
+      "was": "jsmql.update() rejected '$sort' (stage 0): MongoDB's aggregation-pipeline update form only accepts $addFields, $project, $replaceRoot, $replaceWith, $set, $unset. Use jsmql.pipeline() if you need other stages.",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "jsmql\u0000$$.sort(d => -d.age);": {
+      "entry": "jsmql",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "now-accepted",
+      "was": ".sort((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "[{\"$sort\":{\"age\":-1}}]",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "expr\u0000$$.sort(d => -d.age);": {
+      "entry": "expr",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "filter\u0000$$.sort(d => -d.age);": {
+      "entry": "filter",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "message",
+      "was": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Drop the `;` to compose a Filter, or call jsmql.pipeline() / jsmql() for Pipeline output.",
+      "now": "jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a `;`-separated Pipeline. Use jsmql.pipeline() (or jsmql(), which decides from the shape).",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "pipeline\u0000$$.sort(d => -d.age);": {
+      "entry": "pipeline",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "now-accepted",
+      "was": ".sort((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "[{\"$sort\":{\"age\":-1}}]",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "update\u0000$$.sort(d => -d.age);": {
+      "entry": "update",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "message",
+      "was": ".sort((a, b) => …) comparator requires a two-parameter arrow (got 1 params).",
+      "now": "An update document is made of writes — '$.a = 1', '$.n += 2', 'delete $.b', '$.tags.push(x)' — or of update operators ('$inc({ n: 2 })', '{ $set: { a: 1 } }'). This is neither.",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "validate\u0000$$.sort(d => -d.age);": {
+      "entry": "validate",
+      "src": "$$.sort(d => -d.age);",
+      "kind": "output",
+      "was": "{\"valid\":false,\"errors\":[{\"message\":\".sort((a, b) => …) comparator requires a two-parameter arrow (got 1 params).\",\"pos\":8,\"code\":\"CODEGEN_ERROR\"}]}",
+      "now": "{\"valid\":true,\"errors\":[]}",
+      "reason": "Intended, and not this change: a new corpus source. The reference refused a one-parameter arrow on a stream `.toSorted`; the key-function reading accepts it and emits `[{\"$sort\": {\"age\": 1}}]`, which is the same document the string and object spellings emit. The other entry points show the reworded shape refusals already accepted across the corpus."
+    },
+    "jsmql\u0000[1,2,3].filter(x => x)": {
+      "entry": "jsmql",
+      "src": "[1,2,3].filter(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":[1,2,3],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$f",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
+      "reason": "Intended, this change. A predicate that answers a plain value now folds, reading truthiness the way the emitted condition spells it (not missing, not null, not false, not \"\", not 0). Measured on mongod against the reference document for [1,2,3], [0,1,\"\",\"a\",null] and [\"a\",\"\"]: the folded value equals the value the `$filter` returns."
+    },
+    "expr\u0000[1,2,3].filter(x => x)": {
+      "entry": "expr",
+      "src": "[1,2,3].filter(x => x)",
+      "kind": "output",
+      "was": "{\"$filter\":{\"input\":[1,2,3],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}}",
+      "now": "[1,2,3]",
+      "reason": "Intended, this change. A predicate that answers a plain value now folds, reading truthiness the way the emitted condition spells it (not missing, not null, not false, not \"\", not 0). Measured on mongod against the reference document for [1,2,3], [0,1,\"\",\"a\",null] and [\"a\",\"\"]: the folded value equals the value the `$filter` returns."
+    },
+    "filter\u0000[1,2,3].filter(x => x)": {
+      "entry": "filter",
+      "src": "[1,2,3].filter(x => x)",
+      "kind": "output",
+      "was": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[{\"$filter\":{\"input\":[1,2,3],\"as\":\"x\",\"cond\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[\"$$x\",null]},null]},{\"$ne\":[\"$$x\",false]},{\"$ne\":[\"$$x\",\"\"]},{\"$ne\":[\"$$x\",0]}]}}},null]},null]},{\"$ne\":[{\"$f",
+      "now": "{\"$expr\":{\"$and\":[{\"$ne\":[{\"$ifNull\":[[1,2,3],null]},null]},{\"$ne\":[[1,2,3],false]},{\"$ne\":[[1,2,3],\"\"]},{\"$ne\":[[1,2,3],0]}]}}",
+      "reason": "Intended, this change. A predicate that answers a plain value now folds, reading truthiness the way the emitted condition spells it (not missing, not null, not false, not \"\", not 0). Measured on mongod against the reference document for [1,2,3], [0,1,\"\",\"a\",null] and [\"a\",\"\"]: the folded value equals the value the `$filter` returns."
     }
   }
 }

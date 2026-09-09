@@ -9,7 +9,7 @@
 
 import type { Expr, ExprIn, FilterIn, QueryDoc, Stage, StageIn, Truth } from "../../registry/vocabulary.ts";
 import type { Pipeline } from "../../registry/ast.ts";
-import { orderBySpec, sortSpecOf } from "./sort-spec.ts";
+import { orderBySpec, sortSpecOf, streamSortAsk } from "./sort-spec.ts";
 import { constantIn, literalIn, pathOfIn } from "./filter.ts";
 import { internalError } from "../../errors.ts";
 import {
@@ -603,8 +603,8 @@ export function stageInputs(
       if (stages === undefined) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => sortSpecOf(e, name, objects),
-    orderBy: (keys, orders) => orderBySpec(keys, orders, name),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name),
+    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);

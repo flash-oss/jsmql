@@ -15,7 +15,7 @@
 
 import type { Evaluation } from "./evaluate.ts";
 import { ObjectId } from "../../objectid.ts";
-import { sameValue } from "./evaluate.ts";
+import { sameValue, truthy } from "./evaluate.ts";
 import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
 
 const NO: Evaluation = { ok: false };
@@ -74,21 +74,62 @@ const MATH: Readonly<Record<string, (a: readonly number[]) => number>> = {
   min: (xs) => Math.min(...xs),
   max: (xs) => Math.max(...xs),
   // `$round` rounds a half to the EVEN neighbour; JavaScript rounds it up.
-  round: ([x]) => bankersRound(x),
+  round: ([x]) => roundToPlaces(x, 0),
 };
 
 /**
- * MongoDB's rounding at ZERO places: a half goes to the even neighbour.
+ * MongoDB's rounding: a half goes to the EVEN neighbour, in DECIMAL.
  *
- * Only zero. `$round` works in decimal, and reproducing it by scaling with
- * `10 ** places` makes the rounding decision on a perturbed number:
- * `(2.675).round(2)` is 2.68 that way and 2.67 on the server, because 2.675 is
- * really 2.67499999999999982. A place count other than zero stays runtime.
+ * Decimal is the whole difficulty. Scaling by `10 ** places` makes the rounding
+ * decision on a perturbed number — `(2.675).round(2)` is 2.68 that way and 2.67
+ * on the server, because 2.675 is really 2.67499999999999982 — so the decision is
+ * made on the number's EXACT value instead, which is integer arithmetic and cannot
+ * drift. Measured against `$round` over 2,184 value/place pairs.
+ *
+ * A negative number that rounds to zero answers `-0`, which is what the server
+ * answers and what the pass then refuses to spell, so the call stays a runtime one
+ * rather than folding to a `0` of the wrong sign.
  */
-function bankersRound(n: number): number {
-  const floor = Math.floor(n);
-  if (n - floor !== 0.5) return Math.round(n);
-  return floor % 2 === 0 ? floor : floor + 1;
+function roundToPlaces(n: number, places: number): number {
+  if (!Number.isFinite(n) || n === 0) return n;
+  const { digits, exponent } = exactDecimal(n);
+  // Already exact at that many places: there is nothing to decide.
+  const shift = exponent + places;
+  if (shift >= 0) return n;
+  const unit = 10n ** BigInt(-shift);
+  const whole = digits / unit;
+  const rest = digits % unit;
+  const half = unit / 2n;
+  const rounded = rest > half ? whole + 1n : rest < half ? whole : whole % 2n === 0n ? whole : whole + 1n;
+  // Read back through the DECIMAL spelling: a string becomes the nearest double in
+  // one correctly-rounded step, where a division by `10 ** places` rounds twice.
+  let spelt = rounded.toString();
+  if (places > 0 && spelt.length <= places) spelt = spelt.padStart(places + 1, "0");
+  const body =
+    places > 0
+      ? `${spelt.slice(0, spelt.length - places)}.${spelt.slice(spelt.length - places)}`
+      : places < 0 && rounded !== 0n
+        ? spelt + "0".repeat(-places)
+        : spelt;
+  return Number(`${n < 0 ? "-" : ""}${body}`);
+}
+
+/** A double's EXACT value as `digits * 10 ** exponent`. Every double has one. */
+function exactDecimal(n: number): { digits: bigint; exponent: number } {
+  const bits = new DataView(new ArrayBuffer(8));
+  bits.setFloat64(0, Math.abs(n));
+  const high = bits.getUint32(0);
+  const raw = (high >>> 20) & 0x7ff;
+  let mantissa = (BigInt(high & 0xfffff) << 32n) | BigInt(bits.getUint32(4));
+  // A subnormal has no implicit leading bit and a fixed exponent.
+  let power = -1074;
+  if (raw !== 0) {
+    mantissa |= 1n << 52n;
+    power = raw - 1075;
+  }
+  // `2 ** -k` is `5 ** k / 10 ** k`, so a negative power of two is an exact decimal.
+  if (power >= 0) return { digits: mantissa << BigInt(power), exponent: 0 };
+  return { digits: mantissa * 5n ** BigInt(-power), exponent: power };
 }
 
 /**
@@ -328,8 +369,9 @@ function lodashString(s: string, name: string, args: readonly Arg[]): Evaluation
       return ok(asciiLower(s.slice(0, 1)) + s.slice(1));
     case "truncate": {
       // Only the two options the runtime supports; anything else stays runtime.
-      if (a === null || typeof a !== "object" || Array.isArray(a)) return NO;
-      const options = a as Record<string, unknown>;
+      // No argument at all is the default options — the same 30 and "..." the lowering writes.
+      if (a !== undefined && (a === null || typeof a !== "object" || Array.isArray(a))) return NO;
+      const options = (a === undefined ? {} : a) as Record<string, unknown>;
       for (const key of Object.keys(options)) if (key !== "length" && key !== "omission") return NO;
       const limit = options.length === undefined ? 30 : options.length;
       const omission = options.omission === undefined ? "..." : options.omission;
@@ -421,7 +463,8 @@ function stringMethod(s: string, name: string, args: readonly Arg[]): Evaluation
       return ok(name === "padStart" ? built.join("") + s : s + built.join(""));
     }
     case "split":
-      // `$split` rejects an empty separator, so the two disagree there.
+      // `$split` rejects an empty separator, and so does the row — declining the fold is
+      // what lets the registry's refusal reach the developer instead of a folded answer.
       if (typeof a !== "string" || a === "") return NO;
       if (b !== undefined && !isInt32(b)) return NO;
       return ok(s.split(a, typeof b === "number" ? b : undefined));
@@ -445,11 +488,16 @@ function numberMethod(n: number, name: string, args: readonly Arg[]): Evaluation
     case "round":
     case "ceil":
     case "floor": {
-      // A place count other than zero would need decimal arithmetic; see
-      // `bankersRound`. The bare form is exact, so that is the form that folds.
-      if (a !== undefined && a !== 0) return NO;
-      if (name === "round") return ok(bankersRound(n));
-      return ok(name === "ceil" ? Math.ceil(n) : Math.floor(n));
+      if (a !== undefined && !Number.isInteger(a)) return NO;
+      const places = (a as number | undefined) ?? 0;
+      if (name === "round") return ok(roundToPlaces(n, places));
+      // `.ceil(p)` / `.floor(p)` lower to `$divide[$ceil|$floor[$multiply[x, 10 ** p]], 10 ** p]`
+      // — three correctly-rounded double operations, which is this same expression.
+      const scale = 10 ** places;
+      const scaled = name === "ceil" ? Math.ceil(n * scale) : Math.floor(n * scale);
+      const answer = scaled / scale;
+      // `(1e300).ceil(100)` overflows to Infinity on both sides, and Infinity has no MQL literal.
+      return Number.isFinite(answer) ? ok(answer) : NO;
     }
     case "clamp":
       // A BOUND, not a place count — it may be fractional.
@@ -555,11 +603,22 @@ function countArg(a: unknown): number | null {
 /** The numbers in a list, skipping everything else — what `$sum` does. */
 const numbersIn = (xs: readonly unknown[]): number[] => xs.filter((v): v is number => typeof v === "number");
 
+/**
+ * Strings JavaScript orders the way MongoDB does.
+ *
+ * `$min`, `$max` and `$sortArray` compare a string by CODE POINT; JavaScript's `<`
+ * compares UTF-16 units, and a surrogate pair sorts BELOW U+E000 there and above it
+ * on the server. No surrogate, no disagreement.
+ */
+const comparableStrings = (keys: readonly unknown[]): boolean =>
+  keys.every((k) => typeof k === "string" && !/[\uD800-\uDFFF]/.test(k));
+
 /** A stable sort by a computed key. Mixed or null keys have no BSON order here. */
 function sortByKeys(xs: readonly unknown[], keys: readonly unknown[], descending = false): unknown[] | null {
   const kind = (k: unknown): string => (typeof k === "number" ? "number" : typeof k === "string" ? "string" : "other");
   if (keys.some((k) => kind(k) === "other")) return null;
   if (new Set(keys.map(kind)).size > 1) return null;
+  if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return null;
   const paired = xs.map((v, i) => ({ v, k: keys[i], i }));
   paired.sort((p, q) => {
     if (p.k === q.k) return p.i - q.i; // stable
@@ -569,18 +628,101 @@ function sortByKeys(xs: readonly unknown[], keys: readonly unknown[], descending
   return paired.map((p) => p.v);
 }
 
+/** One key of a sort argument: the field it names, and which way it runs. */
+type SortKey = { readonly field: string; readonly direction: 1 | -1 };
+
+/**
+ * The sort argument, as VALUES — the reading `emit/sort-spec.ts` does over source.
+ *
+ *   .sortBy("age")              .orderBy("age", "desc")
+ *   .sortBy(["dept", "age"])    .orderBy(["dept", "age"], ["asc", "desc"])
+ *                               .orderBy({ dept: 1, age: -1 })
+ *
+ * `.sortBy` takes no direction — lodash reads an object there as a matcher — an
+ * unnamed direction is ascending, and every spelling the emitter refuses (a leading
+ * `$`, an unknown direction, no key at all) is refused here too, so the fold never
+ * answers where the program raises.
+ */
+function sortAsk(name: string, values: readonly unknown[]): SortKey[] | null {
+  const direction = (v: unknown): 1 | -1 | null =>
+    v === undefined || v === 1 || v === "asc" ? 1 : v === -1 || v === "desc" ? -1 : null;
+  const [first, second] = values;
+  const keys: SortKey[] = [];
+
+  if (name === "orderBy" && isPlainObject(first)) {
+    if (second !== undefined) return null;
+    for (const [field, v] of Object.entries(first)) {
+      const d = direction(v);
+      if (d === null || field === "" || field.startsWith("$")) return null;
+      keys.push({ field, direction: d });
+    }
+    return keys.length === 0 ? null : keys;
+  }
+
+  const fields = typeof first === "string" ? [first] : Array.isArray(first) ? first : null;
+  if (fields === null || fields.length === 0) return null;
+  if (!fields.every((f) => typeof f === "string" && f !== "" && !f.startsWith("$"))) return null;
+  if (name === "sortBy" && second !== undefined) return null;
+  const directions = second === undefined ? [] : Array.isArray(second) ? second : [second];
+  for (const [i, field] of (fields as string[]).entries()) {
+    const d = name === "sortBy" ? 1 : direction(directions[i]);
+    if (d === null) return null;
+    keys.push({ field, direction: d });
+  }
+  return keys;
+}
+
+/** A field's value, one dotted segment at a time — nothing, unless every step is a document. */
+function readField(doc: unknown, field: string): unknown {
+  let cursor: unknown = doc;
+  for (const segment of field.split(".")) {
+    if (!isPlainObject(cursor)) return undefined;
+    cursor = cursor[segment];
+  }
+  return cursor;
+}
+
+/**
+ * `$sortArray` with a `{ field: 1 | -1 }` spec: a STABLE sort by each key in turn —
+ * measured, ten tied elements keep their input order both ways.
+ *
+ * The server reads a field that is not there as one sorting below every value, and
+ * compares across BSON types by its own order, so a column that is not one
+ * comparable type throughout is left to run there.
+ */
+function sortByFields(xs: readonly unknown[], keys: readonly SortKey[]): Evaluation {
+  const columns = keys.map((k) => xs.map((x) => readField(x, k.field)));
+  for (const column of columns) {
+    if (!column.every((v) => typeof v === "number") && !comparableStrings(column)) return NO;
+  }
+  const order = xs.map((_, i) => i);
+  order.sort((i, j) => {
+    for (const [c, key] of keys.entries()) {
+      const left = columns[c][i] as number | string;
+      const right = columns[c][j] as number | string;
+      if (left !== right) return (left < right ? -1 : 1) * key.direction;
+    }
+    return i - j; // stable
+  });
+  return ok(order.map((i) => xs[i]));
+}
+
 function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluation {
   const [a, b] = args.map(valueOf);
   const fn = fnOf(args[0]);
 
-  /** A predicate must answer with a boolean; see `pickBy` above for why. */
+  /**
+   * A predicate answers with a VALUE, and this is the reading of it — the same four
+   * the lowering spells out in the emitted condition: not missing, not null, not
+   * `false`, not `""`, not `0`. `.filter("ok")` over `{ ok: "" }` drops the element
+   * on the server for exactly that reason, so it does here. The OBJECT family is not
+   * this: `.pickBy` lowers to a raw condition, which is MongoDB's truthiness, and
+   * keeps `""`.
+   */
   const predicate =
     (f: Callable) =>
-    (v: unknown, i: number): boolean => {
-      const verdict = f(v, i, xs);
-      if (typeof verdict !== "boolean") throw NOT_A_BOOLEAN;
-      return verdict;
-    };
+    (v: unknown, i: number): boolean =>
+      truthy(f(v, i, xs));
 
   switch (name) {
     case "size":
@@ -676,10 +818,14 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "min":
     case "max": {
       if (xs.length === 0) return ok(null);
-      // Only numbers: across types MongoDB orders by its own rules, not by `<`.
-      if (!xs.every((v) => typeof v === "number")) return NO;
-      const ns = xs as number[];
-      return ok(name === "min" ? Math.min(...ns) : Math.max(...ns));
+      // One type only: ACROSS types MongoDB orders by its own rules, not by `<`.
+      if (xs.every((v) => typeof v === "number")) {
+        const ns = xs as number[];
+        return ok(name === "min" ? Math.min(...ns) : Math.max(...ns));
+      }
+      if (!comparableStrings(xs)) return NO;
+      const ss = xs as string[];
+      return ok(ss.reduce((best, v) => ((name === "min" ? v < best : v > best) ? v : best)));
     }
     case "sumBy":
     case "meanBy": {
@@ -692,9 +838,12 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "maxBy": {
       if (fn === undefined || xs.length === 0) return NO;
       const keys = xs.map((v, i) => fn(v, i, xs));
-      if (!keys.every((k) => typeof k === "number")) return NO;
-      const best = (keys as number[]).reduce(
-        (bi, k, i) => ((name === "minBy" ? k < (keys[bi] as number) : k > (keys[bi] as number)) ? i : bi),
+      if (!keys.every((k) => typeof k === "number") && !comparableStrings(keys)) return NO;
+      // The lowering sorts by the key and takes the first, and that sort is stable, so
+      // a tie answers with the EARLIEST element — which is what a strict `<` / `>` keeps.
+      const ordered = keys as (number | string)[];
+      const best = ordered.reduce<number>(
+        (bi, k, i) => ((name === "minBy" ? k < ordered[bi] : k > ordered[bi]) ? i : bi),
         0,
       );
       return ok(xs[best]);
@@ -809,6 +958,14 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     case "flatten":
       // ONE level, which is what the runtime lowering does.
       return ok(xs.flat());
+    case "flat":
+      // `$concatArrays`, which takes ARRAYS only — where `.flatten()` wraps a scalar
+      // first. `[1, 2].flat()` is an error on the server and `[1, 2]` in JavaScript,
+      // and one null element makes the whole answer null there. The row allows a depth
+      // of exactly 1, which is the level this concatenates.
+      if (a !== undefined && a !== 1) return NO;
+      if (!xs.every((v) => Array.isArray(v))) return NO;
+      return ok(xs.flat());
     case "zip": {
       const lists = [xs, ...args.map(valueOf)];
       if (!lists.every((l) => Array.isArray(l))) return NO;
@@ -881,21 +1038,31 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
     }
 
     // ── ordering ────────────────────────────────────────────────────────────
-    case "sortBy": {
-      const keys = fn === undefined ? [...xs] : keyedBy(xs, fn);
-      if (keys === null) return NO;
-      const sorted = sortByKeys(xs, keys);
-      return sorted === null ? NO : ok(sorted);
-    }
+    case "sortBy":
     case "orderBy": {
-      const by = fnOf(args[0]);
-      const direction = valueOf(args[1]);
-      const descending = direction === "desc" || direction === -1;
-      if (direction !== undefined && !descending && direction !== "asc" && direction !== 1) return NO;
-      const keys = by === undefined ? [...xs] : keyedBy(xs, by);
-      if (keys === null) return NO;
-      const sorted = sortByKeys(xs, keys, descending);
-      return sorted === null ? NO : ok(sorted);
+      // A key FUNCTION: the sort is by what it computes, which is the
+      // `$map` / `$sortArray` / `$map` lowering.
+      if (fn !== undefined) {
+        const direction = name === "orderBy" ? valueOf(args[1]) : undefined;
+        const descending = direction === "desc" || direction === -1;
+        if (direction !== undefined && !descending && direction !== "asc" && direction !== 1) return NO;
+        const keys = keyedBy(xs, fn);
+        if (keys === null) return NO;
+        const sorted = sortByKeys(xs, keys, descending);
+        return sorted === null ? NO : ok(sorted);
+      }
+      // No argument at all: the natural order of the values themselves.
+      if (args.length === 0) {
+        const sorted = sortByKeys(xs, [...xs]);
+        return sorted === null ? NO : ok(sorted);
+      }
+      // Otherwise the argument NAMES fields, and `$sortArray` reads each one out of
+      // the element — so a receiver of anything but documents carrying that field is a
+      // sort this cannot answer. Reading the argument as a direction and sorting the
+      // ELEMENTS answered `[1, 2, 3]` for `[3, 1, 2].sortBy("x")`, where the server
+      // leaves the list alone.
+      const ask = sortAsk(name, args.map(valueOf));
+      return ask === null ? NO : sortByFields(xs, ask);
     }
 
     default:
@@ -905,6 +1072,3 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
 
 /** Thrown when a value with no MongoDB key spelling is used as one. */
 const NOT_A_KEY = Symbol("value cannot be an object key");
-
-/** Thrown by a predicate whose answer is not a boolean; caught by the caller. */
-export const NOT_A_BOOLEAN = Symbol("predicate did not answer with a boolean");

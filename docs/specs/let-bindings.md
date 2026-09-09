@@ -71,6 +71,14 @@ and the declaration is `let <Ident> = <Expression>`. A missing identifier or a
 missing `=` is a position-marked `ParseError` that echoes the keyword as written
 (`Expected '=' after \`const x\``).
 
+One statement declares ONE binding: the declaration ends with its expression, and a
+`,` after it separates statements rather than opening a second binding. Several
+bindings are several statements — `let a = …; let b = …;`, or `[ let a = …, let b = …,
+… ]` inside a bracketed pipeline. Each takes its own `$set`, and that is what lets a
+binding read the one before it: a `$set` evaluates every field against the stage's
+INPUT document, so two bindings sharing a stage could not depend on each other
+(measured on `{ x: 10 }`: one stage answers `b: null`, two answer `b: 11`).
+
 A declaration ALONE is not a program: with no `;` to make the input a pipeline, a
 lone `let X = …` is refused with the two spellings that work — a trailing `;`, or
 the bracketed form `[ let X = …, … ]`. See
@@ -184,9 +192,6 @@ the end.
   expression and no reshape stage intervenes, the compiler could emit a
   single MongoDB `$let` wrapping that expression instead of `$addFields`/
   `$unset`. Worthwhile for index-preserving `$match`es; not done.
-- **Multi-binding `let a = …, b = …;` [DEF-010].** Comma-separated bindings inside one
-  `let`. Doesn't compose well with the existing `,`-as-update op-separator
-  rule; punt to a follow-up that picks a clear disambiguation.
 - **Index-pitfall warning [DEF-012].** A `let` before an indexable `$match` blocks the
   match from using the index. The compiler could surface a warning through
   `validate()`, but that requires a warning channel which doesn't exist yet.

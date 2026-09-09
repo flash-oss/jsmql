@@ -46,6 +46,7 @@ import {
   pairsToObject,
   normaliseSliceIndex,
   regexBody,
+  resolveSliceIndex,
   reverseArrayOf,
   singleArrayArg,
   sizeOf,
@@ -89,7 +90,7 @@ import type {
   Refusal,
   Returns,
   Rule,
-  SortAsk,
+  StageSortAsk,
   Stage,
   StageIn,
   TokenName,
@@ -622,7 +623,7 @@ const WEEKDAY = [
  * document, which MongoDB cannot sort by — a scratch field holding the key, a
  * `$sort` by it, and the chain's own cleanup dropping the field.
  */
-const sortStages = (ask: SortAsk, slot: () => string, reshape: (cb: Expr) => unknown): Stage[] => {
+const sortStages = (ask: StageSortAsk, slot: () => string, reshape: (cb: Expr) => unknown): Stage[] => {
   if (ask.kind === "keys") return [{ $sort: ask.spec }];
   const key = slot();
   return [{ $addFields: { [key]: reshape(ask.key) } }, { $sort: { [key]: ask.dir } }];
@@ -2063,7 +2064,19 @@ export const NAMES = {
     shape: "array",
     filter: viaFallback,
     expr: {
-      args: { sig: "string, delimiter", exact: 2 },
+      args: {
+        sig: "string, delimiter",
+        exact: 2,
+        // MEASURED: the server refuses an empty delimiter ("$split requires a non-empty
+        // separator"), the same fact the '.split()' row states.
+        nonEmpty: {
+          1: {
+            noun: "separator character",
+            instead:
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+          },
+        },
+      },
       emit: ({ name, args, value }) => ({ [name]: args.map(value) }),
     },
     group: unsupported("'$split' is not valid in a $group output position — see its 'where'."),
@@ -6452,7 +6465,20 @@ export const NAMES = {
     where: ["value"],
     filter: viaFallback,
     expr: {
-      args: { sig: "separator", exact: 1 },
+      args: {
+        sig: "separator",
+        exact: 1,
+        // MEASURED: `{ $split: ["$s", ""] }` is refused ("$split requires a non-empty
+        // separator"), and MongoDB has no split-into-characters operator to fall back on,
+        // so the empty separator is refused here rather than emitted.
+        nonEmpty: {
+          0: {
+            noun: "separator character",
+            instead:
+              "MongoDB cannot split a string into characters. For one character per element, write '$range(0, $.<field>.length).map(i => $.<field>.charAt(i))'.",
+          },
+        },
+      },
       emit: ({ recv, args, value }) => ({ $split: [recv, value(args[0])] }),
     },
     stream: unsupported("'.split()' has no stream form: it produces a value, not a stream of documents."),
@@ -7028,7 +7054,7 @@ export const NAMES = {
     iterateeSlots: {
       array: {
         sortSpec:
-          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, and no argument is the natural order',
+          '`"k"` is the order `{ k: 1 }`, `{ k: -1 }` descends, `["k", "j"]` sorts by two keys, `(a, b) => a - b` orders the elements themselves, and no argument is the natural order',
       },
       stream: {
         sortSpec:
@@ -7039,11 +7065,12 @@ export const NAMES = {
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
-      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn', allowed: [0, 1] },
+      args: { sig: '"field" | ["a", "b"] | { field: dir } | keyFn | comparator', allowed: [0, 1] },
       emit: ({ recv, args, sortSpec, callback, bind }) => {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         // a computed key: sort `{ k, v }` pairs by the key, then take the values back
         const cb = callback(ask.key, "value");
         const p = bind("p");
@@ -7098,6 +7125,7 @@ export const NAMES = {
         if (args.length === 0) return { $sortArray: { input: recv, sortBy: 1 } };
         const ask = sortSpec(args[0], false);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         // a computed key: sort `{ k, v }` pairs by the key, then take the values back
         const cb = callback(ask.key, "value");
         const p = bind("p");
@@ -7150,6 +7178,7 @@ export const NAMES = {
       emit: ({ recv, args, orderBy, callback, bind }) => {
         const ask = orderBy(args[0], args[1]);
         if (ask.kind === "keys") return { $sortArray: { input: recv, sortBy: ask.spec } };
+        if (ask.kind === "whole") return { $sortArray: { input: recv, sortBy: ask.dir } };
         const cb = callback(ask.key, "value");
         const p = bind("p");
         return {
@@ -7189,34 +7218,43 @@ export const NAMES = {
         sig: "start[, deleteCount, ...items]",
         atLeast: 1,
         slotType: { 0: "int", 1: "int" },
-        // JavaScript counts a negative start from the end; resolving one needs the receiver's length. [DEF-035]
-        slotRange: { 0: [0, Infinity], 1: [0, Infinity] },
+        // JavaScript reads a negative deleteCount as 0, and `.toSpliced(1, -1)` is a
+        // typo far more often than an intent, so the count stays closed while the start opens.
+        slotRange: { 1: [0, Infinity] },
       },
       emit: ({ recv, args, value, bind }) => {
         const arr = bind("arr");
         const start = bind("start");
         const tail = bind("tailStart");
         const items = args.slice(2).map((a) => value(a));
-        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : start.ref;
+        const size = { $size: arr.ref };
+        // JavaScript removes everything from `start` on when the count is left out,
+        // so the tail begins at the end and there is nothing after the inserted items.
+        const tailStart = args.length >= 2 ? { $add: [start.ref, value(args[1])] } : size;
+        const rest = { $subtract: [size, tail.ref] };
         return {
           $let: {
-            vars: { [arr.as]: recv, [start.as]: value(args[0]) },
+            vars: { [arr.as]: recv },
             in: {
+              // A `$let` variable cannot see a sibling in its own `vars` block (measured:
+              // "Use of undefined variable"), and a start counted from the end reads the
+              // receiver's length, so each binding sits one level inside the last.
               $let: {
-                vars: { [tail.as]: tailStart },
+                vars: { [start.as]: resolveSliceIndex(args[0], value(args[0]), size) },
                 in: {
-                  $concatArrays: [
-                    { $slice: [arr.ref, start.ref] },
-                    items,
-                    {
-                      // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
-                      $cond: [
-                        { $gt: [{ $subtract: [{ $size: arr.ref }, tail.ref] }, 0] },
-                        { $slice: [arr.ref, tail.ref, { $subtract: [{ $size: arr.ref }, tail.ref] }] },
-                        [],
+                  $let: {
+                    vars: { [tail.as]: tailStart },
+                    in: {
+                      $concatArrays: [
+                        { $slice: [arr.ref, start.ref] },
+                        items,
+                        {
+                          // a three-argument `$slice` refuses a count of 0 (measured): the empty tail is written out
+                          $cond: [{ $gt: [rest, 0] }, { $slice: [arr.ref, tail.ref, rest] }, []],
+                        },
                       ],
                     },
-                  ],
+                  },
                 },
               },
             },
