@@ -7010,14 +7010,15 @@ export const NAMES = {
               recv,
               ...args.map((a) => {
                 const k = kind(a);
+                // JavaScript writes an ARRAY into a string the way `.join(",")` does —
+                // `"a".concat([3, 4])` is "a3,4" — so this is the same helper `.join()` uses.
+                // The exception is the list the desugar packed from a SPREAD call:
+                // `"a".concat(...[3, 4])` passed two arguments, and JavaScript writes each
+                // on its own, with nothing between them.
                 if (k === "array") {
-                  return {
-                    $reduce: {
-                      input: value(a),
-                      initialValue: "",
-                      in: { $concat: ["$$value", { $toString: "$$this" }] },
-                    },
-                  };
+                  return a.type === "ArrayLiteral" && a.packed === true
+                    ? joinedWith(value(a), "")
+                    : joinedWith(value(a), ",");
                 }
                 return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
               }),

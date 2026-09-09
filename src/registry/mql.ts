@@ -358,18 +358,39 @@ export function sliceArray(
   };
 }
 
-/** `arr.join(sep)`: every element as a string, joined — an empty array is "". */
-export const joinedWith = (recv: unknown, separator: unknown): unknown => ({
-  $reduce: {
-    input: recv,
-    initialValue: "",
-    in: cond(
-      { $eq: ["$$value", ""] },
-      { $toString: "$$this" },
-      { $concat: ["$$value", separator, { $toString: "$$this" }] },
-    ),
-  },
-});
+/**
+ * `arr.join(sep)`: every element as a string, joined — an empty array is "".
+ *
+ * Two things JavaScript does that the obvious `$reduce` does not.
+ *
+ * The accumulator starts at `null`, not `""`, because `""` cannot tell "nothing joined
+ * yet" from "what is joined so far is empty": with `""` as the marker an array whose
+ * FIRST element is the empty string loses its separator, and MEASURED,
+ * `["", "a"].join(",")` answered "a" where JavaScript answers ",a".
+ *
+ * And a `null` or missing element is written as "" rather than dropped —
+ * `[1, null, 2].join(",")` is "1,,2". `$toString` of null answers null and `$concat`
+ * with a null operand answers null, so without the test the whole join answered null.
+ *
+ * The reduce keeps its `null` for an empty array, which `$ifNull` turns into the ""
+ * JavaScript gives. That reading covers a null or missing RECEIVER too, the empty-array
+ * neutral the rest of the language uses.
+ */
+export const joinedWith = (recv: unknown, separator: unknown): unknown => {
+  const piece = cond({ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" });
+  return {
+    $ifNull: [
+      {
+        $reduce: {
+          input: recv,
+          initialValue: null,
+          in: cond({ $eq: ["$$value", null] }, piece, { $concat: ["$$value", separator, piece] }),
+        },
+      },
+      "",
+    ],
+  };
+};
 
 // ── the JavaScript globals ───────────────────────────────────────────────────
 

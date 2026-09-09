@@ -2910,17 +2910,40 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
             $cond: {
               if: { $isArray: "$$jsmqlV" },
               then: {
-                $reduce: {
-                  input: "$$jsmqlV",
-                  initialValue: "",
-                  in: {
-                    $cond: {
-                      if: { $eq: ["$$value", ""] },
-                      then: { $toString: "$$this" },
-                      else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+                $ifNull: [
+                  {
+                    $reduce: {
+                      input: "$$jsmqlV",
+                      initialValue: null,
+                      in: {
+                        $cond: {
+                          if: { $eq: ["$$value", null] },
+                          then: {
+                            $cond: {
+                              if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                              then: "",
+                              else: { $toString: "$$this" },
+                            },
+                          },
+                          else: {
+                            $concat: [
+                              "$$value",
+                              ",",
+                              {
+                                $cond: {
+                                  if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                  then: "",
+                                  else: { $toString: "$$this" },
+                                },
+                              },
+                            ],
+                          },
+                        },
+                      },
                     },
                   },
-                },
+                  "",
+                ],
               },
               else: { $toString: "$$jsmqlV" },
             },
@@ -3226,30 +3249,53 @@ describe("bare built-in callbacks", () => {
   });
   it("composes through chaining: filter(Boolean).join(' ')", () => {
     expect(jsmql.expr('$.parts.filter(Boolean).join(" ")')).toEqual({
-      $reduce: {
-        input: {
-          $filter: {
-            input: "$parts",
-            as: "x",
-            cond: {
-              $and: [
-                { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                { $ne: ["$$x", false] },
-                { $ne: ["$$x", ""] },
-                { $ne: ["$$x", 0] },
-              ],
+      $ifNull: [
+        {
+          $reduce: {
+            input: {
+              $filter: {
+                input: "$parts",
+                as: "x",
+                cond: {
+                  $and: [
+                    { $ne: [{ $ifNull: ["$$x", null] }, null] },
+                    { $ne: ["$$x", false] },
+                    { $ne: ["$$x", ""] },
+                    { $ne: ["$$x", 0] },
+                  ],
+                },
+              },
+            },
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    " ",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
+              },
             },
           },
         },
-        initialValue: "",
-        in: {
-          $cond: {
-            if: { $eq: ["$$value", ""] },
-            then: { $toString: "$$this" },
-            else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
-          },
-        },
-      },
+        "",
+      ],
     });
   });
   it("Boolean as a value (outside callback) errors with the call form suggested", () => {
@@ -4785,17 +4831,40 @@ describe("array method additions", () => {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
             then: {
-              $reduce: {
-                input: "$$jsmqlV",
-                initialValue: "",
-                in: {
-                  $cond: {
-                    if: { $eq: ["$$value", ""] },
-                    then: { $toString: "$$this" },
-                    else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: "$$jsmqlV",
+                    initialValue: null,
+                    in: {
+                      $cond: {
+                        if: { $eq: ["$$value", null] },
+                        then: {
+                          $cond: {
+                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                            then: "",
+                            else: { $toString: "$$this" },
+                          },
+                        },
+                        else: {
+                          $concat: [
+                            "$$value",
+                            ",",
+                            {
+                              $cond: {
+                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                then: "",
+                                else: { $toString: "$$this" },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
                   },
                 },
-              },
+                "",
+              ],
             },
             else: { $toString: "$$jsmqlV" },
           },
@@ -4811,17 +4880,40 @@ describe("array method additions", () => {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
             then: {
-              $reduce: {
-                input: "$$jsmqlV",
-                initialValue: "",
-                in: {
-                  $cond: {
-                    if: { $eq: ["$$value", ""] },
-                    then: { $toString: "$$this" },
-                    else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: "$$jsmqlV",
+                    initialValue: null,
+                    in: {
+                      $cond: {
+                        if: { $eq: ["$$value", null] },
+                        then: {
+                          $cond: {
+                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                            then: "",
+                            else: { $toString: "$$this" },
+                          },
+                        },
+                        else: {
+                          $concat: [
+                            "$$value",
+                            ",",
+                            {
+                              $cond: {
+                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                then: "",
+                                else: { $toString: "$$this" },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
                   },
                 },
-              },
+                "",
+              ],
             },
             else: { $toString: "$$jsmqlV" },
           },
@@ -4837,17 +4929,40 @@ describe("array method additions", () => {
           $cond: {
             if: { $isArray: "$$jsmqlV" },
             then: {
-              $reduce: {
-                input: "$$jsmqlV",
-                initialValue: "",
-                in: {
-                  $cond: {
-                    if: { $eq: ["$$value", ""] },
-                    then: { $toString: "$$this" },
-                    else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+              $ifNull: [
+                {
+                  $reduce: {
+                    input: "$$jsmqlV",
+                    initialValue: null,
+                    in: {
+                      $cond: {
+                        if: { $eq: ["$$value", null] },
+                        then: {
+                          $cond: {
+                            if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                            then: "",
+                            else: { $toString: "$$this" },
+                          },
+                        },
+                        else: {
+                          $concat: [
+                            "$$value",
+                            ",",
+                            {
+                              $cond: {
+                                if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                                then: "",
+                                else: { $toString: "$$this" },
+                              },
+                            },
+                          ],
+                        },
+                      },
+                    },
                   },
                 },
-              },
+                "",
+              ],
             },
             else: { $toString: "$$jsmqlV" },
           },
@@ -7646,34 +7761,83 @@ describe("array .concat", () => {
 });
 
 describe(".join", () => {
+  // The accumulator starts at `null` so an array whose FIRST element is "" keeps its
+  // separator, and each element tests for null so a null element is written as "" —
+  // both JavaScript's answers, and both measured on the server. See `joinedWith`.
   it("default separator (,)", () => {
     expect(jsmql.expr("$.tags.join()")).toEqual({
-      $reduce: {
-        input: "$tags",
-        initialValue: "",
-        in: {
-          $cond: {
-            if: { $eq: ["$$value", ""] },
-            then: { $toString: "$$this" },
-            else: { $concat: ["$$value", ",", { $toString: "$$this" }] },
+      $ifNull: [
+        {
+          $reduce: {
+            input: "$tags",
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    ",",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
           },
         },
-      },
+        "",
+      ],
     });
   });
   it("custom separator", () => {
     expect(jsmql.expr('$.tags.join(" | ")')).toEqual({
-      $reduce: {
-        input: "$tags",
-        initialValue: "",
-        in: {
-          $cond: {
-            if: { $eq: ["$$value", ""] },
-            then: { $toString: "$$this" },
-            else: { $concat: ["$$value", " | ", { $toString: "$$this" }] },
+      $ifNull: [
+        {
+          $reduce: {
+            input: "$tags",
+            initialValue: null,
+            in: {
+              $cond: {
+                if: { $eq: ["$$value", null] },
+                then: {
+                  $cond: {
+                    if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                    then: "",
+                    else: { $toString: "$$this" },
+                  },
+                },
+                else: {
+                  $concat: [
+                    "$$value",
+                    " | ",
+                    {
+                      $cond: {
+                        if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                        then: "",
+                        else: { $toString: "$$this" },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
           },
         },
-      },
+        "",
+      ],
     });
   });
 });

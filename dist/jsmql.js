@@ -763,17 +763,21 @@ function sliceArray(recv, args, value, mint2) {
     }
   };
 }
-var joinedWith = (recv, separator) => ({
-  $reduce: {
-    input: recv,
-    initialValue: "",
-    in: cond(
-      { $eq: ["$$value", ""] },
-      { $toString: "$$this" },
-      { $concat: ["$$value", separator, { $toString: "$$this" }] }
-    )
-  }
-});
+var joinedWith = (recv, separator) => {
+  const piece = cond({ $in: [{ $type: "$$this" }, ["null", "missing"]] }, "", { $toString: "$$this" });
+  return {
+    $ifNull: [
+      {
+        $reduce: {
+          input: recv,
+          initialValue: null,
+          in: cond({ $eq: ["$$value", null] }, piece, { $concat: ["$$value", separator, piece] })
+        }
+      },
+      ""
+    ]
+  };
+};
 function dateFromParts(parts, timezone) {
   const body = {};
   DATE_PARTS_CALENDAR.forEach((key, i) => {
@@ -6852,13 +6856,7 @@ var NAMES = {
               ...args.map((a) => {
                 const k = kind(a);
                 if (k === "array") {
-                  return {
-                    $reduce: {
-                      input: value(a),
-                      initialValue: "",
-                      in: { $concat: ["$$value", { $toString: "$$this" }] }
-                    }
-                  };
+                  return a.type === "ArrayLiteral" && a.packed === true ? joinedWith(value(a), "") : joinedWith(value(a), ",");
                 }
                 return k === "string" || k === "unknown" ? value(a) : { $toString: value(a) };
               })
@@ -18122,7 +18120,7 @@ var packSpread = {
     if (n2.type === "MethodCall" && readsAContextRef(n2.object)) return node;
     const name2 = n2.type === "MethodCall" ? n2.name : n2.callee?.type === "Ident" ? n2.callee.name : void 0;
     if (name2 === void 0 || !packsSpreadOf(name2)) return node;
-    return { ...n2, args: [{ type: "ArrayLiteral", elements: n2.args, pos: n2.args[0].pos }] };
+    return { ...n2, args: [{ type: "ArrayLiteral", elements: n2.args, pos: n2.args[0].pos, packed: true }] };
   }
 };
 function pathOn(param, path, pos) {

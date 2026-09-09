@@ -1651,7 +1651,11 @@ $.s.trim().concat(1, 2)    // { $concat: [{ $trim: … }, { $toString: 1 }, { $t
 [1, 2, 3].includes($.x)    // { $in: ["$x", [1, 2, 3]] }            (array-typed)
 [1, 2, 3].indexOf($.x)     // { $indexOfArray: [[1, 2, 3], "$x"] }  (array-typed)
 $.items.lastIndexOf($.x)   // last index of $.x, or -1 (array-only — strings rejected)
-$.tags.join(", ")          // builds a comma-separated string via $reduce/$concat
+$.tags.join(", ")          // builds a separated string via $reduce/$concat, reading each
+                           //   element as JavaScript does: a null or missing element is
+                           //   written as "" rather than dropped (`[1, null, 2].join(",")`
+                           //   is "1,,2"), an empty array is "", and a leading "" element
+                           //   keeps its separator (`["", "a"].join(",")` is ",a")
 $.items.toString()         // same as .join(",") for arrays; no-op for strings; $toString otherwise
 // an array that provably holds arrays — [[1, 2], [3]], .partition(…) — is refused by both:
 // the server cannot stringify an array element; flatten first, or map each inner array to a string

@@ -388,7 +388,10 @@ describe("compiler/emit — array methods", () => {
     expect(compiled("$.a.lastIndexOf(2)", (d) => d.a.lastIndexOf(2))).toMatchObject({ $let: {} });
     expect(compiled("$.a.toString()", (d) => d.a.toString())).toMatchObject({ $let: {} });
     expect(compiled("$.n.toString()", (d) => d.n.toString())).toMatchObject({ $let: {} });
-    expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({ $reduce: {} });
+    // `$ifNull` wraps the reduce so an EMPTY array answers "" rather than the reduce's
+    // own `null` seed — the seed is `null` so a leading "" element keeps its separator.
+    expect(compiled('$.a.join("-")', (d) => d.a.join("-"))).toMatchObject({ $ifNull: [{ $reduce: {} }, ""] });
+    expect(compiled('$.mixed.join(",")', (d) => d.mixed.join(","))).toMatchObject({ $ifNull: [{ $reduce: {} }, ""] });
     expect(compiled("$.n.clamp(0, 5)", () => 5)).toEqual({ $min: [{ $max: ["$n", 0] }, 5] });
     // a receiver PROVEN to be one family runs that cell alone
     expect(compiled('$.csv.split(",").indexOf("b")', (d) => d.csv.split(",").indexOf("b"))).toEqual({

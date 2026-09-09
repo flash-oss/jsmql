@@ -1567,30 +1567,53 @@ describe("full display name via .filter(Boolean).join", { features: ["Array meth
     { kind: "expression", usage: "db.users.aggregate([{ $addFields: { displayName: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`[$.firstName, $.middleName, $.lastName].filter(Boolean).join(" ")`)).toEqual({
-        $reduce: {
-          input: {
-            $filter: {
-              input: ["$firstName", "$middleName", "$lastName"],
-              as: "x",
-              cond: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
+        $ifNull: [
+          {
+            $reduce: {
+              input: {
+                $filter: {
+                  input: ["$firstName", "$middleName", "$lastName"],
+                  as: "x",
+                  cond: {
+                    $and: [
+                      { $ne: [{ $ifNull: ["$$x", null] }, null] },
+                      { $ne: ["$$x", false] },
+                      { $ne: ["$$x", ""] },
+                      { $ne: ["$$x", 0] },
+                    ],
+                  },
+                },
+              },
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: { $eq: ["$$value", null] },
+                  then: {
+                    $cond: {
+                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                      then: "",
+                      else: { $toString: "$$this" },
+                    },
+                  },
+                  else: {
+                    $concat: [
+                      "$$value",
+                      " ",
+                      {
+                        $cond: {
+                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                          then: "",
+                          else: { $toString: "$$this" },
+                        },
+                      },
+                    ],
+                  },
+                },
               },
             },
           },
-          initialValue: "",
-          in: {
-            $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
-            },
-          },
-        },
+          "",
+        ],
       });
     },
   );
@@ -1608,51 +1631,74 @@ describe("full address with conditional inclusion + filter + join", { features: 
   .join(" ")
       `,
       ).toEqual({
-        $reduce: {
-          input: {
-            $filter: {
-              input: [
-                {
-                  $cond: {
-                    if: {
-                      $and: [
-                        { $ne: [{ $ifNull: ["$building", null] }, null] },
-                        { $ne: ["$building", false] },
-                        { $ne: ["$building", ""] },
-                        { $ne: ["$building", 0] },
-                      ],
+        $ifNull: [
+          {
+            $reduce: {
+              input: {
+                $filter: {
+                  input: [
+                    {
+                      $cond: {
+                        if: {
+                          $and: [
+                            { $ne: [{ $ifNull: ["$building", null] }, null] },
+                            { $ne: ["$building", false] },
+                            { $ne: ["$building", ""] },
+                            { $ne: ["$building", 0] },
+                          ],
+                        },
+                        then: { $concat: ["$building", ","] },
+                        else: "$building",
+                      },
                     },
-                    then: { $concat: ["$building", ","] },
-                    else: "$building",
+                    "$streetNo",
+                    "$street",
+                    "$suburb",
+                    "$state",
+                    "$country",
+                    "$postcode",
+                  ],
+                  as: "x",
+                  cond: {
+                    $and: [
+                      { $ne: [{ $ifNull: ["$$x", null] }, null] },
+                      { $ne: ["$$x", false] },
+                      { $ne: ["$$x", ""] },
+                      { $ne: ["$$x", 0] },
+                    ],
                   },
                 },
-                "$streetNo",
-                "$street",
-                "$suburb",
-                "$state",
-                "$country",
-                "$postcode",
-              ],
-              as: "x",
-              cond: {
-                $and: [
-                  { $ne: [{ $ifNull: ["$$x", null] }, null] },
-                  { $ne: ["$$x", false] },
-                  { $ne: ["$$x", ""] },
-                  { $ne: ["$$x", 0] },
-                ],
+              },
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: { $eq: ["$$value", null] },
+                  then: {
+                    $cond: {
+                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                      then: "",
+                      else: { $toString: "$$this" },
+                    },
+                  },
+                  else: {
+                    $concat: [
+                      "$$value",
+                      " ",
+                      {
+                        $cond: {
+                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                          then: "",
+                          else: { $toString: "$$this" },
+                        },
+                      },
+                    ],
+                  },
+                },
               },
             },
           },
-          initialValue: "",
-          in: {
-            $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", " ", { $toString: "$$this" }] },
-            },
-          },
-        },
+          "",
+        ],
       });
     },
   );
@@ -1664,23 +1710,46 @@ describe("tag aggregation via .map.flat.join", { features: ["Array methods"] }, 
     { kind: "expression", usage: "db.posts.aggregate([{ $addFields: { tagsCSV: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$.posts.map("tags").flat().join(", ")`)).toEqual({
-        $reduce: {
-          input: {
+        $ifNull: [
+          {
             $reduce: {
-              input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
-              initialValue: [],
-              in: { $concatArrays: ["$$value", "$$this"] },
+              input: {
+                $reduce: {
+                  input: { $map: { input: "$posts", as: "x", in: "$$x.tags" } },
+                  initialValue: [],
+                  in: { $concatArrays: ["$$value", "$$this"] },
+                },
+              },
+              initialValue: null,
+              in: {
+                $cond: {
+                  if: { $eq: ["$$value", null] },
+                  then: {
+                    $cond: {
+                      if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                      then: "",
+                      else: { $toString: "$$this" },
+                    },
+                  },
+                  else: {
+                    $concat: [
+                      "$$value",
+                      ", ",
+                      {
+                        $cond: {
+                          if: { $in: [{ $type: "$$this" }, ["null", "missing"]] },
+                          then: "",
+                          else: { $toString: "$$this" },
+                        },
+                      },
+                    ],
+                  },
+                },
+              },
             },
           },
-          initialValue: "",
-          in: {
-            $cond: {
-              if: { $eq: ["$$value", ""] },
-              then: { $toString: "$$this" },
-              else: { $concat: ["$$value", ", ", { $toString: "$$this" }] },
-            },
-          },
-        },
+          "",
+        ],
       });
     },
   );

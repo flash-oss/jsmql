@@ -428,7 +428,7 @@ const packSpread: Rule = {
           ? (n.callee as unknown as { name: string }).name
           : undefined;
     if (name === undefined || !packsSpreadOf(name)) return node;
-    return { ...n, args: [{ type: "ArrayLiteral", elements: n.args, pos: n.args[0].pos }] };
+    return { ...n, args: [{ type: "ArrayLiteral", elements: n.args, pos: n.args[0].pos, packed: true }] };
   },
 };
 

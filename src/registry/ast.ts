@@ -131,7 +131,14 @@ export type Expr =
    */
   | { type: "Injected"; value: unknown; pos: number }
   | { type: "TemplateLiteral"; quasis: readonly string[]; exprs: readonly Expr[]; pos: number }
-  | { type: "ArrayLiteral"; elements: readonly ArrayElement[]; pos: number }
+  /**
+   * `packed` is set by the desugar pass when it gathers a call's ARGUMENTS into this
+   * list — `"a".concat(...xs)` becomes `"a".concat([...xs])`. The distinction survives
+   * because JavaScript keeps it: `.concat(...xs)` passes each element as its own
+   * argument, and `.concat(xs)` passes one array, which a string receiver writes out
+   * with commas between the elements.
+   */
+  | { type: "ArrayLiteral"; elements: readonly ArrayElement[]; pos: number; packed?: true }
   | { type: "ObjectLiteral"; entries: readonly ObjectEntry[]; pos: number }
 
   // ── references ────────────────────────────────────────────────────────────

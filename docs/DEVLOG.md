@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix: `.join()` reads its elements the way JavaScript does
+
+Three answers were wrong, and the third was the one that hurt.
+
+    ["", "a"].join(",")     jsmql "a"      JavaScript ",a"
+    [1, null, 2].join(",")  jsmql null     JavaScript "1,,2"
+    "hi".concat([3, 4])     jsmql "hi34"   JavaScript "hi3,4"
+
+The first two are one cause. The reduce used `""` as its accumulator seed and tested
+`$$value == ""` to mean "nothing joined yet" — which an array whose FIRST element is
+the empty string cannot be told apart from. The seed is now `null`, which no element
+can be, and `$ifNull` turns the untouched seed into the `""` an empty array gives.
+The null element is separate: `$toString` of null answers null and `$concat` with a
+null operand answers null, so ONE null element dropped the whole join to null, silently
+writing a null field. Each element now tests its own type first and writes `""`,
+which is what JavaScript does.
+
+The third is the comma. A string receiver writes an array argument the way
+`String(array)` does, and that is `join(",")` — so `.concat()` calls the same helper
+instead of its own separator-less copy. But `"a".concat(...[3, 4])` is "a34", not
+"a3,4", because the spread passes two arguments rather than one array. That
+distinction had been erased by the desugar pass, which packs a call's arguments into
+one array literal, so the literal it builds is now marked `packed` and the cell reads
+the mark. Without it the two spellings would have collapsed into one answer, and the
+live suite caught exactly that on `$.csv.concat(...$.a)` before it shipped.
+
+The emitted document is larger — the element test appears twice inside the reduce,
+and `$ifNull` wraps it. A `$let` would state the test once, but it would need a name,
+and a name inside `$reduce.in` can shadow one the developer bound outside. Correctness
+first, and the size is the price: sixteen shapes now answer exactly what JavaScript
+answers, measured on mongod, where three did not.
+
+---
+
 ## 2026-09-09 — fix: `.concat()` with several arguments emitted MQL the server refuses
 
 `$.s.concat("!", "?")` killed the pipeline. One argument was fine, three field paths
