@@ -104,7 +104,14 @@ export function mergeDevlog(baseText, oursText, theirsText) {
 }
 
 function readStage(stage) {
-  const r = spawnSync("git", ["show", `:${stage}:${TARGET}`], { encoding: "utf8" });
+  // The DEVLOG is append-only and already past a megabyte, which is `spawnSync`'s own
+  // default ceiling: without a bigger one the read fails with ENOBUFS and reports
+  // itself as "not conflicted", which is the opposite of what happened.
+  const r = spawnSync("git", ["show", `:${stage}:${TARGET}`], { encoding: "utf8", maxBuffer: 256 * 1024 * 1024 });
+  if (r.error !== undefined) {
+    process.stderr.write(`merge-devlog: could not run git to read stage ${stage} of ${TARGET}: ${r.error.message}\n`);
+    process.exit(2);
+  }
   if (r.status !== 0) {
     process.stderr.write(
       `merge-devlog: cannot read stage ${stage} of ${TARGET}. ` +

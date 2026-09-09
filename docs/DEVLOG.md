@@ -10,83 +10,131 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-09 — fix: `.join()` reads its elements the way JavaScript does
+## 2026-09-09 — chore: the acceptance gate is clean
 
-Three answers were wrong, and the third was the one that hurt.
+`scripts/diff-compilers.mjs` exits 0. Every one of the 10993 divergences between
+this compiler and the shipped one — 2915 sources × six entry points — carries a
+reason a reviewer can judge, and none is a TODO.
 
-    ["", "a"].join(",")     jsmql "a"      JavaScript ",a"
-    [1, null, 2].join(",")  jsmql null     JavaScript "1,,2"
-    "hi".concat([3, 4])     jsmql "hi34"   JavaScript "hi3,4"
+The reasons are written per CLASS of change, not per row, because that is what a
+reader needs: 2830 rows are one sentence about the strict entries refusing a shape
+they do not take, 2422 about `jsmql.update()` being the update DOCUMENT rather than
+the pipeline form, 96 about a scratch slot numbered from 0, 49 about a callback's
+variable taking the parameter's own name. The rows that needed judgement rather
+than a rule — the last 431 — were judged one cluster at a time, each answer that
+could select different documents run on a mongod, and each judgement checked by a
+second reader whose brief was to refute it. That pass is what found the six
+defects in the entry above.
 
-The first two are one cause. The reduce used `""` as its accumulator seed and tested
-`$$value == ""` to mean "nothing joined yet" — which an array whose FIRST element is
-the empty string cannot be told apart from. The seed is now `null`, which no element
-can be, and `$ifNull` turns the untouched seed into the `""` an empty array gives.
-The null element is separate: `$toString` of null answers null and `$concat` with a
-null operand answers null, so ONE null element dropped the whole join to null, silently
-writing a null field. Each element now tests its own type first and writes `""`,
-which is what JavaScript does.
-
-The third is the comma. A string receiver writes an array argument the way
-`String(array)` does, and that is `join(",")` — so `.concat()` calls the same helper
-instead of its own separator-less copy. But `"a".concat(...[3, 4])` is "a34", not
-"a3,4", because the spread passes two arguments rather than one array. That
-distinction had been erased by the desugar pass, which packs a call's arguments into
-one array literal, so the literal it builds is now marked `packed` and the cell reads
-the mark. Without it the two spellings would have collapsed into one answer, and the
-live suite caught exactly that on `$.csv.concat(...$.a)` before it shipped.
-
-The emitted document is larger — the element test appears twice inside the reduce,
-and `$ifNull` wraps it. A `$let` would state the test once, but it would need a name,
-and a name inside `$reduce.in` can shadow one the developer bound outside. Correctness
-first, and the size is the price: sixteen shapes now answer exactly what JavaScript
-answers, measured on mongod, where three did not.
+What the file now records is the shape of the refactor: what changed, and why each
+change is right. `--accept` refreshes the rows and keeps every reason; a row whose
+divergence disappears is pruned. A new divergence arrives as UNCLASSIFIED and the
+gate exits 1 until someone says why it is correct.
 
 ---
 
-## 2026-09-09 — fix: `.concat()` with several arguments emitted MQL the server refuses
+## 2026-09-09 — chore: the published bundle carries the fixes it is supposed to
 
-`$.s.concat("!", "?")` killed the pipeline. One argument was fine, three field paths
-were fine, and two string literals were not:
+`dist/jsmql.js` is the one build output GitHub Pages serves, and `playground.html`
+imports it — so the playground compiles with whatever that file holds. A `src/`
+edit does not trigger the sync hook (deliberately watcher-free), and the bundle had
+fallen six commits behind: the live page was compiling `.includes` the old way, and
+the dist-gated cases in `test/smoke.test.ts` were passing against the same stale
+bundle, which makes their green no evidence at all about the current compiler.
 
-    Failed to optimize pipeline :: caused by :: $concatArrays only supports arrays, not string
+Rebuilt, re-synced and re-run: the eleven smoke cases pass against a fresh `dist/`,
+and the bundle answers `["a","b"].map(k => $.m[k])` with the plain `$getField`,
+`$.items.map(x => x).length` with the `[]` neutral, and one correlated equality with
+the `localField` pair. `playground.html` is unchanged — its island carries each
+example's SOURCE, and the page compiles in the reader's browser.
 
-The cause is not the argument count. MongoDB folds a run of ADJACENT CONSTANT operands
-inside `$concat` and `$concatArrays` while it OPTIMISES, and raises there when a folded
-constant is the wrong type for that operator. `$.s.concat("!", $.t, "?")` runs, because
-the field path between the two constants breaks the run. The receiver is operand 0 and
-is never constant, which is why a single argument could never trigger it.
+---
 
-Two things follow, and both had to be measured rather than assumed. First, "optimise"
-is before any document moves, so the `$switch` that picks the string reading from the
-array reading does NOT protect its own dead branch — verified with a `$type` guard that
-can never be true, which still failed. Second, `$literal` does not block the fold
-either. There is no wrapper that keeps a bad branch alive: its operands have to be
-type-correct.
+## 2026-09-09 — decision: a string is not spread into its characters
 
-So each argument is now rendered the way JavaScript renders it for the family that
-runs. `$concatArrays` takes arrays only, and JavaScript's `[1].concat(2)` is `[1, 2]`,
-so a proven non-array becomes the one-element array it stands for. `$concat` takes
-strings only, and JavaScript's `"a".concat(2)` is `"a2"`, so a proven non-string goes
-through `$toString` and a proven array is joined element by element. An argument that
-proves nothing stays as written, and the server decides it. Fifteen shapes were run on
-mongod against JavaScript's own answer for the same input; all fifteen agree, and a
-receiver that is neither string nor array still answers `$$REMOVE`.
+`[..."abc"]` is `["a","b","c"]` in JavaScript. MongoDB has no operator that does it —
+`$concatArrays` takes arrays only, `$mergeObjects` takes documents only — so there is
+nothing to lower the spread to, and the compiler was emitting the string unchanged:
+`[..."abc"]` answered the bare string `"abc"`, silently, with no error at compile time
+or at run time. With a sibling element it was worse in a quieter way, emitting
+`{ "$concatArrays": ["abc", ["d"]] }` for the server to reject later.
 
-The row reads the proof through a new `ExprIn` service, `kind`, which hands a cell the
-same proof the receiver dispatch already reads. The cell previously carried a one-line
-copy of that logic (`args[0].type === "ArrayLiteral"`), which is the drift the service
-removes. The defect also reached the proven-receiver road — `[1].concat(2)` and
-`$.s.trim().concat(1, 2)` both failed with no `$switch` in sight — so narrowing the
-dispatch would not have been a fix; only the operand rendering is.
+Both spellings now refuse a spread whose operand is PROVABLY a string, and the
+refusal names `$range(0, <string>.length).map(i => <string>.charAt(i))`, which reads
+per code point and so agrees with JavaScript on a multi-byte character. A field path
+proves nothing, so `[...$.s]` still compiles: the compiler cannot know what the field
+holds, and refusing on a guess would reject working programs.
 
-`test/fold-consistency.test.ts` had been running eight of the failing shapes since
-before the defect existed, and passing. Its comparison treated a server rejection as
-"a pre-existing lowering limitation" and returned green. That is precisely the
-assumption HR3 forbids, so a refusal is now a named entry with a written reason, and
-an unlisted one turns the suite red — checked by removing the one entry and watching
-it fail. Exactly one shape is listed: a `zipObject` over lists of unequal length, where
-`$arrayToObject` refuses the pair that has no value.
+---
+
+## 2026-09-09 — docs: DEFERRED.md says what is open, and a gate keeps it saying so
+
+Twenty-one claims in `docs/DEFERRED.md` that no longer held, found by re-deriving
+each against the compiler.
+
+Two §B decisions were REVERSED by the code and are deleted: `in` for array
+membership ships (`$.status in ["a","b"]` → `{ status: { $in: […] } }`), and a bare
+foreign-param ref in a `$lookup` predicate compiles to a JavaScript-truthiness
+test on the foreign root rather than being rejected. `shuffle` came off the "no
+MQL meaning" list: `$$.shuffle()` is a shipped stream method.
+
+Fourteen pointers named a file, a line or a symbol that does not exist — a
+`lower.ts:3309` in a 1063-line file, four references to a "fork plan" that is in
+no repository, five identifiers deleted long ago, and a citation into
+`DEVLOG.md`, which is append-only and so drifts by construction. Each now names a
+live site, or says "none" where the compiler simply emits larger MQL. DEF-019's
+premise was two-thirds shipped and is narrowed to the whole-element comparator;
+DEF-014's success criterion already passes and the row is restated on the residue
+that is left.
+
+The header's "Open: 29. Decided-against: 9." was 13 and 10. Counts do not belong
+in prose — CLAUDE.md says so — so a COUNT gate in
+`test/deferred-coverage.test.ts` holds them instead, beside a new ID-ORDER gate
+for the claim that §A is ordered. The nine-field row schema, which was written down
+nowhere, is now in the file's own Conventions block. `test/deferred-allowlist.txt`
+lost four banner blocks heading zero entries and the branch narration in a fifth.
+
+---
+
+## 2026-09-09 — docs: the `[]` neutral shows up in the three claims that name it
+
+`scripts/check-doc-claims.mjs`, run after the null-neutral fix, found the three
+prose claims whose MQL now carries the extra `$ifNull`: the README's spread-and-
+`.includes` example, and the two `$switch` blocks in LANGUAGE.md that spell out
+what a dual-receiver `.includes` and `.length` emit.
+
+---
+
+## 2026-09-09 — docs: the specs and the CLAUDE.md files name symbols that exist
+
+Forty-odd pointers across `docs/specs/`, the `CLAUDE.md` files and
+`docs/LANG_RULES.md` that named a file, a line, a section or a function that is
+not there.
+
+The worst were whole sections describing code that no longer exists:
+`update-filter.md`'s Lexer and Parser sections named ten parser methods and a
+`keywordToken()` switch, none of which is in the tree — lexemes are registry rows,
+so the section is now one sentence naming `tokens.ts` and `keywords.ts` as the
+SSOT. `let-bindings.md` and `function-form-params.md` each did the same, and
+`stream-methods.md`'s Lowering column named five deleted helpers and a
+`pipeline.ts` that is not in `src/`.
+
+Six claims were wrong about behaviour, not just about names. LANG_RULES' HR3
+showed `$gt($.x)` emitting MQL where the compiler throws; SR3 showed `.count()`,
+an options-object `.plus({ days: 7 })`, and `Date.parse` — none of which exists.
+`emit-pass.md` claimed two range operators on one field become an `$and` (they
+merge into one document) and that a raw `{ x: $gt($.y) }` keeps its key (the
+operand reads the document, so it lifts to `$expr`). `stream-methods.md` said
+`.reject` "never emits a query-form De Morgan"; it emits `$nor`.
+`replace-root-stage.md` documented a fan-out on `$ = <array>`, which is refused.
+
+The rest is hygiene the project's own rules ask for: `Position` and `OutOf` were
+cited in the wrong file; `.claude/settings.json` pre-approved `Bash(npx:*)`, which
+CLAUDE.md forbids outright; the root file map listed 11 of `emit/`'s 18 modules
+and 5 of `passes/` 12, and claimed version `0.1.0` against a `package.json` that
+says `0.2.0`; and a dozen file headers narrated a previous implementation ("the
+old lexer", "used to", "the NEW compiler's") where the rule allows only current
+behaviour. Each is restated as the invariant it was evidence for.
 
 ---
 
@@ -130,20 +178,33 @@ the design question the deferred row parked, and closes it.
 
 ---
 
-## 2026-09-09 — decision: a string is not spread into its characters
+## 2026-09-09 — feat: a placement rule can belong to an operator the stage carries
 
-`[..."abc"]` is `["a","b","c"]` in JavaScript. MongoDB has no operator that does it —
-`$concatArrays` takes arrays only, `$mergeObjects` takes documents only — so there is
-nothing to lower the spread to, and the compiler was emitting the string unchanged:
-`[..."abc"]` answered the bare string `"abc"`, silently, with no error at compile time
-or at run time. With a sibling element it was worse in a quieter way, emitting
-`{ "$concatArrays": ["abc", ["d"]] }` for the server to reject later.
+`$text` reads a text index, and MEASURED the server reads that index only at the
+start of a pipeline: `[{ $sort: … }, { $match: { $text: … } }]` answers "$match
+with $text is only allowed as the first pipeline stage", and so does the same
+`$text` nested under an `$and`. Inside a `$facet` branch it is refused outright
+("query requires text score metadata, but it is not available"). jsmql promised
+both checks in three places and made neither.
 
-Both spellings now refuse a spread whose operand is PROVABLY a string, and the
-refusal names `$range(0, <string>.length).map(i => <string>.charAt(i))`, which reads
-per code point and so agrees with JavaScript on a multi-byte character. A field path
-proves nothing, so `[...$.s]` still compiles: the compiler cannot know what the field
-holds, and refusing on a guess would reject working programs.
+The rule is `$text`'s, not `$match`'s, so `place` now judges every registry name
+that appears as a KEY anywhere in an emitted stage's body, not the stage name
+alone. `$text`'s row states `only: ["stageFirst"]` and `forbiddenIn: ["$facet"]`,
+and the check falls out.
+
+A placement refusal for a name like this cannot use the generic sentence — `$text`
+does not "produce the pipeline's source documents" — so a row states the wording
+it needs. The `insteadOfContainer` fact added for `$documents` folds into the same
+one, `placement: { first, container }`:
+
+```
+[ $sort({ x: 1 }), $match({ $text: { $search: "mongo" } }) ]
+→ '$text' reads the text index, and the server reads that index at the START of a
+  pipeline. Put the '$match' that uses it first and filter further in a later '$match'.
+```
+
+The `$where` call form stays refused and a RAW `{ $where: … }` body still passes
+through untouched, which is HR1 — the docs claimed a ban on both.
 
 ---
 
@@ -215,303 +276,6 @@ write.
 
 ---
 
-## 2026-09-09 — chore: the published bundle carries the fixes it is supposed to
-
-`dist/jsmql.js` is the one build output GitHub Pages serves, and `playground.html`
-imports it — so the playground compiles with whatever that file holds. A `src/`
-edit does not trigger the sync hook (deliberately watcher-free), and the bundle had
-fallen six commits behind: the live page was compiling `.includes` the old way, and
-the dist-gated cases in `test/smoke.test.ts` were passing against the same stale
-bundle, which makes their green no evidence at all about the current compiler.
-
-Rebuilt, re-synced and re-run: the eleven smoke cases pass against a fresh `dist/`,
-and the bundle answers `["a","b"].map(k => $.m[k])` with the plain `$getField`,
-`$.items.map(x => x).length` with the `[]` neutral, and one correlated equality with
-the `localField` pair. `playground.html` is unchanged — its island carries each
-example's SOURCE, and the page compiles in the reader's browser.
-
----
-
-## 2026-09-09 — docs: the `[]` neutral shows up in the three claims that name it
-
-`scripts/check-doc-claims.mjs`, run after the null-neutral fix, found the three
-prose claims whose MQL now carries the extra `$ifNull`: the README's spread-and-
-`.includes` example, and the two `$switch` blocks in LANGUAGE.md that spell out
-what a dual-receiver `.includes` and `.length` emit.
-
----
-
-## 2026-09-09 — chore: the acceptance gate is clean
-
-`scripts/diff-compilers.mjs` exits 0. Every one of the 10993 divergences between
-this compiler and the shipped one — 2915 sources × six entry points — carries a
-reason a reviewer can judge, and none is a TODO.
-
-The reasons are written per CLASS of change, not per row, because that is what a
-reader needs: 2830 rows are one sentence about the strict entries refusing a shape
-they do not take, 2422 about `jsmql.update()` being the update DOCUMENT rather than
-the pipeline form, 96 about a scratch slot numbered from 0, 49 about a callback's
-variable taking the parameter's own name. The rows that needed judgement rather
-than a rule — the last 431 — were judged one cluster at a time, each answer that
-could select different documents run on a mongod, and each judgement checked by a
-second reader whose brief was to refute it. That pass is what found the six
-defects in the entry above.
-
-What the file now records is the shape of the refactor: what changed, and why each
-change is right. `--accept` refreshes the rows and keeps every reason; a row whose
-divergence disappears is pruned. A new divergence arrives as UNCLASSIFIED and the
-gate exits 1 until someone says why it is correct.
-
----
-
-## 2026-09-09 — fix!: six defects the acceptance gate found, each measured on the server
-
-The gate compares this compiler with the shipped one over 2912 sources × six entry
-points. Classifying the last of its divergences — one agent per cluster, each with
-an adversarial verifier, every answer that could differ run on a mongod — turned up
-six real defects. All six are HR3 or correctness, and none had a test.
-
-**A callback parameter over a string array lost its kind.** A parameter bound over
-`["sender", "recipient"]` or a `.split(",")` is a STRING, so `$.m[k]` is a field
-read. The proof was gone, so the bracket read took the runtime array/object
-dispatch — whose array arm hands `$arrayElemAt` a string, which MEASURED the server
-refuses ("must be a numeric value, but is string"). The binder now takes the
-element kind the row states:
-
-```
-["a", "b"].map(k => $.m[k])
-before: { $map: { … in: { $cond: { if: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$k"] }, … } } } }
-after:  { $map: { input: ["a","b"], as: "k", in: { $getField: { field: "$$k", input: "$m" } } } }
-```
-
-The `?.` neutral follows the same proof: `$.legs?.[party]` now takes `{}` (a
-document) rather than `[]`, so a document with no `legs` no longer reaches
-`$arrayElemAt` at all.
-
-**An anonymous callback took a name a developer can write.** `() => v` bound its
-missing parameter as the JavaScript name `_`, which encodes to `v__5f` — the same
-variable a developer's own `_` takes. It is minted now, `jsmqlUnused`.
-
-**`$and([])` / `$or([])` emitted MQL that cannot run.** MEASURED,
-`find({ $and: [] })` is refused ("$and argument must be a non-empty array") where
-`{ $expr: { $and: [] } }` runs and matches every document — JavaScript's answer for
-`[].every(…)`. The query cell answers null for the empty list, so the value road
-wraps it. `$nor` is filter-only and has no value road, so its row states
-`nonEmpty` and refuses with what "none of nothing" already means.
-
-**`$where` in a `$match` emitted a stage the server refuses.** MEASURED,
-`find({ $where: … })` runs where server-side JavaScript is enabled and an
-aggregation `$match` refuses it at any depth of the body. So the raw filter still
-passes through (HR1) and the same document inside a `$match` is refused, through
-the placement machinery `$text` uses.
-
-**`$$.length` stopped reusing its stamp.** `docs/specs/stream-length.md` states
-compute-once, and two reads were emitting two `$setWindowFields`. The chain caches
-the paths it has stamped and clears them at the first stage whose row does not
-state `preservesCount` — and a lowering that is TAKEN BACK (a join whose chain goes
-on) rewinds its stamps with its hoists, or the retry reads a field the discarded
-stage was going to write.
-
-**`$in` and `$size` are the two array operators that abort on null.** MEASURED, the
-other eight answer null in turn. A reader over a missing field answers null, so a
-value the compiler PROVED is an array can still be null at run time — and
-`$.items.map(x => x).length` aborted the whole command on a document with no
-`items`. Both operands now take the `[]` neutral.
-
----
-
-## 2026-09-09 — docs: the specs and the CLAUDE.md files name symbols that exist
-
-Forty-odd pointers across `docs/specs/`, the `CLAUDE.md` files and
-`docs/LANG_RULES.md` that named a file, a line, a section or a function that is
-not there.
-
-The worst were whole sections describing code that no longer exists:
-`update-filter.md`'s Lexer and Parser sections named ten parser methods and a
-`keywordToken()` switch, none of which is in the tree — lexemes are registry rows,
-so the section is now one sentence naming `tokens.ts` and `keywords.ts` as the
-SSOT. `let-bindings.md` and `function-form-params.md` each did the same, and
-`stream-methods.md`'s Lowering column named five deleted helpers and a
-`pipeline.ts` that is not in `src/`.
-
-Six claims were wrong about behaviour, not just about names. LANG_RULES' HR3
-showed `$gt($.x)` emitting MQL where the compiler throws; SR3 showed `.count()`,
-an options-object `.plus({ days: 7 })`, and `Date.parse` — none of which exists.
-`emit-pass.md` claimed two range operators on one field become an `$and` (they
-merge into one document) and that a raw `{ x: $gt($.y) }` keeps its key (the
-operand reads the document, so it lifts to `$expr`). `stream-methods.md` said
-`.reject` "never emits a query-form De Morgan"; it emits `$nor`.
-`replace-root-stage.md` documented a fan-out on `$ = <array>`, which is refused.
-
-The rest is hygiene the project's own rules ask for: `Position` and `OutOf` were
-cited in the wrong file; `.claude/settings.json` pre-approved `Bash(npx:*)`, which
-CLAUDE.md forbids outright; the root file map listed 11 of `emit/`'s 18 modules
-and 5 of `passes/` 12, and claimed version `0.1.0` against a `package.json` that
-says `0.2.0`; and a dozen file headers narrated a previous implementation ("the
-old lexer", "used to", "the NEW compiler's") where the rule allows only current
-behaviour. Each is restated as the invariant it was evidence for.
-
----
-
-## 2026-09-09 — refactor: a rule nothing produces and nothing reads is not a capability
-
-Fifteen facts and helpers the registry or the compiler declared and nobody read.
-Each promised a behaviour that did not exist, which is worse than absent: a
-reader adding a row states the fact and believes it does something.
-
-Deleted from the row shape: `asReference` (the bare-callback gate is decided by
-the callback rule, not by this field — and its doc block stated a refusal for
-`Math.asinh` the compiler does not emit), `paramsRepeat` (the arity it describes
-is counted by `elementsCallback` against the sibling), `minVersion` (a second
-copy of the vendored YAML's, which is what `generate-globals.mjs` actually
-reads), `RootSpec.family` (no name resolves through a root's family),
-`StageIn.prevStages`, and the `SugarIn` service type no cell can be handed.
-
-Deleted from the source: `streamLengthStage` and `isStringType` (each described a
-shape the registry builds itself), `isCorrelationVar` + `CORRELATION_VAR_RE` (a
-query-slot guard that was never wired), `notADocumentInList` (superseded by the
-builder that names the element index), `isRawQuery`, the unused `GROUP` position
-constant, and the three truth builders in `emit/mql.ts` that the registry cannot
-reach — it imports nothing outside itself, which is exactly why they were dead.
-
-Two facts became real instead of being deleted. `LENGTH_SLOT` was reserved in
-`src/namespace.ts` and spelled as a literal in the registry, so the registry now
-carries the twin `GROUP_SLOT` already had, and one test holds both pairs equal —
-the test the `GROUP_SLOT` comment had been promising.
-
-Two tracking ids leaked into what a developer reads. `[DEF-022]` in six
-`Number.isFinite` refusals and `[DEF-032]` in the function-as-value one are now
-source comments, and both messages are rewritten to name a way out that compiles
-(the test asserts the `.map((x) => f(x))` form the second one recommends).
-
----
-
-## 2026-09-09 — docs: DEFERRED.md says what is open, and a gate keeps it saying so
-
-Twenty-one claims in `docs/DEFERRED.md` that no longer held, found by re-deriving
-each against the compiler.
-
-Two §B decisions were REVERSED by the code and are deleted: `in` for array
-membership ships (`$.status in ["a","b"]` → `{ status: { $in: […] } }`), and a bare
-foreign-param ref in a `$lookup` predicate compiles to a JavaScript-truthiness
-test on the foreign root rather than being rejected. `shuffle` came off the "no
-MQL meaning" list: `$$.shuffle()` is a shipped stream method.
-
-Fourteen pointers named a file, a line or a symbol that does not exist — a
-`lower.ts:3309` in a 1063-line file, four references to a "fork plan" that is in
-no repository, five identifiers deleted long ago, and a citation into
-`DEVLOG.md`, which is append-only and so drifts by construction. Each now names a
-live site, or says "none" where the compiler simply emits larger MQL. DEF-019's
-premise was two-thirds shipped and is narrowed to the whole-element comparator;
-DEF-014's success criterion already passes and the row is restated on the residue
-that is left.
-
-The header's "Open: 29. Decided-against: 9." was 13 and 10. Counts do not belong
-in prose — CLAUDE.md says so — so a COUNT gate in
-`test/deferred-coverage.test.ts` holds them instead, beside a new ID-ORDER gate
-for the claim that §A is ordered. The nine-field row schema, which was written down
-nowhere, is now in the file's own Conventions block. `test/deferred-allowlist.txt`
-lost four banner blocks heading zero entries and the branch narration in a fifth.
-
----
-
-## 2026-09-09 — feat: a placement rule can belong to an operator the stage carries
-
-`$text` reads a text index, and MEASURED the server reads that index only at the
-start of a pipeline: `[{ $sort: … }, { $match: { $text: … } }]` answers "$match
-with $text is only allowed as the first pipeline stage", and so does the same
-`$text` nested under an `$and`. Inside a `$facet` branch it is refused outright
-("query requires text score metadata, but it is not available"). jsmql promised
-both checks in three places and made neither.
-
-The rule is `$text`'s, not `$match`'s, so `place` now judges every registry name
-that appears as a KEY anywhere in an emitted stage's body, not the stage name
-alone. `$text`'s row states `only: ["stageFirst"]` and `forbiddenIn: ["$facet"]`,
-and the check falls out.
-
-A placement refusal for a name like this cannot use the generic sentence — `$text`
-does not "produce the pipeline's source documents" — so a row states the wording
-it needs. The `insteadOfContainer` fact added for `$documents` folds into the same
-one, `placement: { first, container }`:
-
-```
-[ $sort({ x: 1 }), $match({ $text: { $search: "mongo" } }) ]
-→ '$text' reads the text index, and the server reads that index at the START of a
-  pipeline. Put the '$match' that uses it first and filter further in a later '$match'.
-```
-
-The `$where` call form stays refused and a RAW `{ $where: … }` body still passes
-through untouched, which is HR1 — the docs claimed a ban on both.
-
----
-
-## 2026-09-09 — fix: a write to a callback's own stream is answered by name
-
-`.push`, `.sort` and every other mutator spelling desugars to `x = …` on its
-receiver, and the emitter judges the write. A callback's THIRD parameter is the
-body's own STREAM, not a value, so the write reached the end of the target road
-and answered with the wrong thing entirely:
-
-```
-$.o = $$$.u.aggregate((u, _i, c) => { c.push({ x: 1 }); });
-before: Unknown identifier 'c'. Did you mean '$.c'?
-after:  'c' is the body's own stream, and a stream is not a value a statement writes to.
-        Append documents with '.concat(…)' ('c.concat([{ … }]);'), keep some with
-        '.filter(…)', or run a stage on it ('c.$match(…);').
-```
-
-Every way out the message names compiles — `c.concat([{ x: 1 }])` is the same
-`$unionWith` the mutator meant, and `c.$match(…)` the stage — and the test asserts
-each. One message covers every spelling, because they all arrive as one assignment.
-
----
-
-## 2026-09-09 — fix!: two shapes the server refuses, refused at compile time instead
-
-Both were HR3 holes — jsmql emitted MQL a `mongod` rejects — and both are now
-worded refusals that name a spelling that works.
-
-**A written list of documents inside a `$facet` branch.** `$$.push({ a: 1 })` and
-`.concat([{ a: 1 }])` make `{ $unionWith: { pipeline: [{ $documents: […] }] } }`,
-and MEASURED that shape reaches through a `$lookup` and through another
-`$unionWith` — both run — but a facet branch refuses it at any depth:
-"$documents inside of $unionWith is not allowed to be used within a $facet stage".
-A `$unionWith` that NAMES a collection is fine there, so the ban is the
-literal-documents form alone. `$facet`'s row states it as `bansNested`, the
-transitive twin of `forbiddenIn`:
-
-```
-$ = { a: $$.push({ x: 1 }), b: $$.filter(d => d.n > 1) };
-→ '.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere
-  inside a '$facet' — however deeply it is nested. Append another collection instead
-  ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.
-
-$ = { a: $$.push(...$$$.archive), b: $$.take(1) };
-→ [{ $facet: { a: [{ $unionWith: "archive" }], b: [{ $limit: 1 }] } }]
-```
-
-**A fan-out whose elements are not documents.** `$$ = <array>` makes the stream
-from the array's elements, one document each, and MEASURED `$replaceWith` of
-anything else answers "'replacement document' must evaluate to an object". A row
-can now state the kind of ONE element of what it returns — `elementKind`, set where
-the row's own lowering fixes it: `.split()` and `Object.keys()` give strings,
-`Object.entries()` / `.chunk()` / `.zip()` give arrays, `$objectToArray` and
-`$regexFindAll` give documents — and the stream road reads it:
-
-```
-$$ = Object.entries($.scores);
-→ '$$ = …' makes the stream from the array's ELEMENTS, one document each, and these
-  elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));'
-  — or write to a field of the document you have ('$.<field> = <array>;').
-
-$$ = $objectToArray($.scores);   → fans out as it stands, to { k, v } documents
-```
-
-A row that states nothing leaves the elements unproven, and so does a field path
-by construction — `$$ = $.items` still fans out whatever is there.
-
----
-
 ## 2026-09-09 — feat!: a query document is read through an index, so `.includes` is the indexable one
 
 `.includes` means two things in JavaScript — containment in an array, substring in
@@ -576,6 +340,242 @@ row and pinned by two cases in `test/compiler-filter.test.ts`.
 
 ---
 
+## 2026-09-09 — fix: `.concat()` with several arguments emitted MQL the server refuses
+
+`$.s.concat("!", "?")` killed the pipeline. One argument was fine, three field paths
+were fine, and two string literals were not:
+
+    Failed to optimize pipeline :: caused by :: $concatArrays only supports arrays, not string
+
+The cause is not the argument count. MongoDB folds a run of ADJACENT CONSTANT operands
+inside `$concat` and `$concatArrays` while it OPTIMISES, and raises there when a folded
+constant is the wrong type for that operator. `$.s.concat("!", $.t, "?")` runs, because
+the field path between the two constants breaks the run. The receiver is operand 0 and
+is never constant, which is why a single argument could never trigger it.
+
+Two things follow, and both had to be measured rather than assumed. First, "optimise"
+is before any document moves, so the `$switch` that picks the string reading from the
+array reading does NOT protect its own dead branch — verified with a `$type` guard that
+can never be true, which still failed. Second, `$literal` does not block the fold
+either. There is no wrapper that keeps a bad branch alive: its operands have to be
+type-correct.
+
+So each argument is now rendered the way JavaScript renders it for the family that
+runs. `$concatArrays` takes arrays only, and JavaScript's `[1].concat(2)` is `[1, 2]`,
+so a proven non-array becomes the one-element array it stands for. `$concat` takes
+strings only, and JavaScript's `"a".concat(2)` is `"a2"`, so a proven non-string goes
+through `$toString` and a proven array is joined element by element. An argument that
+proves nothing stays as written, and the server decides it. Fifteen shapes were run on
+mongod against JavaScript's own answer for the same input; all fifteen agree, and a
+receiver that is neither string nor array still answers `$$REMOVE`.
+
+The row reads the proof through a new `ExprIn` service, `kind`, which hands a cell the
+same proof the receiver dispatch already reads. The cell previously carried a one-line
+copy of that logic (`args[0].type === "ArrayLiteral"`), which is the drift the service
+removes. The defect also reached the proven-receiver road — `[1].concat(2)` and
+`$.s.trim().concat(1, 2)` both failed with no `$switch` in sight — so narrowing the
+dispatch would not have been a fix; only the operand rendering is.
+
+`test/fold-consistency.test.ts` had been running eight of the failing shapes since
+before the defect existed, and passing. Its comparison treated a server rejection as
+"a pre-existing lowering limitation" and returned green. That is precisely the
+assumption HR3 forbids, so a refusal is now a named entry with a written reason, and
+an unlisted one turns the suite red — checked by removing the one entry and watching
+it fail. Exactly one shape is listed: a `zipObject` over lists of unequal length, where
+`$arrayToObject` refuses the pair that has no value.
+
+---
+
+## 2026-09-09 — fix: `.join()` reads its elements the way JavaScript does
+
+Three answers were wrong, and the third was the one that hurt.
+
+    ["", "a"].join(",")     jsmql "a"      JavaScript ",a"
+    [1, null, 2].join(",")  jsmql null     JavaScript "1,,2"
+    "hi".concat([3, 4])     jsmql "hi34"   JavaScript "hi3,4"
+
+The first two are one cause. The reduce used `""` as its accumulator seed and tested
+`$$value == ""` to mean "nothing joined yet" — which an array whose FIRST element is
+the empty string cannot be told apart from. The seed is now `null`, which no element
+can be, and `$ifNull` turns the untouched seed into the `""` an empty array gives.
+The null element is separate: `$toString` of null answers null and `$concat` with a
+null operand answers null, so ONE null element dropped the whole join to null, silently
+writing a null field. Each element now tests its own type first and writes `""`,
+which is what JavaScript does.
+
+The third is the comma. A string receiver writes an array argument the way
+`String(array)` does, and that is `join(",")` — so `.concat()` calls the same helper
+instead of its own separator-less copy. But `"a".concat(...[3, 4])` is "a34", not
+"a3,4", because the spread passes two arguments rather than one array. That
+distinction had been erased by the desugar pass, which packs a call's arguments into
+one array literal, so the literal it builds is now marked `packed` and the cell reads
+the mark. Without it the two spellings would have collapsed into one answer, and the
+live suite caught exactly that on `$.csv.concat(...$.a)` before it shipped.
+
+The emitted document is larger — the element test appears twice inside the reduce,
+and `$ifNull` wraps it. A `$let` would state the test once, but it would need a name,
+and a name inside `$reduce.in` can shadow one the developer bound outside. Correctness
+first, and the size is the price: sixteen shapes now answer exactly what JavaScript
+answers, measured on mongod, where three did not.
+
+---
+
+## 2026-09-09 — fix: a write to a callback's own stream is answered by name
+
+`.push`, `.sort` and every other mutator spelling desugars to `x = …` on its
+receiver, and the emitter judges the write. A callback's THIRD parameter is the
+body's own STREAM, not a value, so the write reached the end of the target road
+and answered with the wrong thing entirely:
+
+```
+$.o = $$$.u.aggregate((u, _i, c) => { c.push({ x: 1 }); });
+before: Unknown identifier 'c'. Did you mean '$.c'?
+after:  'c' is the body's own stream, and a stream is not a value a statement writes to.
+        Append documents with '.concat(…)' ('c.concat([{ … }]);'), keep some with
+        '.filter(…)', or run a stage on it ('c.$match(…);').
+```
+
+Every way out the message names compiles — `c.concat([{ x: 1 }])` is the same
+`$unionWith` the mutator meant, and `c.$match(…)` the stage — and the test asserts
+each. One message covers every spelling, because they all arrive as one assignment.
+
+---
+
+## 2026-09-09 — fix!: six defects the acceptance gate found, each measured on the server
+
+The gate compares this compiler with the shipped one over 2912 sources × six entry
+points. Classifying the last of its divergences — one agent per cluster, each with
+an adversarial verifier, every answer that could differ run on a mongod — turned up
+six real defects. All six are HR3 or correctness, and none had a test.
+
+**A callback parameter over a string array lost its kind.** A parameter bound over
+`["sender", "recipient"]` or a `.split(",")` is a STRING, so `$.m[k]` is a field
+read. The proof was gone, so the bracket read took the runtime array/object
+dispatch — whose array arm hands `$arrayElemAt` a string, which MEASURED the server
+refuses ("must be a numeric value, but is string"). The binder now takes the
+element kind the row states:
+
+```
+["a", "b"].map(k => $.m[k])
+before: { $map: { … in: { $cond: { if: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$k"] }, … } } } }
+after:  { $map: { input: ["a","b"], as: "k", in: { $getField: { field: "$$k", input: "$m" } } } }
+```
+
+The `?.` neutral follows the same proof: `$.legs?.[party]` now takes `{}` (a
+document) rather than `[]`, so a document with no `legs` no longer reaches
+`$arrayElemAt` at all.
+
+**An anonymous callback took a name a developer can write.** `() => v` bound its
+missing parameter as the JavaScript name `_`, which encodes to `v__5f` — the same
+variable a developer's own `_` takes. It is minted now, `jsmqlUnused`.
+
+**`$and([])` / `$or([])` emitted MQL that cannot run.** MEASURED,
+`find({ $and: [] })` is refused ("$and argument must be a non-empty array") where
+`{ $expr: { $and: [] } }` runs and matches every document — JavaScript's answer for
+`[].every(…)`. The query cell answers null for the empty list, so the value road
+wraps it. `$nor` is filter-only and has no value road, so its row states
+`nonEmpty` and refuses with what "none of nothing" already means.
+
+**`$where` in a `$match` emitted a stage the server refuses.** MEASURED,
+`find({ $where: … })` runs where server-side JavaScript is enabled and an
+aggregation `$match` refuses it at any depth of the body. So the raw filter still
+passes through (HR1) and the same document inside a `$match` is refused, through
+the placement machinery `$text` uses.
+
+**`$$.length` stopped reusing its stamp.** `docs/specs/stream-length.md` states
+compute-once, and two reads were emitting two `$setWindowFields`. The chain caches
+the paths it has stamped and clears them at the first stage whose row does not
+state `preservesCount` — and a lowering that is TAKEN BACK (a join whose chain goes
+on) rewinds its stamps with its hoists, or the retry reads a field the discarded
+stage was going to write.
+
+**`$in` and `$size` are the two array operators that abort on null.** MEASURED, the
+other eight answer null in turn. A reader over a missing field answers null, so a
+value the compiler PROVED is an array can still be null at run time — and
+`$.items.map(x => x).length` aborted the whole command on a document with no
+`items`. Both operands now take the `[]` neutral.
+
+---
+
+## 2026-09-09 — fix!: two shapes the server refuses, refused at compile time instead
+
+Both were HR3 holes — jsmql emitted MQL a `mongod` rejects — and both are now
+worded refusals that name a spelling that works.
+
+**A written list of documents inside a `$facet` branch.** `$$.push({ a: 1 })` and
+`.concat([{ a: 1 }])` make `{ $unionWith: { pipeline: [{ $documents: […] }] } }`,
+and MEASURED that shape reaches through a `$lookup` and through another
+`$unionWith` — both run — but a facet branch refuses it at any depth:
+"$documents inside of $unionWith is not allowed to be used within a $facet stage".
+A `$unionWith` that NAMES a collection is fine there, so the ban is the
+literal-documents form alone. `$facet`'s row states it as `bansNested`, the
+transitive twin of `forbiddenIn`:
+
+```
+$ = { a: $$.push({ x: 1 }), b: $$.filter(d => d.n > 1) };
+→ '.push(<document>)' makes a '$documents' stage, and the server refuses that anywhere
+  inside a '$facet' — however deeply it is nested. Append another collection instead
+  ('$$.push(...$$$.<coll>)'), or append the documents outside the branch.
+
+$ = { a: $$.push(...$$$.archive), b: $$.take(1) };
+→ [{ $facet: { a: [{ $unionWith: "archive" }], b: [{ $limit: 1 }] } }]
+```
+
+**A fan-out whose elements are not documents.** `$$ = <array>` makes the stream
+from the array's elements, one document each, and MEASURED `$replaceWith` of
+anything else answers "'replacement document' must evaluate to an object". A row
+can now state the kind of ONE element of what it returns — `elementKind`, set where
+the row's own lowering fixes it: `.split()` and `Object.keys()` give strings,
+`Object.entries()` / `.chunk()` / `.zip()` give arrays, `$objectToArray` and
+`$regexFindAll` give documents — and the stream road reads it:
+
+```
+$$ = Object.entries($.scores);
+→ '$$ = …' makes the stream from the array's ELEMENTS, one document each, and these
+  elements are arrays. Put each under a field — '$$ = <array>.map((v) => ({ value: v }));'
+  — or write to a field of the document you have ('$.<field> = <array>;').
+
+$$ = $objectToArray($.scores);   → fans out as it stands, to { k, v } documents
+```
+
+A row that states nothing leaves the elements unproven, and so does a field path
+by construction — `$$ = $.items` still fans out whatever is there.
+
+---
+
+## 2026-09-09 — refactor: a rule nothing produces and nothing reads is not a capability
+
+Fifteen facts and helpers the registry or the compiler declared and nobody read.
+Each promised a behaviour that did not exist, which is worse than absent: a
+reader adding a row states the fact and believes it does something.
+
+Deleted from the row shape: `asReference` (the bare-callback gate is decided by
+the callback rule, not by this field — and its doc block stated a refusal for
+`Math.asinh` the compiler does not emit), `paramsRepeat` (the arity it describes
+is counted by `elementsCallback` against the sibling), `minVersion` (a second
+copy of the vendored YAML's, which is what `generate-globals.mjs` actually
+reads), `RootSpec.family` (no name resolves through a root's family),
+`StageIn.prevStages`, and the `SugarIn` service type no cell can be handed.
+
+Deleted from the source: `streamLengthStage` and `isStringType` (each described a
+shape the registry builds itself), `isCorrelationVar` + `CORRELATION_VAR_RE` (a
+query-slot guard that was never wired), `notADocumentInList` (superseded by the
+builder that names the element index), `isRawQuery`, the unused `GROUP` position
+constant, and the three truth builders in `emit/mql.ts` that the registry cannot
+reach — it imports nothing outside itself, which is exactly why they were dead.
+
+Two facts became real instead of being deleted. `LENGTH_SLOT` was reserved in
+`src/namespace.ts` and spelled as a literal in the registry, so the registry now
+carries the twin `GROUP_SLOT` already had, and one test holds both pairs equal —
+the test the `GROUP_SLOT` comment had been promising.
+
+Two tracking ids leaked into what a developer reads. `[DEF-022]` in six
+`Number.isFinite` refusals and `[DEF-032]` in the function-as-value one are now
+source comments, and both messages are rewritten to name a way out that compiles
+(the test asserts the `.map((x) => f(x))` form the second one recommends).
+
+---
+
 ## 2026-09-08 — docs: every documented MQL claim re-derived from the compiler
 
 A doc example is a promise about what jsmql emits, and prose had no test to keep
@@ -603,35 +603,84 @@ now what the compiler answers:
 
 ---
 
-## 2026-09-08 — fix: the CLI writes a live BSON value as the JavaScript that makes it
+## 2026-09-08 — feat: `.assign()` and `.fromEntries()` answer on their receivers
 
-`JSON.stringify` was the CLI's whole renderer, and JSON has no spelling for the
-three live values a compiled filter can hold. Stringifying one is wrong, not
-merely lossy:
+Two more statics gained the method spelling, so every lodash reader of an object has one.
 
-```
-$.name.match(/^a/i)                              printed {"name":{"$regex":{}}}
-$.d >= new Date("2026-01-01")                    printed {"d":{"$gte":"2026-01-01T00:00:00.000Z"}}
-$._id === ObjectId("507f1f77bcf86cd799439011")   printed {"_id":"507f1f77bcf86cd799439011"}
-```
-
-Each of those is a filter the server accepts and answers nothing to: it compares
-a date against a string, an ObjectId against a string, and a regular expression
-against the empty document. The library was always right — `jsmql(…)` returns
-the live `RegExp`, `Date` and `ObjectId` — so only the bin's output was broken,
-which is the one place a developer copies from.
-
-Each now prints as the JavaScript that MAKES it, so the output pastes into a
-driver script or mongosh:
+`.assign()` answers a NEW object, the way `.pick()` and `.omit()` do — the receiver is the first source and nothing is written in place:
 
 ```
-$.name.match(/^a/i) && $.d >= new Date("2026-01-01")
-→ {"name":{"$regex":/^a/i},"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}
+$.o.assign($.p, $.q)      → { $mergeObjects: ["$o", "$p", "$q"] }
+Object.assign($.o, $.p);  → [{ $set: { o: { $mergeObjects: ["$o", "$p"] } } }]    the static still writes its target
+$.o.assign($.p);          → '.assign()' computes a value, and a statement writes one.
+                            Assign it to a field: '$.<field> = <value>.assign(…);'
 ```
 
-Everything else is byte for byte what `JSON.stringify` writes, at every indent
-setting, so output with no live value in it is still JSON and still pipes into
-`jq` — a parity case in `test/cli.test.ts` holds that.
+The mutation fact belongs to the static spelling alone. Before this it was read off the name, so `$.o.assign($.p);` would have been rewritten as a write to `$.p` — the wrong field.
+
+`.fromEntries()` reads a `[key, value]` list, and the three spellings are one lowering:
+
+```
+Object.fromEntries($.pairs)   ┐
+$.pairs.fromEntries()         ├→ { $arrayToObject: { $map: { input: "$pairs", as: "jsmqlP",
+$.pairs.fromPairs()           ┘      in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } },
+                                           { $arrayElemAt: ["$$jsmqlP", 1] }] } } }
+```
+
+That closes a hole in the static. `Object.fromEntries($.pairs)` emitted a bare `$arrayToObject`, and on a pair whose key is not a string the server stopped the whole command — MEASURED on `[[7, 1]]`: "$arrayToObject requires an array of key-value pairs". JavaScript answers `{ "7": 1 }` there, and all three spellings answer that now. The key coercion costs one `$map` where the pairs are already built by another.
+
+---
+
+## 2026-09-08 — feat: the lodash reading of an object is a method too
+
+`Object.keys(o)` compiled and `o.keys()` did not. jsmql already carries nine lodash readers of an object as methods — `.mapValues()`, `.pickBy()`, `.toPairs()` and the rest — so the three JavaScript statics were the odd ones out:
+
+```
+$.user?.profile?.keys()
+→ { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
+```
+
+which is what `Object.keys($.user?.profile)` emits, to the byte. `.values()` and `.entries()` gained the same. `.entries()` and `.toPairs()` are now two spellings of one lowering, as JavaScript and lodash each name it.
+
+A receiver jsmql can PROVE is an array keeps the refusal it had, because JavaScript's `Array.prototype.keys()` answers an iterator and MongoDB has no such value:
+
+```
+$.xs.map(x => x).keys()
+→ .keys() returns an iterator in JavaScript and has no MongoDB equivalent.
+  Use '$op($range, 0, $op($size, arr))' if you want the index array.
+```
+
+A field path is not provably either, and there the object reading answers. MEASURED on mongod: `{ $objectToArray: "$o" }` returns the pairs for a document, `null` for a missing field and for null, and stops the command for an array, a string or a number — the same bargain every other object method already takes.
+
+`docs/LANGUAGE.md` claimed an `$ifNull` guard around `Object.keys` / `Object.fromEntries` / `new Set(…)` arguments written with `?.`. The compiler adds none, and the table is gone.
+
+---
+
+## 2026-09-08 — feat!: `Array.from` is not part of jsmql
+
+`Array.from({ length: n })` was one spelling of a capability the language already had, and the worse one of the two. `$range` says the same thing in fewer characters, and the mapped form bound a throwaway element nobody asked for:
+
+```
+Array.from({ length: 3 }, (_, i) => i * 2)
+→ { $map: { input: { $range: [0, 3] }, as: "jsmqlPair",
+            in: { $let: { vars: { v__5f: null, i: "$$jsmqlPair" }, in: { $multiply: ["$$i", 2] } } } } }
+
+$range(0, 3).map(i => i * 2)
+→ { $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } } }
+```
+
+It also answered on ANY receiver, so `Object.from({ length: 3 })` compiled to the same `$range` — a second spelling of the second spelling, which no document ever mentioned.
+
+The name still parses, and every position refuses it with the form that works:
+
+```
+Array.from({ length: 5 })
+→ 'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it
+  for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have,
+  call '.map(…)' on that array.
+```
+
+Two registry capabilities went with it, because it was the only thing that produced either. A `byArgs` class for "one object literal carrying these keys" had no other row, and the callback service's third parameter — a reading that bound one arrow parameter to a value of its own — had no other caller. A rule nothing produces is not a capability.
 
 ---
 
@@ -686,193 +735,6 @@ turn; it now names `$$.push({ … })` and `$$ = [{ … }]`, which work.
 
 ---
 
-## 2026-09-08 — fix!: a query document is the plain one
-
-Every field comparison carried an array exclusion:
-
-```
-$.age > 18 && $.status === "active"
-before: { age: { $gt: 18, $not: { $type: "array" } },
-          status: { $eq: "active", $not: { $type: "array" } } }
-now:    { age: { $gt: 18 }, status: "active" }
-```
-
-The exclusion was there so a JavaScript spelling would read the field's OWN value, because MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. It is gone. jsmql emits the document a MongoDB developer writes by hand — the one every index plan, every `explain` output and every code review is written against — and the server's own rules apply to it.
-
-The negated and nested forms shed their machinery with it:
-
-```
-$.a !== 1     before: { $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] }        now: { a: { $ne: 1 } }
-$.a.b === 1   before: { "a.b": { $eq: 1, … }, a: { $not: { $type: "array" } } }      now: { "a.b": 1 }
-$.a == null   before: { a: { $eq: null, $not: { $type: "array" } } }                 now: { a: null }
-```
-
-`{ $eq: v }` is written `v` now, the spelling MQL is read and written in — except where `v` would be read as something else, an operator document or a regular expression. An `ObjectId` therefore lands as the value: `$._id === ObjectId("…")` is `{ _id: <ObjectId> }`.
-
-A comparison that must read ONE value still has its own spelling: `.includes(x)` for containment, `.some(e => …)` for an element test, and the aggregation road for the value itself.
-
-Three registry facts went with the exclusion, because nothing else asked for them: the `ValueReading` type, its three constants, and the path-prefix walk that turned an array in the middle of a path into the absent case.
-
-The two suites that measure the boundary tell the whole story, and each names every source it separates. `test/compiler-js-agreement.test.ts` compares the emitted query against JavaScript's own answers on a live mongod: 25 sources moved from its agreement list to its divergence table, each with the array rule as its reason. `test/compiler-query-expr-agreement.test.ts` compares the two roads against each other: 8 moved the same way, and one moved back — a path with an array PREFIX now reads the same on both roads.
-
----
-
-
-## 2026-09-08 — feat!: `Array.from` is not part of jsmql
-
-`Array.from({ length: n })` was one spelling of a capability the language already had, and the worse one of the two. `$range` says the same thing in fewer characters, and the mapped form bound a throwaway element nobody asked for:
-
-```
-Array.from({ length: 3 }, (_, i) => i * 2)
-→ { $map: { input: { $range: [0, 3] }, as: "jsmqlPair",
-            in: { $let: { vars: { v__5f: null, i: "$$jsmqlPair" }, in: { $multiply: ["$$i", 2] } } } } }
-
-$range(0, 3).map(i => i * 2)
-→ { $map: { input: { $range: [0, 3] }, as: "i", in: { $multiply: ["$$i", 2] } } }
-```
-
-It also answered on ANY receiver, so `Object.from({ length: 3 })` compiled to the same `$range` — a second spelling of the second spelling, which no document ever mentioned.
-
-The name still parses, and every position refuses it with the form that works:
-
-```
-Array.from({ length: 5 })
-→ 'Array.from(…)' is not part of jsmql. For a range of indices write '$range(0, n)'; map over it
-  for a value per index, '$range(0, n).map(i => …)'. To build an array from one you already have,
-  call '.map(…)' on that array.
-```
-
-Two registry capabilities went with it, because it was the only thing that produced either. A `byArgs` class for "one object literal carrying these keys" had no other row, and the callback service's third parameter — a reading that bound one arrow parameter to a value of its own — had no other caller. A rule nothing produces is not a capability.
-
----
-
-
-## 2026-09-08 — fix: a stage refused as a predicate stops naming the entry point
-
-Every stage's `filter` cell opened its way out with advice about which entry to call:
-
-```
-$match($.a === 1) && $.b > 2
-before: '$match' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write
-        it as a statement ('$match(…);') or a chain link ('$$.$match(…)').
-```
-
-That advice is dead wherever the cell can fire. A stage that IS the whole program never reaches it — the entry answers first, and already names the right one:
-
-```
-jsmql.filter("$sort({ a: 1 })")
-→ jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a
-  top-level '$sort' stage call. Use jsmql.pipeline().
-```
-
-So the cell only ever speaks when the stage sits INSIDE something the developer meant to write — a predicate they are building, a `.filter` callback on a chain — where they are already in the pipeline it tells them to reach for. The clause is gone from all forty-five, and the sentence says what a predicate is for instead:
-
-```
-now:    '$match' is a pipeline stage, not a filter predicate — a predicate says which documents to
-        keep, not what stages to run. Write it as a pipeline statement ('$match(…);') or as a chain
-        link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.
-```
-
-The last clause is the one the stage's `expr` cell already carried, so the two cells for one stage stop disagreeing. Ten stages have such an equivalent — `$addFields` and `$set` to `$mergeObjects`, `$limit` and `$skip` to `$slice`, `$match` and `$redact` to `$filter`, `$project` to `$getField`, `$sort` to `$sortArray`, `$unionWith` to `$concatArrays`, `$unset` to `$unsetField`. The other thirty-five end after the chain link, because there is nothing else true to say.
-
----
-
-
-## 2026-09-08 — fix: three roads that answered with a JavaScript error, and one that answered about nothing
-
-A sweep of 254 sources — every callback-taking name in the registry, on every receiver, in every container — found no way to run a pipeline stage inside a JavaScript or lodash callback body. `.aggregate` is the one exception and it is one row wide. Four other defects turned up beside it.
-
-**A chain on the stream, read as a value.** A property read lowered its RECEIVER at stream position, so the chain's stages came back and went in where a value belongs:
-
-```
-$match($$.filter(p).length > 0);
-before: [{"$match":{"$expr":{"$gt":[{"$let":{"vars":{"jsmqlRecv":[{"$match":{…}}]}, …
-        mongod → Unrecognized expression '$match'
-now:    A chain on '$$' is a stream of documents, not a value. To branch the stream write
-        '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep
-        the documents, chain them as a statement: '$$.filter(…);'.
-```
-
-Five other spellings of the same shape — `.map`, `.groupBy`, `.flatMap`, `.countBy`, `.keyBy`, `.uniqBy` — never got that far: the stream cell ran on a value record and the JavaScript error reached the developer as their whole message ("document is not a function", "reshape is not a function", "fieldPath is not a function"). The guard runs before the receiver is lowered now, so the cell is never reached. `$$.length` is a value of its own and still compiles.
-
-**`$$.sort("k");`** answered "jsmql internal error (please report to the jsmql maintainers)" — for a spelling `docs/LANGUAGE.md` calls the default, and one whose own row advertises the comparator. Its statement cell is the FIELD form, which a pass owns and a stream receiver never reaches; left as a statement it landed on a cell that is not a rule. A cell a pass owns is its own verdict now, and where the row also states a chain rule the bare statement is that chain link, as `$$.toSorted("k");` already was. `$$.pop();` keeps the receiver message it had.
-
-**`Array.from($.items, (v, i) => v.a)`** compiled to `{ $range: [0, 6] }`. The row takes `{ length: n }` and read `.length` off whatever the first argument lowered to — here the string `"$items"`, which is six characters long. The slot must be written out now, so a field path is refused; `Array.from({ length: $.n }, (_, i) => i)` still compiles, because the object literal is written out even when its length is not.
-
----
-
-
-## 2026-09-08 — fix: a program is judged for its shape only once it is correct
-
-`jsmql.pipeline()` handed a Filter answered with the entry the developer had just called:
-
-```
-jsmql.pipeline("const cutoff = 18; $.age > cutoff")
-before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline.
-        Use jsmql.pipeline() (or jsmql(), which decides from the shape).
-now:    jsmql.pipeline() expects a Pipeline …, but received a binding and one expression, which is a
-        Filter (`const cutoff = 18; $.age > cutoff`). Use jsmql.filter() for a Filter, or wrap the
-        predicate as `$match(…)` for a Pipeline.
-```
-
-A `;` alone does not make a Pipeline. The old branch read the AST node type while the shape check read the shape, so a binding in front of one expression was announced as a Pipeline to the entry that wants one. Both ways out compile:
-
-```
-jsmql.filter("const cutoff = 18; $.age > cutoff")           → { age: { $gt: 18, $not: { $type: "array" } } }
-jsmql.pipeline("const cutoff = 18; $match($.age > cutoff);") → [{ $match: { age: { $gt: 18, … } } }]
-```
-
-The second half was a defect the shape refusal hid:
-
-```
-jsmql.pipeline("const d = new Date('nope'); $.t < d")
-before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline. …
-now:    new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and
-        this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).
-```
-
-A bad date is wrong under every entry, so it speaks before the entry mismatch: told only to call another entry, the developer meets it on the next run instead. The search lowers the program as a FILTER, which is the shape a program the pipeline entry refuses actually has — reading it as anything else answered with a position the developer never asked for. A program with no defect still gets the shape sentence.
-
----
-
-
-## 2026-09-08 — fix!: the `$` spelling of a diagnostic stage meets the scope its row states
-
-A diagnostic stage has two spellings, and only one of them was checked.
-
-```
-$$.currentOp();       → '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
-                        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
-$$.$currentOp({});    → [{ "$currentOp": {} }]        a CLUSTER stage on a collection's chain
-```
-
-The sugar goes through the row that states the scope; the `$` name reaches the stage row directly, and that row states none. So the check never ran. `$$.$indexStats({})`, `$$$$.$indexStats({})` and a mid-chain `$$.filter(…).$indexStats({})` all compiled the same way.
-
-A diagnostic stage reports on the deployment, so it is a SOURCE stage: it stands first, takes no body, and is spelled on the reference its scope names. The `$` form is refused, wherever it stands:
-
-```
-$$.$currentOp({});
-→ '$currentOp' reports on the deployment, so it is a source stage and not a chain link.
-  Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
-```
-
-`docs/specs/globals-generation.md` already stated this as fact — "jsmql rejects `$$.$indexStats({})` outright" — and the compiler did not. An ordinary stage keeps its link form: `$$.$match({ a: 1 })` and `$$.filter(d => d.a > 1).$sort({ b: 1 })` are unchanged.
-
-A misspelling on the database or the cluster was routed as a collection read, so it answered about a destination the reader had not asked for:
-
-```
-$$$$.currentOpp();
-before: Reading another collection produces a value, and this statement gives it no destination. …
-now:    '$$$$' is the cluster, and only the stages that report on the deployment are spelled on it.
-        '.currentOpp()' is not one of them. Did you mean '$$$$.currentOp()'? To read a collection
-        called 'currentOpp', write '$.<field> = $$$$.currentOpp.find(…)'.
-```
-
-Both readings are named, because `$$$.fooBar()` really is ambiguous — a stage that does not exist, or a collection called `fooBar`. The collection read still compiles: `$.x = $$$.fooBar.find(d => d.a === 1);`.
-
----
-
-
 ## 2026-09-08 — fix: a body-key refusal names the key, and every form that key takes
 
 Two refusals about a stage's body said "this stage's body" without saying which part of it:
@@ -903,7 +765,6 @@ The suggestion tail is `didYouMean` from `src/levenshtein.ts` now, as every othe
 Not changed: a program whose SHAPE is wrong for the entry it was handed to still answers with the shape, even when it also holds a defect inside. Lowering it first to find that defect was tried, and it replaced the sentence that names the right entry with one about a position the reader never asked for — `jsmql.expr("$$.x")` answered with a rule about pipeline statements. The masking is real and is still open.
 
 ---
-
 
 ## 2026-09-08 — fix: a callback refusal names the method the source wrote, and the forms that work
 
@@ -941,6 +802,111 @@ The list of forms each slot accepts is read off the same layout the rewrite read
 
 ---
 
+## 2026-09-08 — fix: a program is judged for its shape only once it is correct
+
+`jsmql.pipeline()` handed a Filter answered with the entry the developer had just called:
+
+```
+jsmql.pipeline("const cutoff = 18; $.age > cutoff")
+before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline.
+        Use jsmql.pipeline() (or jsmql(), which decides from the shape).
+now:    jsmql.pipeline() expects a Pipeline …, but received a binding and one expression, which is a
+        Filter (`const cutoff = 18; $.age > cutoff`). Use jsmql.filter() for a Filter, or wrap the
+        predicate as `$match(…)` for a Pipeline.
+```
+
+A `;` alone does not make a Pipeline. The old branch read the AST node type while the shape check read the shape, so a binding in front of one expression was announced as a Pipeline to the entry that wants one. Both ways out compile:
+
+```
+jsmql.filter("const cutoff = 18; $.age > cutoff")           → { age: { $gt: 18, $not: { $type: "array" } } }
+jsmql.pipeline("const cutoff = 18; $match($.age > cutoff);") → [{ $match: { age: { $gt: 18, … } } }]
+```
+
+The second half was a defect the shape refusal hid:
+
+```
+jsmql.pipeline("const d = new Date('nope'); $.t < d")
+before: jsmql.pipeline() expects a Pipeline …, but received a `;`-separated Pipeline. …
+now:    new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and
+        this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).
+```
+
+A bad date is wrong under every entry, so it speaks before the entry mismatch: told only to call another entry, the developer meets it on the next run instead. The search lowers the program as a FILTER, which is the shape a program the pipeline entry refuses actually has — reading it as anything else answered with a position the developer never asked for. A program with no defect still gets the shape sentence.
+
+---
+
+## 2026-09-08 — fix: a stage refused as a predicate stops naming the entry point
+
+Every stage's `filter` cell opened its way out with advice about which entry to call:
+
+```
+$match($.a === 1) && $.b > 2
+before: '$match' is a pipeline stage, not a filter predicate. Pass it to jsmql.pipeline(…), or write
+        it as a statement ('$match(…);') or a chain link ('$$.$match(…)').
+```
+
+That advice is dead wherever the cell can fire. A stage that IS the whole program never reaches it — the entry answers first, and already names the right one:
+
+```
+jsmql.filter("$sort({ a: 1 })")
+→ jsmql.filter() expects a Filter (the document `db.coll.find(filter)` takes), but received a
+  top-level '$sort' stage call. Use jsmql.pipeline().
+```
+
+So the cell only ever speaks when the stage sits INSIDE something the developer meant to write — a predicate they are building, a `.filter` callback on a chain — where they are already in the pipeline it tells them to reach for. The clause is gone from all forty-five, and the sentence says what a predicate is for instead:
+
+```
+now:    '$match' is a pipeline stage, not a filter predicate — a predicate says which documents to
+        keep, not what stages to run. Write it as a pipeline statement ('$match(…);') or as a chain
+        link ('$$.$match(…)'). For the value-position equivalent, use '$filter(…)'.
+```
+
+The last clause is the one the stage's `expr` cell already carried, so the two cells for one stage stop disagreeing. Ten stages have such an equivalent — `$addFields` and `$set` to `$mergeObjects`, `$limit` and `$skip` to `$slice`, `$match` and `$redact` to `$filter`, `$project` to `$getField`, `$sort` to `$sortArray`, `$unionWith` to `$concatArrays`, `$unset` to `$unsetField`. The other thirty-five end after the chain link, because there is nothing else true to say.
+
+---
+
+## 2026-09-08 — fix: a wrong-body refusal shows a right call, and a scope refusal names the sigil
+
+Two families of refusal said what was wrong and stopped there.
+
+A stage handed a body of the wrong type named only the type it wanted:
+
+```
+[ $group("externalId") ]
+before: '$group' expects a document, but got a string.
+now:    '$group' expects a document, but got a string.
+        Write the body as a document, e.g. '$group({ _id: $.category })'.
+
+[ $sample(5) ]
+now:    '$sample' expects a document, but got a number.
+        Write the body as a document, e.g. '$sample({ size: 10 })'.
+```
+
+The example is a fact on the stage's own entry — `bodyExample` — because the shortest right answer for `$group` is not the one for `$sample`, and the emitter holds no table of stage names. Each example is the whole call, and each one compiles. A stage that states none keeps the sentence it had.
+
+A diagnostic stage on the wrong reference lost the sigil that works, and one message named a spelling that does not:
+
+```
+$$.currentOp()
+before: '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'. A stream is not an array: chain a method the stream has …
+now:    '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
+        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+
+$$$.currentOp()
+before: '$$$' is the database, and no stage runs on it alone: '.currentOp()' runs on the collection ('$$.currentOp()') or the cluster ('$$$$.currentOp()') — its row says which.
+now:    '$$$' is the database, and no stage runs on it alone.
+        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+
+$$.indexStat()
+before: … Did you mean '.$indexStats()'?      ← '$$.$indexStats()' answers "requires exactly 1 argument, got 0"
+now:    … Did you mean '$$.indexStats()'?     ← compiles to [{ $indexStats: {} }]
+```
+
+The scope each stage states decides the sigil, so each message names exactly one spelling instead of offering two and leaving the reader to guess. "its row says which" is gone: a row is a thing the reader has never seen.
+
+Three suites stated the corrected behaviour in their own titles — "points at the $$$$ prefix", "with its correct prefix" — while asserting the text that named none. They assert the way out now, and each way out is compiled in the same test.
+
+---
 
 ## 2026-09-08 — fix: six refusals name a way out, and each way out compiles
 
@@ -989,79 +955,60 @@ $ = { a: $.xs.map(x => { const g = z => z + 1; return g(x); }) };    a declarati
 
 ---
 
+## 2026-09-08 — fix: the CLI writes a live BSON value as the JavaScript that makes it
 
-## 2026-09-08 — fix: a wrong-body refusal shows a right call, and a scope refusal names the sigil
-
-Two families of refusal said what was wrong and stopped there.
-
-A stage handed a body of the wrong type named only the type it wanted:
-
-```
-[ $group("externalId") ]
-before: '$group' expects a document, but got a string.
-now:    '$group' expects a document, but got a string.
-        Write the body as a document, e.g. '$group({ _id: $.category })'.
-
-[ $sample(5) ]
-now:    '$sample' expects a document, but got a number.
-        Write the body as a document, e.g. '$sample({ size: 10 })'.
-```
-
-The example is a fact on the stage's own entry — `bodyExample` — because the shortest right answer for `$group` is not the one for `$sample`, and the emitter holds no table of stage names. Each example is the whole call, and each one compiles. A stage that states none keeps the sentence it had.
-
-A diagnostic stage on the wrong reference lost the sigil that works, and one message named a spelling that does not:
+`JSON.stringify` was the CLI's whole renderer, and JSON has no spelling for the
+three live values a compiled filter can hold. Stringifying one is wrong, not
+merely lossy:
 
 ```
-$$.currentOp()
-before: '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'. A stream is not an array: chain a method the stream has …
-now:    '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
-        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
-
-$$$.currentOp()
-before: '$$$' is the database, and no stage runs on it alone: '.currentOp()' runs on the collection ('$$.currentOp()') or the cluster ('$$$$.currentOp()') — its row says which.
-now:    '$$$' is the database, and no stage runs on it alone.
-        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
-
-$$.indexStat()
-before: … Did you mean '.$indexStats()'?      ← '$$.$indexStats()' answers "requires exactly 1 argument, got 0"
-now:    … Did you mean '$$.indexStats()'?     ← compiles to [{ $indexStats: {} }]
+$.name.match(/^a/i)                              printed {"name":{"$regex":{}}}
+$.d >= new Date("2026-01-01")                    printed {"d":{"$gte":"2026-01-01T00:00:00.000Z"}}
+$._id === ObjectId("507f1f77bcf86cd799439011")   printed {"_id":"507f1f77bcf86cd799439011"}
 ```
 
-The scope each stage states decides the sigil, so each message names exactly one spelling instead of offering two and leaving the reader to guess. "its row says which" is gone: a row is a thing the reader has never seen.
+Each of those is a filter the server accepts and answers nothing to: it compares
+a date against a string, an ObjectId against a string, and a regular expression
+against the empty document. The library was always right — `jsmql(…)` returns
+the live `RegExp`, `Date` and `ObjectId` — so only the bin's output was broken,
+which is the one place a developer copies from.
 
-Three suites stated the corrected behaviour in their own titles — "points at the $$$$ prefix", "with its correct prefix" — while asserting the text that named none. They assert the way out now, and each way out is compiled in the same test.
+Each now prints as the JavaScript that MAKES it, so the output pastes into a
+driver script or mongosh:
+
+```
+$.name.match(/^a/i) && $.d >= new Date("2026-01-01")
+→ {"name":{"$regex":/^a/i},"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}
+```
+
+Everything else is byte for byte what `JSON.stringify` writes, at every indent
+setting, so output with no live value in it is still JSON and still pipes into
+`jq` — a parity case in `test/cli.test.ts` holds that.
 
 ---
 
+## 2026-09-08 — fix: three roads that answered with a JavaScript error, and one that answered about nothing
 
-## 2026-09-08 — feat: `.assign()` and `.fromEntries()` answer on their receivers
+A sweep of 254 sources — every callback-taking name in the registry, on every receiver, in every container — found no way to run a pipeline stage inside a JavaScript or lodash callback body. `.aggregate` is the one exception and it is one row wide. Four other defects turned up beside it.
 
-Two more statics gained the method spelling, so every lodash reader of an object has one.
-
-`.assign()` answers a NEW object, the way `.pick()` and `.omit()` do — the receiver is the first source and nothing is written in place:
-
-```
-$.o.assign($.p, $.q)      → { $mergeObjects: ["$o", "$p", "$q"] }
-Object.assign($.o, $.p);  → [{ $set: { o: { $mergeObjects: ["$o", "$p"] } } }]    the static still writes its target
-$.o.assign($.p);          → '.assign()' computes a value, and a statement writes one.
-                            Assign it to a field: '$.<field> = <value>.assign(…);'
-```
-
-The mutation fact belongs to the static spelling alone. Before this it was read off the name, so `$.o.assign($.p);` would have been rewritten as a write to `$.p` — the wrong field.
-
-`.fromEntries()` reads a `[key, value]` list, and the three spellings are one lowering:
+**A chain on the stream, read as a value.** A property read lowered its RECEIVER at stream position, so the chain's stages came back and went in where a value belongs:
 
 ```
-Object.fromEntries($.pairs)   ┐
-$.pairs.fromEntries()         ├→ { $arrayToObject: { $map: { input: "$pairs", as: "jsmqlP",
-$.pairs.fromPairs()           ┘      in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } },
-                                           { $arrayElemAt: ["$$jsmqlP", 1] }] } } }
+$match($$.filter(p).length > 0);
+before: [{"$match":{"$expr":{"$gt":[{"$let":{"vars":{"jsmqlRecv":[{"$match":{…}}]}, …
+        mongod → Unrecognized expression '$match'
+now:    A chain on '$$' is a stream of documents, not a value. To branch the stream write
+        '$ = { k: $$.filter(…), … }' (a '$facet'); for its size write '$$.length'; to keep
+        the documents, chain them as a statement: '$$.filter(…);'.
 ```
 
-That closes a hole in the static. `Object.fromEntries($.pairs)` emitted a bare `$arrayToObject`, and on a pair whose key is not a string the server stopped the whole command — MEASURED on `[[7, 1]]`: "$arrayToObject requires an array of key-value pairs". JavaScript answers `{ "7": 1 }` there, and all three spellings answer that now. The key coercion costs one `$map` where the pairs are already built by another.
+Five other spellings of the same shape — `.map`, `.groupBy`, `.flatMap`, `.countBy`, `.keyBy`, `.uniqBy` — never got that far: the stream cell ran on a value record and the JavaScript error reached the developer as their whole message ("document is not a function", "reshape is not a function", "fieldPath is not a function"). The guard runs before the receiver is lowered now, so the cell is never reached. `$$.length` is a value of its own and still compiles.
+
+**`$$.sort("k");`** answered "jsmql internal error (please report to the jsmql maintainers)" — for a spelling `docs/LANGUAGE.md` calls the default, and one whose own row advertises the comparator. Its statement cell is the FIELD form, which a pass owns and a stream receiver never reaches; left as a statement it landed on a cell that is not a rule. A cell a pass owns is its own verdict now, and where the row also states a chain rule the bare statement is that chain link, as `$$.toSorted("k");` already was. `$$.pop();` keeps the receiver message it had.
+
+**`Array.from($.items, (v, i) => v.a)`** compiled to `{ $range: [0, 6] }`. The row takes `{ length: n }` and read `.length` off whatever the first argument lowered to — here the string `"$items"`, which is six characters long. The slot must be written out now, so a field path is refused; `Array.from({ length: $.n }, (_, i) => i)` still compiles, because the object literal is written out even when its length is not.
 
 ---
-
 
 ## 2026-09-08 — fix!: `$merge` takes the four words again, and the word list is the server's
 
@@ -1088,32 +1035,36 @@ Two suites stated the right behaviour in their titles and pinned the wrong answe
 
 ---
 
+## 2026-09-08 — fix!: a query document is the plain one
 
-## 2026-09-08 — feat: the lodash reading of an object is a method too
-
-`Object.keys(o)` compiled and `o.keys()` did not. jsmql already carries nine lodash readers of an object as methods — `.mapValues()`, `.pickBy()`, `.toPairs()` and the rest — so the three JavaScript statics were the odd ones out:
-
-```
-$.user?.profile?.keys()
-→ { $map: { input: { $objectToArray: "$user.profile" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }
-```
-
-which is what `Object.keys($.user?.profile)` emits, to the byte. `.values()` and `.entries()` gained the same. `.entries()` and `.toPairs()` are now two spellings of one lowering, as JavaScript and lodash each name it.
-
-A receiver jsmql can PROVE is an array keeps the refusal it had, because JavaScript's `Array.prototype.keys()` answers an iterator and MongoDB has no such value:
+Every field comparison carried an array exclusion:
 
 ```
-$.xs.map(x => x).keys()
-→ .keys() returns an iterator in JavaScript and has no MongoDB equivalent.
-  Use '$op($range, 0, $op($size, arr))' if you want the index array.
+$.age > 18 && $.status === "active"
+before: { age: { $gt: 18, $not: { $type: "array" } },
+          status: { $eq: "active", $not: { $type: "array" } } }
+now:    { age: { $gt: 18 }, status: "active" }
 ```
 
-A field path is not provably either, and there the object reading answers. MEASURED on mongod: `{ $objectToArray: "$o" }` returns the pairs for a document, `null` for a missing field and for null, and stops the command for an array, a string or a number — the same bargain every other object method already takes.
+The exclusion was there so a JavaScript spelling would read the field's OWN value, because MongoDB satisfies a field comparison when any ELEMENT of an array value satisfies it. It is gone. jsmql emits the document a MongoDB developer writes by hand — the one every index plan, every `explain` output and every code review is written against — and the server's own rules apply to it.
 
-`docs/LANGUAGE.md` claimed an `$ifNull` guard around `Object.keys` / `Object.fromEntries` / `new Set(…)` arguments written with `?.`. The compiler adds none, and the table is gone.
+The negated and nested forms shed their machinery with it:
+
+```
+$.a !== 1     before: { $or: [{ a: { $ne: 1 } }, { a: { $type: "array" } }] }        now: { a: { $ne: 1 } }
+$.a.b === 1   before: { "a.b": { $eq: 1, … }, a: { $not: { $type: "array" } } }      now: { "a.b": 1 }
+$.a == null   before: { a: { $eq: null, $not: { $type: "array" } } }                 now: { a: null }
+```
+
+`{ $eq: v }` is written `v` now, the spelling MQL is read and written in — except where `v` would be read as something else, an operator document or a regular expression. An `ObjectId` therefore lands as the value: `$._id === ObjectId("…")` is `{ _id: <ObjectId> }`.
+
+A comparison that must read ONE value still has its own spelling: `.includes(x)` for containment, `.some(e => …)` for an element test, and the aggregation road for the value itself.
+
+Three registry facts went with the exclusion, because nothing else asked for them: the `ValueReading` type, its three constants, and the path-prefix walk that turned an array in the middle of a path into the absent case.
+
+The two suites that measure the boundary tell the whole story, and each names every source it separates. `test/compiler-js-agreement.test.ts` compares the emitted query against JavaScript's own answers on a live mongod: 25 sources moved from its agreement list to its divergence table, each with the array rule as its reason. `test/compiler-query-expr-agreement.test.ts` compares the two roads against each other: 8 moved the same way, and one moved back — a path with an array PREFIX now reads the same on both roads.
 
 ---
-
 
 ## 2026-09-08 — fix!: an empty stage list is refused, and the list says what it holds
 
@@ -1139,6 +1090,41 @@ $unset([]);
 
 ---
 
+## 2026-09-08 — fix!: the `$` spelling of a diagnostic stage meets the scope its row states
+
+A diagnostic stage has two spellings, and only one of them was checked.
+
+```
+$$.currentOp();       → '.currentOp()' is not available on a 'stream' — it is defined on 'cluster'.
+                        Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+$$.$currentOp({});    → [{ "$currentOp": {} }]        a CLUSTER stage on a collection's chain
+```
+
+The sugar goes through the row that states the scope; the `$` name reaches the stage row directly, and that row states none. So the check never ran. `$$.$indexStats({})`, `$$$$.$indexStats({})` and a mid-chain `$$.filter(…).$indexStats({})` all compiled the same way.
+
+A diagnostic stage reports on the deployment, so it is a SOURCE stage: it stands first, takes no body, and is spelled on the reference its scope names. The `$` form is refused, wherever it stands:
+
+```
+$$.$currentOp({});
+→ '$currentOp' reports on the deployment, so it is a source stage and not a chain link.
+  Write '$$$$.currentOp()' — the cluster reference, run on the admin database.
+```
+
+`docs/specs/globals-generation.md` already stated this as fact — "jsmql rejects `$$.$indexStats({})` outright" — and the compiler did not. An ordinary stage keeps its link form: `$$.$match({ a: 1 })` and `$$.filter(d => d.a > 1).$sort({ b: 1 })` are unchanged.
+
+A misspelling on the database or the cluster was routed as a collection read, so it answered about a destination the reader had not asked for:
+
+```
+$$$$.currentOpp();
+before: Reading another collection produces a value, and this statement gives it no destination. …
+now:    '$$$$' is the cluster, and only the stages that report on the deployment are spelled on it.
+        '.currentOpp()' is not one of them. Did you mean '$$$$.currentOp()'? To read a collection
+        called 'currentOpp', write '$.<field> = $$$$.currentOpp.find(…)'.
+```
+
+Both readings are named, because `$$$.fooBar()` really is ambiguous — a stage that does not exist, or a collection called `fooBar`. The collection read still compiles: `$.x = $$$.fooBar.find(d => d.a === 1);`.
+
+---
 
 ## 2026-09-08 — refactor!: the rows are the only table
 
@@ -1152,7 +1138,6 @@ The coverage suite asks a different question now. It reads `definitions/query/` 
 
 ---
 
-
 ## 2026-09-08 — test: three suites assert what this compiler answers
 
 `test/compiler-join.test.ts` did not parse. The change that refuses a callback's own stream after a count-changing stage turned an expectation into a refusal, and the old `.toEqual([…])` block was left standing after the `.toThrow(…)` that replaced it — `);.toEqual([`. Vitest reported it as a transform error, so the file's 40 tests never ran. The stale block is gone.
@@ -1163,62 +1148,6 @@ The coverage suite asks a different question now. It reads `definitions/query/` 
 
 ---
 
-
-## 2026-09-07 — fix: a bracketed program is diagnosed as the pipeline it is
-
-`jsmql.pipeline("[{ $macth: … }]")` answered "jsmql.pipeline() expects a Pipeline … Use jsmql.pipeline()" — the entry the developer had just called. The strict-shape entries ask `shapeOf` first, and a bracketed list whose stage name is misspelled does not look like a pipeline, so the shape refusal spoke before the lowering could name the typo. `jsmql()` on the same source named it and suggested `$match`.
-
-A BRACKETED program is a pipeline the developer wrote as one, whatever is inside it, so the pipeline entry no longer asks the shape question about it: the lowering answers, and names the stage. `jsmql.filter` still says "Use jsmql.pipeline()" for a bracketed program, because there the advice is true.
-
----
-
-
-## 2026-09-07 — fix!: a callback's own stream is refused where its count cannot stay true
-
-`(o, _i, c) => { … }` binds `c` to the body's own stream, and `c.length` is its count. MQL has no inline cardinality operator, so the count is stamped into a field by a `$setWindowFields` — and that stage is HOISTED to the front of the body, wherever the read sits. Any stage between the stamp and the read that changes the count or drops the fields makes the stamp untrue, and nothing recomputed it.
-
-Two suites had the evidence written down. One asserted `n: 4` for every user in a body that filtered by user — the whole collection's count, under a comment claiming it counted "the body's stream where it stands". The other asserted an `assert(<coll>.length > 0)` after a `$match`, under a comment explaining that the assertion no-ops for a user with no orders because no document survives the filter — which is to say the assertion the developer wrote was not the one that ran. And after a `$group` the field is gone entirely, so the test read a missing value and fired on every document.
-
-`c` is refused now in any body that runs a stage whose row does not state `preservesCount`, and the message names the stage. That fact is the freshness rule `docs/specs/stream-length.md` already stated as a hard-coded allowlist in a module that no longer exists: the stage leaves the stream's count and its documents' fields both untouched. Five stages state it. The rule is conservative on purpose — recomputing is always correct and reusing a stale count is a bug — so `$sort` and `$addFields` keep the handle while `$match`, `$limit`, `$unwind` and `$group` refuse it. Read the count in a statement ahead of the chain, or leave the third parameter off.
-
----
-
-
-## 2026-09-07 — feat!: one grouping spelling, and a generator says what it is
-
-`Object.groupBy($.items, x => x.k)` and `$.items.groupBy(x => x.k)` emitted the identical MQL. Two spellings of one capability is the friction jsmql rejects, so the `Object` receiver is refused. The name still parses, which is the point: a refused name gets a message that names the form that works, where a deleted one would leave "unknown identifier". Its two internal errors go with it — a non-arrow discriminator and a two-parameter arrow both used to answer "jsmql internal error (please report to the jsmql maintainers)" with `.pos = 0`, which asked the developer to file a bug for their own typo and left tooling with no position.
-
-Two registry audits caught the change honestly and had to learn one thing: a family listed in `on` whose value cell is a REFUSAL takes no callback, so it states no iteratee layout. Every other family still must.
-
-`function*` said "Expected '(' but got '*'". `docs/LANGUAGE.md` states twice that a generator is refused with a pointer to the plain form, and the parser's own test said so in its title while asserting the token error. Both spellings — a declaration and a function expression — now name the plain `function` and the arrow. `async function` got the same treatment, because the documented sentence covers both and its old message ("Expected an assignment but got 'function'") named nothing. A binding or field NAMED `async` is untouched: the refusal fires only where the next word is `function`.
-
----
-
-
-## 2026-09-07 — fix(compiler): a refusal names the method the source spells, and the way out compiles
-
-`$.a.reverse(1)` answered "'.toReversed()' takes no arguments, got 1". A mutator is rewritten to its immutable twin before it is lowered — `.reverse()` becomes `$.a = $.a.toReversed()` — and the arity refusal then named the twin, a name the developer cannot find anywhere in their program. A rewritten call carries `wrote`, the name the SOURCE spells, and every message reads that. `.sort(1, 2)` names `.sort` now, `.splice` names `.splice`, and a call no pass renamed is unaffected. `wrote` is provenance, not meaning: the desugar suite strips it beside `pos`, because a sugar still MEANS the plain form it becomes.
-
-Two refusals named a way out that does not compile. `.sortBy({ … })` is refused because lodash reads an object as a matcher and sorts by its truth, not as directions — that is lodash's own API, where `sortBy` takes iteratees and sorts ascending and `orderBy` takes the orders. The message offered `.sort({ field: -1 })`, which is refused in a value position and raises an internal error on a stream; it names `.orderBy({ field: -1 })` and `.toSorted({ field: -1 })` now, which take an order in every position. `.toReversed()` on a stream offered `.sort(<key>)`, refused there for the same reason, and names `.orderBy` now.
-
-`.reverse()` and `.toReversed()` answer alike on a stream. Both reverse an order a stream does not have until it is sorted, and `.reverse()` used to say "use its immutable form mid-chain" — a pointer to a method refused for the identical reason. Its bare-statement form fell through to the generic receiver refusal, which named no way out at all; a stream receiver on a row spelled for arrays now gets one.
-
----
-
-
-## 2026-09-07 — fix(compiler): groupBy answers an object, a pad target is guarded, and pick answers an object
-
-Three more answers the acceptance gate measured wrong, each on a live mongod against JavaScript's own.
-
-`$$$.orders.groupBy(d => d.cat)` wrote `[{ a: […], b: […] }]` where `.keyBy` and `.countBy` wrote the object itself, and lodash's `_.groupBy` answers an object. The row states `collapses`, which says whether the stream cell folds the whole stream into one document, and `groupBy` states it conditionally because it has two stream spellings: a key (`"cat"`, `d => d.cat`) builds lodash's object, and a raw `$group` body (`{ _id: "$cat", n: $sum(1) }`) IS the stage and keeps a stream. The condition asked whether the argument was written as a string literal — a question the desugar pass makes unanswerable, because it rewrites a field-name string into an arrow long before emit, so the test could never be true. It asks the argument's SHAPE now, which is what the two spellings actually differ in, and the fact is named `unlessRawBody` after the question it asks.
-
-`$.s.padStart($.w)` stopped the query when the width was missing or null: `$range` refuses a non-numeric end. JavaScript pads nothing there — `"7".padStart(null)` is `"7"` — so the receiver stands when nothing is needed. One test covers null, missing, and a width already shorter than the string, because MEASURED `$gt: [null, 0]` is false. A width written as a number literal is numeric by construction and keeps the unguarded shape.
-
-`$.o.pick(["a"]).trim()` emitted `$trim` over a document and the server stopped the query. The `pick` and `omit` rows answered `"unknown"` for an object receiver, on the reasoning that a stream reads them as a `$project` — but `returns` is stated PER FAMILY, so the stream half says `stream` and the object half can say what it builds, which is a document literal. Every string, number and date method on the result is a compile error now, and `.mapValues`, a field read and `.size()` still compile. `pickBy`, `omitBy`, `mapValues`, `mapKeys` and `invert` already stated it.
-
----
-
-
 ## 2026-09-07 — feat: a written list of documents appends to the stream
 
 `docs/LANGUAGE.md` documented `$$.push({ … })` as `{ $unionWith: { pipeline: [{ $documents: [ … ] }] } }`, and the compiler built it — for arguments written one at a time. Spreading a written LIST of the same documents was refused, and so was `.concat` of one, although both say the same thing in JavaScript and both reach the same batch.
@@ -1228,22 +1157,6 @@ Three more answers the acceptance gate measured wrong, each on a live mongod aga
 The line the change does NOT cross is the one the server draws. `$documents` takes a list the program spells out: MEASURED, a field path there is refused ("an array is expected"), and `{ coll, pipeline: [{ $documents }] }` is refused as well ("\$documents can only be run with database or cluster-level aggregation"). So an array the DATA decides has no append form, and the refusal says so and names the three that exist — another collection, a written document, a written list — plus `$$ = <array>`, which makes the stream FROM such an array instead of appending to it.
 
 ---
-
-
-## 2026-09-07 — feat!: an array names the STREAM, not the document root
-
-`$ = <array>` fanned out: one input document became one output document per element. The destination said "document" and the operation said "stream", and the two readings of `$` had to be held in the head at once — the root replacement `$ = { … }` writes ONE document, the same spelling with an array wrote many.
-
-The destination says which now. `$$ = <array>` fans out, with the lowering the root spelling had (`$set` into a slot, `$unwind`, `$replaceWith` — `$unwind` needs a materialised path, so an inline array expression cannot be unwound where it stands). `$ = <array>` is refused, and the message names the spelling that takes one. The two element refusals the root road carried, for an empty literal and for a provably scalar element, are retired with it: the stream road's own readings answer instead.
-
-Three readings of `$$ = …` now stand side by side, and each is the honest meaning of its right side. A chain on the stream, on the callback's own stream, or on another collection is the STREAM road whatever kind its last link returns — a `$lookup` yields an array, and `$$ = $$$.orders.filter(p)` is still a source switch. An array LITERAL is `$documents`, a source stage that replaces the whole stream and must stand first. Anything else that is provably an array fans out, one answer per input document.
-
-This closes an HR3 break the acceptance gate measured: `$ = Object.entries($.scores)` fanned out arrays as document roots and the server stopped the query with Location40228. The root refuses the array outright now, and the developer is sent to the destination that takes one.
-
-Two of the three spellings the change recommends do not exist: appending an in-document array to the stream needs `$documents` over a field path, and MEASURED, the server refuses that ("an array is expected"). `$$.push(...)` and `.concat(…)` append another COLLECTION and keep their own messages.
-
----
-
 
 ## 2026-09-07 — feat!: `Number` is the one numeric conversion; `parseInt` and `parseFloat` are refused
 
@@ -1259,6 +1172,47 @@ Three tests in the restored suite asserted that `parseInt` compiles, under title
 
 ---
 
+## 2026-09-07 — feat!: an array names the STREAM, not the document root
+
+`$ = <array>` fanned out: one input document became one output document per element. The destination said "document" and the operation said "stream", and the two readings of `$` had to be held in the head at once — the root replacement `$ = { … }` writes ONE document, the same spelling with an array wrote many.
+
+The destination says which now. `$$ = <array>` fans out, with the lowering the root spelling had (`$set` into a slot, `$unwind`, `$replaceWith` — `$unwind` needs a materialised path, so an inline array expression cannot be unwound where it stands). `$ = <array>` is refused, and the message names the spelling that takes one. The two element refusals the root road carried, for an empty literal and for a provably scalar element, are retired with it: the stream road's own readings answer instead.
+
+Three readings of `$$ = …` now stand side by side, and each is the honest meaning of its right side. A chain on the stream, on the callback's own stream, or on another collection is the STREAM road whatever kind its last link returns — a `$lookup` yields an array, and `$$ = $$$.orders.filter(p)` is still a source switch. An array LITERAL is `$documents`, a source stage that replaces the whole stream and must stand first. Anything else that is provably an array fans out, one answer per input document.
+
+This closes an HR3 break the acceptance gate measured: `$ = Object.entries($.scores)` fanned out arrays as document roots and the server stopped the query with Location40228. The root refuses the array outright now, and the developer is sent to the destination that takes one.
+
+Two of the three spellings the change recommends do not exist: appending an in-document array to the stream needs `$documents` over a field path, and MEASURED, the server refuses that ("an array is expected"). `$$.push(...)` and `.concat(…)` append another COLLECTION and keep their own messages.
+
+---
+
+## 2026-09-07 — feat!: one grouping spelling, and a generator says what it is
+
+`Object.groupBy($.items, x => x.k)` and `$.items.groupBy(x => x.k)` emitted the identical MQL. Two spellings of one capability is the friction jsmql rejects, so the `Object` receiver is refused. The name still parses, which is the point: a refused name gets a message that names the form that works, where a deleted one would leave "unknown identifier". Its two internal errors go with it — a non-arrow discriminator and a two-parameter arrow both used to answer "jsmql internal error (please report to the jsmql maintainers)" with `.pos = 0`, which asked the developer to file a bug for their own typo and left tooling with no position.
+
+Two registry audits caught the change honestly and had to learn one thing: a family listed in `on` whose value cell is a REFUSAL takes no callback, so it states no iteratee layout. Every other family still must.
+
+`function*` said "Expected '(' but got '*'". `docs/LANGUAGE.md` states twice that a generator is refused with a pointer to the plain form, and the parser's own test said so in its title while asserting the token error. Both spellings — a declaration and a function expression — now name the plain `function` and the arrow. `async function` got the same treatment, because the documented sentence covers both and its old message ("Expected an assignment but got 'function'") named nothing. A binding or field NAMED `async` is untouched: the refusal fires only where the next word is `function`.
+
+---
+
+## 2026-09-07 — fix: a bracketed program is diagnosed as the pipeline it is
+
+`jsmql.pipeline("[{ $macth: … }]")` answered "jsmql.pipeline() expects a Pipeline … Use jsmql.pipeline()" — the entry the developer had just called. The strict-shape entries ask `shapeOf` first, and a bracketed list whose stage name is misspelled does not look like a pipeline, so the shape refusal spoke before the lowering could name the typo. `jsmql()` on the same source named it and suggested `$match`.
+
+A BRACKETED program is a pipeline the developer wrote as one, whatever is inside it, so the pipeline entry no longer asks the shape question about it: the lowering answers, and names the stage. `jsmql.filter` still says "Use jsmql.pipeline()" for a bracketed program, because there the advice is true.
+
+---
+
+## 2026-09-07 — fix!: a callback's own stream is refused where its count cannot stay true
+
+`(o, _i, c) => { … }` binds `c` to the body's own stream, and `c.length` is its count. MQL has no inline cardinality operator, so the count is stamped into a field by a `$setWindowFields` — and that stage is HOISTED to the front of the body, wherever the read sits. Any stage between the stamp and the read that changes the count or drops the fields makes the stamp untrue, and nothing recomputed it.
+
+Two suites had the evidence written down. One asserted `n: 4` for every user in a body that filtered by user — the whole collection's count, under a comment claiming it counted "the body's stream where it stands". The other asserted an `assert(<coll>.length > 0)` after a `$match`, under a comment explaining that the assertion no-ops for a user with no orders because no document survives the filter — which is to say the assertion the developer wrote was not the one that ran. And after a `$group` the field is gone entirely, so the test read a missing value and fired on every document.
+
+`c` is refused now in any body that runs a stage whose row does not state `preservesCount`, and the message names the stage. That fact is the freshness rule `docs/specs/stream-length.md` already stated as a hard-coded allowlist in a module that no longer exists: the stage leaves the stream's count and its documents' fields both untouched. Five stages state it. The rule is conservative on purpose — recomputing is always correct and reusing a stale count is a bug — so `$sort` and `$addFields` keep the handle while `$match`, `$limit`, `$unwind` and `$group` refuse it. Read the count in a statement ahead of the chain, or leave the third parameter off.
+
+---
 
 ## 2026-09-07 — fix(compiler): a clause that can never hold, and a lost optional neutral
 
@@ -1267,41 +1221,6 @@ Two more answers the acceptance gate measured wrong, and in both the suite's own
 `$.tags === [1, 2]` emitted `{ tags: { $eq: [1, 2], $not: { $type: "array" } } }`. A field that equals `[1, 2]` IS an array, so the own-value guard excluded every document the equality selected: the clause could not hold for any document at all. An array has no own-value query form — the query language reads `{ f: [1, 2] }` as "f equals the array, OR f is an array holding the ELEMENT `[1, 2]`" — so the comparison takes the expression road, where `$eq` compares the whole value. A document-valued comparison already did. Measured over five documents: the equality selects the one whose `tags` is `[1, 2]` and excludes the one whose `tags` is `[[1, 2]]`, which the native clause would have matched.
 
 `$.user?.posts.map(p => p.id)` lost the `?.` neutral and answered null where JavaScript answers `[]`; one link further, `.length` put `$size` on that null and the server stopped the query. The neutral is the empty value of the receiver's family, and where the family is not proven the row's own `on` supplies it — but only when the row named exactly ONE family, and `.map` is spelled on an array and on the stream. A stream is not a family a document field can hold, so the question is the row's one FIELD family, which `soleFieldFamilyOf` already answers. `$.tags?.join(",")` kept its `$ifNull` throughout, on a row spelled for the array alone; the two agree now.
-
----
-
-
-## 2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong
-
-The differential gate compares every harvested program through both compilers and runs both MQL documents on a live mongod. Three answers came back wrong, each silently: the query ran and returned the wrong thing.
-
-`.ceil(p)` and `.floor(p)` dropped the precision. `$.n.ceil(2)` on 1.234 answered 2 where JavaScript answers 1.24. Only `$round` takes a precision on the server, so the row's own comment ("MEASURED: $.n.ceil(2) takes the precision") and `docs/LANGUAGE.md` both described a lowering the emit never built. It scales by 10^p, rounds to a whole number and scales back — measured against JavaScript for a positive value, a negative one, and a zero precision.
-
-`new Set($.a).difference(new Set($.b))` kept the receiver's duplicates, so it answered something that is not a set: `[3, 3, 2, 1]` less `[2]` gave `[3, 3, 1]`. One emit served both receiver families, and the two want different answers — lodash's `_.difference` keeps duplicates, a Set holds each value once. The row states both now. The two families share one `$type` test, so no `$switch` can separate them, and the dispatch was building a branch that could never be chosen; a dispatch now covers only the families `$type` tells apart, and the row's declaration order decides the rest. A `new Set(…)` receiver is proven at the source, so it never reaches the dispatch at all.
-
-`.endsWith(".pdf")` matched `"report.pdf\n"`. PCRE reads `$` as the end of the subject OR the position before a final newline; `\z` is the end of the subject alone, which is what JavaScript's `endsWith` means. Measured on mongod: `/\.pdf$/` selects both strings, `\z` selects one.
-
----
-
-
-## 2026-09-07 — refactor: the pointers the old compiler left behind
-
-The removal deleted thirty source modules and seven specs. The prose stayed. Comments, spec paragraphs and test titles across thirty-five files still named a deleted file or a deleted symbol as a thing that exists — `internalVar()` "in codegen.ts", a sort order "read by mql-sort.ts", "Divergence 3 in match-query-translation.md". A reader who followed one of those pointers found nothing, and a reader who trusted one learned a fact about a compiler that is gone.
-
-Each pointer now names the live owner, verified by opening the file and finding the symbol: the gensym is `Scope.bind` in `emit/names.ts`, the sort order is read by `emit/sort-spec.ts`, truthiness is `truthOf` in `emit/mode.ts`, the callback rule is the row's own cell, and the filter divergences are documented in `emit-pass.md § The filter target`. Where the only content was history — "five key-group dimensions were declared here and never populated", "which is how nine string methods once fell silently out of the registry" — the sentence is restated as the rule it was really about, or dropped.
-
-Two tables survive with corrected comments rather than a rewrite. `src/operators.ts` and `src/stages.ts` state operator and stage shapes that only the globals generator reads, and their comments claimed the compiler read them; the compiler reads `src/registry/`. That duplication is the next thing to remove.
-
----
-
-
-## 2026-09-07 — refactor: the words the old compiler left behind, part one — the pending machinery
-
-A registry cell could say `pending(<file>)`: the fact is stated, the lowering still lives in the module the string names, and a ratchet test counts the cells down. That was the migration's own scaffolding. Every lowering arrived, the ratchet reached zero, and the scaffolding stayed — a type in the vocabulary, an arm on three cell shapes, a verdict in `consult`, a branch in `select`, two throws in `lower`, an error class, a skip class in the differential gate, and a ratchet test counting a thing that cannot occur.
-
-One entry survived in code: `PENDING_CONSTRUCTS` named a function declaration as unbuilt and pointed at `src/codegen.ts`. Both halves were false — `function double(x) { return x * 2 }` compiles, and that file was deleted with the rest of the old compiler. Nothing called the function that read the list.
-
-It is all gone. `Cell` now reads: named in `where` means a renderer or `inCode(<the file that builds it>)`; absent from `where` means a refusal that says why. The differential gate keeps one skip class, for a source that belongs to another target of the compiler under test, and no longer needs the row to corroborate a claim about itself.
 
 ---
 
@@ -1317,6 +1236,16 @@ One consequence is worth naming on its own: `{ x: $gt($.y) }` now lifts, where i
 
 ---
 
+## 2026-09-07 — fix(compiler): a refusal names the method the source spells, and the way out compiles
+
+`$.a.reverse(1)` answered "'.toReversed()' takes no arguments, got 1". A mutator is rewritten to its immutable twin before it is lowered — `.reverse()` becomes `$.a = $.a.toReversed()` — and the arity refusal then named the twin, a name the developer cannot find anywhere in their program. A rewritten call carries `wrote`, the name the SOURCE spells, and every message reads that. `.sort(1, 2)` names `.sort` now, `.splice` names `.splice`, and a call no pass renamed is unaffected. `wrote` is provenance, not meaning: the desugar suite strips it beside `pos`, because a sugar still MEANS the plain form it becomes.
+
+Two refusals named a way out that does not compile. `.sortBy({ … })` is refused because lodash reads an object as a matcher and sorts by its truth, not as directions — that is lodash's own API, where `sortBy` takes iteratees and sorts ascending and `orderBy` takes the orders. The message offered `.sort({ field: -1 })`, which is refused in a value position and raises an internal error on a stream; it names `.orderBy({ field: -1 })` and `.toSorted({ field: -1 })` now, which take an order in every position. `.toReversed()` on a stream offered `.sort(<key>)`, refused there for the same reason, and names `.orderBy` now.
+
+`.reverse()` and `.toReversed()` answer alike on a stream. Both reverse an order a stream does not have until it is sorted, and `.reverse()` used to say "use its immutable form mid-chain" — a pointer to a method refused for the identical reason. Its bare-statement form fell through to the generic receiver refusal, which named no way out at all; a stream receiver on a row spelled for arrays now gets one.
+
+---
+
 ## 2026-09-07 — fix(compiler): a value terminal over a joined collection gives one document, and says so
 
 `$$.orders.head().map(x => x)` compiled to `$map` over `{ $first: … }`. A `$lookup.as` array holds documents, so `.head()` gives one document, and mongod stops the query with "input to $map must be an array not object". The defect was data-dependent and therefore worse than a plain refusal: over an empty foreign collection the same pipeline runs and writes null, so it passes in a development database and aborts the query in production. Eleven terminals behaved this way — `head`, `first`, `last`, `at`, `nth`, `findLast`, `min`, `max`, `minBy`, `maxBy` — and every array method on the document that followed. Only `.find(p)` was right, because it travels the `picksOne` route, which already types the slot.
@@ -1327,52 +1256,47 @@ The proof travels only as far as it can be shown. `elementsRead` answers for a P
 
 ---
 
-## 2026-09-06 — docs: the two coverage gaps the restored suites measured are open rows
+## 2026-09-07 — fix(compiler): groupBy answers an object, a pad target is guarded, and pick answers an object
 
-Running the previous compiler's corpus over this compiler measured two gaps that are neither bugs nor decisions, so they are open rows rather than prose. DEF-034: a constant expression settles to its value where an evaluator exists, and a few reshapers have none — `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor, which the row's work raises. DEF-035: `.toSpliced()` refuses a negative start that JavaScript counts from the end, because resolving one needs the receiver's length in hand and the row states a slot range from zero.
+Three more answers the acceptance gate measured wrong, each on a live mongod against JavaScript's own.
 
-Neither is a correctness fault: the compiler emits correct, larger MQL for the first and a message naming the constraint for the second.
+`$$$.orders.groupBy(d => d.cat)` wrote `[{ a: […], b: […] }]` where `.keyBy` and `.countBy` wrote the object itself, and lodash's `_.groupBy` answers an object. The row states `collapses`, which says whether the stream cell folds the whole stream into one document, and `groupBy` states it conditionally because it has two stream spellings: a key (`"cat"`, `d => d.cat`) builds lodash's object, and a raw `$group` body (`{ _id: "$cat", n: $sum(1) }`) IS the stage and keeps a stream. The condition asked whether the argument was written as a string literal — a question the desugar pass makes unanswerable, because it rewrites a field-name string into an arrow long before emit, so the test could never be true. It asks the argument's SHAPE now, which is what the two spellings actually differ in, and the fact is named `unlessRawBody` after the question it asks.
 
----
+`$.s.padStart($.w)` stopped the query when the width was missing or null: `$range` refuses a non-numeric end. JavaScript pads nothing there — `"7".padStart(null)` is `"7"` — so the receiver stands when nothing is needed. One test covers null, missing, and a width already shorter than the string, because MEASURED `$gt: [null, 0]` is false. A width written as a number literal is numeric by construction and keeps the unguarded shape.
 
-## 2026-09-06 — test: the feature suites of the previous compiler assert this compiler's output
-
-The suites that came with the previous compiler — `codegen`, `pipeline`, `lookup`, `stream-methods`, `match-translation`, `stage-validation`, `union`, `out`, `update-filter`, `functions`, `let-bindings`, `callback-block`, `const-folding`, `fold-consistency`, `implicit-pipeline`, `literal-passthrough`, `parity`, `permutations`, `query-expr-agreement`, `stream-length`, `system-stages`, `assert` — are back in `test/`, with their inputs unchanged and their expected MQL regenerated from this compiler. The inputs are the contract: several thousand JSMQL programs that a developer wrote once and that must keep compiling. The MQL they expect is the compiler's lowering, which this compiler states differently in places (a `$lookup` always through `let` + `pipeline`, a computed `$group` key through `__jsmql` fields, JavaScript's own answer for a constant fold), so every `toEqual` was rewritten by `scripts/regen-expectations.mjs` and reviewed as a diff, and every case whose polarity changed — refused then, accepted now, or the reverse — was judged one by one (`scripts/convert-expectations.mjs` flips the mechanical ones; a KEEP pattern protects the refusals the suite must keep). Two suites were not kept: `ast-walk` and `methods-grid` asserted the internals of modules that no longer exist (a walker's node count, a method table's rows); the behaviour they guarded is asserted by the `compiler-*` and `registry-*` suites. Inside the kept suites, the `describe` blocks that reached into the removed compiler's exports (`generateImplicitPipeline`, the stream-method table, the stage-cell table) were dropped for the same reason.
-
-The restated cases are the behaviour changes this compiler makes on purpose, each with its DEVLOG entry: an ObjectId literal in a filter is `{ _id: { $eq: ObjectId(…) } }`; a constant membership test is the native `$in`; a lookup terminal's count is `$size` in one `$set`; `keyBy` / `groupBy` / `countBy` on a stream pass through `$arrayToObject`; `$.x = [1, 2]` as a root fans out only documents; `locf` needs no `sortBy` (measured on mongod — only `linear` does); a lookup body's `# DEVLOG
-
-A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
-
-**Conventions.**
-- Newest entry on top.
-- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
-- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
-- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
- is the outer document and is never written. `fold-consistency` measures how many constant expressions fold, and its floor moved from 0.95 to 0.85: the folds this compiler withholds are the ones whose JavaScript answer is not spellable as MQL or not the server's (an unequal-length `zipWith`, a mixed-type comparison, an empty read), and a handful the fold does not reach yet (`round` / `ceil` / `floor` with a precision, `.flat()`, `.truncate()`, `.split("")`, `sortBy` / `orderBy` over documents, a string-shorthand predicate). Those are open work, listed in the entry below.
+`$.o.pick(["a"]).trim()` emitted `$trim` over a document and the server stopped the query. The `pick` and `omit` rows answered `"unknown"` for an object receiver, on the reasoning that a stream reads them as a `$project` — but `returns` is stated PER FAMILY, so the stream half says `stream` and the object half can say what it builds, which is a document literal. Every string, number and date method on the result is a compile error now, and `.mapValues`, a field read and `.size()` still compile. `pickBy`, `omitBy`, `mapValues`, `mapKeys` and `invert` already stated it.
 
 ---
 
-## 2026-09-06 — fix(compiler): the refusals and lowerings the feature suites found missing
+## 2026-09-07 — fix(compiler): three answers the acceptance gate measured wrong
 
-Running the previous compiler's suites over this compiler found the gaps a fresh corpus cannot: cases the registry did not state yet, and messages that named the wrong mistake. All are rows and cells now, none is a special case in the emitter.
+The differential gate compares every harvested program through both compilers and runs both MQL documents on a live mongod. Three answers came back wrong, each silently: the query ran and returned the wrong thing.
 
-Statements. `$ = <array literal>` fans out one document per element, so an empty literal ("would fan out nothing and drop every document") and a literal with a provably scalar element ("a number is not a document") are refused before the server refuses every root. A context reference alone where a statement stands (`$;`) says what a statement is. A misspelled stage (`$matc(…)`) gets a suggestion from the stage names. A callback's third parameter read as a value (`c.total`) is named as the body's own stream, not as a reusable function. A block whose statement is a stage or a bare call keeps the "is a pipeline stage, not part of a callback" message; a block whose statement is a stray expression (`{ d.v; }`) gets the block's own rule ("must end with a `return <expr>`", or "holds 'const' declarations and one 'return'" when a return exists). A `function` entry form (`function ({ $ }) { return … }`) parses like the arrow form. `Object.assign($.x, …)` alone is a write in `jsmql.expr`.
+`.ceil(p)` and `.floor(p)` dropped the precision. `$.n.ceil(2)` on 1.234 answered 2 where JavaScript answers 1.24. Only `$round` takes a precision on the server, so the row's own comment ("MEASURED: $.n.ceil(2) takes the precision") and `docs/LANGUAGE.md` both described a lowering the emit never built. It scales by 10^p, rounds to a whole number and scales back — measured against JavaScript for a positive value, a negative one, and a zero precision.
 
-Rows. Stage bodies carry the facts the server enforces, as declarative rules the checker reads: `nonEmpty` (`$project`, `$unset`), `minimums` (`$sample` size, `$bucketAuto` buckets, `$graphLookup` maxDepth), `sortedList` (`$bucket` boundaries), `nested` / `eachValue` / `exactlyOneOf` (`$fill` output, `$setWindowFields` output windows), `requiresWhen` (`$fill` linear needs `sortBy` — measured: `locf` does not), `atLeastOneOf` (`$unionWith`). `$unset` takes a string or an array. `$where` is refused with the JSMQL predicate as the alternative (a raw document still passes, HR1). Membership (`in`, `.includes`) against a constant list is the native `{ field: { $in: […] } }` in a filter. `.join()` and `.toString()` state `elements: "scalar"`, so a receiver that provably holds arrays — a literal of literals, `.partition(…)` — is refused with the flatten / map-each rewrite instead of a `$reduce` the server fails on. `.map` / `.filter` / `.find` / `.findLast` / `.every` / `.some` / `.flatMap` take exactly one callback; `maxBy` is `sortBy` descending then the first element; `$covariancePop` / `$covarianceSamp` take one, two or three arguments; a `groupBy` body links to its key. The fold: `zipWith` folds only equal-length arrays, `unionBy` dedupes, a non-finite number or an unspellable value in a callback withholds the fold, a source regex is never folded.
+`new Set($.a).difference(new Set($.b))` kept the receiver's duplicates, so it answered something that is not a set: `[3, 3, 2, 1]` less `[2]` gave `[3, 3, 1]`. One emit served both receiver families, and the two want different answers — lodash's `_.difference` keeps duplicates, a Set holds each value once. The row states both now. The two families share one `$type` test, so no `$switch` can separate them, and the dispatch was building a branch that could never be chosen; a dispatch now covers only the families `$type` tells apart, and the row's declaration order decides the rest. A `new Set(…)` receiver is proven at the source, so it never reaches the dispatch at all.
 
-Values. A RegExp the call supplied — `jsmql.expr\`${re}\``, `$.name = ${re}`, `$set({ name: ${re} })` — is a value in its own right in every position, and inside a filter it keeps its identity (`{ name: re }`, not a copy); a RegExp inside an injected structure is a leaf, like a Date or an ObjectId. A source regex is still refused outside the regex methods. A duck-typed ObjectId (`_bsontype` + `toHexString`) from another `bson` copy is accepted. `jsmql.validate` refuses a non-string, non-function input with a `TypeError` instead of a compiler error. `kindOf` on an unproven receiver answers the method's one family or its agreed return (`$ = $.items.map(…)` is refused as an array root). The `.thisArg` hint names the callback's parameters.
-
----
-
-## 2026-09-06 — feat!: an object matcher is lodash's partial deep match, and a `$`-named field segment is reachable
-
-`.filter({ qty: { $gt: 5 } })` compared the field `qty` with the document `{ $gt: 5 }` — and in an expression that document is an operator with one argument, which the server refuses. The developer ruled for lodash's own reading (`_.filter([{ a: { b: { c: 3, d: 99 } } }], { a: { b: { c: 3 } } })` matches): a matcher is a PARTIAL deep match. `matchTests` in `src/compiler/passes/desugar.ts` reads a nested object as a longer path (`x.a.b.c === 3`), an array of constants as a subset (`x.tags.includes("a") && x.tags.includes("b")`), an empty object or array as a match of anything, and every other value as `===`; a key is a field name however it is spelled, so `{ qty: { $gt: 5 } }` is `x.qty.$gt === 5`. A field path whose segment starts with `$` is refused by the server ("FieldPath field names may not start with '$'", measured), so the value road (`reachable` in `src/compiler/emit/lower.ts`) reads such a segment through `$getField` with the name as a literal — `{ $getField: { field: { $literal: "$gt" }, input: "$qty" } }` — and every segment after it the same way; a query slot keeps the native `{ "qty.$gt": … }`, which the server takes (measured). This supersedes the equality-by-design entry for the matcher.
+`.endsWith(".pdf")` matched `"report.pdf\n"`. PCRE reads `$` as the end of the subject OR the position before a final newline; `\z` is the end of the subject alone, which is what JavaScript's `endsWith` means. Measured on mongod: `/\.pdf$/` selects both strings, `\z` selects one.
 
 ---
 
-## 2026-09-06 — feat!: a JavaScript date spelling counts as JavaScript does — months from 0, Sunday as 0 — in the constant fold too
+## 2026-09-07 — refactor: the pointers the old compiler left behind
 
-The runtime cells already gave a JavaScript spelling JavaScript's numbering (`$.t.getMonth()` → `{ $subtract: [{ $month: "$t" }, 1] }`, `new Date($.y, $.m, 1)` → `month: { $add: ["$m", 1] }`), while the constant fold kept the 2026-08-13 rule — one month base for the whole language, MongoDB's — so `new Date(2024, 1, 15)` was 15 January and `new Date(2024, $.one, 15)` was 15 February. The developer chose consistency in the direction of the general ruling: a JavaScript spelling gets JavaScript's behaviour, and MongoDB's numbering is what the `$op(…)` escape hatch gives untouched (`$month($.t)`, `$dateFromParts({ month: 1 })`). `src/compiler/passes/fold-dates.ts` now folds `getMonth()` / `getDay()` as JavaScript answers them, reads the calendar-parts constructor's month from 0 and rolls an out-of-range part over as JavaScript does (`new Date(2024, 12, 1)` is 1 January 2025; the server's `$dateFromParts` rolls the same way), and `Date.UTC(2020)` is January again. `.set({ month: 1 })` keeps Luxon's 1-based vocabulary — it is the one date API here that is not a JavaScript spelling — and says so. This supersedes the 2026-08-13 and 2026-08-12 entries on the month and weekday base; `docs/LANGUAGE.md` § Date Operations states the rule.
+The removal deleted thirty source modules and seven specs. The prose stayed. Comments, spec paragraphs and test titles across thirty-five files still named a deleted file or a deleted symbol as a thing that exists — `internalVar()` "in codegen.ts", a sort order "read by mql-sort.ts", "Divergence 3 in match-query-translation.md". A reader who followed one of those pointers found nothing, and a reader who trusted one learned a fact about a compiler that is gone.
+
+Each pointer now names the live owner, verified by opening the file and finding the symbol: the gensym is `Scope.bind` in `emit/names.ts`, the sort order is read by `emit/sort-spec.ts`, truthiness is `truthOf` in `emit/mode.ts`, the callback rule is the row's own cell, and the filter divergences are documented in `emit-pass.md § The filter target`. Where the only content was history — "five key-group dimensions were declared here and never populated", "which is how nine string methods once fell silently out of the registry" — the sentence is restated as the rule it was really about, or dropped.
+
+Two tables survive with corrected comments rather than a rewrite. `src/operators.ts` and `src/stages.ts` state operator and stage shapes that only the globals generator reads, and their comments claimed the compiler read them; the compiler reads `src/registry/`. That duplication is the next thing to remove.
+
+---
+
+## 2026-09-07 — refactor: the words the old compiler left behind, part one — the pending machinery
+
+A registry cell could say `pending(<file>)`: the fact is stated, the lowering still lives in the module the string names, and a ratchet test counts the cells down. That was the migration's own scaffolding. Every lowering arrived, the ratchet reached zero, and the scaffolding stayed — a type in the vocabulary, an arm on three cell shapes, a verdict in `consult`, a branch in `select`, two throws in `lower`, an error class, a skip class in the differential gate, and a ratchet test counting a thing that cannot occur.
+
+One entry survived in code: `PENDING_CONSTRUCTS` named a function declaration as unbuilt and pointed at `src/codegen.ts`. Both halves were false — `function double(x) { return x * 2 }` compiles, and that file was deleted with the rest of the old compiler. Nothing called the function that read the list.
+
+It is all gone. `Cell` now reads: named in `where` means a renderer or `inCode(<the file that builds it>)`; absent from `where` means a refusal that says why. The differential gate keeps one skip class, for a source that belongs to another target of the compiler under test, and no longer needs the row to corroborate a claim about itself.
 
 ---
 
@@ -1384,37 +1308,23 @@ The feature specs carried the removed compiler's internals — `GenerateCtx`, `g
 
 ---
 
-## 2026-09-06 — fix(compiler): a method on an unproven receiver has the kind its one family states
+## 2026-09-06 — docs: the two coverage gaps the restored suites measured are open rows
 
-`$ = $.items.map(x => ({ v: x }))` emitted `{ $replaceWith: { $map: … } }` — an array as the new root, which the server refuses — because `kindOf` answered "unknown" for a method call whose receiver the registry cannot type, and the fan-out (`$set` a slot, `$unwind`, `$replaceWith`) is keyed on a provable array. The same gap left `const ids = $.tags.uniq()` untyped, so `ids.includes("a")` took the dual-receiver `$switch` form. A method spelled on ONE document-field family (`.map`, `.uniq`, … on `array`) is a call on that family or a server error, never a call on another, so its result is what the row states for that family: `soleFieldFamilyOf` in `src/compiler/rows.ts`, read by `kindOf` (`src/compiler/emit/types.ts`) when the receiver's family is unproven. A method on several families (`.length`, `.slice`) stays unknown and keeps the dual form.
+Running the previous compiler's corpus over this compiler measured two gaps that are neither bugs nor decisions, so they are open rows rather than prose. DEF-034: a constant expression settles to its value where an evaluator exists, and a few reshapers have none — `[[1, 2], [3]].flat()` and `"abc".split("")` emit their runtime operator over literal operands. `test/fold-consistency.test.ts` measures the fraction that folds and holds a floor, which the row's work raises. DEF-035: `.toSpliced()` refuses a negative start that JavaScript counts from the end, because resolving one needs the receiver's length in hand and the row states a slot range from zero.
 
----
-
-## 2026-09-06 — fix(compiler): an injected `"$…"` string is a literal in every slot the server evaluates
-
-`jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })` emitted `[{ $set: { x: "$b" } }]`, and the server read the field `b` — user input had become a field reference, which HR1's gate exists to prevent. The gate exempted every pipeline program because the shipped compiler did (measured, and copied as a fact); the exemption was the shipped compiler's defect. The gate now asks only where the string stands: a value slot the server evaluates — an expression, a `$set` value, a stage body, a `$group` key — wraps it (`{ $literal: "$b" }`); a query slot and an update DOCUMENT take the string as written, because they evaluate nothing (`jsmql.update` → `{ $set: { x: "$b" } }` stores the string; measured). A `"$…"` string written in the SOURCE is unchanged: it is MongoDB's field path, as HR1 states, and `docs/LANGUAGE.md` § `$literal` now says so instead of describing an automatic wrap the compiler does not do.
+Neither is a correctness fault: the compiler emits correct, larger MQL for the first and a message naming the constraint for the second.
 
 ---
 
-## 2026-09-06 — fix(compiler): `Object.assign` on a field is a write; the refusals spell names as the source does
+## 2026-09-06 — feat!: a JavaScript date spelling counts as JavaScript does — months from 0, Sunday as 0 — in the constant fold too
 
-Three defects found by probing the surface for the reference. A bare `Object.assign($.p, { a: 1 })` — no `;` — was read as a filter: the shape pass let the `;` decide for a name that lists both a value and a statement form, and a merged object is truthy, so the filter kept every document. It is now the write it is (`[{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }]`), as `$.tags.push(1)` already was; `Object.assign({}, $.a)` — a fresh object, nothing written — stays a value. Two refusals were mis-spelled: a wrong count read `'.find()'(predicate) requires exactly 1 argument` and a property refused on its receiver read `'.length()'`; `refusalFor` now starts from the bare name (`'.find(predicate)' requires …`, `'.length' is not available on …`). And a read of another collection outside a pipeline was refused with the stream-count sentence (`'$$.$$$.<coll>' (the current stream's document count) …`); it has its own (`'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage …`).
-
----
-
-## 2026-09-06 — fix(compiler): one stream-length stamp, no empty `$let`
-
-Two emit warts, both found by probing `$$.length` at every depth. A write whose join chain goes on after the `$lookup` (`$.o = $$$.orders.filter(o => o.i < $$.length).map(…)`) lowered the body twice — once to learn the chain is not complete, once on the value road — and each lowering hoisted the `$setWindowFields` stamp, so the pipeline carried it twice. The first attempt now takes its hoists back (`joinWrite` in `src/compiler/emit/join.ts`). And a call with no parameters (`const half = () => $$.length / 2; … half()`) wrapped its body in `{ $let: { vars: {}, in: … } }`; a `$let` that binds nothing is dropped (`applyLambda` in `src/compiler/emit/lower.ts`).
+The runtime cells already gave a JavaScript spelling JavaScript's numbering (`$.t.getMonth()` → `{ $subtract: [{ $month: "$t" }, 1] }`, `new Date($.y, $.m, 1)` → `month: { $add: ["$m", 1] }`), while the constant fold kept the 2026-08-13 rule — one month base for the whole language, MongoDB's — so `new Date(2024, 1, 15)` was 15 January and `new Date(2024, $.one, 15)` was 15 February. The developer chose consistency in the direction of the general ruling: a JavaScript spelling gets JavaScript's behaviour, and MongoDB's numbering is what the `$op(…)` escape hatch gives untouched (`$month($.t)`, `$dateFromParts({ month: 1 })`). `src/compiler/passes/fold-dates.ts` now folds `getMonth()` / `getDay()` as JavaScript answers them, reads the calendar-parts constructor's month from 0 and rolls an out-of-range part over as JavaScript does (`new Date(2024, 12, 1)` is 1 January 2025; the server's `$dateFromParts` rolls the same way), and `Date.UTC(2020)` is January again. `.set({ month: 1 })` keeps Luxon's 1-based vocabulary — it is the one date API here that is not a JavaScript spelling — and says so. This supersedes the 2026-08-13 and 2026-08-12 entries on the month and weekday base; `docs/LANGUAGE.md` § Date Operations states the rule.
 
 ---
 
-## 2026-09-06 — refactor: the shipped compiler is gone
+## 2026-09-06 — feat!: an object matcher is lodash's partial deep match, and a `$`-named field segment is reachable
 
-Thirty source modules — `codegen.ts`, `pipeline.ts`, `lookup-translation.ts`, `stream-methods.ts`, `methods/`, the `mql-*` builders, the old lexer, parser and AST, the validators and the sugar translators — are removed; nothing imported them since the swap. The globals generator reads the registry now: `src/compiler/rows.ts` exposes the vocabulary it types (`streamMethodNames`, `valueMethodNames`, `valueMethodReturns`, `valueTerminalMethodNames`, `nativeDateMethodNames`, `requiredReceiverFamily`), each derived from the rows' cells and `on` — a method chains on `$` because its row has a stream RULE, ends a `$$.<coll>` chain with a value because it has an array value rule and no stream rule — so `src/globals.ts` cannot drift from what the compiler accepts. `src/operators.ts` and `src/stages.ts` stay as the operator and stage shapes the generator reads.
-
-The specs that described only the removed modules go with them (`lowering-grid`, `method-dispatch`, `predicate-ir`, `operator-validation`, `pipeline-validation`, `match-query-translation`, `const-folding`); the remaining specs and the CLAUDE guides point at the modules that own each construct now. DEF-033 closes: `$.length` reads the root stream at every depth, inside a `$facet` branch and a function body alike; the one body that cannot read it, `$unionWith`, has no `let` by MongoDB's design and says so.
-
-Two deferred rows close with the removal. DEF-011 (partial extraction under `||` in `$match`) described the removed translator: the new filter road lowers each `||` branch on its own. DEF-033 (`$$.length` in a sub-pipeline or a function body) is the stream-length rule at every depth: a `$facet` branch and a declared function body read the stamped field, a `$lookup` body reads it through `let`, and a `$unionWith` body — the one stage without a `let` — refuses the read and names the join form. `docs/specs/stream-length.md` and `docs/LANGUAGE.md` state the rule; the tags are gone. The globals generator reads the registry's arity for the value terminals, so a no-argument terminal is typed `(): T`, and `Array.from` stays a static in TypeScript's own lib.
+`.filter({ qty: { $gt: 5 } })` compared the field `qty` with the document `{ $gt: 5 }` — and in an expression that document is an operator with one argument, which the server refuses. The developer ruled for lodash's own reading (`_.filter([{ a: { b: { c: 3, d: 99 } } }], { a: { b: { c: 3 } } })` matches): a matcher is a PARTIAL deep match. `matchTests` in `src/compiler/passes/desugar.ts` reads a nested object as a longer path (`x.a.b.c === 3`), an array of constants as a subset (`x.tags.includes("a") && x.tags.includes("b")`), an empty object or array as a match of anything, and every other value as `===`; a key is a field name however it is spelled, so `{ qty: { $gt: 5 } }` is `x.qty.$gt === 5`. A field path whose segment starts with `$` is refused by the server ("FieldPath field names may not start with '$'", measured), so the value road (`reachable` in `src/compiler/emit/lower.ts`) reads such a segment through `$getField` with the name as a literal — `{ $getField: { field: { $literal: "$gt" }, input: "$qty" } }` — and every segment after it the same way; a query slot keeps the native `{ "qty.$gt": … }`, which the server takes (measured). This supersedes the equality-by-design entry for the matcher.
 
 ---
 
@@ -1441,37 +1351,9 @@ The suites that specified the shipped compiler's shapes are gone with it — the
 
 ---
 
-## 2026-09-06 — feat(compiler): the update-document target, takeWhile / dropWhile, and no pending cell left
-
-**The registry has no pending cell.** The last three clusters landed and the ratchet stands at zero.
-
-**The update-document target** (`update(source)` in `src/compiler/index.ts`, `src/compiler/emit/update.ts`) is the object form of an update, `updateOne(filter, { $set: … })`. Its statements stay in the `updateDoc` position, so no statement sugar rewrites a write: `$.n += 2` is `{ $inc: { n: 2 } }`, `$.tags.push(3, 4)` is `{ $push: { tags: { $each: [3, 4] } } }`, `$.b = $.a; delete $.a;` is `{ $rename: { a: "b" } }`, `$.t = new Date()` is `$currentDate`, `Math.min($.n, c)` is `$min`. A document-form update takes constants — the server stores `"$b"` as the string — so every read of the document is refused at this root, naming the pipeline form; a copy without a delete, a field written twice, a mutator with no document form and a non-operator key are refused the same way. The nineteen `updateDoc` cells pass their document through, and the fragments (`$each`, `$slice`, `$sort`, `$position`) are valid only inside `$push` / `$addToSet`. Each document is applied on mongod 8.3.7 and the result compared with what JavaScript leaves behind (`test/compiler-update.test.ts`).
-
-**`.takeWhile` / `.dropWhile` on the stream** keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`, then a `$match` on it — and refuse a stream that carries no sort, naming the spellings that give it one. A stage cell sees the chain's own earlier links through `prevStages` and the new `sortedBy` service, not only the stages already emitted. **The forty-one production cells** that were marked pending name the compiler file that owns each construct (`inCode`): every one was built. Two of them gained their own refusal: a destructured parameter (`({ a }) => …`) is named for what it is by the parser, and a namespace function used as a value (`Math.abs` alone) is told to be called or handed to a callback slot.
-
----
-
 ## 2026-09-06 — feat(compiler): every stage states its body facts
 
 The twenty-eight stage rows whose `body` was still pending state it now, each fact read off mongod 8.3.7 where a standalone server can answer (`// MEASURED:` beside it) and off the manual where only Atlas or a sharded cluster can (`$search`, `$vectorSearch`, `$listSearchIndexes`, `$rankFusion`, `$scoreFusion`, `$shardedDataDistribution`, `$listSampledQueries`). The object-form stages are closed key sets with their required keys, key types and enumerations — `$densify`, `$fill` (`partitionBy` and `partitionByFields` never together), `$setWindowFields` (`output` required), `$merge` (its two enumerations; an update pipeline passes), `$geoNear`, `$changeStream`, `$out`'s document form, `$changeStreamSplitLargeEvent` and `$shardedDataDistribution` (an empty document). The single-operand stages — `$count`, `$limit`, `$skip`, `$match`, `$project`, `$set`, `$unset`, `$replaceWith`, `$redact`, `$sortByCount`, `$documents`, `$addFields` — state an open rule, since their operand's shape is the statement cell's `args`; the server's answer to each wrong operand is recorded beside it. A nested key set (`$densify.range`, `$fill.output.<f>.method`) is not stated: the rule is flat, and the measurement notes it. Ratchet 62.
-
----
-
-## 2026-09-06 — feat(compiler): the query operators' call forms are their clauses
-
-The filter target's pending list is empty: the thirty-eight `filter` cells of the query operators are stated. A query operator CALLED — `$exists($.a)`, `$regex($.s, "x", "i")`, `$all($.tags, ["a"])`, `$geoWithin($.loc, $box(…))`, `$expr(e)`, `$text("foo")` — writes the clause its document form spells, the first argument the field. An operator that also has an expression form (`$gt`, `$in`, `$type`, `$mod`, …) answers the clause when the field is a path and the operand a constant, and takes the expression road otherwise. The shipped compiler wrapped every one of the query-only calls in a truthiness test under `$expr` — `{ $expr: { $and: [{ $ne: [{ $exists: "$a" }, null] }, …] } }` — which the server refuses as an unknown expression operator.
-
-**Three services join `FilterIn`**, each a refusal by name when its argument is wrong: `fieldPath` (the field a query operator tests), `literal` (a compile-time constant, a regex literal becoming a RegExp with the server's flags), `element` (an `$elemMatch` arrow as the query over one element). `constantIn` reads a literal list or document of constants as a constant, which `$in($.a, [1, 2])` and `$text({ $search: … })` need. **`$and` / `$or` / `$nor` list their predicates** as filters of their own — as a call and as a key of a raw document, where `{ $and: [{ a: $gt(1) }] }` had reached the expression form's count rule; a raw document element and a JavaScript spelling may sit side by side in one list. `$not` negates one raw clause on one field and otherwise takes the expression form, whose negation of a JavaScript spelling is exact. Every shape ran on mongod 8.3.7.
-
-**A fragment is refused on its own.** The rows had long stated `onlyInside` (`$box` inside `$geoWithin`, `$case` inside `$switch`) and nothing read it: `$case($.a, 1)` lowered to a bare `{ case, then }` and `$box(…)` to a whole filter of `{ $box: … }`. The Env's site now records the operator whose arguments are being lowered, and both targets refuse a fragment met anywhere else, naming its host.
-
-A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
-
-**Conventions.**
-- Newest entry on top.
-- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
-- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
-- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
 
 ---
 
@@ -1485,15 +1367,67 @@ The filter target's pending list is empty: the thirty-eight `filter` cells of th
 
 ---
 
-## 2026-09-05 — feat(compiler): the statement mutators state their write form; `assert` and `Object.assign` as statements
+## 2026-09-06 — feat(compiler): the update-document target, takeWhile / dropWhile, and no pending cell left
 
-The statement target's pending list is empty. `.pop()`, `.shift()`, `.fill()` and `.copyWithin()` — the mutators with no same-argument twin — state their WRITE FORM on the row (`mutatorForm`): JSMQL source by argument count, `_r` the receiver, `_0`… the arguments. A new desugar rule parses the form with the compiler's own parser and writes it back to the receiver, so `$.a.pop();` IS `$.a = $.a.slice(0, -1);` and reaches the same value cells a developer's spelling would — negative indices included, which the shipped direct lowerings did not honour (`.fill(9, -1)`, `.copyWithin(-1, 0)`). The form spreads the receiver into an array literal (`[..._r]`), which lowers to the bare field path and proves the receiver an array — `.pop()` exists on an array alone — so the value cells take the array branch without the runtime type dispatch an unproven receiver otherwise gets. Each form is compared with JavaScript's own answer over the fixture on mongod in `test/compiler-sugars.test.ts`. A count the row does not state is the arity error, worded from the row's `sig`.
+**The registry has no pending cell.** The last three clusters landed and the ratchet stands at zero.
 
-**A binding is a mutator's target too**, and a mutator may write a `const` — JavaScript allows the mutation, only the rebinding is refused — so the desugar marks its own writes (`mutates` on the assignment) and the emitter's const check reads the mark. A mutator on a receiver that is neither a field nor a binding (`$.s.trim().sort();`, `[1, 2].reverse();`) is refused with the place to write; a spread argument to a statement call (`assert(...$.flags)`) is refused like every spread a rule does not read as a list; and a function the program declared wins over the `assert` global.
+**The update-document target** (`update(source)` in `src/compiler/index.ts`, `src/compiler/emit/update.ts`) is the object form of an update, `updateOne(filter, { $set: … })`. Its statements stay in the `updateDoc` position, so no statement sugar rewrites a write: `$.n += 2` is `{ $inc: { n: 2 } }`, `$.tags.push(3, 4)` is `{ $push: { tags: { $each: [3, 4] } } }`, `$.b = $.a; delete $.a;` is `{ $rename: { a: "b" } }`, `$.t = new Date()` is `$currentDate`, `Math.min($.n, c)` is `$min`. A document-form update takes constants — the server stores `"$b"` as the string — so every read of the document is refused at this root, naming the pipeline form; a copy without a delete, a field written twice, a mutator with no document form and a non-operator key are refused the same way. The nineteen `updateDoc` cells pass their document through, and the fragments (`$each`, `$slice`, `$sort`, `$position`) are valid only inside `$push` / `$addToSet`. Each document is applied on mongod 8.3.7 and the result compared with what JavaScript leaves behind (`test/compiler-update.test.ts`).
 
-**A bare callable global is the arrow that applies it.** `.map(String)`, `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — the `bareCallable` slot form the rows already listed had no rewrite behind it, so every one was refused as "not an arrow". The shorthand rule now builds `x => String(x)` for a callable global (never a name that needs `new`, never a binding) on the slots whose row states the form. The shape of a program is read off the PARSED program, since an entry picks the desugar root from it.
+**`.takeWhile` / `.dropWhile` on the stream** keep the leading / trailing run of a SORTED stream — a running flag in `$setWindowFields` over the last `$sort`, then a `$match` on it — and refuse a stream that carries no sort, naming the spellings that give it one. A stage cell sees the chain's own earlier links through `prevStages` and the new `sortedBy` service, not only the stages already emitted. **The forty-one production cells** that were marked pending name the compiler file that owns each construct (`inCode`): every one was built. Two of them gained their own refusal: a destructured parameter (`({ a }) => …`) is named for what it is by the parser, and a namespace function used as a value (`Math.abs` alone) is told to be called or handed to a callback slot.
 
-**`Object.assign($.o, x);` writes its target** through the row's existing `mutatesArgumentAt` fact (a second desugar rule), and **`assert(condition[, message]);`** is the row's own statement cell: a `$match` whose `$expr` converts `true` to a type named by the outcome, so the server's refusal carries the message (measured). The condition is read as a truth, like every JavaScript spelling. `reverse` / `sort` / `splice` / `unshift` / `assign` and the bare `$` / `$# DEVLOG
+---
+
+## 2026-09-06 — fix(compiler): `Object.assign` on a field is a write; the refusals spell names as the source does
+
+Three defects found by probing the surface for the reference. A bare `Object.assign($.p, { a: 1 })` — no `;` — was read as a filter: the shape pass let the `;` decide for a name that lists both a value and a statement form, and a merged object is truthy, so the filter kept every document. It is now the write it is (`[{ $set: { p: { $mergeObjects: ["$p", { a: 1 }] } } }]`), as `$.tags.push(1)` already was; `Object.assign({}, $.a)` — a fresh object, nothing written — stays a value. Two refusals were mis-spelled: a wrong count read `'.find()'(predicate) requires exactly 1 argument` and a property refused on its receiver read `'.length()'`; `refusalFor` now starts from the bare name (`'.find(predicate)' requires …`, `'.length' is not available on …`). And a read of another collection outside a pipeline was refused with the stream-count sentence (`'$$.$$$.<coll>' (the current stream's document count) …`); it has its own (`'$$$.<coll>' (a read of another collection) needs Pipeline mode — it materialises a '$lookup' stage …`).
+
+---
+
+## 2026-09-06 — fix(compiler): a method on an unproven receiver has the kind its one family states
+
+`$ = $.items.map(x => ({ v: x }))` emitted `{ $replaceWith: { $map: … } }` — an array as the new root, which the server refuses — because `kindOf` answered "unknown" for a method call whose receiver the registry cannot type, and the fan-out (`$set` a slot, `$unwind`, `$replaceWith`) is keyed on a provable array. The same gap left `const ids = $.tags.uniq()` untyped, so `ids.includes("a")` took the dual-receiver `$switch` form. A method spelled on ONE document-field family (`.map`, `.uniq`, … on `array`) is a call on that family or a server error, never a call on another, so its result is what the row states for that family: `soleFieldFamilyOf` in `src/compiler/rows.ts`, read by `kindOf` (`src/compiler/emit/types.ts`) when the receiver's family is unproven. A method on several families (`.length`, `.slice`) stays unknown and keeps the dual form.
+
+---
+
+## 2026-09-06 — fix(compiler): an injected `"$…"` string is a literal in every slot the server evaluates
+
+`jsmql.pipeline.compile(({ s }, { $ }) => { $.x = s; })({ s: "$b" })` emitted `[{ $set: { x: "$b" } }]`, and the server read the field `b` — user input had become a field reference, which HR1's gate exists to prevent. The gate exempted every pipeline program because the shipped compiler did (measured, and copied as a fact); the exemption was the shipped compiler's defect. The gate now asks only where the string stands: a value slot the server evaluates — an expression, a `$set` value, a stage body, a `$group` key — wraps it (`{ $literal: "$b" }`); a query slot and an update DOCUMENT take the string as written, because they evaluate nothing (`jsmql.update` → `{ $set: { x: "$b" } }` stores the string; measured). A `"$…"` string written in the SOURCE is unchanged: it is MongoDB's field path, as HR1 states, and `docs/LANGUAGE.md` § `$literal` now says so instead of describing an automatic wrap the compiler does not do.
+
+---
+
+## 2026-09-06 — fix(compiler): one stream-length stamp, no empty `$let`
+
+Two emit warts, both found by probing `$$.length` at every depth. A write whose join chain goes on after the `$lookup` (`$.o = $$$.orders.filter(o => o.i < $$.length).map(…)`) lowered the body twice — once to learn the chain is not complete, once on the value road — and each lowering hoisted the `$setWindowFields` stamp, so the pipeline carried it twice. The first attempt now takes its hoists back (`joinWrite` in `src/compiler/emit/join.ts`). And a call with no parameters (`const half = () => $$.length / 2; … half()`) wrapped its body in `{ $let: { vars: {}, in: … } }`; a `$let` that binds nothing is dropped (`applyLambda` in `src/compiler/emit/lower.ts`).
+
+---
+
+## 2026-09-06 — fix(compiler): the refusals and lowerings the feature suites found missing
+
+Running the previous compiler's suites over this compiler found the gaps a fresh corpus cannot: cases the registry did not state yet, and messages that named the wrong mistake. All are rows and cells now, none is a special case in the emitter.
+
+Statements. `$ = <array literal>` fans out one document per element, so an empty literal ("would fan out nothing and drop every document") and a literal with a provably scalar element ("a number is not a document") are refused before the server refuses every root. A context reference alone where a statement stands (`$;`) says what a statement is. A misspelled stage (`$matc(…)`) gets a suggestion from the stage names. A callback's third parameter read as a value (`c.total`) is named as the body's own stream, not as a reusable function. A block whose statement is a stage or a bare call keeps the "is a pipeline stage, not part of a callback" message; a block whose statement is a stray expression (`{ d.v; }`) gets the block's own rule ("must end with a `return <expr>`", or "holds 'const' declarations and one 'return'" when a return exists). A `function` entry form (`function ({ $ }) { return … }`) parses like the arrow form. `Object.assign($.x, …)` alone is a write in `jsmql.expr`.
+
+Rows. Stage bodies carry the facts the server enforces, as declarative rules the checker reads: `nonEmpty` (`$project`, `$unset`), `minimums` (`$sample` size, `$bucketAuto` buckets, `$graphLookup` maxDepth), `sortedList` (`$bucket` boundaries), `nested` / `eachValue` / `exactlyOneOf` (`$fill` output, `$setWindowFields` output windows), `requiresWhen` (`$fill` linear needs `sortBy` — measured: `locf` does not), `atLeastOneOf` (`$unionWith`). `$unset` takes a string or an array. `$where` is refused with the JSMQL predicate as the alternative (a raw document still passes, HR1). Membership (`in`, `.includes`) against a constant list is the native `{ field: { $in: […] } }` in a filter. `.join()` and `.toString()` state `elements: "scalar"`, so a receiver that provably holds arrays — a literal of literals, `.partition(…)` — is refused with the flatten / map-each rewrite instead of a `$reduce` the server fails on. `.map` / `.filter` / `.find` / `.findLast` / `.every` / `.some` / `.flatMap` take exactly one callback; `maxBy` is `sortBy` descending then the first element; `$covariancePop` / `$covarianceSamp` take one, two or three arguments; a `groupBy` body links to its key. The fold: `zipWith` folds only equal-length arrays, `unionBy` dedupes, a non-finite number or an unspellable value in a callback withholds the fold, a source regex is never folded.
+
+Values. A RegExp the call supplied — `jsmql.expr\`${re}\``, `$.name = ${re}`, `$set({ name: ${re} })` — is a value in its own right in every position, and inside a filter it keeps its identity (`{ name: re }`, not a copy); a RegExp inside an injected structure is a leaf, like a Date or an ObjectId. A source regex is still refused outside the regex methods. A duck-typed ObjectId (`_bsontype` + `toHexString`) from another `bson` copy is accepted. `jsmql.validate` refuses a non-string, non-function input with a `TypeError` instead of a compiler error. `kindOf` on an unproven receiver answers the method's one family or its agreed return (`$ = $.items.map(…)` is refused as an array root). The `.thisArg` hint names the callback's parameters.
+
+---
+
+## 2026-09-06 — refactor: the shipped compiler is gone
+
+Thirty source modules — `codegen.ts`, `pipeline.ts`, `lookup-translation.ts`, `stream-methods.ts`, `methods/`, the `mql-*` builders, the old lexer, parser and AST, the validators and the sugar translators — are removed; nothing imported them since the swap. The globals generator reads the registry now: `src/compiler/rows.ts` exposes the vocabulary it types (`streamMethodNames`, `valueMethodNames`, `valueMethodReturns`, `valueTerminalMethodNames`, `nativeDateMethodNames`, `requiredReceiverFamily`), each derived from the rows' cells and `on` — a method chains on `$` because its row has a stream RULE, ends a `$$.<coll>` chain with a value because it has an array value rule and no stream rule — so `src/globals.ts` cannot drift from what the compiler accepts. `src/operators.ts` and `src/stages.ts` stay as the operator and stage shapes the generator reads.
+
+The specs that described only the removed modules go with them (`lowering-grid`, `method-dispatch`, `predicate-ir`, `operator-validation`, `pipeline-validation`, `match-query-translation`, `const-folding`); the remaining specs and the CLAUDE guides point at the modules that own each construct now. DEF-033 closes: `$.length` reads the root stream at every depth, inside a `$facet` branch and a function body alike; the one body that cannot read it, `$unionWith`, has no `let` by MongoDB's design and says so.
+
+Two deferred rows close with the removal. DEF-011 (partial extraction under `||` in `$match`) described the removed translator: the new filter road lowers each `||` branch on its own. DEF-033 (`$$.length` in a sub-pipeline or a function body) is the stream-length rule at every depth: a `$facet` branch and a declared function body read the stamped field, a `$lookup` body reads it through `let`, and a `$unionWith` body — the one stage without a `let` — refuses the read and names the join form. `docs/specs/stream-length.md` and `docs/LANGUAGE.md` state the rule; the tags are gone. The globals generator reads the registry's arity for the value terminals, so a no-argument terminal is typed `(): T`, and `Array.from` stays a static in TypeScript's own lib.
+
+---
+
+## 2026-09-06 — test: the feature suites of the previous compiler assert this compiler's output
+
+The suites that came with the previous compiler — `codegen`, `pipeline`, `lookup`, `stream-methods`, `match-translation`, `stage-validation`, `union`, `out`, `update-filter`, `functions`, `let-bindings`, `callback-block`, `const-folding`, `fold-consistency`, `implicit-pipeline`, `literal-passthrough`, `parity`, `permutations`, `query-expr-agreement`, `stream-length`, `system-stages`, `assert` — are back in `test/`, with their inputs unchanged and their expected MQL regenerated from this compiler. The inputs are the contract: several thousand JSMQL programs that a developer wrote once and that must keep compiling. The MQL they expect is the compiler's lowering, which this compiler states differently in places (a `$lookup` always through `let` + `pipeline`, a computed `$group` key through `__jsmql` fields, JavaScript's own answer for a constant fold), so every `toEqual` was rewritten by `scripts/regen-expectations.mjs` and reviewed as a diff, and every case whose polarity changed — refused then, accepted now, or the reverse — was judged one by one (`scripts/convert-expectations.mjs` flips the mechanical ones; a KEEP pattern protects the refusals the suite must keep). Two suites were not kept: `ast-walk` and `methods-grid` asserted the internals of modules that no longer exist (a walker's node count, a method table's rows); the behaviour they guarded is asserted by the `compiler-*` and `registry-*` suites. Inside the kept suites, the `describe` blocks that reached into the removed compiler's exports (`generateImplicitPipeline`, the stream-method table, the stage-cell table) were dropped for the same reason.
+
+The restated cases are the behaviour changes this compiler makes on purpose, each with its DEVLOG entry: an ObjectId literal in a filter is `{ _id: { $eq: ObjectId(…) } }`; a constant membership test is the native `$in`; a lookup terminal's count is `$size` in one `$set`; `keyBy` / `groupBy` / `countBy` on a stream pass through `$arrayToObject`; `$.x = [1, 2]` as a root fans out only documents; `locf` needs no `sortBy` (measured on mongod — only `linear` does); a lookup body's `# DEVLOG
 
 A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
 
@@ -1502,7 +1436,61 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 - Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
 - If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
 - Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
- / `$$` statements are stated as in-code cells (the desugar rules and statement.ts own them). `StageIn` gains `truth`.
+ is the outer document and is never written. `fold-consistency` measures how many constant expressions fold, and its floor moved from 0.95 to 0.85: the folds this compiler withholds are the ones whose JavaScript answer is not spellable as MQL or not the server's (an unequal-length `zipWith`, a mixed-type comparison, an empty read), and a handful the fold does not reach yet (`round` / `ceil` / `floor` with a precision, `.flat()`, `.truncate()`, `.split("")`, `sortBy` / `orderBy` over documents, a string-shorthand predicate). Those are open work, listed in the entry below.
+
+---
+
+## 2026-09-05 — docs: the bare chain `$$.filter(…);` is the default spelling of a stream chain
+
+The developer's ruling: `$$ = $$.filter(…)` exists and lowers identically, but it is never the default — "stop asking users to write unnecessary `$$ =` characters." Every prose surface now shows the bare statement: README, `docs/LANGUAGE.md`, the specs' examples, the `CLAUDE.md` files, `test/realistic.test.ts` (and so the playground it feeds), and the compiler's own hints where a chain is meant. The assignment form is mentioned only where it is itself the subject — the replace-stream spec, and the sentence that says the two are one program.
+
+Nothing changes in what compiles: the bare form has always lowered to the same stages, and the suite compiles every rewritten source through the shipped compiler against the unchanged expected MQL.
+
+---
+
+## 2026-09-05 — feat(compiler): a stage's body is checked from the facts its row states
+
+Every stage row said `body: pending`, so a body the server refuses was emitted unchecked. The statement target now reads two kinds of fact off the row, both mechanisms that already existed for operator arguments: `args` for a body that is not an object — `slotType`, `constant`, `slotRange` — and `body`, a `BodyRule`, for one that is.
+
+The valuable half is `constant`. A slot the server reads before any document exists accepts a field path SILENTLY: measured, `$unionWith($.c)` emits `{ "$unionWith": "$c" }`, and the server unions a collection literally named `$c` — no error, no documents, nothing to tell the developer their expression was never evaluated. `$lookup`'s `from` behaves the same way. A stated `constant` turns that into a compile-time refusal.
+
+`ArgType` gains `fieldName`, for a slot that NAMES a field to write rather than a path to read. It is the one place the literal gate is deliberately bypassed: a `$`-led string is normally a runtime field reference and no business of a validator, but in this slot it is exactly the error — `{ $count: "$n" }` is refused with "the count field cannot be a $-prefixed path", and a dotted or empty name likewise. Many stages name an output field, so the type will be reused.
+
+Four rows are stated from measurement so far, each with both sides run on the server: `$count` (a constant field name), `$limit` (a constant integer of 1 or more — `{ $limit: 0 }` is "the limit must be positive"), `$skip` (0 or more), and `$unionWith` (a constant collection name). A range whose top is the largest safe integer reads as a floor in the message, because that is what it is.
+
+---
+
+## 2026-09-05 — feat(compiler): bindings between stages, and the stream from a literal list of documents
+
+Two more constructs leave the statement target's pending list.
+
+**A `let` is a field between stages.** `let x = $.a * 2; $.b = x;` carries the value in `__jsmql.var.x`, reads it back as `"$__jsmql.var.x"`, and the chain's trailing cleanup drops it — the shipped shapes, measured first. A constant `let` never gets that far; the fold inlines it. The binding is written again by `x = …` when it is a `let` and refused when it is a `const`. Read in a predicate it is a field, so `$$.filter(d => d.x > t)` is a field-to-field `$expr`, which is what the shipped compiler emitted too.
+
+**The scope threads, and a stage that replaces the document ends it.** Each statement now answers the Env the next one is lowered under. A stage whose row states `replacesDocument` takes every field-carried binding with it, and the scratch namespace is not owed a cleanup for what is gone — `$group` and `$ = { … }` end without a trailing `$unset`, as the shipped compiler's peephole did. A read after that is refused naming the stage. Two rows state the fact for the first time, both from the before-audit's measurement: `$count` and `$sortByCount` drop the document, and the shipped compiler emitted a read of a field that was no longer there (`let t = $.a; $count("n"); $.b = t;` ran and returned `[{ n: 2 }]` with no `b`). `$project` states `"inclusion"`: a body that names fields to keep drops the rest, one that names fields to remove keeps them — measured both ways — so the fact is body-dependent and the type says so rather than a boolean lying half the time.
+
+**The way back after a drop is `x = …`, never a second `let`.** The shipped compiler accepted `let v = …; $group(…); let v = …` — a second declaration in one block, which JavaScript refuses, and this language is a strict syntax subset — and refused `v = 5` after the stage, pointing at exactly that re-declaration. Both are the other way round now: an assignment to a `let` a stage dropped writes its slot again and the next statement reads it, a second `let` in one block is refused, and a nested block (a stage's `[ … ]` body, an `o => { … }` block) declares its own names so a `let` there shadows. Every name with no value at a read — a dropped binding, a callback's index or collection parameter, a function inside its own body — is one `dropped` marker that carries its wording from the place that took the name away, so the message for an index parameter no longer calls it a `let` binding, and recursion is refused without a message-sniffing catch.
+
+**`$$ = [{ … }, { … }]` is `$documents`.** A source stage, so it stands first; every element a document, stated as `arrayOf: object`; the empty list is a stream of nothing, `{ $match: { $expr: false } }`, which needs no source stage. A list holding a `$$.reduce` is the reducer wrap, a different road and a stated pending.
+
+Gate: pipeline fully classified; expr and filter unchanged at zero. The gate's `--accept` now refreshes a kept row's kind and outputs (a reason judges a class of change, and the row must show the change it judges) and prunes the rows of an entry that no longer diverge — 75 stale rows had claimed divergences nobody could see.
+
+---
+
+## 2026-09-05 — feat(compiler): eleven stage bodies stated from the server's own answers, and two facts the vocabulary could not hold
+
+A measurement fan-out ran every key of every join, write, group and window stage against mongod and reported what the server enforces, key by key, with the refusal verbatim. Eleven stage rows now state their body instead of pointing at `pending`: `$bucket`, `$bucketAuto`, `$collStats`, `$currentOp`, `$graphLookup`, `$listLocalSessions`, `$listSessions`, `$lookup`, `$planCacheStats`, `$unionWith`, `$unwind`. The pending ratchet fell from 419 to 408, which is the only way that number is allowed to move.
+
+Two of the reported facts no field could express, so the vocabulary gained one field each — both measured, neither invented:
+
+**`together`** — a set of keys that must be ALL present or ALL absent. `required` cannot say it, because each key is optional on its own, and `exactlyOneOf` says the opposite. `{ $lookup: { from: "o", localField: "a", as: "j" } }` is refused by the server with "requires both or neither of 'localField' and 'foreignField'".
+
+**`atLeastOneOf`** — a set of which at least one must be present, where more than one is fine. `$lookup` joins by the `localField`/`foreignField` pair, by a `pipeline`, or by BOTH — measured accepted — and by none of them the server refuses it. `exactlyOneOf` would have refused the both-together form that works.
+
+**`slotType` widened to a set.** `$unionWith` takes a collection NAME or a body document and refuses everything else ("the $unionWith stage specification must be an object or string, but found int"), which one `ArgType` per slot could not say. A slot with one type stays a bare `ArgType`.
+
+Two checks learned the same distinction from the other side. A stage whose body may be a string OR an object runs its `body` rule on the object form alone — on a string body the rule would take its positional branch and demand the object's required keys of a name. And `constant` exempts an object literal for the same reason: `$unionWith("c")` must be a constant, `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be. A `$`-led string is normally a runtime path and no business of a validator, except in a constant-only slot, where the server reads the string as itself — measured: `{ $bucketAuto: { granularity: "$g" } }` answers "granularity must be one of: R5, R10, …".
+
+Every newly ruled stage runs on a live mongod and returns documents; every refusal above quotes the server's own words for the same input.
 
 ---
 
@@ -1511,20 +1499,6 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 The sixteen `group` / `window` cells of the JavaScript aggregates are stated: `$.a.sum()` in a `$group` output field is `{ $sum: "$a" }`, `.mean()` is `$avg`, `.max()` / `.min()` their operators, `.first()` / `.head()` are `$first` and `.last()` is `$last`; the same seven inside `$setWindowFields.output` are the window operators. `GroupIn` now carries the receiver and the `iteratee` service, since an alias reads the receiver where an operator call reads its argument.
 
 **`.sumBy` and `.meanBy` accumulate the per-document value.** The shipped compiler emitted `{ $sum: { $map: … } }` and `{ $avg: { $map: … } }` in a `$group`, and the server ignores an array operand there — `$sum` answers 0 and `$avg` null (measured on 8.3.7), silently. The cells wrap the per-document aggregate: `{ $sum: { $sum: <map> } }`, `{ $avg: { $avg: <map> } }`; `.meanBy` in a group is therefore the mean of each document's mean, stated in the spec. Both run on mongod in `test/compiler-sugars.test.ts`. Ratchet 145.
-
----
-
-## 2026-09-05 — feat(compiler): the JavaScript globals, Math, the regex methods, the reducers and the spread pack
-
-The value target of the new compiler has no pending cell left in `src/registry/names.ts`. The last forty-eight landed: every `Math.*` function, the global constructors (`String`, `Boolean`, `parseInt`, `parseFloat`), the `Number`, `Array` and `Object` statics (`isInteger`, `isNaN`, `isArray`, `assign`, `fromEntries`, `keys`, `values`, `entries`, `groupBy`, `Array.from`), a regex literal's own `.test` and `.exec`, the index searches (`findIndex`, `findLastIndex`), `reduce` / `reduceRight`, `zipWith`, the Set relations, `$case`, `new Date(y, m, …)` and `Date.UTC(…)`, and the number receiver's `.round` / `.ceil` / `.floor`. Each is compared with JavaScript's own answer on mongod 8.3.7 in `test/compiler-methods.test.ts`.
-
-**Two services join `ExprIn`.** `reducer(cb, seed)` is `(acc, x[, i]) => …` as a `$reduce` body: the accumulator IS `$value` and the element IS `$this` when the body is plain arithmetic, and both are read through a `$let` when the body calls anything — a call may lower to a `$reduce` of its own and shadow them (the shipped compiler remapped unconditionally). The seed's kind types the accumulator, so `acc + x` on a string seed is `$concat` and `acc[0]` on an object seed is `$getField`. `elements(cb, count[, pick])` binds one parameter per position of one array element — `.zipWith`'s arrow over a `$zip` pair, `Array.from`'s `(_, i)` over a `$range`.
-
-**A spread is packed, not spliced.** A rule that reads its arguments as ONE list states `spread: true` on its `args`, and a new desugar rule (`packSpread`) turns `Math.max(...$.a, 1)` into `Math.max([...$.a, 1])` for it; the array literal's own lowering splices the spread and the cell sees one operand — `{ $max: { $concatArrays: ["$a", [1]] } }`, `{ $mergeObjects: <one list> }` for `Object.assign({}, ...$.docs)` (the server reads one array operand for both, measured). The rule leaves `$.push(...$$.coll)` alone: that spread is the union road's. A rule that reads arguments one by one keeps its `spreadRefused` message.
-
-**Four facts the server decided.** `$eq: [NaN, NaN]` is TRUE on the server, so the shipped `Number.isNaN` (`$ne: [v, v]`) was always false; it reads `$toString` for `"NaN"` now, and `Number.isInteger` excludes NaN and the infinities the same way. `$pow` of a negative base to 1/3 is NaN, so `Math.cbrt` keeps the sign. `$case` is not a MongoDB operator — the shipped `{ $case: [...] }` inside `$switch.branches` is refused — so `$case(condition, result)` lowers to the `{ case, then }` branch the server reads. And a three-argument `$slice` refuses a count of 0, which the shipped `.with` / `.toSpliced` / `.splice` reached at either end.
-
-**JavaScript numbering, JavaScript shapes.** `new Date(y, m, d)` and `Date.UTC(…)` count the month from 0, like `getMonth()` already does, so the month moves up by one on the way to `$dateFromParts` (folded for a literal). `Object.entries` answers `[key, value]` pairs, so `Object.fromEntries` round-trips it. `parseInt` truncates a decimal string through `$toDouble` and `$trunc`. The Set relations and operations accept a Set or an array receiver, and `symmetricDifference` / `isDisjointFrom` — refused by the shipped compiler — lower to the set operators. `Array.isArray` emits the one-element list form, so a literal array operand is one argument. The pending ratchet drops to 161; what remains is the filter query operators, the stage body rules, the update document, the statement mutators, the group and window accumulator aliases, and the two stream cells (`takeWhile`, `dropWhile`).
 
 ---
 
@@ -1572,27 +1546,54 @@ Also fixed on the way: a nested join written inside a predicate leaked `__jsmql.
 
 ---
 
-## 2026-09-05 — feat(compiler): bindings between stages, and the stream from a literal list of documents
+## 2026-09-05 — feat(compiler): the JavaScript globals, Math, the regex methods, the reducers and the spread pack
 
-Two more constructs leave the statement target's pending list.
+The value target of the new compiler has no pending cell left in `src/registry/names.ts`. The last forty-eight landed: every `Math.*` function, the global constructors (`String`, `Boolean`, `parseInt`, `parseFloat`), the `Number`, `Array` and `Object` statics (`isInteger`, `isNaN`, `isArray`, `assign`, `fromEntries`, `keys`, `values`, `entries`, `groupBy`, `Array.from`), a regex literal's own `.test` and `.exec`, the index searches (`findIndex`, `findLastIndex`), `reduce` / `reduceRight`, `zipWith`, the Set relations, `$case`, `new Date(y, m, …)` and `Date.UTC(…)`, and the number receiver's `.round` / `.ceil` / `.floor`. Each is compared with JavaScript's own answer on mongod 8.3.7 in `test/compiler-methods.test.ts`.
 
-**A `let` is a field between stages.** `let x = $.a * 2; $.b = x;` carries the value in `__jsmql.var.x`, reads it back as `"$__jsmql.var.x"`, and the chain's trailing cleanup drops it — the shipped shapes, measured first. A constant `let` never gets that far; the fold inlines it. The binding is written again by `x = …` when it is a `let` and refused when it is a `const`. Read in a predicate it is a field, so `$$.filter(d => d.x > t)` is a field-to-field `$expr`, which is what the shipped compiler emitted too.
+**Two services join `ExprIn`.** `reducer(cb, seed)` is `(acc, x[, i]) => …` as a `$reduce` body: the accumulator IS `$value` and the element IS `$this` when the body is plain arithmetic, and both are read through a `$let` when the body calls anything — a call may lower to a `$reduce` of its own and shadow them (the shipped compiler remapped unconditionally). The seed's kind types the accumulator, so `acc + x` on a string seed is `$concat` and `acc[0]` on an object seed is `$getField`. `elements(cb, count[, pick])` binds one parameter per position of one array element — `.zipWith`'s arrow over a `$zip` pair, `Array.from`'s `(_, i)` over a `$range`.
 
-**The scope threads, and a stage that replaces the document ends it.** Each statement now answers the Env the next one is lowered under. A stage whose row states `replacesDocument` takes every field-carried binding with it, and the scratch namespace is not owed a cleanup for what is gone — `$group` and `$ = { … }` end without a trailing `$unset`, as the shipped compiler's peephole did. A read after that is refused naming the stage. Two rows state the fact for the first time, both from the before-audit's measurement: `$count` and `$sortByCount` drop the document, and the shipped compiler emitted a read of a field that was no longer there (`let t = $.a; $count("n"); $.b = t;` ran and returned `[{ n: 2 }]` with no `b`). `$project` states `"inclusion"`: a body that names fields to keep drops the rest, one that names fields to remove keeps them — measured both ways — so the fact is body-dependent and the type says so rather than a boolean lying half the time.
+**A spread is packed, not spliced.** A rule that reads its arguments as ONE list states `spread: true` on its `args`, and a new desugar rule (`packSpread`) turns `Math.max(...$.a, 1)` into `Math.max([...$.a, 1])` for it; the array literal's own lowering splices the spread and the cell sees one operand — `{ $max: { $concatArrays: ["$a", [1]] } }`, `{ $mergeObjects: <one list> }` for `Object.assign({}, ...$.docs)` (the server reads one array operand for both, measured). The rule leaves `$.push(...$$.coll)` alone: that spread is the union road's. A rule that reads arguments one by one keeps its `spreadRefused` message.
 
-**The way back after a drop is `x = …`, never a second `let`.** The shipped compiler accepted `let v = …; $group(…); let v = …` — a second declaration in one block, which JavaScript refuses, and this language is a strict syntax subset — and refused `v = 5` after the stage, pointing at exactly that re-declaration. Both are the other way round now: an assignment to a `let` a stage dropped writes its slot again and the next statement reads it, a second `let` in one block is refused, and a nested block (a stage's `[ … ]` body, an `o => { … }` block) declares its own names so a `let` there shadows. Every name with no value at a read — a dropped binding, a callback's index or collection parameter, a function inside its own body — is one `dropped` marker that carries its wording from the place that took the name away, so the message for an index parameter no longer calls it a `let` binding, and recursion is refused without a message-sniffing catch.
+**Four facts the server decided.** `$eq: [NaN, NaN]` is TRUE on the server, so the shipped `Number.isNaN` (`$ne: [v, v]`) was always false; it reads `$toString` for `"NaN"` now, and `Number.isInteger` excludes NaN and the infinities the same way. `$pow` of a negative base to 1/3 is NaN, so `Math.cbrt` keeps the sign. `$case` is not a MongoDB operator — the shipped `{ $case: [...] }` inside `$switch.branches` is refused — so `$case(condition, result)` lowers to the `{ case, then }` branch the server reads. And a three-argument `$slice` refuses a count of 0, which the shipped `.with` / `.toSpliced` / `.splice` reached at either end.
 
-**`$$ = [{ … }, { … }]` is `$documents`.** A source stage, so it stands first; every element a document, stated as `arrayOf: object`; the empty list is a stream of nothing, `{ $match: { $expr: false } }`, which needs no source stage. A list holding a `$$.reduce` is the reducer wrap, a different road and a stated pending.
-
-Gate: pipeline fully classified; expr and filter unchanged at zero. The gate's `--accept` now refreshes a kept row's kind and outputs (a reason judges a class of change, and the row must show the change it judges) and prunes the rows of an entry that no longer diverge — 75 stale rows had claimed divergences nobody could see.
+**JavaScript numbering, JavaScript shapes.** `new Date(y, m, d)` and `Date.UTC(…)` count the month from 0, like `getMonth()` already does, so the month moves up by one on the way to `$dateFromParts` (folded for a literal). `Object.entries` answers `[key, value]` pairs, so `Object.fromEntries` round-trips it. `parseInt` truncates a decimal string through `$toDouble` and `$trunc`. The Set relations and operations accept a Set or an array receiver, and `symmetricDifference` / `isDisjointFrom` — refused by the shipped compiler — lower to the set operators. `Array.isArray` emits the one-element list form, so a literal array operand is one argument. The pending ratchet drops to 161; what remains is the filter query operators, the stage body rules, the update document, the statement mutators, the group and window accumulator aliases, and the two stream cells (`takeWhile`, `dropWhile`).
 
 ---
 
-## 2026-09-05 — docs: the bare chain `$$.filter(…);` is the default spelling of a stream chain
+## 2026-09-05 — feat(compiler): the statement mutators state their write form; `assert` and `Object.assign` as statements
 
-The developer's ruling: `$$ = $$.filter(…)` exists and lowers identically, but it is never the default — "stop asking users to write unnecessary `$$ =` characters." Every prose surface now shows the bare statement: README, `docs/LANGUAGE.md`, the specs' examples, the `CLAUDE.md` files, `test/realistic.test.ts` (and so the playground it feeds), and the compiler's own hints where a chain is meant. The assignment form is mentioned only where it is itself the subject — the replace-stream spec, and the sentence that says the two are one program.
+The statement target's pending list is empty. `.pop()`, `.shift()`, `.fill()` and `.copyWithin()` — the mutators with no same-argument twin — state their WRITE FORM on the row (`mutatorForm`): JSMQL source by argument count, `_r` the receiver, `_0`… the arguments. A new desugar rule parses the form with the compiler's own parser and writes it back to the receiver, so `$.a.pop();` IS `$.a = $.a.slice(0, -1);` and reaches the same value cells a developer's spelling would — negative indices included, which the shipped direct lowerings did not honour (`.fill(9, -1)`, `.copyWithin(-1, 0)`). The form spreads the receiver into an array literal (`[..._r]`), which lowers to the bare field path and proves the receiver an array — `.pop()` exists on an array alone — so the value cells take the array branch without the runtime type dispatch an unproven receiver otherwise gets. Each form is compared with JavaScript's own answer over the fixture on mongod in `test/compiler-sugars.test.ts`. A count the row does not state is the arity error, worded from the row's `sig`.
 
-Nothing changes in what compiles: the bare form has always lowered to the same stages, and the suite compiles every rewritten source through the shipped compiler against the unchanged expected MQL.
+**A binding is a mutator's target too**, and a mutator may write a `const` — JavaScript allows the mutation, only the rebinding is refused — so the desugar marks its own writes (`mutates` on the assignment) and the emitter's const check reads the mark. A mutator on a receiver that is neither a field nor a binding (`$.s.trim().sort();`, `[1, 2].reverse();`) is refused with the place to write; a spread argument to a statement call (`assert(...$.flags)`) is refused like every spread a rule does not read as a list; and a function the program declared wins over the `assert` global.
+
+**A bare callable global is the arrow that applies it.** `.map(String)`, `.filter(Boolean)`, `.map(Math.abs)`, `.map(ObjectId)` — the `bareCallable` slot form the rows already listed had no rewrite behind it, so every one was refused as "not an arrow". The shorthand rule now builds `x => String(x)` for a callable global (never a name that needs `new`, never a binding) on the slots whose row states the form. The shape of a program is read off the PARSED program, since an entry picks the desugar root from it.
+
+**`Object.assign($.o, x);` writes its target** through the row's existing `mutatesArgumentAt` fact (a second desugar rule), and **`assert(condition[, message]);`** is the row's own statement cell: a `$match` whose `$expr` converts `true` to a type named by the outcome, so the server's refusal carries the message (measured). The condition is read as a truth, like every JavaScript spelling. `reverse` / `sort` / `splice` / `unshift` / `assign` and the bare `$` / `$# DEVLOG
+
+A chronological log of decisions, changes, and the reasoning behind them. Every observable change to jsmql gets an entry here — this is the answer to future "why is X this way?" questions, the closest thing this project has to a ticket tracker.
+
+**Conventions.**
+- Newest entry on top.
+- Each entry: short title, date (UTC), 1–3 paragraphs answering *what* and *why*. Include file refs where relevant.
+- If a decision is later reversed or superseded, do not delete — add a follow-up entry that links back.
+- Pre-1.0: no version numbers in entries. We are still finding the shape of the language; the package version stays at `0.1.0` until the public API is ready to commit to.
+ / `$$` statements are stated as in-code cells (the desugar rules and statement.ts own them). `StageIn` gains `truth`.
+
+---
+
+## 2026-09-05 — feat(compiler): the statement target — a program to a pipeline
+
+The next target of the new compiler: a `;`-separated program of statements to an aggregation pipeline. `src/compiler/emit/statement.ts`, and `pipeline(source)` beside `expr` and `filter`.
+
+**Two statements never merge.** The `;` the developer wrote IS the stage boundary and the `,` IS the merge, so one source keeps one output and no rule reads across a boundary the developer drew. Inside a `,`-joined run the writes group as far as one stage can carry them, and the run ends where a group would say something else than the source does — measured, all three of them: a later write that READS what an earlier one wrote must read the new value (`$.x = 1, $.z = $.x`); a path that touches one already written is the source saying two things, and the server refuses a parent beside its own child outright ("specification contains two conflicting paths"); and a deletion is its own stage. Writing what an earlier value READ needs no split, because that is exactly what one `$set` already means.
+
+**The row decides what may stand as a statement, not a stage test.** The first version asked `isStageName`, which refused `assert(…)` — a statement that is not a stage — with the wrong word, and did so 1135 times across the corpus. Now any named row is consulted for its `statement` cell, and the cell's own text answers. A stage's BODY lowers in the position its row states, so `$match`'s predicate becomes a query document and a `$group` output key becomes an accumulator without either cell knowing which reading it asked for: `readIn` is the one hub that gives each position its reading.
+
+**What is not built yet is stated as data.** `PENDING_CONSTRUCTS` in `emit/errors.ts` names each statement construct that still lives in the shipped compiler — a `let` binding, a write to the stream, a read from another collection, a stream chain as a statement, a write to another collection. The differential harness verifies a "not yet" against that list instead of trusting the throw, and the list emptying is what finishing this target means. It is the same discipline the name-pendings already had, for constructs no row names.
+
+**380 refusal texts became actionable.** Every value-producing name said "'$abs' is not a statement — see its 'where'", which tells a developer nothing. Each now names the way out: "'$abs' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $abs(…);'".
+
+Thirteen representative programs run on a live mongod and return the right documents, including `$group` with an accumulator, `$project`, a raw stage document, and the stream-length hoist with its trailing cleanup. `test/compiler-statement.test.ts` asserts the shapes and then runs every one of them against the server, because a green `toEqual` proves what the compiler emits and never that the server accepts it. Gate: `--entry pipeline` now compares, with 897 sources skipped as verified pendings; the remaining rows are the slices still to build.
 
 ---
 
@@ -1622,6 +1623,18 @@ The other three questions put to the developer needed no code. Arithmetic over a
 
 ---
 
+## 2026-09-05 — fix(compiler): a computed expression in a query document's value slot is refused
+
+`$match({ a: $.b > 1 })` emitted `{ "$match": { "a": { "$gt": ["$b", 1] } } }`. The server ACCEPTS that and returns nothing: `$gt` reads its operand as the value to compare against, so the document asks whether `a` is greater than a two-element array. Both compilers did it, and no test could see it — the emitted document is valid MQL and the suite asserts what is emitted.
+
+A value slot in a query document takes a VALUE or a query operator. A computed expression is neither, and it is refused now with the two spellings that work: the predicate itself (`$match($.a > 1)`) or `$expr`. A constant written as an expression (`-1`) has already settled by then, so it is a value and passes. The other half of the same rule: a value the developer wrote as JAVASCRIPT whose lowering is an aggregation operator the query language has no name for — `{ a: $.s.trim() }` → `{ a: { $trim: … } }`, "unknown operator: $trim" — is refused too.
+
+A document the developer TYPED still passes through, keys as written, including a `$`-name this build does not list in filter position: a query operator newer than the build must round-trip, and the escape hatch is a promise. That distinction is the whole rule — a JavaScript spelling is checked, raw MQL is the developer's own.
+
+`$expr` is the one place a query document changes language, and it now says so: the row states `operandPosition: "value"`, so the query-value rules do not apply inside it. Without that the fix refused `{ $expr: $multiply($.a, 2) }`, which the server accepts. Two rows in the registry are missing their query meaning (`$size` and `$rand` list only value position, and MongoDB has a query `$size`); nothing depends on them today, and the check that would have exposed them is the one deliberately not applied to raw documents.
+
+---
+
 ## 2026-09-05 — fix(compiler): one road for both spellings of a stage, and eight more body facts measured
 
 The differential harness's own report drove this: every row where the shipped compiler REFUSED and the new one accepted was a shape the server refuses too.
@@ -1640,48 +1653,6 @@ The differential harness's own report drove this: every row where the shipped co
 - A `$`-led string is a runtime path everywhere except a CONSTANT-only slot, where the server reads it as itself: `{ $bucketAuto: { granularity: "$g" } }` answers "granularity must be one of: R5, R10, …".
 
 The `--entry pipeline` gate is fully classified: 1777 rows accepted with a reason, 910 skipped as verified pendings, nothing unclassified. `expr` and `filter` still hold at zero. The suite runs every pipeline it asserts against a live mongod, with one stated allowance — a sort by text score needs a text index, which is the deployment's limit and not the shape's.
-
----
-
-## 2026-09-05 — feat(compiler): eleven stage bodies stated from the server's own answers, and two facts the vocabulary could not hold
-
-A measurement fan-out ran every key of every join, write, group and window stage against mongod and reported what the server enforces, key by key, with the refusal verbatim. Eleven stage rows now state their body instead of pointing at `pending`: `$bucket`, `$bucketAuto`, `$collStats`, `$currentOp`, `$graphLookup`, `$listLocalSessions`, `$listSessions`, `$lookup`, `$planCacheStats`, `$unionWith`, `$unwind`. The pending ratchet fell from 419 to 408, which is the only way that number is allowed to move.
-
-Two of the reported facts no field could express, so the vocabulary gained one field each — both measured, neither invented:
-
-**`together`** — a set of keys that must be ALL present or ALL absent. `required` cannot say it, because each key is optional on its own, and `exactlyOneOf` says the opposite. `{ $lookup: { from: "o", localField: "a", as: "j" } }` is refused by the server with "requires both or neither of 'localField' and 'foreignField'".
-
-**`atLeastOneOf`** — a set of which at least one must be present, where more than one is fine. `$lookup` joins by the `localField`/`foreignField` pair, by a `pipeline`, or by BOTH — measured accepted — and by none of them the server refuses it. `exactlyOneOf` would have refused the both-together form that works.
-
-**`slotType` widened to a set.** `$unionWith` takes a collection NAME or a body document and refuses everything else ("the $unionWith stage specification must be an object or string, but found int"), which one `ArgType` per slot could not say. A slot with one type stays a bare `ArgType`.
-
-Two checks learned the same distinction from the other side. A stage whose body may be a string OR an object runs its `body` rule on the object form alone — on a string body the rule would take its positional branch and demand the object's required keys of a name. And `constant` exempts an object literal for the same reason: `$unionWith("c")` must be a constant, `$unionWith({ coll: "c", pipeline: [$match(…)] })` must not be. A `$`-led string is normally a runtime path and no business of a validator, except in a constant-only slot, where the server reads the string as itself — measured: `{ $bucketAuto: { granularity: "$g" } }` answers "granularity must be one of: R5, R10, …".
-
-Every newly ruled stage runs on a live mongod and returns documents; every refusal above quotes the server's own words for the same input.
-
----
-
-## 2026-09-05 — fix(compiler): a computed expression in a query document's value slot is refused
-
-`$match({ a: $.b > 1 })` emitted `{ "$match": { "a": { "$gt": ["$b", 1] } } }`. The server ACCEPTS that and returns nothing: `$gt` reads its operand as the value to compare against, so the document asks whether `a` is greater than a two-element array. Both compilers did it, and no test could see it — the emitted document is valid MQL and the suite asserts what is emitted.
-
-A value slot in a query document takes a VALUE or a query operator. A computed expression is neither, and it is refused now with the two spellings that work: the predicate itself (`$match($.a > 1)`) or `$expr`. A constant written as an expression (`-1`) has already settled by then, so it is a value and passes. The other half of the same rule: a value the developer wrote as JAVASCRIPT whose lowering is an aggregation operator the query language has no name for — `{ a: $.s.trim() }` → `{ a: { $trim: … } }`, "unknown operator: $trim" — is refused too.
-
-A document the developer TYPED still passes through, keys as written, including a `$`-name this build does not list in filter position: a query operator newer than the build must round-trip, and the escape hatch is a promise. That distinction is the whole rule — a JavaScript spelling is checked, raw MQL is the developer's own.
-
-`$expr` is the one place a query document changes language, and it now says so: the row states `operandPosition: "value"`, so the query-value rules do not apply inside it. Without that the fix refused `{ $expr: $multiply($.a, 2) }`, which the server accepts. Two rows in the registry are missing their query meaning (`$size` and `$rand` list only value position, and MongoDB has a query `$size`); nothing depends on them today, and the check that would have exposed them is the one deliberately not applied to raw documents.
-
----
-
-## 2026-09-05 — feat(compiler): a stage's body is checked from the facts its row states
-
-Every stage row said `body: pending`, so a body the server refuses was emitted unchecked. The statement target now reads two kinds of fact off the row, both mechanisms that already existed for operator arguments: `args` for a body that is not an object — `slotType`, `constant`, `slotRange` — and `body`, a `BodyRule`, for one that is.
-
-The valuable half is `constant`. A slot the server reads before any document exists accepts a field path SILENTLY: measured, `$unionWith($.c)` emits `{ "$unionWith": "$c" }`, and the server unions a collection literally named `$c` — no error, no documents, nothing to tell the developer their expression was never evaluated. `$lookup`'s `from` behaves the same way. A stated `constant` turns that into a compile-time refusal.
-
-`ArgType` gains `fieldName`, for a slot that NAMES a field to write rather than a path to read. It is the one place the literal gate is deliberately bypassed: a `$`-led string is normally a runtime field reference and no business of a validator, but in this slot it is exactly the error — `{ $count: "$n" }` is refused with "the count field cannot be a $-prefixed path", and a dotted or empty name likewise. Many stages name an output field, so the type will be reused.
-
-Four rows are stated from measurement so far, each with both sides run on the server: `$count` (a constant field name), `$limit` (a constant integer of 1 or more — `{ $limit: 0 }` is "the limit must be positive"), `$skip` (0 or more), and `$unionWith` (a constant collection name). A range whose top is the largest safe integer reads as a floor in the message, because that is what it is.
 
 ---
 
@@ -1705,35 +1676,13 @@ Suite: 62 files, 4822 passed, and every pipeline the statement suite asserts als
 
 ---
 
-## 2026-09-05 — feat(compiler): the statement target — a program to a pipeline
+## 2026-09-04 — docs: two rulings on the filter target — `$.` is the root document at every depth, and `||` stays per branch
 
-The next target of the new compiler: a `;`-separated program of statements to an aggregation pipeline. `src/compiler/emit/statement.ts`, and `pipeline(source)` beside `expr` and `filter`.
+Two questions the filter target raised, answered by the developer, recorded here so the pipeline chunk inherits them.
 
-**Two statements never merge.** The `;` the developer wrote IS the stage boundary and the `,` IS the merge, so one source keeps one output and no rule reads across a boundary the developer drew. Inside a `,`-joined run the writes group as far as one stage can carry them, and the run ends where a group would say something else than the source does — measured, all three of them: a later write that READS what an earlier one wrote must read the new value (`$.x = 1, $.z = $.x`); a path that touches one already written is the source saying two things, and the server refuses a parent beside its own child outright ("specification contains two conflicting paths"); and a deletion is its own stage. Writing what an earlier value READ needs no split, because that is exactly what one `$set` already means.
+**`$.` is the root document, with no exceptions.** Inside a sub-pipeline — a `$$$.<coll>` chain, an `.aggregate([…])` block, a `.filter(…)` predicate — `$.x` reads the OUTER document, threaded in through `$lookup.let`; the inner document is the callback parameter, or a raw `"$x"` MQL path string. This is what HR4 already states and what the shipped compiler does, so nothing changes. It is written down again because the alternative was tempting: MongoDB itself reads `"$total"` inside a `$lookup` sub-pipeline as the FOREIGN document's field, so a reader of the emitted MQL sees two meanings for one spelling. The ruling keeps JSMQL's spelling single-valued and leaves MongoDB's spelling to the escape hatch — a developer who writes raw MQL accepts MongoDB's reading of it.
 
-**The row decides what may stand as a statement, not a stage test.** The first version asked `isStageName`, which refused `assert(…)` — a statement that is not a stage — with the wrong word, and did so 1135 times across the corpus. Now any named row is consulted for its `statement` cell, and the cell's own text answers. A stage's BODY lowers in the position its row states, so `$match`'s predicate becomes a query document and a `$group` output key becomes an accumulator without either cell knowing which reading it asked for: `readIn` is the one hub that gives each position its reading.
-
-**What is not built yet is stated as data.** `PENDING_CONSTRUCTS` in `emit/errors.ts` names each statement construct that still lives in the shipped compiler — a `let` binding, a write to the stream, a read from another collection, a stream chain as a statement, a write to another collection. The differential harness verifies a "not yet" against that list instead of trusting the throw, and the list emptying is what finishing this target means. It is the same discipline the name-pendings already had, for constructs no row names.
-
-**380 refusal texts became actionable.** Every value-producing name said "'$abs' is not a statement — see its 'where'", which tells a developer nothing. Each now names the way out: "'$abs' computes a value, and a statement writes one. Assign it to a field: '$.<field> = $abs(…);'".
-
-Thirteen representative programs run on a live mongod and return the right documents, including `$group` with an accumulator, `$project`, a raw stage document, and the stream-length hoist with its trailing cleanup. `test/compiler-statement.test.ts` asserts the shapes and then runs every one of them against the server, because a green `toEqual` proves what the compiler emits and never that the server accepts it. Gate: `--entry pipeline` now compares, with 897 sources skipped as verified pendings; the remaining rows are the slices still to build.
-
----
-
-## 2026-09-04 — fix(compiler): the measurement fan-out's findings — a `.some` receiver is a path, a remainder may be negative, and the third reading is stated
-
-Eight agents measured one query-cell family each against a JavaScript oracle on a live mongod, and a skeptic tried to refute each proposal. Two refutations named defects the implementation already avoids — a missing prefix exclusion, and a leaf exclusion dropped from the loose-null cell — both re-checked here against the refuters' own documents. Three findings were real.
-
-**A `.some` receiver is a path like any other.** `$.a.items.some(i => i.q > 2)` selected `a: [{ items: [{ q: 3 }] }]`, where JavaScript throws reading `a.items` and so selects nothing. The cell emitted `$elemMatch` keyed on the path with no prefix exclusions; it goes through `queryOwnValue` now, like every other cell.
-
-**The third reading is a stated fact, not a sniff.** `queryOwnValue` decided whether a test is read element-wise by looking for an `$exists` key inside it — a guess about a test's meaning from its spelling. `ValueReading` gains `ofTheField`, and `FIELD_VALUE` names the reading `$exists` and `$elemMatch` share: the test asks about the FIELD, so no leaf exclusion, and a prefix array is still absent.
-
-**A remainder may be negative.** `$.a % 3 === -1` required a non-negative remainder to take its query form, so it fell to `$expr`, where the server refuses `$mod` on a non-numeric field. It is `{ a: { $mod: [3, -1], $not: { $type: "array" } } }` now — measured exactly JavaScript, and an index scan.
-
-A negated `.some` joins the throw family in the oracle's divergence table: JavaScript throws twice over on `!$.g.some(i => i.r.s === 1)` — `.some` on a document with no `g`, and `i.r.s` on an element with no `r` — and so selects nothing, where this language reads a path as a path and answers that no element matches, so the negation holds. The positive spelling agrees.
-
-Two road divergences are tracked rather than unnoticed. An array at a path PREFIX reads as ABSENT on the query road, which is JavaScript's answer, and MAPS over the array on the expression road, which is MongoDB's reading of `"$a.q"` — and a value IS a MongoDB path, since HR1 round-trips the two spellings. `$.a.q == null` and `$.a.q === undefined` carry that reason in `test/compiler-query-expr-agreement.test.ts`.
+**`||` stays per branch.** A new fact came out of measuring it: because each branch is its own clause, the server chooses when each one runs, so a branch the server refuses on some document can be reached where one `$expr` over the whole `||` happened to run after a cheaper clause had already excluded that document. Measured, with `b: "oops"` in one document: the per-branch shape is refused ("$multiply only supports numeric types") and the single-`$expr` shape returns two documents. Neither order is promised by the server, and `"oops" * 2` is `NaN`, which this language does not model, so arithmetic over a mixed-type field can fail on either shape. The rule stands, because it is the one that keeps a leaf's meaning independent of its siblings: `{ $expr: { $eq: ["$tags", "red"] } }` does not select `tags: ["red","blue"]` where `{ tags: "red" }` does, and a developer reading one branch should not have to look at the other. The hazard is stated in `docs/specs/emit-pass.md`.
 
 ---
 
@@ -1763,31 +1712,6 @@ $.a.b === 1                 // → { "a.b": { $eq: 1, … }, a: { $not: { $type:
 **`!p` became the complement of p's clause.** An adversarial verifier found the asymmetry the array rule exposed: `$.v > 1 || !($.v > 1)` is a tautology in JavaScript, but the positive branch now reads one value while the negated branch stayed on the `$expr` road — and `$expr` orders across BSON types, so `{ $not: { $gt: ["$v", 1] } }` is false for `v: [0, 20]` and for `v: "x"`, where JavaScript says true for both. Measured, the disjunction selected 13 of 16 documents. `!p` now emits `{ $nor: [<p's clause>] }` whenever p has a clause with no `$expr` inside, and the tautology holds again. `!($.tags.includes("vip"))` is the one row this leaves in the divergence table, and it is the throw family: JavaScript's `.includes` throws on a number, a null and a missing field, and only the negation shows it.
 
 Where the two roads stood apart on arrays they now agree: seven rows moved from DIVERGE to AGREE in `test/compiler-query-expr-agreement.test.ts`, leaving only the two type-bracketing rows. Gates: filter 252 accepted / 0 unclassified, expr 146 / 0. Suite: 61 files, 4796 passed. SR2 in `docs/LANG_RULES.md` now states the rule; `docs/specs/match-query-translation.md` points the shipped translator's divergences at it.
-
----
-
-## 2026-09-04 — docs: two rulings on the filter target — `$.` is the root document at every depth, and `||` stays per branch
-
-Two questions the filter target raised, answered by the developer, recorded here so the pipeline chunk inherits them.
-
-**`$.` is the root document, with no exceptions.** Inside a sub-pipeline — a `$$$.<coll>` chain, an `.aggregate([…])` block, a `.filter(…)` predicate — `$.x` reads the OUTER document, threaded in through `$lookup.let`; the inner document is the callback parameter, or a raw `"$x"` MQL path string. This is what HR4 already states and what the shipped compiler does, so nothing changes. It is written down again because the alternative was tempting: MongoDB itself reads `"$total"` inside a `$lookup` sub-pipeline as the FOREIGN document's field, so a reader of the emitted MQL sees two meanings for one spelling. The ruling keeps JSMQL's spelling single-valued and leaves MongoDB's spelling to the escape hatch — a developer who writes raw MQL accepts MongoDB's reading of it.
-
-**`||` stays per branch.** A new fact came out of measuring it: because each branch is its own clause, the server chooses when each one runs, so a branch the server refuses on some document can be reached where one `$expr` over the whole `||` happened to run after a cheaper clause had already excluded that document. Measured, with `b: "oops"` in one document: the per-branch shape is refused ("$multiply only supports numeric types") and the single-`$expr` shape returns two documents. Neither order is promised by the server, and `"oops" * 2` is `NaN`, which this language does not model, so arithmetic over a mixed-type field can fail on either shape. The rule stands, because it is the one that keeps a leaf's meaning independent of its siblings: `{ $expr: { $eq: ["$tags", "red"] } }` does not select `tags: ["red","blue"]` where `{ tags: "red" }` does, and a developer reading one branch should not have to look at the other. The hazard is stated in `docs/specs/emit-pass.md`.
-
----
-
-## 2026-09-04 — fix(compiler): the filter target's query-cell review — `typeof … "undefined"` is absence, `$sampleRate` takes a rate, a zero divisor is refused, and a nested `.some` reads its own element
-
-The third after-audit of the filter target reviewed every query cell against a running `mongod` and found six defects; all six are fixed here, each as a stated registry fact or a rule stated once in the emit phase.
-
-- **`typeof $.a === "undefined"` tested the deprecated BSON `undefined` type.** `{ a: { $type: "undefined" } }` matched none of six documents without `a`, and the negation matched all sixteen. JavaScript's `typeof` answers `"undefined"` for ABSENCE, so the spelling map (`JS_TYPEOF_TO_BSON`) now states `undefined → missing`: the query form is `{ a: { $exists: false } }` / `{ $exists: true }`, the expression form compares `$type` with `"missing"`. Measured: `[3]` and `[1,2,4,5]` over the probe collection. The shipped compiler has the same defect.
-- **`$sampleRate` emitted any constant.** The server takes a number in `[0, 1]`; `$sampleRate(2)` and `$sampleRate("0.5")` were emitted and refused at run time (HR3). The `Arity` vocabulary gains `slotRange` (a closed numeric range for a literal slot), and the row states `slotType: { 0: "number" }, slotRange: { 0: [0, 1] }`. Also `$sampleRate` inside a `.some(…)` body: the server refuses it inside `$elemMatch` ("can only be applied to the top-level document"), and a query-only row has no value form to fall back to, so the leaf refuses it with the way out (`$.items.some(…) && $sampleRate(…)`).
-- **A zero divisor reached the server.** `$.a % 0 === 1` became `{ a: { $mod: [0, 1] } }` ("divisor cannot be 0"). `Arity` gains `nonZero` (slots a literal zero is refused in); the `remainder`, `division`, `$mod` and `$divide` rows state `nonZero: [1]`, and the check words the refusal by the operator the developer wrote (`'%'`, never the registry key — `production()` now spells every production by its token). The `$not`-form divergence of `%` (`{ $not: { $mod } }` also selects a missing, null or non-numeric field) is documented as divergence 6.
-- **A nested `.some` read an OUTER element's field as the INNER element's.** `$.a.some(i => i.b.some(j => i.c === 1))` became `{ a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } } }` and selected the wrong document (measured). The `$elemMatch` boundary now records which parameter is its element, and `pathOfIn` answers a path only for the INNERMOST element's fields; an outer parameter's field takes the `$expr` road (the value form of `some`, pending today).
-- **`$log10` and `$atan2` refused in filter position** with a text that named their `where` — every other value row falls back to `$expr`. Both are `filter: viaFallback` now.
-- **Refusal texts.** Seventeen first-only stage rows offered a chain-link spelling (`$$.$currentOp(…)`) the compiler refuses — the text now says the stage produces the pipeline's source documents and stands first. Nine system-stage rows and nine mutator rows refused with no alternative; they now name the statement spelling. `$case` fell back to `$expr` with a name the server does not know as an expression; its filter cell is a refusal that spells `$switch`.
-
-Gates: filter 168 accepted / 0 unclassified, expr 146 / 0. Suite: 60 files, 4754 passed. Specs: `match-query-translation.md` (divergence 6, the `typeof` and `$sampleRate` bullets), `emit-pass.md` (the query-cell paragraph).
 
 ---
 
@@ -2236,6 +2160,82 @@ kept a binding it could have folded; it walks with the binders now.
 
 ---
 
+## 2026-09-04 — fix(compiler): the filter target's query-cell review — `typeof … "undefined"` is absence, `$sampleRate` takes a rate, a zero divisor is refused, and a nested `.some` reads its own element
+
+The third after-audit of the filter target reviewed every query cell against a running `mongod` and found six defects; all six are fixed here, each as a stated registry fact or a rule stated once in the emit phase.
+
+- **`typeof $.a === "undefined"` tested the deprecated BSON `undefined` type.** `{ a: { $type: "undefined" } }` matched none of six documents without `a`, and the negation matched all sixteen. JavaScript's `typeof` answers `"undefined"` for ABSENCE, so the spelling map (`JS_TYPEOF_TO_BSON`) now states `undefined → missing`: the query form is `{ a: { $exists: false } }` / `{ $exists: true }`, the expression form compares `$type` with `"missing"`. Measured: `[3]` and `[1,2,4,5]` over the probe collection. The shipped compiler has the same defect.
+- **`$sampleRate` emitted any constant.** The server takes a number in `[0, 1]`; `$sampleRate(2)` and `$sampleRate("0.5")` were emitted and refused at run time (HR3). The `Arity` vocabulary gains `slotRange` (a closed numeric range for a literal slot), and the row states `slotType: { 0: "number" }, slotRange: { 0: [0, 1] }`. Also `$sampleRate` inside a `.some(…)` body: the server refuses it inside `$elemMatch` ("can only be applied to the top-level document"), and a query-only row has no value form to fall back to, so the leaf refuses it with the way out (`$.items.some(…) && $sampleRate(…)`).
+- **A zero divisor reached the server.** `$.a % 0 === 1` became `{ a: { $mod: [0, 1] } }` ("divisor cannot be 0"). `Arity` gains `nonZero` (slots a literal zero is refused in); the `remainder`, `division`, `$mod` and `$divide` rows state `nonZero: [1]`, and the check words the refusal by the operator the developer wrote (`'%'`, never the registry key — `production()` now spells every production by its token). The `$not`-form divergence of `%` (`{ $not: { $mod } }` also selects a missing, null or non-numeric field) is documented as divergence 6.
+- **A nested `.some` read an OUTER element's field as the INNER element's.** `$.a.some(i => i.b.some(j => i.c === 1))` became `{ a: { $elemMatch: { b: { $elemMatch: { c: 1 } } } } }` and selected the wrong document (measured). The `$elemMatch` boundary now records which parameter is its element, and `pathOfIn` answers a path only for the INNERMOST element's fields; an outer parameter's field takes the `$expr` road (the value form of `some`, pending today).
+- **`$log10` and `$atan2` refused in filter position** with a text that named their `where` — every other value row falls back to `$expr`. Both are `filter: viaFallback` now.
+- **Refusal texts.** Seventeen first-only stage rows offered a chain-link spelling (`$$.$currentOp(…)`) the compiler refuses — the text now says the stage produces the pipeline's source documents and stands first. Nine system-stage rows and nine mutator rows refused with no alternative; they now name the statement spelling. `$case` fell back to `$expr` with a name the server does not know as an expression; its filter cell is a refusal that spells `$switch`.
+
+Gates: filter 168 accepted / 0 unclassified, expr 146 / 0. Suite: 60 files, 4754 passed. Specs: `match-query-translation.md` (divergence 6, the `typeof` and `$sampleRate` bullets), `emit-pass.md` (the query-cell paragraph).
+
+---
+
+## 2026-09-04 — fix(compiler): the measurement fan-out's findings — a `.some` receiver is a path, a remainder may be negative, and the third reading is stated
+
+Eight agents measured one query-cell family each against a JavaScript oracle on a live mongod, and a skeptic tried to refute each proposal. Two refutations named defects the implementation already avoids — a missing prefix exclusion, and a leaf exclusion dropped from the loose-null cell — both re-checked here against the refuters' own documents. Three findings were real.
+
+**A `.some` receiver is a path like any other.** `$.a.items.some(i => i.q > 2)` selected `a: [{ items: [{ q: 3 }] }]`, where JavaScript throws reading `a.items` and so selects nothing. The cell emitted `$elemMatch` keyed on the path with no prefix exclusions; it goes through `queryOwnValue` now, like every other cell.
+
+**The third reading is a stated fact, not a sniff.** `queryOwnValue` decided whether a test is read element-wise by looking for an `$exists` key inside it — a guess about a test's meaning from its spelling. `ValueReading` gains `ofTheField`, and `FIELD_VALUE` names the reading `$exists` and `$elemMatch` share: the test asks about the FIELD, so no leaf exclusion, and a prefix array is still absent.
+
+**A remainder may be negative.** `$.a % 3 === -1` required a non-negative remainder to take its query form, so it fell to `$expr`, where the server refuses `$mod` on a non-numeric field. It is `{ a: { $mod: [3, -1], $not: { $type: "array" } } }` now — measured exactly JavaScript, and an index scan.
+
+A negated `.some` joins the throw family in the oracle's divergence table: JavaScript throws twice over on `!$.g.some(i => i.r.s === 1)` — `.some` on a document with no `g`, and `i.r.s` on an element with no `r` — and so selects nothing, where this language reads a path as a path and answers that no element matches, so the negation holds. The positive spelling agrees.
+
+Two road divergences are tracked rather than unnoticed. An array at a path PREFIX reads as ABSENT on the query road, which is JavaScript's answer, and MAPS over the array on the expression road, which is MongoDB's reading of `"$a.q"` — and a value IS a MongoDB path, since HR1 round-trips the two spellings. `$.a.q == null` and `$.a.q === undefined` carry that reason in `test/compiler-query-expr-agreement.test.ts`.
+
+---
+
+## 2026-08-27 — feat(registry): every value-producing name states the type it returns, measured
+
+All 264 `mongo` rows carried no `returns`, so nothing in the new compiler could type an operator's
+result. Without it phase 5 loses the receiver-type error — `$.v = $toUpper($.s).map(x => x)` has to say
+*"'.map(...)' expects an array receiver, but '$toUpper(...)' returns a string"* — or grows a hardcoded
+table, which is the shape this rewrite exists to remove. The shipped compiler's `OPERATOR_RETURNS`
+holds 127 entries and is that table.
+
+Measured rather than copied, one operator at a time, with `{ $type: <a well-typed call> }` on a running
+mongod. The call is built from two things already in the repo — the vendored spec's
+`arguments[].type` (what each operand must resolve to) and the row's own `shape` (how the operands are
+written) — so the generator covers a new operator the day its row lands, and only the ~55 calls it
+cannot express are written out. Three independent sources were compared: the vendored `type:` field,
+the shipped table, and the server. All three agree on 154 of the 157 the vendored examples could
+exercise. The three exceptions are the interesting ones: `$trunc`, where the YAML says
+`resolvesToString` and the server says double — the error CLAUDE.md already warns about, rediscovered
+independently — and `$add`/`$subtract`, where all three agree the type follows the operands.
+
+A single measurement cannot tell `$push` (always an array) from `$max` (whatever it was given), so each
+operator was asked twice, with operands of two families. That found `$subtract` — one call gave a
+number, the pair gave `date` and `long` — and it corrected the shipped table's absences in the other
+direction too. Absence there means both "depends on the arguments" and "never measured", and 32 of the
+55 absent rows turn out to be invariant: the N-readers return an *array* of n elements rather than one
+element (`$firstN`, `$topN`, …), the collectors always do (`$push`, `$addToSet`), the id and hash
+producers have one type each, and the window operators that compute rather than carry are numeric
+(`$derivative`, `$integral`, `$covariance*`, …). Only the ones that carry a value read from elsewhere
+vary (`$shift`, `$locf`, `$top`, `$bottom`).
+
+So the registry separates the two facts. `returns` is stated on exactly the rows whose `where` includes
+`value`, `group` or `window` — 182 mongo rows plus `$`, whose `$$ROOT` measures as an object — with
+`"unknown"` where the kind follows the operands, and absence meaning "produces no value at all". A
+test holds both directions of that equivalence. `Kind` gains `"binData"`, which `$hash` and `$toUUID`
+produce and nothing else does.
+
+[test/compiler-returns-agrees.test.ts](../test/compiler-returns-agrees.test.ts) is the guard, because
+`returns` is measured data and only a re-measurement can catch it rotting. It re-derives each call,
+asks the server, and checks the stated kind. It also runs the varying-operand pairs — and checks them
+in BOTH directions, which closed a hole found by making the suite fail: asking only "does every
+`unknown` row vary" let a row quietly claim to be invariant, and that is the more dangerous mistake,
+because it makes the type check reject valid code. Four operators cannot be asked at all — the
+Queryable Encryption predicates need encrypted fields, and `$meta` needs `$search` — so they are named
+with reasons, and the suite fails if one of them starts working.
+
+---
+
 ## 2026-08-27 — fix(compiler): phases 1–4 hardened against fourteen silent-wrong-output hazards
 
 An extensibility review of the new compiler's first four phases — before phase 5 is built on them —
@@ -2310,51 +2310,6 @@ family, every `Only` member is used, `only` and `replacesDocument` sit on stage 
 
 ---
 
-## 2026-08-27 — feat(registry): every value-producing name states the type it returns, measured
-
-All 264 `mongo` rows carried no `returns`, so nothing in the new compiler could type an operator's
-result. Without it phase 5 loses the receiver-type error — `$.v = $toUpper($.s).map(x => x)` has to say
-*"'.map(...)' expects an array receiver, but '$toUpper(...)' returns a string"* — or grows a hardcoded
-table, which is the shape this rewrite exists to remove. The shipped compiler's `OPERATOR_RETURNS`
-holds 127 entries and is that table.
-
-Measured rather than copied, one operator at a time, with `{ $type: <a well-typed call> }` on a running
-mongod. The call is built from two things already in the repo — the vendored spec's
-`arguments[].type` (what each operand must resolve to) and the row's own `shape` (how the operands are
-written) — so the generator covers a new operator the day its row lands, and only the ~55 calls it
-cannot express are written out. Three independent sources were compared: the vendored `type:` field,
-the shipped table, and the server. All three agree on 154 of the 157 the vendored examples could
-exercise. The three exceptions are the interesting ones: `$trunc`, where the YAML says
-`resolvesToString` and the server says double — the error CLAUDE.md already warns about, rediscovered
-independently — and `$add`/`$subtract`, where all three agree the type follows the operands.
-
-A single measurement cannot tell `$push` (always an array) from `$max` (whatever it was given), so each
-operator was asked twice, with operands of two families. That found `$subtract` — one call gave a
-number, the pair gave `date` and `long` — and it corrected the shipped table's absences in the other
-direction too. Absence there means both "depends on the arguments" and "never measured", and 32 of the
-55 absent rows turn out to be invariant: the N-readers return an *array* of n elements rather than one
-element (`$firstN`, `$topN`, …), the collectors always do (`$push`, `$addToSet`), the id and hash
-producers have one type each, and the window operators that compute rather than carry are numeric
-(`$derivative`, `$integral`, `$covariance*`, …). Only the ones that carry a value read from elsewhere
-vary (`$shift`, `$locf`, `$top`, `$bottom`).
-
-So the registry separates the two facts. `returns` is stated on exactly the rows whose `where` includes
-`value`, `group` or `window` — 182 mongo rows plus `$`, whose `$$ROOT` measures as an object — with
-`"unknown"` where the kind follows the operands, and absence meaning "produces no value at all". A
-test holds both directions of that equivalence. `Kind` gains `"binData"`, which `$hash` and `$toUUID`
-produce and nothing else does.
-
-[test/compiler-returns-agrees.test.ts](../test/compiler-returns-agrees.test.ts) is the guard, because
-`returns` is measured data and only a re-measurement can catch it rotting. It re-derives each call,
-asks the server, and checks the stated kind. It also runs the varying-operand pairs — and checks them
-in BOTH directions, which closed a hole found by making the suite fail: asking only "does every
-`unknown` row vary" let a row quietly claim to be invariant, and that is the more dangerous mistake,
-because it makes the type check reject valid code. Four operators cannot be asked at all — the
-Queryable Encryption predicates need encrypted fields, and `$meta` needs `$search` — so they are named
-with reasons, and the suite fails if one of them starts working.
-
----
-
 ## 2026-08-27 — fix(registry): a stage body's positions are stated, and an accumulator slot takes one operand
 
 Phase 4 supplied three of the seven positions. `filter`, `group`, `window` and `updateDoc` had no way
@@ -2402,109 +2357,34 @@ a cell using `accumulated` must state `exact: 1`.
 
 ---
 
-## 2026-08-26 — fix: three silent drops in the bracketed write path
+## 2026-08-26 — chore: the `params` field validated, and one audit deleted for never firing
 
-`arrayElement` in the new parser took `writes().ops[0]` in two branches and threw the rest away. So
-`[++$.a, ++$.b]` parsed as one increment, `[(delete $.a, delete $.b)]` as one delete, and
-`[($.b = 1, $.c = 2)]` as one assignment — no error, just a missing write. The old compiler emits one
-`$set` with both fields for the first and refuses the other two outright, so all three were wrong.
+Two validation passes over the work just committed.
 
-The cause was three copies of the same "does a write start here" condition, one per caller, and the
-array copy was the one that had drifted. There is now a single `writeAhead()`, and the run itself is
-split in two: `writes()` is the `;` form where a `,` always continues, and `writeRun()` is the
-bracketed form where a `,` continues only when a write follows. That second rule is what makes
-`[$.b = 1, ++$.c]` one stage and `[$.b = 1, $match(…)]` two, matching the old compiler on both.
+**`params` is right on all 39 rows** — arity and meaning both measured, zero wrong. Thirteen of
+the lists are deliberately SHORTER than the API they name, and each refusal says so:
+`$.a.findIndex((v, i, arr) => arr)` is *"callbacks take at most 2 parameters (element, index); the
+third 'array' argument isn't supported"*. So a list records what JSMQL accepts and the API name
+says where to look for the difference; the vocabulary now states that, rather than leaving a
+reader to wonder whether a short list is an omission. It also exposes one asymmetry worth naming:
+`.filter` takes the index and `.reject`, its own negation, does not. And `paramsRepeat` turns out
+to mean an EXACT count rather than a maximum — with two arrays `zipWith` refuses both one and
+three parameters — so a checker must count the collections handed in, never the length of the list.
 
-`ArrayElement` in `src/registry/ast.ts` gains `UpdateFilter`, which is what the branches lacked a way
-to return. A trailing comma before a closing brace now parses too — `({ $ }) => { $.a = 1, $.b = 2, }`
-— because a callback block is a statement list and a formatter puts one there. Verified against a
-1849-input corpus harvested from the test suite: 1828 accepted before and after, zero differences
-apart from that trailing comma.
+**`DanglingTokens` is deleted, because it could never fire.** Five audits were tested by feeding
+each a bogus value and confirming an error naming it; all five fire. The sixth does not, and for a
+reason distinct from the two failure modes found earlier: **constraint collapse**. When a row's
+`tokens` literal violates `T extends readonly Lexeme[]`, TypeScript reports it and then
+instantiates `T` with the CONSTRAINT — so `Mentioned<"tokens">` yields `Lexeme` and the audit
+reads `never`. The inputs that would make it fire are exactly the ones the constraint intercepts
+first, and interception erases them from the type the audit reads.
 
----
-
-## 2026-08-26 — feat: three more places a node can stand
-
-`Where` held two of the seven positions, and the gaps were not neutral. A `$$ = <chain>`
-right-hand side is a STREAM of documents and every link back down the chain is one too,
-while the lambda inside `$$.filter(d => d.x)` is an ordinary expression over one document
-— so a chain link and its callback needed telling apart. And the left of `=` was being
-reported as a value, which it is not: it names a place to write and is never evaluated.
-A rule meant for expressions would have fired on it, so it is now `target`.
-
-The third was an outright error rather than a gap. The writes inside an `UpdateFilter`
-were reaching rules as values. The `,`-joined run groups writes into one stage; it does
-not turn them into expressions, so its `ops` are statements.
-
-Four positions remain unmodelled, and not because they were forgotten: `filter` and
-`updateDoc` are properties of the whole program chosen once at the root, not decisions
-about one parent-to-property step, and `group` and `window` sit inside a stage body whose
-accumulator slots no row states yet.
-
----
-
-## 2026-08-26 — fix: a stage is one construct, and an operator cannot accept operands it does not render
-
-Two registry faults, each found independently by two auditors, and each one silently corrupts
-anything phase 5 builds on top of it.
-
-**All 45 stage rows denied `statement`.** `$match(<body>);` and `$$ = $$.$match(<body>)` are the
-same stage written two ways and the language accepts both — measured on every one of the 45. The
-rows listed only `stream`, so `consult("$match", "statement")` answered *"'$match' is not a
-statement"*, and phase 4 puts every element of a `;`-separated program at statement position. No
-pipeline program could have compiled. `MongoSpec.statement`'s own documentation states the rule and
-`op()` already builds both cells from one emitter; the hand-written rows did not follow either. Both
-cells now hold the same emitter, and a test asserts they stay the same one rather than merely
-equivalent — one construct, one rendering, so the two cannot drift.
-
-**73 operator rows accepted more operands than their shape can render.** An operand accepted and
-then not rendered VANISHES:
-
-    $abs($.a, $.b)   would emit {"$abs":"$a"}   — valid MQL, wrong answer
-
-70 `single`-shaped rows carried the generic `atLeast: 1`. Four object-shaped rows were worse, and
-mongod refuses their output outright: `{$dateDiff:"$a"}` is *"$dateDiff only supports an object as
-its argument"*. Those four now state the key order a positional call maps onto, which is what
-`objectBody` zips against — `BodyRule.positional`'s own doc records this exact regression having
-happened once before.
-
-The audit that holds it asks one question: can the arity a cell states exceed what the row's shape
-renders? Writing it turned up seven more. Five accumulators (`$first`, `$last`, `$addToSet`, `$push`,
-`$linearFill`) stated no ceiling in their WINDOW cell while `$group` correctly stated one, and mongod
-answers *"The $first accumulator is a unary operator"*. `$locf` did the same. And `$count` demanded
-an argument its own emitter throws away — the shipped compiler refuses `$count({})` and accepts
-`$count()`, which is the exact opposite of what the row said.
-
-Scoping that audit was itself a finding: `$count("total")` is a STAGE taking one argument while
-`$count()` as an accumulator takes none, so one row renders two ways and only the operand-shaped
-cells — `value`, `group`, `window`, `updateDoc` — are governed by `shape`.
-
----
-
-## 2026-08-26 — feat: a declared function called with constants
-
-The last third of the `CallExpression` gap. `function double(x) { return x * 2 }` followed by
-`double(3)` now folds to 6, as does the same function bound with `const`, one declared
-function called from inside another, and a lambda applied where it stands.
-
-A function is held in the environment and kept OUT of the substitution map, because the two
-are different things. A constant is inlined at its use sites; a function is called at them.
-Storing one where the other belongs would put a lambda in an expression's place, so the
-wrapper that distinguishes them is a type and not a convention.
-
-Two bugs came out of getting it working. Body folding was running with an empty environment,
-so a constant subexpression could never see a declared function — `function f() { return 42 }
-$.x === f()` folded nowhere. Passing the environment down needed the scope tracking
-substitution already had, and then one more correction: applying it to the statement LIST
-hid a scope's own declarations along with the nested ones, because `shadowedIn` cannot tell
-the two apart from inside. It is applied one statement at a time now, which is the only
-reading under which a scope's declarations are visible to its own statements.
-
-And substitution was replacing an identifier in CALLEE position. `const g = 3; g(1)` is a
-TypeError in JavaScript, and inlining the 3 left `3(1)` in the tree — not a program, and
-nothing a later phase could report usefully. A callee names a function the way the left of a
-write names a place, so both are now the same rule: an identifier that NAMES something is
-never replaced by a value.
+The right response is removal, not repair. The invariant is already enforced, and enforced better:
+injecting a bogus lexeme gives one error, on the offending ROW, where a reader can act on it,
+rather than on a line at the foot of the file. A check that cannot fire is worse than no check,
+because it reads as assurance. `after` keeps its audit, because `A extends readonly string[]`
+imposes no equivalent constraint — the comment in its place explains that difference so the dead
+check is not re-added.
 
 ---
 
@@ -2542,94 +2422,121 @@ where it is hardest: 46 agree, and the rest are refusals the server shares.
 
 ---
 
-## 2026-08-26 — fix: the fold, put to 30,000 expressions
+## 2026-08-26 — feat: a declared function called with constants
 
-An adversarial sweep generated 29,957 expressions, folded each one, and compared it against
-what mongod computes for the same expression left alone. It found roughly 230 wrong answers
-and 1,250 cases where the fold answered where the program does not run. Both counts are now
-zero, and the whole set is a committed suite.
+The last third of the `CallExpression` gap. `function double(x) { return x * 2 }` followed by
+`double(3)` now folds to 6, as does the same function bound with `const`, one declared
+function called from inside another, and a lambda applied where it stands.
 
-TWO WERE DESIGN FAULTS rather than slips in a rule. Non-finite values were being handed on
-as ordinary values so the pass could name them, and only the FINAL value was checked — so
-`1 / 0 > 0` folded to `true` while the server refuses the division outright, and so did
-`` `${1/0}` ``, `(1/0) === (1/0)` and every other operator that consumes one and yields
-something spellable. A value with no MongoDB literal is now a third state that PROPAGATES,
-which also means an `Infinity` three operators deep reports by name exactly as one at the
-top does. And the evaluator recursed without a bound: `1 + 1 + …` in 2,600 terms threw a
-`RangeError` with no position, which is the one thing every rule in the file takes care not
-to produce. Depth is counted now, and so is size — `"x".padStart(500000000)` computes in a
-millisecond and yields half a gigabyte of string on its way to a 16 MB document.
+A function is held in the environment and kept OUT of the substitution map, because the two
+are different things. A constant is inlined at its use sites; a function is called at them.
+Storing one where the other belongs would put a lambda in an expression's place, so the
+wrapper that distinguishes them is a type and not a convention.
 
-THE REST WERE JAVASCRIPT AND MONGODB DIFFERING, each found by the same method. Comparison
-was by JavaScript identity, so `[1,2] === [1,2]` folded to `false` where `$eq` says true —
-and every literal this evaluator builds is a fresh object, so that was every structural
-comparison there is. Strings were compared, indexed and padded in UTF-16 units where
-MongoDB works in code points; padding by units could even cut an astral character in half
-and hand the driver a lone surrogate, a string with no UTF-8 encoding. `$round` works in
-decimal, and reproducing it by scaling with `10 ** places` makes the rounding decision on a
-perturbed number — `(2.675).round(2)` is 2.68 that way and 2.67 on the server — so only the
-bare form folds. `-0` is a double to the driver where the same arithmetic gives MongoDB an
-int `0`. `$toString` of a double and JavaScript's own formatting disagree on exponents, so a
-number interpolated into a template stays runtime. And `.substring` does not swap its
-arguments, `.join` collapses to null on a null element, `.concat` and `.flatMap` take arrays
-only, `.startCase` lower-cases the tail, `.inRange` normalises a negative bound.
+Two bugs came out of getting it working. Body folding was running with an empty environment,
+so a constant subexpression could never see a declared function — `function f() { return 42 }
+$.x === f()` folded nowhere. Passing the environment down needed the scope tracking
+substitution already had, and then one more correction: applying it to the statement LIST
+hid a scope's own declarations along with the nested ones, because `shadowedIn` cannot tell
+the two apart from inside. It is applied one statement at a time now, which is the only
+reading under which a scope's declarations are visible to its own statements.
 
-Every index and count now has to be a 32-bit integer, because `$substrCP`, `$arrayElemAt`,
-`$slice` and `$range` all demand one — `"abc".charAt(1.5)` is `""` in JavaScript and an
-error on the server, and folding it made this pass a second, more permissive grammar than
-the one the parser enforces.
-
-One correction went the other way. `&&` and `||` were held to boolean operands on the
-reasoning that `$and` and `$or` answer with a boolean. They do not: jsmql lowers both to
-JavaScript's own truthiness, verified on the server, where `0 || 5` is 5 and `1 && 2` is 2.
-So `const timeout = envValue || 30000` folds, which is the shape people write.
+And substitution was replacing an identifier in CALLEE position. `const g = 3; g(1)` is a
+TypeError in JavaScript, and inlining the 3 left `3(1)` in the tree — not a program, and
+nothing a later phase could report usefully. A callee names a function the way the left of a
+write names a place, so both are now the same rule: an identifier that NAMES something is
+never replaced by a value.
 
 ---
 
-## 2026-08-26 — fix: six ways the fold could answer with the wrong value
+## 2026-08-26 — feat: a row says which argument slots stand in for an arrow
 
-Adversarial review of the new fold found six defects, all of the same family: the pass knew
-about SOME of the places a name can be bound or changed, and pushed a constant through the
-rest. Each is now covered by a test that fails without the fix.
+A higher-order name takes its iteratee in more than one spelling — `$.rows.uniqBy("id")`,
+`$.rows.filter({ active: true })`, `$.rows.filter(["a.b", 1])`, `$.items.map(String)` — and
+until now nothing in the registry recorded which slot accepts which. The fact lived only in
+`shorthandToLambda`, `keyExpr` and `mql-sort.ts`.
 
-A nested statement list is a scope. `const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })`
-answered `b: 1` — the inner declaration binds a different variable, and it was left standing,
-unread, one line above the reference that should have used it. The same shape reached every
-bracketed sub-pipeline and every `$facet` branch. And a block's declarations did not shadow
-for each other, so `map(x => { const y = x.n; const z = y + 1; return z })` under an outer
-`const y = 1` made `z` the constant 2 instead of `x.n + 1` — a per-document answer replaced
-by a fixed one.
+Reading it off the argument's SHAPE instead is not an option, because three other kinds of
+slot wear the same three spellings and mean none of them. `$.items.filter({ f: 1 })` is a
+matcher and `$.items.toSorted({ f: 1 })` is a DIRECTION; `$.items.find(["a", "b"])` is a
+path/value pair and `$.items.toSorted(["a", "b"])` is two sort keys; `$.user.pick(["a","b"])`
+is a list of field names, and `$$ = $$.groupBy({ _id: … })` is a raw `$group` document.
+`.sortBy()` already refuses the object form because of this collision and its message says
+so. A rewrite driven by shape would turn a sort into a matcher silently.
 
-A write through a PATH was invisible twice over. `let a = { p: 1 }; a.p = 9` folded `a` to
-its first value AND rewrote the destination, producing `1 = 9`, which is not a program at
-all. So was a mutation that wears no `=`: the pass claimed every array mutator had become a
-plain assignment before it looked, which is true only for a `$.field` receiver — on a
-binding, `a.sort()` stayed a call, and the fold then substituted the pre-mutation value into
-the mutator's own receiver. A call that IS a statement now excludes its receiver, which
-needs no list of method names to be kept in step with the language.
+`iterateeSlots` states it, one entry per receiver family `on` lists. It is
+NOT on `Arity`, where a field of this name sat unused by every row: an `Arity` requires a
+`sig` and a count, so a cell could not state a spelling without also inventing an argument
+count it had no reason to claim. That is why the field was never filled in, and moving it
+cost nothing because nothing referenced it.
 
-The fallback for a value with no literal inlined the declaration's raw source, and `mapTree`
-does not walk into a replacement — so `const q = 2; const arr = [q / 0]` carried a free `q`
-to every use site, to be captured by a lambda parameter of that name or left with no binder
-anywhere. There is no fallback now: a value with no literal keeps its binding. That closed a
-third defect with it, since `unspellable` only looked at a top-level number and let
-`const a = [1 / 0]` through in silence where `const a = 1 / 0` was refused by name.
+Per FAMILY and not per position, because the slot layout is a property of the receiver:
+`$.items.groupBy(fn)` puts the iteratee first and `Object.groupBy($.items, fn)` puts the
+collection there, and one row serves both. Keyed by position, that row would have said the
+first slot takes a matcher on every receiver, and `Object.groupBy(["a", 1], fn)` would have
+been rewritten into a discriminator. Among these rows the family fixes the position anyway,
+so nothing is lost.
 
-Two more, from the same review. A receiver was routed by its JavaScript type, so a RegExp
-and a BSON value fell into the object rules — `/ab/.size()` folded to 0, which is
-`Object.keys(regex).length` and means nothing, where the language refuses the call outright.
-And a name read before its declaration folded to the later value; JavaScript throws a
-ReferenceError there, so the binding is kept and a later phase reports it.
+The values are measured, not assumed. A harness compiles each spelling and the arrow that
+means the same thing, erases the binding names the compiler chose for itself, and compares
+— and the test that does so is committed, so the claim stays checked in both directions:
+every declared spelling compiles and agrees with its arrow, and every spelling a slot leaves
+out is refused. It earned its place at once, by rejecting a claim of mine that `$$.groupBy`
+takes no shorthand at all: only its OBJECT form is a `$group` document, and `$$.groupBy("k")`
+is an ordinary iteratee. Two rows are narrower than their siblings for a reason the server gives:
+`$$.map` and `$$.flatMap` accept a property path only, because `$replaceWith` needs a
+document and `$unwind` needs a field path, and a matcher is provably a boolean.
 
-The fixpoint also gave up too early. A chain where each link needs the previous one folded
-AND a rule run on the result advances one link per round, and 24 rounds was not enough for
-23 links. Statements now resolve against what is known at the point they stand, so an
-ordinary chain settles in two rounds however long it is; the limit is raised for the
-alternating case, and its message no longer blames a rule bug for what may be the source.
+Building the harness turned up three MQL shapes the server rejects. `$$ = $$.map(d => d.a === 1)`
+emits `{"$replaceWith":{"$eq":["$a",1]}}` and mongod answers *'replacement document' must
+evaluate to an object, but resulting value was: true*; `$$ = $$.map("a")` does the same for a
+scalar field. And two spellings of one meaning diverge in filter position:
+`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` while
+`$.items.some({ active: true })` emits an `$expr` `$anyElementTrue` — which cannot use an
+index and, on a document whose `items` is a string, fails the query outright where
+`$elemMatch` returns the right answer. Rewriting the shorthand into its arrow before any
+lowering runs removes that divergence, so the pass is a fix rather than a tidy-up.
 
-Alongside the fixes, the array family the pass was missing — the aggregates, the set
-operations, the count-based slicing, and the reshaping — 31 methods, each checked against a
-live mongod.
+---
+
+## 2026-08-26 — feat: a synthesised lambda parameter that cannot capture
+
+A rewrite that BUILDS a lambda has to name its parameter, and that name lands in the same
+flat scope as everything around it. `$.items.filter({ a: n })` rewritten to
+`$.items.filter(n => n.a === n)` emits valid MQL and the wrong answer — the binding the
+developer meant is unreachable. That is the worst shape a bug can take, and the mutator
+rewrites got away without the machinery only because none of them splices a user
+expression into a body.
+
+`freshParam` needs no scope, no gensym counter and no state, because shadowing only
+matters for names the BODY mentions and a synthesised body mentions exactly what the
+rewrite splices in. So the arguments in hand answer the whole question. The suffix starts
+at 2, so the ordinary case keeps the bare name: `$.items.map("name")` reads as
+`x => x.name` and its MQL as `$$x`, not as a mangled compiler name.
+
+---
+
+## 2026-08-26 — feat: an iteratee shorthand becomes the arrow it means
+
+`$.items.filter({ active: true })` is now rewritten to `$.items.filter(x => x.active === true)`
+before anything lowers it, and the same for a property path, a path/value pair, and an
+omitted iteratee. The pass reads `iterateeSlots` and never the argument's shape, so
+`$.items.toSorted({ rank: 1 })` — where the same object is a DIRECTION — is left alone.
+
+It is a fix, not a tidy-up. Two spellings of one meaning diverged in filter position:
+`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` and
+`$.items.some({ active: true })` an `$expr` `$anyElementTrue`, which cannot use an index and,
+on a document whose `items` is a string, fails the query where `$elemMatch` returns the
+answer. One shape reaches the lowering now, so the divergence cannot arise.
+
+A bare callable is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
+unapplied and accepted as `x => Math.asinh(x)`, so rewriting it would WIDEN the language;
+which callables may be passed bare belongs to the row that states it. The synthesised
+parameter steps aside from any name the spliced-in values mention, so
+`$.items.filter({ a: x })` becomes `x2 => x2.a === x` and not a silent capture.
+
+Every rewrite is tested against the tree its arrow spelling parses to, including the three
+shapes that look like a matcher and are not: a computed key, a spread, and an empty object.
 
 ---
 
@@ -2693,138 +2600,6 @@ agree on the output shape for all 1329 of them.
 
 ---
 
-## 2026-08-26 — fix: a production names itself by its spelling, never by its key
-
-`productions.ts` is keyed descriptively — `conditional`, `remainder`, `methodCall` — so that
-two rules cannot collide on a symbol. 143 refusal messages were interpolating that key into
-text a user reads: *'conditional' produces a value, not a stage*, and worse,
-*'.conditional()' is not a statement*, which applies method-call phrasing to a ternary.
-Nobody types the word "conditional".
-
-`tokens` cannot supply the spelling either, because it lists every lexeme the rule consumes.
-Joined, it gives `?:` for the ternary and `.(),?.$identifier` for a method call. So a row
-now states its `spelling`, and the messages are regenerated from it — including the six
-that named no construct at all (*"a declaration is not a filter predicate."*).
-
-Three of the choices were between two defensible spellings, and the tie-breaker each time
-was whether the message could MISNAME what the reader wrote. `namespacedCall` is
-`Class.method()` rather than `Math.abs(x)`, because one row covers five namespaces and a
-message quoting `Math` to someone who wrote `Object.keys(o)` is wrong. `parameterReference`
-is `<param>` rather than a plausible identifier, for the same reason. And `pipelineStatement`
-says what to do — *';' makes the output a Pipeline, which is not a filter predicate. Drop
-the ';' to write a filter.*
-
-Four tests hold it: every row states one, no message contains its key, every refusal that
-carries its own subject names its spelling, and no spelling is just the key again.
-
----
-
-## 2026-08-26 — feat: the shape decision is one question asked of a row
-
-Which document a program becomes — a Filter for `find()` or a list of stages for
-`aggregate()` — is decided in the shipped compiler by four stacked auto-wrap heuristics in
-`lowerWithCtx`, each a special case with its own paragraph of reasoning: one for a bare
-stage call, one for `$$.<method>(…)` and the diagnostic source stages, one for a mutator on
-a writable path, and `isPipelineAst` for the bracketed form. That accretion is the thing
-this rewrite exists to remove.
-
-`shapeOf` asks the row instead. A construct is a statement when its row lists `statement`
-or `stream` and has NO value form — which is exactly what a stage looks like, since `$match`
-has no expression form while `.filter()` has one and is an expression standing alone. A
-write, a declaration and a `;`-run are statements by their node type, and a chain that
-reads a context reference is a stream however it ends, which is answered by walking to the
-base — the three references being three node types is what makes that a type test rather
-than a level check.
-
-Measured against the shipped compiler on every input the test suite compiles: 1313 of 1328
-agree, and the 15 that do not are all one thing. `const a = 1; $.x === a` compiles to
-`{"x": 1}` because the binding is a compile-time constant and folds away, leaving one
-expression; a binding that does not fold is a pipeline in both. That divergence closes when
-constant folding lands as a pass, and the test records it rather than hiding it.
-
-Two parser faults came out of the measurement. A trailing `;` was being thrown away for a
-lone statement, so `Object.assign($.a, $.b)` — which merges two objects — and
-`Object.assign($.a, $.b);` — which writes the document — parsed to the same tree, and
-nothing downstream could tell them apart. And a `function` declaration inside a bracketed
-pipeline parsed as a function VALUE, which made the literal look like an array of values
-rather than a pipeline.
-
----
-
-## 2026-08-26 — feat: an iteratee shorthand becomes the arrow it means
-
-`$.items.filter({ active: true })` is now rewritten to `$.items.filter(x => x.active === true)`
-before anything lowers it, and the same for a property path, a path/value pair, and an
-omitted iteratee. The pass reads `iterateeSlots` and never the argument's shape, so
-`$.items.toSorted({ rank: 1 })` — where the same object is a DIRECTION — is left alone.
-
-It is a fix, not a tidy-up. Two spellings of one meaning diverged in filter position:
-`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` and
-`$.items.some({ active: true })` an `$expr` `$anyElementTrue`, which cannot use an index and,
-on a document whose `items` is a string, fails the query where `$elemMatch` returns the
-answer. One shape reaches the lowering now, so the divergence cannot arise.
-
-A bare callable is deliberately not rewritten. `$.items.map(Math.asinh)` is refused
-unapplied and accepted as `x => Math.asinh(x)`, so rewriting it would WIDEN the language;
-which callables may be passed bare belongs to the row that states it. The synthesised
-parameter steps aside from any name the spliced-in values mention, so
-`$.items.filter({ a: x })` becomes `x2 => x2.a === x` and not a silent capture.
-
-Every rewrite is tested against the tree its arrow spelling parses to, including the three
-shapes that look like a matcher and are not: a computed key, a spread, and an empty object.
-
----
-
-## 2026-08-26 — feat: a row says which argument slots stand in for an arrow
-
-A higher-order name takes its iteratee in more than one spelling — `$.rows.uniqBy("id")`,
-`$.rows.filter({ active: true })`, `$.rows.filter(["a.b", 1])`, `$.items.map(String)` — and
-until now nothing in the registry recorded which slot accepts which. The fact lived only in
-`shorthandToLambda`, `keyExpr` and `mql-sort.ts`.
-
-Reading it off the argument's SHAPE instead is not an option, because three other kinds of
-slot wear the same three spellings and mean none of them. `$.items.filter({ f: 1 })` is a
-matcher and `$.items.toSorted({ f: 1 })` is a DIRECTION; `$.items.find(["a", "b"])` is a
-path/value pair and `$.items.toSorted(["a", "b"])` is two sort keys; `$.user.pick(["a","b"])`
-is a list of field names, and `$$ = $$.groupBy({ _id: … })` is a raw `$group` document.
-`.sortBy()` already refuses the object form because of this collision and its message says
-so. A rewrite driven by shape would turn a sort into a matcher silently.
-
-`iterateeSlots` states it, one entry per receiver family `on` lists. It is
-NOT on `Arity`, where a field of this name sat unused by every row: an `Arity` requires a
-`sig` and a count, so a cell could not state a spelling without also inventing an argument
-count it had no reason to claim. That is why the field was never filled in, and moving it
-cost nothing because nothing referenced it.
-
-Per FAMILY and not per position, because the slot layout is a property of the receiver:
-`$.items.groupBy(fn)` puts the iteratee first and `Object.groupBy($.items, fn)` puts the
-collection there, and one row serves both. Keyed by position, that row would have said the
-first slot takes a matcher on every receiver, and `Object.groupBy(["a", 1], fn)` would have
-been rewritten into a discriminator. Among these rows the family fixes the position anyway,
-so nothing is lost.
-
-The values are measured, not assumed. A harness compiles each spelling and the arrow that
-means the same thing, erases the binding names the compiler chose for itself, and compares
-— and the test that does so is committed, so the claim stays checked in both directions:
-every declared spelling compiles and agrees with its arrow, and every spelling a slot leaves
-out is refused. It earned its place at once, by rejecting a claim of mine that `$$.groupBy`
-takes no shorthand at all: only its OBJECT form is a `$group` document, and `$$.groupBy("k")`
-is an ordinary iteratee. Two rows are narrower than their siblings for a reason the server gives:
-`$$.map` and `$$.flatMap` accept a property path only, because `$replaceWith` needs a
-document and `$unwind` needs a field path, and a matcher is provably a boolean.
-
-Building the harness turned up three MQL shapes the server rejects. `$$ = $$.map(d => d.a === 1)`
-emits `{"$replaceWith":{"$eq":["$a",1]}}` and mongod answers *'replacement document' must
-evaluate to an object, but resulting value was: true*; `$$ = $$.map("a")` does the same for a
-scalar field. And two spellings of one meaning diverge in filter position:
-`$.items.some(x => x.active === true)` emits `{"items":{"$elemMatch":{"active":true}}}` while
-`$.items.some({ active: true })` emits an `$expr` `$anyElementTrue` — which cannot use an
-index and, on a document whose `items` is a string, fails the query outright where
-`$elemMatch` returns the right answer. Rewriting the shorthand into its arrow before any
-lowering runs removes that divergence, so the pass is a fix rather than a tidy-up.
-
----
-
 ## 2026-08-26 — feat: one place asks a row what it says, and the refusal surface works before any lowering does
 
 `consult(name, position)` reads the cell a row holds for a position and answers with one of
@@ -2852,120 +2627,6 @@ available on '$$' — reverses the stream, and …` — and the caller is the on
 which spelling it is looking at. That was previously detectable only by reading the first
 letter of the message and guessing, a coupling nothing declared; `because(...)` states it,
 and `refusalSentence` is the one place that joins the two halves.
-
----
-
-## 2026-08-26 — feat: a synthesised lambda parameter that cannot capture
-
-A rewrite that BUILDS a lambda has to name its parameter, and that name lands in the same
-flat scope as everything around it. `$.items.filter({ a: n })` rewritten to
-`$.items.filter(n => n.a === n)` emits valid MQL and the wrong answer — the binding the
-developer meant is unreachable. That is the worst shape a bug can take, and the mutator
-rewrites got away without the machinery only because none of them splices a user
-expression into a body.
-
-`freshParam` needs no scope, no gensym counter and no state, because shadowing only
-matters for names the BODY mentions and a synthesised body mentions exactly what the
-rewrite splices in. So the arguments in hand answer the whole question. The suffix starts
-at 2, so the ordinary case keeps the bare name: `$.items.map("name")` reads as
-`x => x.name` and its MQL as `$$x`, not as a mangled compiler name.
-
----
-
-## 2026-08-26 — feat: position travels down the tree, and the statement mutators desugar
-
-Phase 3 could not run on its own. `$.items.sort()` is a write at statement position and a refusal
-anywhere else, and one tree shape with two meanings needs the position — which `mapTree` could not
-supply, because it rebuilds a parent as soon as a child changes and a node recorded beforehand is not
-the node a rule receives. `mapTreeIn` in `src/compiler/passes/walk.ts` carries an inherited value down
-instead, and `src/compiler/passes/position.ts` says what that value becomes on each parent-to-property
-step. The sub-pipeline case reads the stage's own `subPipelineFields`, so `$facet`'s `["*"]` needs no
-clause: `$lookup({ pipeline: [$.items.sort()] })` finds the statement, `$.a = [1, $.items.push(2)]`
-does not.
-
-Three rules landed on top of it. `$.a.b` folds to one `FieldRef` holding `a.b`, and `.length` is the
-one name that declines because its row is the only one READ rather than called on something a field
-can hold — so `$.a.length` stays the size while `$.a.length.b` folds past it into a field really
-called `length`. Then the mutators: `$.items.sort();` becomes `$.items = $.items.toSorted();` and
-`$.items.push(9);` becomes `$.items = [...$.items, 9];`. Spread and not `.concat()`, because
-`[1].push([2])` is `[1, [2]]` and `[1].concat([2])` is `[1, 2]`.
-
-Which mutators rewrite is stated by two new registry fields, `immutableTwin` and `asArrayLiteral`, and
-the test for both is the same arguments. `.pop()` gets neither even though `.toSpliced(-1, 1)` computes
-the same array: those arguments are not the ones the caller wrote, and re-deriving them spends the
-receiver-family proof the row supplies — measured at 1.5x the MQL for `.pop()` and 4.4x for
-`.shift()`. Those four are lowered directly instead. Every rewrite was checked twice: against the tree
-its explicit form parses to, and by running both forms on a live `mongod` and comparing the documents.
-
-That second check found a seventh place where the shipped compiler emits MQL the server refuses.
-`.splice(start, count)` and `.toSpliced(start, count)` both lower to a `$slice` whose third argument is
-`{ $max: [0, …] }`, and MongoDB rejects a third argument of `0` — so both spellings fail on any array
-shorter than `start + count`, including `[1].splice(1, 2)` and every empty array. `.shift()` uses
-`{ $max: [1, …] }` and is correct, so the fix is local to the splice lowering.
-
----
-
-## 2026-08-26 — fix: the three callbacks `params` had missed, and a kind for a declared variable
-
-A coverage sweep probed all 504 rows with more than twenty lambda shapes each and found exactly
-three names that take a callback and had no `params`: `aggregate`, `Array.from`, and `$let`. No row
-claimed one falsely.
-
-`aggregate` binds `(value, index, collection)`, and its middle slot is unusual enough to be worth
-recording: the index EXISTS but is refused if read — *"'i' … has no meaning inside
-'.aggregate((d, i, …) => …)' — MongoDB streams have no per-doc index. Keep it unused (e.g.
-'(d, _i, coll)') only to reach the 3rd 'collection' parameter."* `Array.from` binds
-`(value, index)` where the value is always null, which is why the `{ length: n }` form exists.
-
-`$let` needed a new `ParamKind`. Its parameters bind variables DECLARED IN A SIBLING ARGUMENT —
-`$let({ x: 1, y: 2 }, (p, q) => p + q)` binds `p` to `x` — so none of `value`, `index`, `key`,
-`accumulator` or `collection` describes them. Writing `["value", "value"]` would be exactly the
-class of lie the field exists to remove, so `"binding"` is the honest answer, with `paramsRepeat`
-because the arity comes from that sibling.
-
-The sweep also settled a question worth writing down: the `$op(...)` operator rows do NOT need
-`params`, and not because they were overlooked. `$map`, `$filter`, `$reduce`, `$sortArray`,
-`$switch`, `$function` and `$accumulator` accept no lambda at all — a raw operator is the MongoDB
-shape spelled positionally, so its variable is a NAME STRING (`$map($.a, "x", …)`) and its body is
-an expression over MongoDB's own `$$this` / `$$value`. The user has already spelled the binding
-out, so there is nothing to disambiguate, which is the whole purpose of the field. `$let` is the
-single exception.
-
-`.filter` gains the per-position form: three parameters as a value, exactly one as a chain link,
-where `$$ = $$.filter((d, i) => …)` is *"must take exactly one parameter"*. `find` was checked for
-the same split and does not need it — it accepts three on a foreign receiver and is refused as a
-chain link outright.
-
----
-
-## 2026-08-26 — chore: the `params` field validated, and one audit deleted for never firing
-
-Two validation passes over the work just committed.
-
-**`params` is right on all 39 rows** — arity and meaning both measured, zero wrong. Thirteen of
-the lists are deliberately SHORTER than the API they name, and each refusal says so:
-`$.a.findIndex((v, i, arr) => arr)` is *"callbacks take at most 2 parameters (element, index); the
-third 'array' argument isn't supported"*. So a list records what JSMQL accepts and the API name
-says where to look for the difference; the vocabulary now states that, rather than leaving a
-reader to wonder whether a short list is an omission. It also exposes one asymmetry worth naming:
-`.filter` takes the index and `.reject`, its own negation, does not. And `paramsRepeat` turns out
-to mean an EXACT count rather than a maximum — with two arrays `zipWith` refuses both one and
-three parameters — so a checker must count the collections handed in, never the length of the list.
-
-**`DanglingTokens` is deleted, because it could never fire.** Five audits were tested by feeding
-each a bogus value and confirming an error naming it; all five fire. The sixth does not, and for a
-reason distinct from the two failure modes found earlier: **constraint collapse**. When a row's
-`tokens` literal violates `T extends readonly Lexeme[]`, TypeScript reports it and then
-instantiates `T` with the CONSTRAINT — so `Mentioned<"tokens">` yields `Lexeme` and the audit
-reads `never`. The inputs that would make it fire are exactly the ones the constraint intercepts
-first, and interception erases them from the type the audit reads.
-
-The right response is removal, not repair. The invariant is already enforced, and enforced better:
-injecting a bogus lexeme gives one error, on the offending ROW, where a reader can act on it,
-rather than on a line at the foot of the file. A check that cannot fire is worse than no check,
-because it reads as assurance. `after` keeps its audit, because `A extends readonly string[]`
-imposes no equivalent constraint — the comment in its place explains that difference so the dead
-check is not re-added.
 
 ---
 
@@ -3006,6 +2667,335 @@ there.
 
 ---
 
+## 2026-08-26 — feat: position travels down the tree, and the statement mutators desugar
+
+Phase 3 could not run on its own. `$.items.sort()` is a write at statement position and a refusal
+anywhere else, and one tree shape with two meanings needs the position — which `mapTree` could not
+supply, because it rebuilds a parent as soon as a child changes and a node recorded beforehand is not
+the node a rule receives. `mapTreeIn` in `src/compiler/passes/walk.ts` carries an inherited value down
+instead, and `src/compiler/passes/position.ts` says what that value becomes on each parent-to-property
+step. The sub-pipeline case reads the stage's own `subPipelineFields`, so `$facet`'s `["*"]` needs no
+clause: `$lookup({ pipeline: [$.items.sort()] })` finds the statement, `$.a = [1, $.items.push(2)]`
+does not.
+
+Three rules landed on top of it. `$.a.b` folds to one `FieldRef` holding `a.b`, and `.length` is the
+one name that declines because its row is the only one READ rather than called on something a field
+can hold — so `$.a.length` stays the size while `$.a.length.b` folds past it into a field really
+called `length`. Then the mutators: `$.items.sort();` becomes `$.items = $.items.toSorted();` and
+`$.items.push(9);` becomes `$.items = [...$.items, 9];`. Spread and not `.concat()`, because
+`[1].push([2])` is `[1, [2]]` and `[1].concat([2])` is `[1, 2]`.
+
+Which mutators rewrite is stated by two new registry fields, `immutableTwin` and `asArrayLiteral`, and
+the test for both is the same arguments. `.pop()` gets neither even though `.toSpliced(-1, 1)` computes
+the same array: those arguments are not the ones the caller wrote, and re-deriving them spends the
+receiver-family proof the row supplies — measured at 1.5x the MQL for `.pop()` and 4.4x for
+`.shift()`. Those four are lowered directly instead. Every rewrite was checked twice: against the tree
+its explicit form parses to, and by running both forms on a live `mongod` and comparing the documents.
+
+That second check found a seventh place where the shipped compiler emits MQL the server refuses.
+`.splice(start, count)` and `.toSpliced(start, count)` both lower to a `$slice` whose third argument is
+`{ $max: [0, …] }`, and MongoDB rejects a third argument of `0` — so both spellings fail on any array
+shorter than `start + count`, including `[1].splice(1, 2)` and every empty array. `.shift()` uses
+`{ $max: [1, …] }` and is correct, so the fix is local to the splice lowering.
+
+---
+
+## 2026-08-26 — feat: the shape decision is one question asked of a row
+
+Which document a program becomes — a Filter for `find()` or a list of stages for
+`aggregate()` — is decided in the shipped compiler by four stacked auto-wrap heuristics in
+`lowerWithCtx`, each a special case with its own paragraph of reasoning: one for a bare
+stage call, one for `$$.<method>(…)` and the diagnostic source stages, one for a mutator on
+a writable path, and `isPipelineAst` for the bracketed form. That accretion is the thing
+this rewrite exists to remove.
+
+`shapeOf` asks the row instead. A construct is a statement when its row lists `statement`
+or `stream` and has NO value form — which is exactly what a stage looks like, since `$match`
+has no expression form while `.filter()` has one and is an expression standing alone. A
+write, a declaration and a `;`-run are statements by their node type, and a chain that
+reads a context reference is a stream however it ends, which is answered by walking to the
+base — the three references being three node types is what makes that a type test rather
+than a level check.
+
+Measured against the shipped compiler on every input the test suite compiles: 1313 of 1328
+agree, and the 15 that do not are all one thing. `const a = 1; $.x === a` compiles to
+`{"x": 1}` because the binding is a compile-time constant and folds away, leaving one
+expression; a binding that does not fold is a pipeline in both. That divergence closes when
+constant folding lands as a pass, and the test records it rather than hiding it.
+
+Two parser faults came out of the measurement. A trailing `;` was being thrown away for a
+lone statement, so `Object.assign($.a, $.b)` — which merges two objects — and
+`Object.assign($.a, $.b);` — which writes the document — parsed to the same tree, and
+nothing downstream could tell them apart. And a `function` declaration inside a bracketed
+pipeline parsed as a function VALUE, which made the literal look like an array of values
+rather than a pipeline.
+
+---
+
+## 2026-08-26 — feat: three more places a node can stand
+
+`Where` held two of the seven positions, and the gaps were not neutral. A `$$ = <chain>`
+right-hand side is a STREAM of documents and every link back down the chain is one too,
+while the lambda inside `$$.filter(d => d.x)` is an ordinary expression over one document
+— so a chain link and its callback needed telling apart. And the left of `=` was being
+reported as a value, which it is not: it names a place to write and is never evaluated.
+A rule meant for expressions would have fired on it, so it is now `target`.
+
+The third was an outright error rather than a gap. The writes inside an `UpdateFilter`
+were reaching rules as values. The `,`-joined run groups writes into one stage; it does
+not turn them into expressions, so its `ops` are statements.
+
+Four positions remain unmodelled, and not because they were forgotten: `filter` and
+`updateDoc` are properties of the whole program chosen once at the root, not decisions
+about one parent-to-property step, and `group` and `window` sit inside a stage body whose
+accumulator slots no row states yet.
+
+---
+
+## 2026-08-26 — fix: a production names itself by its spelling, never by its key
+
+`productions.ts` is keyed descriptively — `conditional`, `remainder`, `methodCall` — so that
+two rules cannot collide on a symbol. 143 refusal messages were interpolating that key into
+text a user reads: *'conditional' produces a value, not a stage*, and worse,
+*'.conditional()' is not a statement*, which applies method-call phrasing to a ternary.
+Nobody types the word "conditional".
+
+`tokens` cannot supply the spelling either, because it lists every lexeme the rule consumes.
+Joined, it gives `?:` for the ternary and `.(),?.$identifier` for a method call. So a row
+now states its `spelling`, and the messages are regenerated from it — including the six
+that named no construct at all (*"a declaration is not a filter predicate."*).
+
+Three of the choices were between two defensible spellings, and the tie-breaker each time
+was whether the message could MISNAME what the reader wrote. `namespacedCall` is
+`Class.method()` rather than `Math.abs(x)`, because one row covers five namespaces and a
+message quoting `Math` to someone who wrote `Object.keys(o)` is wrong. `parameterReference`
+is `<param>` rather than a plausible identifier, for the same reason. And `pipelineStatement`
+says what to do — *';' makes the output a Pipeline, which is not a filter predicate. Drop
+the ';' to write a filter.*
+
+Four tests hold it: every row states one, no message contains its key, every refusal that
+carries its own subject names its spelling, and no spelling is just the key again.
+
+---
+
+## 2026-08-26 — fix: a stage is one construct, and an operator cannot accept operands it does not render
+
+Two registry faults, each found independently by two auditors, and each one silently corrupts
+anything phase 5 builds on top of it.
+
+**All 45 stage rows denied `statement`.** `$match(<body>);` and `$$ = $$.$match(<body>)` are the
+same stage written two ways and the language accepts both — measured on every one of the 45. The
+rows listed only `stream`, so `consult("$match", "statement")` answered *"'$match' is not a
+statement"*, and phase 4 puts every element of a `;`-separated program at statement position. No
+pipeline program could have compiled. `MongoSpec.statement`'s own documentation states the rule and
+`op()` already builds both cells from one emitter; the hand-written rows did not follow either. Both
+cells now hold the same emitter, and a test asserts they stay the same one rather than merely
+equivalent — one construct, one rendering, so the two cannot drift.
+
+**73 operator rows accepted more operands than their shape can render.** An operand accepted and
+then not rendered VANISHES:
+
+    $abs($.a, $.b)   would emit {"$abs":"$a"}   — valid MQL, wrong answer
+
+70 `single`-shaped rows carried the generic `atLeast: 1`. Four object-shaped rows were worse, and
+mongod refuses their output outright: `{$dateDiff:"$a"}` is *"$dateDiff only supports an object as
+its argument"*. Those four now state the key order a positional call maps onto, which is what
+`objectBody` zips against — `BodyRule.positional`'s own doc records this exact regression having
+happened once before.
+
+The audit that holds it asks one question: can the arity a cell states exceed what the row's shape
+renders? Writing it turned up seven more. Five accumulators (`$first`, `$last`, `$addToSet`, `$push`,
+`$linearFill`) stated no ceiling in their WINDOW cell while `$group` correctly stated one, and mongod
+answers *"The $first accumulator is a unary operator"*. `$locf` did the same. And `$count` demanded
+an argument its own emitter throws away — the shipped compiler refuses `$count({})` and accepts
+`$count()`, which is the exact opposite of what the row said.
+
+Scoping that audit was itself a finding: `$count("total")` is a STAGE taking one argument while
+`$count()` as an accumulator takes none, so one row renders two ways and only the operand-shaped
+cells — `value`, `group`, `window`, `updateDoc` — are governed by `shape`.
+
+---
+
+## 2026-08-26 — fix: six ways the fold could answer with the wrong value
+
+Adversarial review of the new fold found six defects, all of the same family: the pass knew
+about SOME of the places a name can be bound or changed, and pushed a constant through the
+rest. Each is now covered by a test that fails without the fix.
+
+A nested statement list is a scope. `const a = 1; $$.aggregate(() => { const a = 2; $match({ b: a }) })`
+answered `b: 1` — the inner declaration binds a different variable, and it was left standing,
+unread, one line above the reference that should have used it. The same shape reached every
+bracketed sub-pipeline and every `$facet` branch. And a block's declarations did not shadow
+for each other, so `map(x => { const y = x.n; const z = y + 1; return z })` under an outer
+`const y = 1` made `z` the constant 2 instead of `x.n + 1` — a per-document answer replaced
+by a fixed one.
+
+A write through a PATH was invisible twice over. `let a = { p: 1 }; a.p = 9` folded `a` to
+its first value AND rewrote the destination, producing `1 = 9`, which is not a program at
+all. So was a mutation that wears no `=`: the pass claimed every array mutator had become a
+plain assignment before it looked, which is true only for a `$.field` receiver — on a
+binding, `a.sort()` stayed a call, and the fold then substituted the pre-mutation value into
+the mutator's own receiver. A call that IS a statement now excludes its receiver, which
+needs no list of method names to be kept in step with the language.
+
+The fallback for a value with no literal inlined the declaration's raw source, and `mapTree`
+does not walk into a replacement — so `const q = 2; const arr = [q / 0]` carried a free `q`
+to every use site, to be captured by a lambda parameter of that name or left with no binder
+anywhere. There is no fallback now: a value with no literal keeps its binding. That closed a
+third defect with it, since `unspellable` only looked at a top-level number and let
+`const a = [1 / 0]` through in silence where `const a = 1 / 0` was refused by name.
+
+Two more, from the same review. A receiver was routed by its JavaScript type, so a RegExp
+and a BSON value fell into the object rules — `/ab/.size()` folded to 0, which is
+`Object.keys(regex).length` and means nothing, where the language refuses the call outright.
+And a name read before its declaration folded to the later value; JavaScript throws a
+ReferenceError there, so the binding is kept and a later phase reports it.
+
+The fixpoint also gave up too early. A chain where each link needs the previous one folded
+AND a rule run on the result advances one link per round, and 24 rounds was not enough for
+23 links. Statements now resolve against what is known at the point they stand, so an
+ordinary chain settles in two rounds however long it is; the limit is raised for the
+alternating case, and its message no longer blames a rule bug for what may be the source.
+
+Alongside the fixes, the array family the pass was missing — the aggregates, the set
+operations, the count-based slicing, and the reshaping — 31 methods, each checked against a
+live mongod.
+
+---
+
+## 2026-08-26 — fix: the fold, put to 30,000 expressions
+
+An adversarial sweep generated 29,957 expressions, folded each one, and compared it against
+what mongod computes for the same expression left alone. It found roughly 230 wrong answers
+and 1,250 cases where the fold answered where the program does not run. Both counts are now
+zero, and the whole set is a committed suite.
+
+TWO WERE DESIGN FAULTS rather than slips in a rule. Non-finite values were being handed on
+as ordinary values so the pass could name them, and only the FINAL value was checked — so
+`1 / 0 > 0` folded to `true` while the server refuses the division outright, and so did
+`` `${1/0}` ``, `(1/0) === (1/0)` and every other operator that consumes one and yields
+something spellable. A value with no MongoDB literal is now a third state that PROPAGATES,
+which also means an `Infinity` three operators deep reports by name exactly as one at the
+top does. And the evaluator recursed without a bound: `1 + 1 + …` in 2,600 terms threw a
+`RangeError` with no position, which is the one thing every rule in the file takes care not
+to produce. Depth is counted now, and so is size — `"x".padStart(500000000)` computes in a
+millisecond and yields half a gigabyte of string on its way to a 16 MB document.
+
+THE REST WERE JAVASCRIPT AND MONGODB DIFFERING, each found by the same method. Comparison
+was by JavaScript identity, so `[1,2] === [1,2]` folded to `false` where `$eq` says true —
+and every literal this evaluator builds is a fresh object, so that was every structural
+comparison there is. Strings were compared, indexed and padded in UTF-16 units where
+MongoDB works in code points; padding by units could even cut an astral character in half
+and hand the driver a lone surrogate, a string with no UTF-8 encoding. `$round` works in
+decimal, and reproducing it by scaling with `10 ** places` makes the rounding decision on a
+perturbed number — `(2.675).round(2)` is 2.68 that way and 2.67 on the server — so only the
+bare form folds. `-0` is a double to the driver where the same arithmetic gives MongoDB an
+int `0`. `$toString` of a double and JavaScript's own formatting disagree on exponents, so a
+number interpolated into a template stays runtime. And `.substring` does not swap its
+arguments, `.join` collapses to null on a null element, `.concat` and `.flatMap` take arrays
+only, `.startCase` lower-cases the tail, `.inRange` normalises a negative bound.
+
+Every index and count now has to be a 32-bit integer, because `$substrCP`, `$arrayElemAt`,
+`$slice` and `$range` all demand one — `"abc".charAt(1.5)` is `""` in JavaScript and an
+error on the server, and folding it made this pass a second, more permissive grammar than
+the one the parser enforces.
+
+One correction went the other way. `&&` and `||` were held to boolean operands on the
+reasoning that `$and` and `$or` answer with a boolean. They do not: jsmql lowers both to
+JavaScript's own truthiness, verified on the server, where `0 || 5` is 5 and `1 && 2` is 2.
+So `const timeout = envValue || 30000` folds, which is the shape people write.
+
+---
+
+## 2026-08-26 — fix: the three callbacks `params` had missed, and a kind for a declared variable
+
+A coverage sweep probed all 504 rows with more than twenty lambda shapes each and found exactly
+three names that take a callback and had no `params`: `aggregate`, `Array.from`, and `$let`. No row
+claimed one falsely.
+
+`aggregate` binds `(value, index, collection)`, and its middle slot is unusual enough to be worth
+recording: the index EXISTS but is refused if read — *"'i' … has no meaning inside
+'.aggregate((d, i, …) => …)' — MongoDB streams have no per-doc index. Keep it unused (e.g.
+'(d, _i, coll)') only to reach the 3rd 'collection' parameter."* `Array.from` binds
+`(value, index)` where the value is always null, which is why the `{ length: n }` form exists.
+
+`$let` needed a new `ParamKind`. Its parameters bind variables DECLARED IN A SIBLING ARGUMENT —
+`$let({ x: 1, y: 2 }, (p, q) => p + q)` binds `p` to `x` — so none of `value`, `index`, `key`,
+`accumulator` or `collection` describes them. Writing `["value", "value"]` would be exactly the
+class of lie the field exists to remove, so `"binding"` is the honest answer, with `paramsRepeat`
+because the arity comes from that sibling.
+
+The sweep also settled a question worth writing down: the `$op(...)` operator rows do NOT need
+`params`, and not because they were overlooked. `$map`, `$filter`, `$reduce`, `$sortArray`,
+`$switch`, `$function` and `$accumulator` accept no lambda at all — a raw operator is the MongoDB
+shape spelled positionally, so its variable is a NAME STRING (`$map($.a, "x", …)`) and its body is
+an expression over MongoDB's own `$$this` / `$$value`. The user has already spelled the binding
+out, so there is nothing to disambiguate, which is the whole purpose of the field. `$let` is the
+single exception.
+
+`.filter` gains the per-position form: three parameters as a value, exactly one as a chain link,
+where `$$ = $$.filter((d, i) => …)` is *"must take exactly one parameter"*. `find` was checked for
+the same split and does not need it — it accepts three on a foreign receiver and is refused as a
+chain link outright.
+
+---
+
+## 2026-08-26 — fix: three silent drops in the bracketed write path
+
+`arrayElement` in the new parser took `writes().ops[0]` in two branches and threw the rest away. So
+`[++$.a, ++$.b]` parsed as one increment, `[(delete $.a, delete $.b)]` as one delete, and
+`[($.b = 1, $.c = 2)]` as one assignment — no error, just a missing write. The old compiler emits one
+`$set` with both fields for the first and refuses the other two outright, so all three were wrong.
+
+The cause was three copies of the same "does a write start here" condition, one per caller, and the
+array copy was the one that had drifted. There is now a single `writeAhead()`, and the run itself is
+split in two: `writes()` is the `;` form where a `,` always continues, and `writeRun()` is the
+bracketed form where a `,` continues only when a write follows. That second rule is what makes
+`[$.b = 1, ++$.c]` one stage and `[$.b = 1, $match(…)]` two, matching the old compiler on both.
+
+`ArrayElement` in `src/registry/ast.ts` gains `UpdateFilter`, which is what the branches lacked a way
+to return. A trailing comma before a closing brace now parses too — `({ $ }) => { $.a = 1, $.b = 2, }`
+— because a callback block is a statement list and a formatter puts one there. Verified against a
+1849-input corpus harvested from the test suite: 1828 accepted before and after, zero differences
+apart from that trailing comma.
+
+---
+
+## 2026-08-25 — feat: a name-blind AST, in the registry, with NodeName derived from it
+
+[src/registry/ast.ts](src/registry/ast.ts) holds the tree the new parser builds: 33 node types
+where [src/ast.ts](src/ast.ts) has 48. Eighteen went, three arrived. It imports nothing, like
+every registry file, which is what lets `NodeName` in
+[src/registry/vocabulary.ts](src/registry/vocabulary.ts) be DERIVED from the shapes instead of
+written a second time by hand — and the hand-written copy had already drifted, still naming
+`MathCall`, `TypeCastRef` and eleven more with nothing to check it.
+
+The tree is **name-blind**: the parser never compares a name against a set.
+`Math.max($.a, $.b)` and `$.rows.max()` are one node type whose receiver differs, because they
+are one name on two receivers and `names.ts` already says `max` serves both the `Math` and the
+`array` family. That alone removed fourteen node types that existed only because the old parser
+knew particular names — `MathCall`, `MathConst`, `ObjectCall`, `NumberStatic`, `NewSet`,
+`NewDate`, `DateNow`, `DateUTC`, `ArrayFrom`, `TypeCast`, `TypeCastRef`, `MathCallRef`,
+`ObjectIdRef`, and `ParamRef`, which was never distinguishable from any other bare name.
+`CollectionRef` / `DatabaseRef` / `ClusterRef` became one `ContextRef` with a level, and
+`TypeofExpr` folded into `UnaryExpr`, since `typeof` is a prefix operator. `ObjectIdLiteral`
+stays: `0x` followed by exactly 24 hex digits is a re-reading of a NUMBER token, a syntactic
+fact rather than a name.
+
+Two things survive parsing that used to be resolved during it. `AssignOp` keeps `+=`, `-=`,
+`*=`, `/=`, `++` and `--` exactly as written, so the parser holds no meaning and the desugar
+phase reduces them to `=` over a `BinaryExpr`. And a `Lambda` carries either a `body` or
+`stages`, never both — a `{ … }` callback is JavaScript unless the name's row says
+`blockBody: "stages"`, which only `aggregate` does.
+
+Deriving `NodeName` turned nine `becomes` values into compile errors, which is the point:
+[test/compiler-ast.test.ts](test/compiler-ast.test.ts) now checks both directions, that no rule
+claims a node the tree lacks and that no node exists which no syntax builds. It also dissolves
+an earlier finding — `collectionReference` was reported as wrongly claiming both `DatabaseRef`
+and `CollectionRef`, and with one `ContextRef` node the question no longer exists.
+
+---
+
 ## 2026-08-25 — feat: a row says what its callback's parameters bind
 
 One written shape means three different things and only the NAME says which:
@@ -3036,6 +3026,101 @@ collection handed in.
 
 ---
 
+## 2026-08-25 — feat: every name gets a row, including the ten that live inside another operator
+
+Ten names had been left out on the grounds that they never stand alone —
+`$box`, `$center`, `$centerSphere`, `$polygon`, `$geometry`, `$maxDistance`, `$minDistance`,
+`$each`, `$position` and `$case`. Leaving them out means the registry cannot answer "what is
+`$each`?", which is the one question it exists to answer. They now have rows, and the fact
+that made them awkward has a field instead of an exclusion.
+
+`onlyInside` names the operators whose body accepts a name, PER POSITION. Per position because
+the two are independent: `$slice` stands alone as an aggregation operator AND appears inside
+`$push` in an update document, so a flat list would have constrained the standalone use too. It
+reads `onlyInside: { updateDoc: ["$push"] }`. Nesting does not change `where` — `$box` is still
+reached in a filter, `$each` in an update document, `$case` in a value — so the two fields
+answer different questions and neither can be derived from the other.
+
+Every containment was proven both ways on a live server:
+`{ loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }` is accepted while
+`{ $addFields: { v: { $box: [[0,0],[1,1]] } } }` is *"Unrecognized expression '$box'"*, and the
+same pair holds for `$each`. A third audit checks that every container named is a key of the
+same table; making it real took the same two `never` guards the `composedInto` audit needed,
+because `never extends readonly (infer V)[]` succeeds with `V = unknown` and a single
+`unknown` in the union makes the check accept anything. It was confirmed by making it fail on
+a bogus container before being trusted.
+
+---
+
+## 2026-08-25 — feat: one Pratt loop replaces the fourteen-method cascade
+
+Phase 2 of [src/compiler/](src/compiler/CLAUDE.md) reads `precedence`,
+`associativity` and `fixity` off the rows. The old parser encoded the fourteen levels as the
+call order of fourteen mutually-recursive methods — `parseTernary` called `parseNullish` called
+`parseOr`, down to `parsePostfix` — so nothing named a level and adding an operator meant
+inserting a method in the right place. The level is now the number on the row.
+
+Building the tables found something the rows had not said. A trigger may head SEVERAL rules —
+`.` heads `memberAccess`, `methodCall` and `namespacedCall`, and only a following `(` says which
+— so the table groups by trigger and checks that everything sharing one agrees on the level.
+Disagreeing would mean one of them binds differently and no lookahead could repair it, so it
+throws while the table is built. Two facts the parser would otherwise have hard-coded moved onto
+rows instead: `tokens[0]` is now documented as the TRIGGER, and `word` carries the literal text a
+rule needs when its trigger is the `identifier` class — `function` is not lexer-reserved, so
+`function f(x) { return x }` needs the text, and the text belongs on `functionBinding`.
+
+The eight JavaScript-syntax forms the old parser wrongly accepted are refused, which is the
+point of having stated them: `$.a ?? $.b || $.c`, `typeof $.a ** $.b` and `$.a?.b = 1` are all
+`SyntaxError` under `node --check` and all compiled before. Parenthesising still works, because
+a group deliberately forgets which rule produced it. `associativity: "none"` now does what it
+says — `$.a < $.b < $.c` is refused with a message naming the fix rather than silently grouping
+left.
+
+Every one of the 1,691 suite inputs the old compiler accepts parses, with zero exceptions,
+asserted in [test/compiler-parse.test.ts](test/compiler-parse.test.ts). Reaching zero took six
+rounds and each gap was a real one: `$in(…)` and `$let(…)` name a reserved word after the `$`;
+a callback block may hold pipeline STAGES rather than a `return`; trailing commas are legal in
+every list JavaScript has; an object key may be a number; `{ x }` is shorthand; an array literal
+may hold statements, which is the bracketed pipeline form; `$.a = $.b = 5` chains and assigns to
+both; and a formatter parenthesises each write in a run, so `($.a = 1), ($.b = 2)` unwraps per
+element. 648 further inputs parse that the old compiler rejects later, in a phase the parser is
+not.
+
+---
+
+## 2026-08-25 — feat: src/compiler/ begins, with the lexer reading the token table
+
+The compiler is being rebuilt as five phases over `src/registry/`, each reading the one file
+that owns its facts. [src/compiler/CLAUDE.md](src/compiler/CLAUDE.md) holds the diagram and the
+rule that shapes all of it: **the registry says what the language HAS, not how to build the
+MQL.** A row answers whether a name exists, what it attaches to, which of the seven positions
+it is legal in, how many arguments it takes there, and what the error says. It does not hold a
+renderer, because a lowering reads its neighbours — the receiver's provable type, the stages
+already emitted, a sibling argument's shape — and one row can see none of that. Lowerings are
+code, in `emit/`.
+
+Phase 1 is done. The old lexer wrote one `if` per spelling, ordered longest-first by hand, and
+promoted reserved words with an eleven-case switch; both are table reads now. Punctuator order
+is DERIVED from key length, so `===` cannot be shadowed by `==` and no row is placed by hand,
+and the promotion is `KEYWORDS` itself. The four decisions a longest-match table cannot imply
+are read from the rows that state them — `maxRun` refuses `$$$$$` rather than splitting it into
+two legal tokens, `chooseBy` reads `/` as division after a value and a regex otherwise,
+`tracksDepth` and `resumesTemplateAtDepth` let an interpolation find its own closing brace in
+`` `${ {a: 1} } px` ``. What stays hand-written is the scanners, because a table says which
+spelling makes which token while a scanner decides where a token ENDS: `1_000.5e-3` is one
+number and `0x507f1f77bcf86cd799439011` is an ObjectId at exactly 24 hex digits.
+
+The suite's own inputs are the specification. 2,381 JSMQL sources harvested from every test
+file lex to a byte-identical token stream under both lexers, with zero differences and none
+refused by only one of them — asserted in
+[test/compiler-lex.test.ts](test/compiler-lex.test.ts), which also checks that every reserved
+word and every fixed spelling lexes to the type its row names. Parity is guidance rather than
+the target: where the two disagree the new one may be right, so a difference has to be listed
+rather than tolerated. One already is — an unterminated regex at end of input used to lex as a
+complete token and is now refused.
+
+---
+
 ## 2026-08-25 — feat: the parser reads the entry form
 
 `parseEntry` completes phase 2. The sugar audit found the gap by trying to use it:
@@ -3055,19 +3140,6 @@ is refused for the same reason. The bindings are held BESIDE the tree, never in 
 Every `$`-family key is matched as its own TOKEN rather than by spelling — `$`, `$$`, `$$$`,
 `$$$$` are four distinct token types after the earlier `ContextRef` split, and `$name` is the
 `Dollar` token followed by an identifier. So the key vocabulary needs no string comparison.
-
----
-
-## 2026-08-25 — fix: three names could be passed unapplied and no row said so
-
-`asReference` records whether a name may be handed to a higher-order method without being
-called, and `ceil`, `floor` and `round` were missing it while the compiler accepts all three:
-`$.a.map(Math.floor)` → `{"$map":{"input":"$a","as":"v","in":{"$floor":"$$v"}}}`. They are the
-three rows the per-family split rewrote into `on: ["number", "Math"]` — the flag went in the
-same edit that added the namespace family, and only those three, which is what a hand-audit
-misses and a measurement does not. `Math.floor` is the very example the compiler's own rejection
-text uses for what IS allowed. The registry now claims exactly the 25 names the compiler accepts:
-four globals and twenty-one unary `Math` methods.
 
 ---
 
@@ -3121,110 +3193,6 @@ read after '$group'"* while the same program with `$project` or `$sort` compiles
 
 ---
 
-## 2026-08-25 — feat: one Pratt loop replaces the fourteen-method cascade
-
-Phase 2 of [src/compiler/](src/compiler/CLAUDE.md) reads `precedence`,
-`associativity` and `fixity` off the rows. The old parser encoded the fourteen levels as the
-call order of fourteen mutually-recursive methods — `parseTernary` called `parseNullish` called
-`parseOr`, down to `parsePostfix` — so nothing named a level and adding an operator meant
-inserting a method in the right place. The level is now the number on the row.
-
-Building the tables found something the rows had not said. A trigger may head SEVERAL rules —
-`.` heads `memberAccess`, `methodCall` and `namespacedCall`, and only a following `(` says which
-— so the table groups by trigger and checks that everything sharing one agrees on the level.
-Disagreeing would mean one of them binds differently and no lookahead could repair it, so it
-throws while the table is built. Two facts the parser would otherwise have hard-coded moved onto
-rows instead: `tokens[0]` is now documented as the TRIGGER, and `word` carries the literal text a
-rule needs when its trigger is the `identifier` class — `function` is not lexer-reserved, so
-`function f(x) { return x }` needs the text, and the text belongs on `functionBinding`.
-
-The eight JavaScript-syntax forms the old parser wrongly accepted are refused, which is the
-point of having stated them: `$.a ?? $.b || $.c`, `typeof $.a ** $.b` and `$.a?.b = 1` are all
-`SyntaxError` under `node --check` and all compiled before. Parenthesising still works, because
-a group deliberately forgets which rule produced it. `associativity: "none"` now does what it
-says — `$.a < $.b < $.c` is refused with a message naming the fix rather than silently grouping
-left.
-
-Every one of the 1,691 suite inputs the old compiler accepts parses, with zero exceptions,
-asserted in [test/compiler-parse.test.ts](test/compiler-parse.test.ts). Reaching zero took six
-rounds and each gap was a real one: `$in(…)` and `$let(…)` name a reserved word after the `$`;
-a callback block may hold pipeline STAGES rather than a `return`; trailing commas are legal in
-every list JavaScript has; an object key may be a number; `{ x }` is shorthand; an array literal
-may hold statements, which is the bracketed pipeline form; `$.a = $.b = 5` chains and assigns to
-both; and a formatter parenthesises each write in a run, so `($.a = 1), ($.b = 2)` unwraps per
-element. 648 further inputs parse that the old compiler rejects later, in a phase the parser is
-not.
-
----
-
-## 2026-08-25 — feat: a name-blind AST, in the registry, with NodeName derived from it
-
-[src/registry/ast.ts](src/registry/ast.ts) holds the tree the new parser builds: 33 node types
-where [src/ast.ts](src/ast.ts) has 48. Eighteen went, three arrived. It imports nothing, like
-every registry file, which is what lets `NodeName` in
-[src/registry/vocabulary.ts](src/registry/vocabulary.ts) be DERIVED from the shapes instead of
-written a second time by hand — and the hand-written copy had already drifted, still naming
-`MathCall`, `TypeCastRef` and eleven more with nothing to check it.
-
-The tree is **name-blind**: the parser never compares a name against a set.
-`Math.max($.a, $.b)` and `$.rows.max()` are one node type whose receiver differs, because they
-are one name on two receivers and `names.ts` already says `max` serves both the `Math` and the
-`array` family. That alone removed fourteen node types that existed only because the old parser
-knew particular names — `MathCall`, `MathConst`, `ObjectCall`, `NumberStatic`, `NewSet`,
-`NewDate`, `DateNow`, `DateUTC`, `ArrayFrom`, `TypeCast`, `TypeCastRef`, `MathCallRef`,
-`ObjectIdRef`, and `ParamRef`, which was never distinguishable from any other bare name.
-`CollectionRef` / `DatabaseRef` / `ClusterRef` became one `ContextRef` with a level, and
-`TypeofExpr` folded into `UnaryExpr`, since `typeof` is a prefix operator. `ObjectIdLiteral`
-stays: `0x` followed by exactly 24 hex digits is a re-reading of a NUMBER token, a syntactic
-fact rather than a name.
-
-Two things survive parsing that used to be resolved during it. `AssignOp` keeps `+=`, `-=`,
-`*=`, `/=`, `++` and `--` exactly as written, so the parser holds no meaning and the desugar
-phase reduces them to `=` over a `BinaryExpr`. And a `Lambda` carries either a `body` or
-`stages`, never both — a `{ … }` callback is JavaScript unless the name's row says
-`blockBody: "stages"`, which only `aggregate` does.
-
-Deriving `NodeName` turned nine `becomes` values into compile errors, which is the point:
-[test/compiler-ast.test.ts](test/compiler-ast.test.ts) now checks both directions, that no rule
-claims a node the tree lacks and that no node exists which no syntax builds. It also dissolves
-an earlier finding — `collectionReference` was reported as wrongly claiming both `DatabaseRef`
-and `CollectionRef`, and with one `ContextRef` node the question no longer exists.
-
----
-
-## 2026-08-25 — feat: src/compiler/ begins, with the lexer reading the token table
-
-The compiler is being rebuilt as five phases over `src/registry/`, each reading the one file
-that owns its facts. [src/compiler/CLAUDE.md](src/compiler/CLAUDE.md) holds the diagram and the
-rule that shapes all of it: **the registry says what the language HAS, not how to build the
-MQL.** A row answers whether a name exists, what it attaches to, which of the seven positions
-it is legal in, how many arguments it takes there, and what the error says. It does not hold a
-renderer, because a lowering reads its neighbours — the receiver's provable type, the stages
-already emitted, a sibling argument's shape — and one row can see none of that. Lowerings are
-code, in `emit/`.
-
-Phase 1 is done. The old lexer wrote one `if` per spelling, ordered longest-first by hand, and
-promoted reserved words with an eleven-case switch; both are table reads now. Punctuator order
-is DERIVED from key length, so `===` cannot be shadowed by `==` and no row is placed by hand,
-and the promotion is `KEYWORDS` itself. The four decisions a longest-match table cannot imply
-are read from the rows that state them — `maxRun` refuses `$$$$$` rather than splitting it into
-two legal tokens, `chooseBy` reads `/` as division after a value and a regex otherwise,
-`tracksDepth` and `resumesTemplateAtDepth` let an interpolation find its own closing brace in
-`` `${ {a: 1} } px` ``. What stays hand-written is the scanners, because a table says which
-spelling makes which token while a scanner decides where a token ENDS: `1_000.5e-3` is one
-number and `0x507f1f77bcf86cd799439011` is an ObjectId at exactly 24 hex digits.
-
-The suite's own inputs are the specification. 2,381 JSMQL sources harvested from every test
-file lex to a byte-identical token stream under both lexers, with zero differences and none
-refused by only one of them — asserted in
-[test/compiler-lex.test.ts](test/compiler-lex.test.ts), which also checks that every reserved
-word and every fixed spelling lexes to the type its row names. Parity is guidance rather than
-the target: where the two disagree the new one may be right, so a difference has to be listed
-rather than tolerated. One already is — an unterminated regex at end of input used to lex as a
-complete token and is now refused.
-
----
-
 ## 2026-08-25 — fix: `tracksDepth` and `resumesTemplateAtDepth` were on the wrong row
 
 Both flags landed on the `$$$$` row instead of `{` and `}`. The edit that added them matched a
@@ -3240,60 +3208,45 @@ template interpolation, and got `undefined`, so every template with an interpola
 
 ---
 
-## 2026-08-25 — feat: every name gets a row, including the ten that live inside another operator
+## 2026-08-25 — fix: three names could be passed unapplied and no row said so
 
-Ten names had been left out on the grounds that they never stand alone —
-`$box`, `$center`, `$centerSphere`, `$polygon`, `$geometry`, `$maxDistance`, `$minDistance`,
-`$each`, `$position` and `$case`. Leaving them out means the registry cannot answer "what is
-`$each`?", which is the one question it exists to answer. They now have rows, and the fact
-that made them awkward has a field instead of an exclusion.
-
-`onlyInside` names the operators whose body accepts a name, PER POSITION. Per position because
-the two are independent: `$slice` stands alone as an aggregation operator AND appears inside
-`$push` in an update document, so a flat list would have constrained the standalone use too. It
-reads `onlyInside: { updateDoc: ["$push"] }`. Nesting does not change `where` — `$box` is still
-reached in a filter, `$each` in an update document, `$case` in a value — so the two fields
-answer different questions and neither can be derived from the other.
-
-Every containment was proven both ways on a live server:
-`{ loc: { $geoWithin: { $box: [[-1,-1],[1,1]] } } }` is accepted while
-`{ $addFields: { v: { $box: [[0,0],[1,1]] } } }` is *"Unrecognized expression '$box'"*, and the
-same pair holds for `$each`. A third audit checks that every container named is a key of the
-same table; making it real took the same two `never` guards the `composedInto` audit needed,
-because `never extends readonly (infer V)[]` succeeds with `V = unknown` and a single
-`unknown` in the union makes the check accept anything. It was confirmed by making it fail on
-a bogus container before being trusted.
+`asReference` records whether a name may be handed to a higher-order method without being
+called, and `ceil`, `floor` and `round` were missing it while the compiler accepts all three:
+`$.a.map(Math.floor)` → `{"$map":{"input":"$a","as":"v","in":{"$floor":"$$v"}}}`. They are the
+three rows the per-family split rewrote into `on: ["number", "Math"]` — the flag went in the
+same edit that added the namespace family, and only those three, which is what a hand-audit
+misses and a measurement does not. `Math.floor` is the very example the compiler's own rejection
+text uses for what IS allowed. The registry now claims exactly the 25 names the compiler accepts:
+four globals and twenty-one unary `Math` methods.
 
 ---
 
-## 2026-08-24 — fix: the update DOCUMENT is a seventh position, not a missing feature
+## 2026-08-24 — feat: the namespace members the registry never described
 
-`Position` had six members and MongoDB has seven places a name can be written. The one it
-lacked is the update document — the second argument to `updateOne` when it is an object rather
-than an array:
+`Family` declared `Math`, `Object`, `Number` and `Array`, and not one row belonged to any of
+them — `Math.abs($.n)` compiles to `{"$abs":"$n"}` and had no row at all, while
+[src/ast.ts](src/ast.ts) listed 30 Math methods the parser branches on. Forty rows now cover
+that surface, every field measured by driving the compiler rather than read from a list: the
+27 Math members (25 methods plus `PI` and `E`, which are read and never called —
+`Math.PI()` is refused), `Object.assign` and `Object.fromEntries`, the three `Number` statics,
+`Array.isArray`, the `Object` namespace itself, and the four bare conversion callables
+`String`, `Boolean`, `parseInt`, `parseFloat`.
 
-```js
-db.products.updateOne({ sku: "abc123" }, { $inc: { quantity: -2, "metrics.orders": 1 } })
-```
+Two facts had no field. `NameSpec.asReference` records whether a name may be handed to a
+higher-order method unapplied, because nothing about the arity predicts it —
+`$.items.map(Math.floor)` is accepted and `$.items.map(Math.asinh)` is *"Only the unary Math
+methods … can be passed as bare callbacks"*, and both are unary. And `Number.isFinite` parses
+and is then refused, so it needs a row carrying its `[DEF-022]` message rather than no row at
+all; the same is true of `Set.symmetricDifference` and `Set.isDisjointFrom`, which the
+language recognises and answers with a tailored refusal.
 
-That is accepted, and the SAME document as a pipeline stage is *"Unrecognized pipeline stage
-name: '$inc'"*. With six positions there was no way to say "valid here, invalid everywhere
-else", so `$inc` had to be written as valid nowhere — which is simply false. `Position` gains
-`"updateDoc"`, `MongoSpec` gains the matching cell, and fifteen operators now name it:
-`$currentDate $inc $min $max $mul $rename $set $setOnInsert $unset $addToSet $pop $pull $push
-$pullAll $bit`, each verified by running `updateOne` against a live server. Seven already had
-rows as aggregation names and gain the position; eight had no row at all.
-
-`Only: "update"` is a different fact and the two were easy to confuse, so both now say which
-they are: `"update"` marks a STAGE the update PIPELINE accepts — the array form, which
-`jsmql.update` enforces — while `"updateDoc"` is the object form. `$set` is the one name that
-holds both, which is why the distinction has to be stated rather than inferred.
-
-Where JSMQL already offers a JavaScript spelling for the same effect, the row names it, so the
-row is a signpost rather than a dead end: `$.views++` and `$.views += 2` for `$inc`,
-`$.price *= 1.1` for `$mul`, `$.a = 1` for `$set`, `delete $.a` for `$unset`,
-`$.tags.push(x)` for `$push`, `$.tags.pop()` for `$pop`, and `$.b = $.a; delete $.a;` for
-`$rename`.
+Six keys serve a namespace AND a value receiver with different rules, which is what
+`perFamily` exists for. `Math.round($.n)` takes exactly one argument while `$.n.round(2)`
+takes the precision, so the two cannot share an arity; `Math.max(...values)` takes arguments
+where `$.rows.max()` takes none; `Object.groupBy(items, x => key)` requires its discriminator
+where the array receiver's iteratee is optional. Each is one row with one rule per family,
+never two rows — `max` and `$max` are different names, but `Math.max` and `$.rows.max()` are
+the same name on two receivers.
 
 ---
 
@@ -3349,58 +3302,29 @@ is stated on the one name that differs, and its absence means JavaScript.
 
 ---
 
-## 2026-08-24 — feat: the namespace members the registry never described
+## 2026-08-24 — fix: fifteen name rows described the form that does not exist
 
-`Family` declared `Math`, `Object`, `Number` and `Array`, and not one row belonged to any of
-them — `Math.abs($.n)` compiles to `{"$abs":"$n"}` and had no row at all, while
-[src/ast.ts](src/ast.ts) listed 30 Math methods the parser branches on. Forty rows now cover
-that surface, every field measured by driving the compiler rather than read from a list: the
-27 Math members (25 methods plus `PI` and `E`, which are read and never called —
-`Math.PI()` is refused), `Object.assign` and `Object.fromEntries`, the three `Number` statics,
-`Array.isArray`, the `Object` namespace itself, and the four bare conversion callables
-`String`, `Boolean`, `parseInt`, `parseFloat`.
+Fifteen rows claimed `where: ["value"]` with a working expression cell, for names whose value
+form throws. The nine mutators are legal at statement position and nowhere else —
+`$.tags.sort()` errors while `$.tags.sort();` lowers to
+`[{"$set":{"tags":{"$sortArray":{"input":"$tags","sortBy":{"t":1}}}}}]` — so their `where` is
+`["statement"]`, plus `"stream"` for `sort`, which is also a chain link
+(`$$ = $$.sort("t")` → `[{"$sort":{"t":1}}]`). `push` takes both an array and a stream
+receiver, is a statement on either, and is refused mid-chain, which the split `stream` and
+`statement` cells can now say in one row.
 
-Two facts had no field. `NameSpec.asReference` records whether a name may be handed to a
-higher-order method unapplied, because nothing about the arity predicts it —
-`$.items.map(Math.floor)` is accepted and `$.items.map(Math.asinh)` is *"Only the unary Math
-methods … can be passed as bare callbacks"*, and both are unary. And `Number.isFinite` parses
-and is then refused, so it needs a row carrying its `[DEF-022]` message rather than no row at
-all; the same is true of `Set.symmetricDifference` and `Set.isDisjointFrom`, which the
-language recognises and answers with a tailored refusal.
+`keys`, `values` and `entries` were backwards. The row said `on: "array"` with a lowering,
+but `$.arr.keys()` is *".keys() returns an iterator in JavaScript and has no MongoDB
+equivalent"* — the form that works is `Object.keys($.doc)`, which had no row at all. They are
+now `on: ["array", "Object"]` with a per-family cell: the array family carries the refusal,
+the `Object` family carries the lowering. That forced one vocabulary change — `perFamily` now
+accepts `Pending`, because the working half still lives in [src/codegen.ts](src/codegen.ts)
+and without it the row had to invent an emitter for a lowering it does not hold.
 
-Six keys serve a namespace AND a value receiver with different rules, which is what
-`perFamily` exists for. `Math.round($.n)` takes exactly one argument while `$.n.round(2)`
-takes the precision, so the two cannot share an arity; `Math.max(...values)` takes arguments
-where `$.rows.max()` takes none; `Object.groupBy(items, x => key)` requires its discriminator
-where the array receiver's iteratee is optional. Each is one row with one rule per family,
-never two rows — `max` and `$max` are different names, but `Math.max` and `$.rows.max()` are
-the same name on two receivers.
-
----
-
-## 2026-08-24 — fix: the lexical rules a longest-match table cannot imply, and the lexemes rules really consume
-
-Four lexer decisions now sit in [src/registry/tokens.ts](src/registry/tokens.ts) instead of
-only in code. A longest-match table over the spellings would read `$$$$$` as `$$$$` followed
-by `$` — two valid tokens and no error — where the lexer says *"Up to 4 levels of context
-reference are supported ('$.', '$$', '$$$', '$$$$')"*, so `$$$$` carries a `maxRun`. `/` and
-`/=` are classified on the PRECEDING token rather than on themselves, which is a `chooseBy`.
-`{` counts depth so a template interpolation knows which `}` closes it, and that `}` emits no
-token at all — the one closer whose row produces nothing. `EOF` had no row despite being a
-token the lexer appends and `TOKEN_DISPLAY` names, so coverage was 68 of 69 types; it is now
-keyed `endOfInput`.
-
-Twenty production rules listed fewer lexemes than they consume, which matters because `tokens`
-is the only statement of what triggers a rule. `methodCall` omitted `?.` and the `$` of a
-stage link, so `$.s?.trim()` and `$$ = $$.$sort({a:1})` had no producing rule.
-`destructuringParam` omitted the four context-ref keys that are its whole point — a toolbox
-slot's keys are `Dollar` / `DoubleDollar` / `TripleDollar` / `QuadDollar` tokens, not
-identifiers — and the `:` of the `key: alias` rename it documents. `collectionWrite` named only
-the same-database spelling while `$$$$.reporting.summary = $$;` → `[{"$out":{"db":"reporting",
-"coll":"summary"}}]` is equally legal, and `streamReplacement` omitted the `$$$` of a source
-switch and the brackets of the three reduce-wrap shapes. Two rules listed a lexeme they do NOT
-consume: `memberAccess` claimed `:` (`$.a:b` is *"Unexpected token ':'"*) and `templateLiteral`
-claimed the interpolation's closing `}`.
+The remaining shims (`forEach`, `toLocaleString`, `unzipWith`) have no working form in any
+position, so their `where` is empty and all six cells carry the refusal the compiler already
+words. Every message here is taken from the grid declaration rather than rewritten, so the
+registry and the thrown error cannot drift.
 
 ---
 
@@ -3467,29 +3391,29 @@ it becomes a per-family cell rather than one flat rule that hid the refusal.
 
 ---
 
-## 2026-08-24 — fix: fifteen name rows described the form that does not exist
+## 2026-08-24 — fix: the lexical rules a longest-match table cannot imply, and the lexemes rules really consume
 
-Fifteen rows claimed `where: ["value"]` with a working expression cell, for names whose value
-form throws. The nine mutators are legal at statement position and nowhere else —
-`$.tags.sort()` errors while `$.tags.sort();` lowers to
-`[{"$set":{"tags":{"$sortArray":{"input":"$tags","sortBy":{"t":1}}}}}]` — so their `where` is
-`["statement"]`, plus `"stream"` for `sort`, which is also a chain link
-(`$$ = $$.sort("t")` → `[{"$sort":{"t":1}}]`). `push` takes both an array and a stream
-receiver, is a statement on either, and is refused mid-chain, which the split `stream` and
-`statement` cells can now say in one row.
+Four lexer decisions now sit in [src/registry/tokens.ts](src/registry/tokens.ts) instead of
+only in code. A longest-match table over the spellings would read `$$$$$` as `$$$$` followed
+by `$` — two valid tokens and no error — where the lexer says *"Up to 4 levels of context
+reference are supported ('$.', '$$', '$$$', '$$$$')"*, so `$$$$` carries a `maxRun`. `/` and
+`/=` are classified on the PRECEDING token rather than on themselves, which is a `chooseBy`.
+`{` counts depth so a template interpolation knows which `}` closes it, and that `}` emits no
+token at all — the one closer whose row produces nothing. `EOF` had no row despite being a
+token the lexer appends and `TOKEN_DISPLAY` names, so coverage was 68 of 69 types; it is now
+keyed `endOfInput`.
 
-`keys`, `values` and `entries` were backwards. The row said `on: "array"` with a lowering,
-but `$.arr.keys()` is *".keys() returns an iterator in JavaScript and has no MongoDB
-equivalent"* — the form that works is `Object.keys($.doc)`, which had no row at all. They are
-now `on: ["array", "Object"]` with a per-family cell: the array family carries the refusal,
-the `Object` family carries the lowering. That forced one vocabulary change — `perFamily` now
-accepts `Pending`, because the working half still lives in [src/codegen.ts](src/codegen.ts)
-and without it the row had to invent an emitter for a lowering it does not hold.
-
-The remaining shims (`forEach`, `toLocaleString`, `unzipWith`) have no working form in any
-position, so their `where` is empty and all six cells carry the refusal the compiler already
-words. Every message here is taken from the grid declaration rather than rewritten, so the
-registry and the thrown error cannot drift.
+Twenty production rules listed fewer lexemes than they consume, which matters because `tokens`
+is the only statement of what triggers a rule. `methodCall` omitted `?.` and the `$` of a
+stage link, so `$.s?.trim()` and `$$ = $$.$sort({a:1})` had no producing rule.
+`destructuringParam` omitted the four context-ref keys that are its whole point — a toolbox
+slot's keys are `Dollar` / `DoubleDollar` / `TripleDollar` / `QuadDollar` tokens, not
+identifiers — and the `:` of the `key: alias` rename it documents. `collectionWrite` named only
+the same-database spelling while `$$$$.reporting.summary = $$;` → `[{"$out":{"db":"reporting",
+"coll":"summary"}}]` is equally legal, and `streamReplacement` omitted the `$$$` of a source
+switch and the brackets of the three reduce-wrap shapes. Two rules listed a lexeme they do NOT
+consume: `memberAccess` claimed `:` (`$.a:b` is *"Unexpected token ':'"*) and `templateLiteral`
+claimed the interpolation's closing `}`.
 
 ---
 
@@ -3527,6 +3451,37 @@ first-stage-only with their nested `input.pipelines.*`, and the six stages `jsmq
 whitelists finally carry `only: ["update"]`. The four named enum references are resolved to
 their member lists, except `regexFlags`, which is a set of characters rather than a list of
 values and so has its own field.
+
+---
+
+## 2026-08-24 — fix: the update DOCUMENT is a seventh position, not a missing feature
+
+`Position` had six members and MongoDB has seven places a name can be written. The one it
+lacked is the update document — the second argument to `updateOne` when it is an object rather
+than an array:
+
+```js
+db.products.updateOne({ sku: "abc123" }, { $inc: { quantity: -2, "metrics.orders": 1 } })
+```
+
+That is accepted, and the SAME document as a pipeline stage is *"Unrecognized pipeline stage
+name: '$inc'"*. With six positions there was no way to say "valid here, invalid everywhere
+else", so `$inc` had to be written as valid nowhere — which is simply false. `Position` gains
+`"updateDoc"`, `MongoSpec` gains the matching cell, and fifteen operators now name it:
+`$currentDate $inc $min $max $mul $rename $set $setOnInsert $unset $addToSet $pop $pull $push
+$pullAll $bit`, each verified by running `updateOne` against a live server. Seven already had
+rows as aggregation names and gain the position; eight had no row at all.
+
+`Only: "update"` is a different fact and the two were easy to confuse, so both now say which
+they are: `"update"` marks a STAGE the update PIPELINE accepts — the array form, which
+`jsmql.update` enforces — while `"updateDoc"` is the object form. `$set` is the one name that
+holds both, which is why the distinction has to be stated rather than inferred.
+
+Where JSMQL already offers a JavaScript spelling for the same effect, the row names it, so the
+row is a signpost rather than a dead end: `$.views++` and `$.views += 2` for `$inc`,
+`$.price *= 1.1` for `$mul`, `$.a = 1` for `$set`, `delete $.a` for `$unset`,
+`$.tags.push(x)` for `$push`, `$.tags.pop()` for `$pop`, and `$.b = $.a; delete $.a;` for
+`$rename`.
 
 ---
 
@@ -3618,34 +3573,293 @@ prototype to leak.
 
 ---
 
-## 2026-08-16 — refactor: the Predicate IR is complete — every query shape is stated once
+## 2026-08-16 — chore: `ArgRules` drops six dimensions nothing ever used
 
-The remaining six nodes join `src/predicate-ir.ts`: `Cmp` (equality, ordered, and the two
-null modes), `Membership`, `Contains` unanchored, `Quantify`, `Logical` and the two that have
-no query cell at all.
+`ArgRules` declared `positionalTypes`, `keyIntBounds`, `exactlyOneOf`,
+`atLeastOneOf`, `mutuallyExclusive` and `branches`. No operator populated any of
+them. `positionalTypes` even had a live read path in the validator, walking a
+field that was always undefined; the other five were read by nothing at all.
 
-The measurable end state is that `src/match-translation.ts` builds NO query document of its
-own. Every `{ [field]: … }` it used to assemble now comes from a named cell, and a test reads
-its source and asserts that, because the IR's entire value is that a shape exists in one
-place. `fieldQueryOrNegated` — the generic negation helper the old sites shared — turned out
-to have no callers left once the nodes absorbed them, and is gone.
+A rule nothing produces and nothing reads is not a capability. It is a claim the
+registry cannot back, and it makes the vocabulary look wider than it is — which
+matters now, because the argument vocabulary is about to be shared across all
+four feature kinds and a reader needs to know what it really does.
 
-Three cells were worth writing out rather than folding together. `Cmp`'s null modes are
-separate functions because they are genuinely different queries: JS `===` must EXCLUDE a
-missing field, which only `{ p: { $type: "null" } }` does, while `==` wants the looser
-`{ p: null }` that matches missing too. Equality does NOT route through the ordered builder,
-because `{ p: v }` is both the indexed spelling and the one that matches an array containing
-`v` — `{ p: { $eq: v } }` is neither. And `Contains` unanchored keeps the array-membership
-form with the divergence stated on it.
+Two of the six describe checks that genuinely exist, hand-written in
+`stage-validation.ts`: `$setWindowFields`'s window cannot carry both `documents`
+and `range`, and a `$fill` output field cannot carry both `value` and `method`.
+Those are STAGE body rules, and `StageDef` has no `args` field yet. So the shared
+vocabulary gets rebuilt from what the stages actually need rather than from what
+was guessed in advance — the comment left in `operators.ts` says so, and points
+at the grid spec.
 
-Two Query cells are deliberately absent rather than unwritten: `Quantify(every)` needs De
-Morgan and `Logical(not)` flips index usage with the data's shape. Both would change which
-documents an index can serve, so they take the `$expr` fallback BY CONSTRUCTION — which is
-the property the IR was designed around. A missing query rule is never a wrong answer, only a
-larger document.
+---
 
-Output-neutral throughout: 443 accepted rows, nothing unclassified, and the agreement suite
-still shows the two targets selecting the same documents.
+## 2026-08-16 — chore: the error classes and the arity checker move to leaves
+
+`CodegenError`, `UnknownIdentifierError` and `internalError` now live in `src/errors.ts`;
+`checkArity` and its rule type live in `src/arity.ts`. `codegen.ts` re-exports both sets, so
+no import path outside those two files changed.
+
+The reason is structural. Throwing is not a compiler service, and neither is counting
+arguments — but declaring them in `codegen.ts` meant every module that merely REJECTS
+something depended on the whole compiler. For the modules `codegen.ts` imports back
+(`literal-gate.ts`, `operator-validation.ts`, and any future method family that needs a
+literal gate) that dependency closes a cycle, and a cycle here is not a style complaint: it
+evaluates the importer first, which is how nine string methods once fell silently out of the
+registry with no error anywhere. `literal-gate.ts` is now a true leaf, and
+`operator-validation.ts` keeps only a type-only edge, which has no runtime existence.
+
+`arity.ts` also collapses a real duplicate: `Arity` in `codegen.ts` and `MethodArgs` in
+`src/methods/types.ts` were the same five fields written twice. One type now, read by the
+grid's declarations, the `$op(...)` validator, the stage validators and the static-call
+families alike.
+
+Output-neutral; the harness reports the same 209 accepted divergences.
+
+---
+
+## 2026-08-16 — docs: adding a method means writing a declaration, not a switch case
+
+The authoring rule in `CLAUDE.md` still opened with "add a `case \"foo\"` in
+`generateMethodCall`" — the exact habit the grid was built to break. It now opens with "write
+ONE declaration in the matching family file", and says why the ratchet fails a switch case.
+
+`docs/specs/lowering-grid.md` gained the honest account of what is LEFT in the switch, so
+the remainder reads as a set of stated reasons rather than an unexplained backlog. Ten of
+the twenty are one shape: DUAL-receiver methods (`.indexOf`, `.includes`, `.at`, `.slice`,
+`.concat`, `.nth`, `.lastIndexOf`, `.size`, `.toString`, `.toLocaleString`) that work on a
+string AND an array and pick their lowering from what the receiver is inferred to be. That
+is a missing CONCEPT, not a missing service — `receiver` names one family and these have
+two — and it is the next thing worth solving.
+
+---
+
+## 2026-08-16 — docs: the language reference matches the simplified date lowerings
+
+The `.getUTCxxx()` and `.toISOString()` examples in `LANGUAGE.md` still showed the
+restated-default forms. Each is now verified against the compiler.
+
+---
+
+## 2026-08-16 — docs: the target architecture for MQL code generation
+
+The compiler has a clean front end and no back end. The lexer and parser are one
+straight line, and then the AST goes directly to JSON — so scope resolution,
+type inference, desugaring, constant folding and validation all run *during*
+emission, wherever the code first needs them. A feature has no single home, so
+each new one lands wherever is nearest to hand. The measurable result: one JS
+method can carry four separate declarations of its own contract (a TypeScript
+signature for the value form, another for the stream form, an arity check in the
+value lowering, an argument validator in the stream registry) and no two of them
+have to agree. `.take` currently disagrees with itself in all four.
+
+These specs describe the architecture that replaces it, and they are written
+before the code so the design is reviewable while it is still cheap to change.
+[`specs/architecture.md`](specs/architecture.md) is rewritten around the three
+MQL target languages (Query, Expr, Stage) and the two receiver kinds (Value,
+Stream), with the target implied by position rather than threaded as a value —
+a field can be dropped, and dropping this one would emit the wrong language.
+[`specs/lowering-grid.md`](specs/lowering-grid.md) is new: one declaration per
+feature, applicability derived from the declared receiver, and every applicable
+cell answered by a lowering or an `unsupported(reason)` a user will read.
+[`specs/predicate-ir.md`](specs/predicate-ir.md) is new: eleven nodes shared by
+the Query and Expr targets, each declaring the operand kinds its query form
+accepts, so a node that cannot index falls back to `{ $expr: … }` by
+construction instead of by omission. [`specs/desugar-pass.md`](specs/desugar-pass.md)
+is new: the seventeen sugar forms become explicit nodes before any lowering
+runs, with the five load-bearing precedence constraints written down and proved
+by the input that discriminates each pair.
+
+`SR2` in [`LANG_RULES.md`](LANG_RULES.md) is amended, because it promised the
+opposite of what the language should do. "A native JavaScript API behaves as its
+JavaScript self" reads as a promise about the runtime; the promise jsmql
+actually makes is about the *notation*. The line runs between what the developer
+wrote and what they never wrote: a typed `-3` in `.substr(-3, 2)` is an
+instruction and is honoured at whatever MQL cost, while lodash's ordering
+guarantee in `.uniqBy()` was never expressed by anyone and gives way to
+MongoDB's behaviour and the smaller document. The rule explicitly does not
+license guessing a value's type — a `$cond` on `$isArray` is missing
+information, not JavaScript behaviour.
+
+`vendor/fetch-mql-specs.mjs` now also fetches `definitions/types` and
+`definitions/query`. The first carries the enum members that
+`operator-validation.ts` otherwise holds as hand-written lists with nothing to
+check them against — the vendored `timeUnit` matches ours exactly, which is the
+point: it can now be asserted rather than assumed. The second describes the MQL
+query language, the one surface jsmql emits into with no spec to reconcile
+against, and the surface the predicate IR targets.
+
+---
+
+## 2026-08-16 — feat: `=== undefined` is an existence test in expression position too
+
+`$.a === undefined` lowered to `{ a: { $exists: false } }` as a filter and THREW everywhere
+else. The error explained that MongoDB's aggregation language "has no way to distinguish
+'missing field' from 'field present with null value'".
+
+That is not true, and has not been for a long time. `$type` answers `"missing"` for an absent
+field and `"null"` for one holding an explicit null — exactly the line `$exists` draws. So the
+expression language can express existence, and `Exists` is now the second node of the
+Predicate IR with both cells: `{ p: { $exists: b } }` as a query,
+`{ $eq | $ne: [{ $type: P }, "missing"] }` as an expression.
+
+Verified on a live mongod over `{a:5}`, `{a:null}`, `{}`: both targets select only the third
+for `=== undefined` and all three others for `!== undefined`, while `=== null` still selects
+only the second. Missing and null stay distinct, which was the whole worry.
+
+`undefined` used as a VALUE rather than compared still throws — MQL has no `undefined`, and
+emitting `null` would conflate two different documents. Its message no longer claims the
+comparison is `$match`-only; it names the two comparison forms and the two alternatives
+(`null`, `delete $.field`).
+
+The four `Exists` sources moved from the skipped set into the agreeing set of
+`test/query-expr-agreement.test.ts`, which is what that suite is for.
+
+---
+
+## 2026-08-16 — feat: every array-receiver method answers for its stream form
+
+62 methods work on an in-document array and not on the stream. 14 explained
+themselves — the value-collapsing terminals, which say where they *do* work. The
+other 48 fell to one generic sentence listing what is chainable, which tells a
+developer what else exists and never why the thing they wrote is absent.
+
+The grid rule says an applicable cell must carry an answer, so each now does.
+`STREAM_UNSUPPORTED` holds a written reason per method, and every reason names
+what to write instead: `.reverse` points at `.sort(<key>)`, `.flat` at
+`.flatMap(d => d.<field>)` (which is `$unwind`), `.union` at `.concat(...)`
+(which is `$unionWith`), the from-the-end family at sorting by the opposite key.
+`STREAM_HANDLED_ELSEWHERE` names the four whose answer lives in another file, so
+they cannot look unanswered.
+
+Writing the reasons did what the design predicted: three of them could not be
+written. `.uniq`, `.sortedUniq` and `.sortedUniqBy` had no defensible "why not" —
+`.uniqBy` already lowers to `$group` + `$replaceWith`, and `.uniq` is the same
+thing keyed on the whole document. lodash's "input is already sorted"
+precondition is a hint its runtime uses, never something the developer asked for
+in the output, so the sorted pair are aliases (SR2). All three now lower, and
+their membership matches the value form exactly on a live mongod.
+
+A completeness test fails when an array-receiver method has none of the four
+answers, when a name claims two, or when a reason is too short to help. The
+generic list survives for a name jsmql does not recognise at all — a typo has no
+reason to give, so it still gets the vocabulary and a suggestion.
+
+---
+
+## 2026-08-16 — feat: the grid learns dual receivers, and derives the dispatch it used to repeat
+
+`receiver` named ONE family, and twelve methods have two. JavaScript put `.slice`,
+`.indexOf`, `.includes`, `.concat` and `.at` on `Array` **and** on `String`; lodash's `.size`
+counts an array's elements or an object's keys; `.toString` applies to anything. Each of
+them hand-wrote the same thing: probe the receiver, emit one lowering if it is provably an
+array, another if provably a string, and a `cond($isArray, …)` when neither is provable.
+
+`receiver` now accepts a list of families (or `"any"`), and `byReceiver` declares one cell
+per family. Dispatch probes in DECLARATION order — so the precedence is visible in the
+declaration instead of buried in an if-chain — and **derives** the runtime `$cond` from the
+two cells when nothing is provable. That derivation is the point. Ten copies of one rule are
+ten chances for two of them to disagree about what a bare `$.field` means, and there is now
+exactly one place that decides. It is the same move the Predicate IR makes with its
+automatic `$expr` fallback.
+
+Three declarations answer the not-provable case themselves, and each says why it must: `.at`
+and `.nth` fall to `$$REMOVE` for a receiver that is neither (reading "not an array" as
+"string" once made `$.aliases.at(0) ?? "anonymous"` yield `""`), `.lastIndexOf` has an
+`unsupported` string cell so there is no second branch to dispatch to, and `.toString`'s
+"anything else" is a real lowering rather than a choice between two. The other five omit
+`uncertain` entirely; a test proves statically that what they omit can actually be derived.
+
+Two smaller pieces came with it. `MethodArgs` gained `spread`, because `.concat` splices its
+spread arguments where every other method refuses them — that is a property of the argument
+rule, not something a lowering should re-derive. And `LowerInput` gained
+`requireStringifiableReceiver`, which `.toString` and `.join` both need to refuse a receiver
+that provably holds arrays.
+
+The new invariants immediately caught a wrong claim of mine: `.getTime()` was declared
+date-only, but `$toLong` converts a string or a number too and jsmql deliberately does not
+take that away. Its receiver is `"any"`, and the grid now says so.
+
+Ratchet 21 → 9, and what remains is four stated reasons rather than a family. Output-neutral:
+the harness reports the same 218 accepted divergences, and every dual method was re-checked
+on a live `mongod` — both provable branches, and the derived one across documents holding an
+array in one and a string in the next.
+
+---
+
+## 2026-08-16 — feat(site): both published pages follow the reader's system colour scheme
+
+[index.html](../index.html) and the playground carry a dark palette beside the
+light one, chosen by `prefers-color-scheme` alone. Neither page has a switch, a
+stored preference, or a class on `<html>`: the reader's system decides, which is
+also the only way to get the right paint on first frame with no flash. Both pages
+already routed every colour through a `:root` token block, so the dark theme is a
+second token block and nothing else — one set of rules serves both themes, and
+they cannot drift apart the way two hand-maintained stylesheets would.
+`color-scheme: light dark` hands the browser its own surfaces (scroll bars, the
+search box, the Prettify check box, the canvas behind the page), which is
+otherwise the part of a dark page that stays stubbornly white.
+
+Six colours sat outside the token block and blocked the swap, so they became
+tokens: the primary button's fill and its text (`--accent-hover`, `--on-accent`),
+the editors' base colour (`--code-fg`), the error underline (`--err-marker`), the
+editor selection (`--code-selection`, plus a blurred variant so the light theme
+keeps the two distinct states CodeMirror ships), and the sidebar's search icon.
+That last one is a data URI, and a data URI cannot read a token — so the whole
+`url()` *is* the token, restated in the dark block with a lighter stroke.
+
+The pinned CodeMirror `neo` stylesheet is a light-theme file: it picks its token
+colours against white. Loading a second, dark CodeMirror theme was the obvious
+alternative and does not work here — the theme name is fixed in JavaScript
+(`theme: "neo"`), and CSS cannot swap a class on a media query, so the switch
+would have needed script and a stored preference, which is exactly what this
+change avoids. Instead both pages restate `neo`'s six token families at a
+lightness that reads on a dark surface, each keeping the hue `neo` gives it, so a
+keyword stays blue and a string stays orange in either theme. The landing page
+uses the same tokeniser as the playground's editors, so repeating the same rules
+in both files is also what keeps a block on one page matching the same block on
+the other. Light mode is unchanged to the byte.
+
+---
+
+## 2026-08-16 — feat(site): the landing page's code panels hold a numbered 80-column line
+
+The pretty-printer in [index.html](../index.html) breaks a line at 80 columns,
+and the panels showing its output were 464px of text — 59 columns. The page's
+own examples therefore scrolled sideways to be read, which is a poor advert for
+a language whose pitch is that its source is shorter than the MQL. The example
+cards now take a measure the *code* dictates: `--code-panel` states what one
+panel needs as arithmetic a reader can check — 80 columns at the character
+advance of the `--mono` stack, the widest line-number gutter, the padding, the
+border, a vertical scroll bar, and named slack for the platform variation in the
+last two — and `.wrap.code` carries two of them side by side.
+
+The cards break out of the page measure rather than the page widening to meet
+them. Widening `.wrap` itself was tried first and is worse: it drags every
+heading, paragraph and card grid along, and it pushed the six-card feature
+section from a balanced three-up to a ragged 4+2. So the examples section holds
+two wraps — the heading and the notices keep the 1080px prose measure, the cards
+get their own. A window too narrow for a whole line scrolls the panel sideways,
+as before. Making the panel wrap instead was tried and reverted: code should
+read as it was written, and a wrapped 80-column line is not what the printer
+produced.
+
+Line numbers arrive the way the playground's editors show them, which needed one
+element per line for a CSS counter to number. `paint()` therefore drives
+CodeMirror's `runMode` through its **callback** form rather than handing it the
+element: one run still tokenises the whole text, so a construct spanning lines
+reads correctly, while each line lands in its own `.ln`. Tokenising line by line
+would have been simpler and silently wrong for the same reason. The number is
+generated content, so a copied selection is the source alone, and the script
+sizes each gutter to the digits that panel actually reaches.
+
+One consequence worth recording: the hero paragraphs and the section intros
+dropped their 40em/46em reading caps. Beside cards half again as wide, a
+paragraph pinned to the left of a column that every heading, button row and card
+grid around it fills reads as a page that lost its centre. The page measure
+already bounds the line length, so the caps bought nothing and cost the
+alignment.
 
 ---
 
@@ -3704,173 +3918,154 @@ could not use an index.
 
 ---
 
-## 2026-08-16 — refactor: Mod and RegexMatch join the Predicate IR
+## 2026-08-16 — fix: `.trim("x")` is rejected instead of silently discarded
 
-Two more nodes, both output-neutral — the agreement suite already showed these two targets
-agreeing, so this is the tidying half of the work rather than the bug-finding half.
+Moving the self-contained string methods into the declaration grid turned up a
+gap none of the 4 000 tests covered. `.trim`, `.trimStart`, `.trimEnd`,
+`.toLowerCase` and `.toUpperCase` had switch arms that returned an operator
+without ever checking arity, so `$.s.trim("x")` compiled to a plain `$trim` and
+the argument vanished. The developer wrote something that did nothing, and jsmql
+said nothing.
 
-`Mod` earns its place on one detail: `$mod` takes `[divisor, remainder]`, which is the most
-swappable pair on the whole surface. That order is now written once. `RegexMatch` earns its
-on another: the Query cell must emit a live `RegExp` instance rather than a `$regex`
-document, because the driver serialises the former into the BSON regex an index reads and the
-latter into a plain document.
+Nothing about that was a hard problem — it is what happens when the arity rule
+and the lowering are two separate statements and only one of them is consulted.
+In a declaration they are the same object, and dispatch applies the rule before
+the lowering runs, so an arm cannot skip its own check. The nine methods in
+`src/methods/string.ts` got the rejection for free by being declared.
 
-`Mod`'s Expr cell is declared but not yet CALLED — codegen still reaches that shape through
-its generic binary path. That is honest only while the two agree, so a test asserts the
-declared cell equals the emitted MQL for both the plain and negated forms. A cell nobody
-checks is a comment pretending to be code, and the whole point of the IR is that a cell
-cannot quietly stop describing reality.
+Rejecting is faithful to both languages: JavaScript's `trim` takes no arguments,
+and MQL's `chars` option stays reachable through the operator form,
+`$trim({ input, chars })`.
 
-Five of eleven nodes now share their vocabulary.
-
----
-
-## 2026-08-16 — perf: .startsWith / .endsWith in a filter use an index, and stop aborting
-
-`$.email.startsWith("admin")` in Filter position had no query form. It fell through to
-`{ $expr: { $eq: [{ $indexOfCP: ["$email", "admin"] }, 0] } }`, and that is two problems at
-once.
-
-`$expr` cannot use an index. Measured on a live mongod with an index on the field:
-`{ email: /^admin/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. On any collection
-worth indexing, that is the difference between a lookup and a full scan.
-
-Worse, `$indexOfCP` ERRORS on a non-string input. One numeric value anywhere in that field
-aborted the entire query — not a wrong answer, a dead query. The regex simply does not match
-those documents.
-
-The anchored Query cell of the `Contains` IR node now emits a real BSON regex: a `RegExp`
-instance rather than a `$regex` document, because that is what the driver serialises into the
-form the index reads. It is gated on a LITERAL needle and a static field path — a runtime
-needle cannot be baked into a pattern, a computed receiver has nothing to index, and an HR1
-`"$x"` needle is a field reference rather than a literal. All three keep the expression
-fallback, which is exactly what the operand-kind gate is for.
-
-Regex metacharacters in the needle are escaped through a replacer FUNCTION, not a replacement
-string: `String.replace` reads `$&` and `$$` as substitution patterns, so a needle containing
-`$` would otherwise corrupt itself. `.startsWith("a.b")` matches the literal `a.b`.
-
-The overview of docs/specs/predicate-ir.md predicted this one — "they gain an indexed query
-form the day the anchored case gets one". It has.
+One constraint the migration surfaced: `src/methods/` must be a **leaf**. The
+first version of the string family imported `CodegenError` to write a nicer
+message, which made `codegen.ts` and the registry mutually dependent — the
+registry then assembled before the family initialised, `lookupMethod` returned
+nothing for every string method, and all nine silently fell back to the switch.
+The declarative arity rule says the same thing without the import.
 
 ---
 
-## 2026-08-16 — feat: `=== undefined` is an existence test in expression position too
+## 2026-08-16 — fix: `$$.push(...)` is detected in every callback body shape
 
-`$.a === undefined` lowered to `{ a: { $exists: false } }` as a filter and THREW everywhere
-else. The error explained that MongoDB's aggregation language "has no way to distinguish
-'missing field' from 'field present with null value'".
+`jsmql.update()` pre-rejects the statement-only union syntax with a message that
+names it. That gate walked the tree through a private copy of the traversal,
+and the copy handled a lambda's expression body and its statement block but not
+its `ExprBlock` — the `{ const q = …; return q }` shape. So the same buried
+`$$.push(...)` produced the actionable message from one callback spelling and a
+misdirecting downstream error from another. The sibling gate for lookup syntax
+walked all four forms and behaved correctly, which is what made the difference
+visible.
 
-That is not true, and has not been for a long time. `$type` answers `"missing"` for an absent
-field and `"null"` for one holding an explicit null — exactly the line `$exists` draws. So the
-expression language can express existence, and `Exists` is now the second node of the
-Predicate IR with both cells: `{ p: { $exists: b } }` as a query,
-`{ $eq | $ne: [{ $type: P }, "missing"] }` as an expression.
-
-Verified on a live mongod over `{a:5}`, `{a:null}`, `{}`: both targets select only the third
-for `=== undefined` and all three others for `!== undefined`, while `=== null` still selects
-only the second. Missing and null stay distinct, which was the whole worry.
-
-`undefined` used as a VALUE rather than compared still throws — MQL has no `undefined`, and
-emitting `null` would conflate two different documents. Its message no longer claims the
-comparison is `$match`-only; it names the two comparison forms and the two alternatives
-(`null`, `delete $.field`).
-
-The four `Exists` sources moved from the skipped set into the agreeing set of
-`test/query-expr-agreement.test.ts`, which is what that suite is for.
+The private walker is deleted. `containsUnionPush` now runs `someExpr` /
+`someStmt` from `ast-walk.ts` — the module that exists so a traversal is written
+once and is complete over the `Expr` union by construction. That removes about
+seventy lines and the whole class of divergence, since the two gates now share
+one walk instead of agreeing by inspection.
 
 ---
 
-## 2026-08-16 — test: the two predicate targets are compared on a live server
+## 2026-08-16 — fix: `$sampleRate` emits its query form instead of invalid MQL
 
-Before migrating nine more nodes into the Predicate IR, the question worth answering was
-which of them actually disagree. `test/query-expr-agreement.test.ts` answers it the only way
-that works: run BOTH lowerings of one source over the SAME documents on a real mongod and
-compare the ids that come back.
+`$match($sampleRate(0.1))` compiled to an `$expr` wrap containing
+`{ $sampleRate: 0.1 }`, and mongod refuses it: *Unrecognized expression
+'$sampleRate'*. The operator has no expression form at all — it is a `$match`
+body key and nothing else — so every expression-context lowering of it was
+invalid MQL. `CLAUDE.md` introduces the `$op(...)` escape hatch with this exact
+operator, so the documented example did not run.
 
-That is the query/expr analogue of `parity.test.ts`, and it exists because unit tests
-structurally cannot catch this class. `typeof $.a === "boolean"` selected documents as a
-filter and matched nothing as an expression, with a passing `toEqual` on each side, because
-each side was individually self-consistent.
+`OperatorDef` could not express "query position only", which is why the registry
+carried it as an ordinary single-argument expression operator. It can now:
+`matchOnly: true`, read by two places. The match translator lowers it to the bare
+query form ahead of every other rule, and codegen rejects it — reaching codegen
+proves it was written somewhere the translator does not run, so the rejection
+needs no context flag of its own.
 
-Twenty-seven predicates agree, verified on the server. Three diverge, and TWO of those were
-undocumented:
-
-- **Ordered comparison against a missing field.** `{age:{$lt:18}}` requires the field to
-  exist; `{$lt:["$age",18]}` reads a missing field as sorting before every number in BSON
-  order, so the expression form matches a document the query form does not. Divergence 3.
-- **`.includes()` on a receiver whose type cannot be proved.** The query form is MongoDB's
-  `{s:"ell"}` — equality OR array-membership — while the expression form dispatches on
-  `$isArray` and does a substring test for a string. Divergence 4. It is reached ONLY for a
-  bare field path: a receiver jsmql can prove is a string fails `asFieldPath`, takes the
-  `$expr` fallback, and agrees. So the divergence sits exactly where the type is unknowable
-  and never where it is known, which is the defensible half of it.
-
-The source comment on that second one claimed it was "Documented in
-match-query-translation.md". It was not. Both are now, and both are asserted live.
-
-The divergences are asserted to STILL diverge, not merely tolerated: repairing one fails the
-suite and forces its row to move to the agreeing set, so a fix cannot land unnoticed.
+It composes: `$.age > 18 && $sampleRate(0.1)` merges into one query document, so
+it now works in `find()` as well as `$match`, which it never did. Verified on a
+live mongod in all three shapes. Raw `$match({ $sampleRate: 0.1 })` passes
+through untouched. This closes the last known HR3 violation from the audit.
 
 ---
 
-## 2026-08-16 — refactor: one required-key rule, and two enum checkers that must stay two
+## 2026-08-16 — fix: a `jsmql.compile` param resolves inside `.reduce` and `Object.groupBy`
 
-The argument-vocabulary unification, done on the narrow basis its own audit argued for:
-merge what is genuinely one rule, and leave what only looks like one.
+`GenerateCtx` carries 23 fields and only two of them are required. A context
+literal that omits one of the other 21 still type-checks, so an omission is
+invisible at the point it is written and invisible in review. Two builders —
+the one `.reduce` uses for its callback and the one `Object.groupBy` uses for
+its key lambda — enumerated eight fields each, and `bindings` was not among
+them. The result was a parameter that resolved in `.map` and `.filter` and
+threw `Unknown identifier` in `.reduce`, for the same query.
 
-**Required keys were one rule written twice.** `requireKeys` in `literal-gate.ts` and a loop
-in `operator-validation.ts` had the same behaviour and a byte-identical message, differing
-only in how each learned which keys a body carried. `requirePresentKeys` is now the single
-rule; it takes the present KEY LIST rather than an object, which is what lets both call it —
-an operator call may be POSITIONAL, where there is no object body to read keys off. Twelve
-stage sites and the operator path share it.
-
-**The enum checkers are NOT one rule, and merging them would have been a bug.** They look
-like duplicates: same message shape, same closed-set idea. They differ in whether a source
-`"$x"` is skipped, and that difference is load-bearing, because the SLOTS differ in kind. An
-operator's enum slot is an EXPRESSION slot — `$dateTrunc({ date: $.d, unit: "$u" })` runs on
-mongod and returns the truncated date — so a `$`-string there is a field reference (HR1) that
-only the server can judge, and skipping it is right. A stage's enum slot is literal-only:
-mongod answers `$bucketAuto({ granularity: "$g" })` with "Unknown rounding granularity '$g'"
-and `$merge`'s `whenMatched: "$g"` with "Enumeration value '$g' … is not a valid value", so
-the field reference IS a certain violation and belongs at the keyboard. Both checked on a
-live server.
-
-Routing stages through the operator checker would emit MQL the server refuses (HR3); routing
-operators through the stage checker would reject a valid query. So the gates stay two, the
-WORDING stays one, and each now carries the reason plus a test that pins it — a future
-attempt to merge them fails loudly instead of quietly breaking one side.
-
-That is the whole of the argument-vocabulary work as scoped. The rest of what the plan
-proposed — one `args` shape across operators, stages and methods — was superficial
-similarity, and forcing it would have cost more than the duplication does.
-
-Output-neutral: 302 accepted rows, nothing unclassified.
+Both now spread the caller's context and override only what they actually
+change. The rule the comment states is the general one: never enumerate this
+type, because the field you forget is the field nobody can see you forgot. A
+builder that means to drop a field writes it as an explicit `undefined` with a
+reason, which reads as a decision instead of an accident.
 
 ---
 
-## 2026-08-16 — fix: jsmql.pipeline() rejected a source jsmql() compiled
+## 2026-08-16 — fix: a `let` tombstone survives every lambda depth
 
-`jsmql("$.o = $$$.orders.find(o => o.uid === 1)")` produced a two-stage pipeline.
-`jsmql.pipeline()` on the same source threw.
+`extendCtx` built its result by naming fields — nineteen of `GenerateCtx`'s
+twenty-three. The four it did not name were dropped, and nothing marked the drop
+as deliberate, because an omission in a literal of optional fields looks exactly
+like a field that does not apply.
 
-A strict-shape entry exists to reject input that would lower to the OTHER shape. This input
-lowers to a Pipeline — the shape `jsmql.pipeline` asks for — so refusing it was simply wrong.
-The reroute list in `lowerToPipelineStages` names `$out`, replace-root, replace-stream and
-`$$.length`, and omits the lookup form that `lowerWithCtx` has; the comment directly above
-that list says the two entries must agree on every sugar, so the intent was recorded and the
-list was one item short.
+One of the four was `sourceSwitch`, the tombstone recording which `let` bindings
+a stream switch invalidated. So `let k = $.x; $$ = $$$.orders.map(o => o.total + k)`
+produced the message that explains what happened, and adding one more `.map`
+level produced `Unknown identifier 'k'. Did you mean '$.k'?` — the same mistake,
+diagnosed well at depth 1 and badly at depth 2.
 
-`jsmql.update()` still refuses it, and correctly: `$lookup` is not in the update-pipeline
-whitelist.
+It now spreads. A lambda body is inside everything its surroundings are inside —
+the same sub-pipeline, the same `$lookup`, the same source switch — so the
+default is that every field carries through, and a field that must stop is
+written as an explicit `undefined` with a reason. The differential harness
+confirms the blast radius: across 2 518 sources and five entry points, exactly
+two outputs changed, and both are the improved message.
 
-Ten corpus sources changed answer, every one a lookup assignment through the `pipeline`
-entry. They were already harvested — the divergence had been invisible only because BOTH
-compilers rejected them.
+That is the third context bug of the same shape, so the rule is now stated in
+`src/CLAUDE.md`: never enumerate a `GenerateCtx` literal.
 
-Second of the entry-point gaps the desugar-pass audit turned up. Both are the same shape: a
-place that assembles stages, not testing for a form another place tests for.
+---
+
+## 2026-08-16 — fix: a callback method rejects JavaScript's trailing thisArg instead of dropping it
+
+`$.a.map(x => x, 1)` compiled and silently discarded the `1`. So did `.filter`, `.find`,
+`.findLast`, `.some`, `.every`, `.flatMap`, `.findIndex` and `.findLastIndex` — every method
+that reached `requireLambda`, which only ever read `args[0]`.
+
+`.map(fn, thisArg)` is real JavaScript, so this is not a typo the user can be told to look
+up: it is a signature they know, whose second half has no meaning in an expression that has
+no `this`. The message says exactly that. `requireLambda` raises it rather than an arity
+rule, because "is there a callback here?" is one question and a count rule would fire first
+with the worse of the two answers (".map() requires a lambda as its first argument, e.g.
+x => x > 0" tells a reader what to write; "requires exactly 1 argument" does not).
+`.reduce` / `.reduceRight` legitimately take two arguments and pass their own limit.
+
+Same class as the `.trim("x")` fix, and found the same way — by migrating the family to the
+declaration grid, where a method cannot skip its own rule. The differential corpus gained
+three cases so the change is recorded rather than merely believed.
+
+---
+
+## 2026-08-16 — fix: a fractional count is rejected instead of handed to `$slice`
+
+`$slice` needs a 32-bit integer in every count and position slot, so a fraction
+is not a wrong answer — it is an abort at query time. `.chunk` checked for one.
+`.take`, `.drop`, `.takeRight`, `.dropRight`, `.sampleSize` and `.slice` did
+not, and passed `1.5` straight through into the emitted document. The stream
+forms of the same methods rejected it, because that side gates its count
+through one shared validator; the value side had no equivalent, so one method
+disagreed with itself depending on where it was written.
+
+The check now lives with the argument rather than with the method, as
+`requireIntCount`, and every count-taking arm calls it. It stays literal-gated:
+a field path or any expression passes untouched, because only a literal is
+certainly wrong. A written negative index is still honoured — `.slice(-3)`
+means what the developer typed, and only the fraction is refused.
 
 ---
 
@@ -3898,6 +4093,130 @@ ordinary stage body is untouched and now has a corpus source holding it there.
 Found by the audit for the desugar pass, which is exactly the class of defect that pass is
 meant to make impossible: sugar recognised during lowering has to be recognised at every
 place lowering begins, and this was one that was not.
+
+---
+
+## 2026-08-16 — fix: assignment sugar inside a literal sub-pipeline no longer emits an empty field path
+
+Three loops assemble pipeline elements. Two of them route an assignment through
+the sugar hub; the third — the one that lowers a literal sub-pipeline array —
+buffered every assignment as an update op. `$ = …` has an empty target path, so
+`$lookup({ pipeline: [$ = { t: $.total }] })` emitted
+`{ $set: { "": { t: "$total" } } }`, which mongod refuses with *FieldPath cannot
+be constructed with empty string*. `$$$.<coll> = …` in the same slot reached
+`internalError`, a helper reserved for states a valid program cannot produce.
+
+That loop has no slot allocator, so it cannot run the sugar itself. It now
+recognises the three sugar shapes and rejects each one by naming the spelling
+that does work there: `$replaceWith({ … })` for a root replacement, `$match(…)`
+for narrowing a stream a sub-pipeline already owns, and — for a collection write
+— the fact that `$out` and `$merge` are forbidden inside any sub-pipeline, so
+the write belongs at the end of the outer one. An ordinary `$.a = 1` and a
+`delete $.x` are untouched.
+
+The rejection is the interim shape. Sugar becomes an explicit node before any
+loop runs once the desugar pass lands, at which point no loop can encounter a
+sugar form at all — see [specs/desugar-pass.md](specs/desugar-pass.md).
+
+---
+
+## 2026-08-16 — fix: jsmql.pipeline() rejected a source jsmql() compiled
+
+`jsmql("$.o = $$$.orders.find(o => o.uid === 1)")` produced a two-stage pipeline.
+`jsmql.pipeline()` on the same source threw.
+
+A strict-shape entry exists to reject input that would lower to the OTHER shape. This input
+lowers to a Pipeline — the shape `jsmql.pipeline` asks for — so refusing it was simply wrong.
+The reroute list in `lowerToPipelineStages` names `$out`, replace-root, replace-stream and
+`$$.length`, and omits the lookup form that `lowerWithCtx` has; the comment directly above
+that list says the two entries must agree on every sugar, so the intent was recorded and the
+list was one item short.
+
+`jsmql.update()` still refuses it, and correctly: `$lookup` is not in the update-pipeline
+whitelist.
+
+Ten corpus sources changed answer, every one a lookup assignment through the `pipeline`
+entry. They were already harvested — the divergence had been invisible only because BOTH
+compilers rejected them.
+
+Second of the entry-point gaps the desugar-pass audit turned up. Both are the same shape: a
+place that assembles stages, not testing for a form another place tests for.
+
+---
+
+## 2026-08-16 — fix: the date accessors accept the `{ date, timezone }` object form
+
+All 13 date-component accessors — `$year`, `$hour`, `$isoWeekYear` and their
+siblings — take either a date directly or a `{ date, timezone }` document, and
+the server accepts both. jsmql declared them `single`-shaped with
+`singleType: "date"`, so the object form was refused at compile time with
+*'$year' expects a date, but got an object*. The documented, server-valid
+spelling was unreachable, and the escape hatch could not route around it,
+because the escape hatch is the thing that was rejecting it.
+
+A false rejection is worse than a missing feature: the developer wrote valid
+MQL and jsmql refused to emit it. The `singleType` gate now exempts an object
+literal, which restores the literal-gating invariant it was breaking — a
+validator rejects only what is *certainly* wrong, and an object argument to
+these operators is certainly right about half the time. A string or a number
+still fails, since neither is a date in either form.
+
+All 13 object-form outputs were executed against a live `mongod` and accepted.
+Full validation of the object form's own keys waits for the argument vocabulary
+to be able to say "single or object" — see
+[specs/lowering-grid.md](specs/lowering-grid.md).
+
+---
+
+## 2026-08-16 — fix: the differential harness pins the compiler it compares against
+
+The harness's reference is "the checkout this worktree hangs off". That checkout belongs to
+whoever else is working in it, and it moved during a session — onto a branch two commits
+ahead of the frozen master the refactor was supposed to be measured against.
+
+Nothing was harmed: both commits were landing-page work and the reference's `src/` tree is
+byte-identical to frozen master, so every output-neutral claim made so far stands. But that
+was luck, and the harness could not have told anyone otherwise — it printed the reference
+PATH and nothing about which compiler was at it.
+
+It now reads the reference's commit and the git TREE hash of its `src/`, and prints both.
+Only `src/` counts: a reference that moved for docs is the same compiler, and the tree hash
+says so without a diff. `--accept` stamps that identity into
+`test/accepted-divergences.json`, and a later run whose reference has a different `src/`
+tree — or uncommitted edits in it — exits 3 and explains why. Every accepted row is a
+judgement about one specific compiler; against a different one, a real regression reads as
+an already-accepted divergence.
+
+The guard was checked by faking a moved tree hash: exit 3, with the recorded and actual
+trees named. That matters more now than it did — the three largest migrations left all
+justify themselves with "UNCLASSIFIED: 0".
+
+---
+
+## 2026-08-16 — fix: the harness reads the sources it was blind to, and compares validate
+
+The corpus harvester read `jsmql("…")` and `jsmql('…')` and nothing else. Every source
+written with backticks — the backtick CALL argument and the template TAG form, the latter a
+first-class entry point — was outside the corpus, including the whole of `realistic.test.ts`'s
+tag cases.
+
+Reading all three spellings grew the corpus from 2531 to 2901 sources and immediately
+surfaced 28 divergences. None was new: they are the same already-judged changes (`.uniq()`
+lowering to `$setUnion`, `jsmql.expr()` refusing a stream-replace, `.getUTCxxx()` dropping
+its restated UTC default) reaching sources the harness had simply never compiled. Each was
+judged by reusing the existing row's reason, because the judgement already existed — only
+the evidence was missing. A divergence the corpus cannot see is not an absence of divergence.
+
+`validate` is now a compared entry point. Its result IS a public contract —
+`{ valid, errors: [{ message, pos }] }`, and editor tooling underlines source with that
+`.pos` — but the harness only ever asked the four output entries, which observe that a throw
+happened and never what it said or where it pointed. It contributed 24 more rows, every one
+the `validate` view of a change already accepted for a throwing entry.
+
+Corpus 2531 → 2901 sources, 5 → 6 entry points; accepted rows 218 → 270, UNCLASSIFIED 0.
+This is groundwork: the Predicate IR, the desugar pass and the argument-vocabulary
+unification all justify themselves with "UNCLASSIFIED: 0", and that sentence is only worth
+as much as the corpus behind it.
 
 ---
 
@@ -3932,634 +4251,59 @@ still have two implementations.
 
 ---
 
-## 2026-08-16 — fix: the harness reads the sources it was blind to, and compares validate
+## 2026-08-16 — fix!: `jsmql.expr()` refuses root- and stream-replace instead of returning stages
 
-The corpus harvester read `jsmql("…")` and `jsmql('…')` and nothing else. Every source
-written with backticks — the backtick CALL argument and the template TAG form, the latter a
-first-class entry point — was outside the corpus, including the whole of `realistic.test.ts`'s
-tag cases.
+`jsmql.expr()` returns one aggregation expression — the shape that goes inside a
+stage body or an `updateOne` update document. It gated three sugar forms that
+lower to stages (`$lookup`, `$unionWith`, `$out`) and missed the other three.
+`$ = <expr>`, `$$ = <expr>` and the facet-shaped `$ = { k: $$.filter(…) }` fell
+through to the pipeline lowerer, so the expression-only entry point handed back
+a stage ARRAY.
 
-Reading all three spellings grew the corpus from 2531 to 2901 sources and immediately
-surfaced 28 divergences. None was new: they are the same already-judged changes (`.uniq()`
-lowering to `$setUnion`, `jsmql.expr()` refusing a stream-replace, `.getUTCxxx()` dropping
-its restated UTC default) reaching sources the harness had simply never compiled. Each was
-judged by reusing the existing row's reason, because the judgement already existed — only
-the evidence was missing. A divergence the corpus cannot see is not an absence of divergence.
+The cause is shared machinery doing the right thing for the wrong caller:
+`lowerProgram` reroutes a one-op `UpdateFilter` whose target is `$` or `$$`
+through `generateImplicitPipeline`, because a bare `$ = { a: 1 }` with no `;` is
+still a root replacement. That reroute is correct for `jsmql()` and
+`jsmql.pipeline()`, and wrong for the two entry points that cannot hold stages.
+`jsmql.filter()` already guarded against it; `jsmql.expr()` now does the same,
+with a message that names both ways out — drop the `$ = ` to build the
+expression alone, or move to a Pipeline entry.
 
-`validate` is now a compared entry point. Its result IS a public contract —
-`{ valid, errors: [{ message, pos }] }`, and editor tooling underlines source with that
-`.pos` — but the harness only ever asked the four output entries, which observe that a throw
-happened and never what it said or where it pointed. It contributed 24 more rows, every one
-the `validate` view of a change already accepted for a throwing entry.
-
-Corpus 2531 → 2901 sources, 5 → 6 entry points; accepted rows 218 → 270, UNCLASSIFIED 0.
-This is groundwork: the Predicate IR, the desugar pass and the argument-vocabulary
-unification all justify themselves with "UNCLASSIFIED: 0", and that sentence is only worth
-as much as the corpus behind it.
-
----
-
-## 2026-08-16 — fix: the differential harness pins the compiler it compares against
-
-The harness's reference is "the checkout this worktree hangs off". That checkout belongs to
-whoever else is working in it, and it moved during a session — onto a branch two commits
-ahead of the frozen master the refactor was supposed to be measured against.
-
-Nothing was harmed: both commits were landing-page work and the reference's `src/` tree is
-byte-identical to frozen master, so every output-neutral claim made so far stands. But that
-was luck, and the harness could not have told anyone otherwise — it printed the reference
-PATH and nothing about which compiler was at it.
-
-It now reads the reference's commit and the git TREE hash of its `src/`, and prints both.
-Only `src/` counts: a reference that moved for docs is the same compiler, and the tree hash
-says so without a diff. `--accept` stamps that identity into
-`test/accepted-divergences.json`, and a later run whose reference has a different `src/`
-tree — or uncommitted edits in it — exits 3 and explains why. Every accepted row is a
-judgement about one specific compiler; against a different one, a real regression reads as
-an already-accepted divergence.
-
-The guard was checked by faking a moved tree hash: exit 3, with the recorded and actual
-trees named. That matters more now than it did — the three largest migrations left all
-justify themselves with "UNCLASSIFIED: 0".
+This changes an accepted input into a rejected one, so it is breaking. The test
+that asserted `jsmql.expr("$ = $.profile")` returned `[{ $replaceWith: … }]` was
+asserting the defect; it now asserts the rejection, alongside a case confirming
+the ordinary `$.a = 1` update-op form still returns its bare `{ $set: … }`
+building block.
 
 ---
 
-## 2026-08-16 — feat: the grid learns dual receivers, and derives the dispatch it used to repeat
-
-`receiver` named ONE family, and twelve methods have two. JavaScript put `.slice`,
-`.indexOf`, `.includes`, `.concat` and `.at` on `Array` **and** on `String`; lodash's `.size`
-counts an array's elements or an object's keys; `.toString` applies to anything. Each of
-them hand-wrote the same thing: probe the receiver, emit one lowering if it is provably an
-array, another if provably a string, and a `cond($isArray, …)` when neither is provable.
-
-`receiver` now accepts a list of families (or `"any"`), and `byReceiver` declares one cell
-per family. Dispatch probes in DECLARATION order — so the precedence is visible in the
-declaration instead of buried in an if-chain — and **derives** the runtime `$cond` from the
-two cells when nothing is provable. That derivation is the point. Ten copies of one rule are
-ten chances for two of them to disagree about what a bare `$.field` means, and there is now
-exactly one place that decides. It is the same move the Predicate IR makes with its
-automatic `$expr` fallback.
-
-Three declarations answer the not-provable case themselves, and each says why it must: `.at`
-and `.nth` fall to `$$REMOVE` for a receiver that is neither (reading "not an array" as
-"string" once made `$.aliases.at(0) ?? "anonymous"` yield `""`), `.lastIndexOf` has an
-`unsupported` string cell so there is no second branch to dispatch to, and `.toString`'s
-"anything else" is a real lowering rather than a choice between two. The other five omit
-`uncertain` entirely; a test proves statically that what they omit can actually be derived.
-
-Two smaller pieces came with it. `MethodArgs` gained `spread`, because `.concat` splices its
-spread arguments where every other method refuses them — that is a property of the argument
-rule, not something a lowering should re-derive. And `LowerInput` gained
-`requireStringifiableReceiver`, which `.toString` and `.join` both need to refuse a receiver
-that provably holds arrays.
-
-The new invariants immediately caught a wrong claim of mine: `.getTime()` was declared
-date-only, but `$toLong` converts a string or a number too and jsmql deliberately does not
-take that away. Its receiver is `"any"`, and the grid now says so.
-
-Ratchet 21 → 9, and what remains is four stated reasons rather than a family. Output-neutral:
-the harness reports the same 218 accepted divergences, and every dual method was re-checked
-on a live `mongod` — both provable branches, and the derived one across documents holding an
-array in one and a string in the next.
-
----
-
-## 2026-08-16 — docs: adding a method means writing a declaration, not a switch case
-
-The authoring rule in `CLAUDE.md` still opened with "add a `case \"foo\"` in
-`generateMethodCall`" — the exact habit the grid was built to break. It now opens with "write
-ONE declaration in the matching family file", and says why the ratchet fails a switch case.
-
-`docs/specs/lowering-grid.md` gained the honest account of what is LEFT in the switch, so
-the remainder reads as a set of stated reasons rather than an unexplained backlog. Ten of
-the twenty are one shape: DUAL-receiver methods (`.indexOf`, `.includes`, `.at`, `.slice`,
-`.concat`, `.nth`, `.lastIndexOf`, `.size`, `.toString`, `.toLocaleString`) that work on a
-string AND an array and pick their lowering from what the receiver is inferred to be. That
-is a missing CONCEPT, not a missing service — `receiver` names one family and these have
-two — and it is the next thing worth solving.
-
----
-
-## 2026-08-16 — refactor: the reshaping array methods join the grid
-
-`.toReversed`, `.toSorted`, `.sortBy`, `.orderBy`, `.toSpliced` and `.with` become
-`src/methods/array-reshape.ts` — the immutable spellings JavaScript added beside its
-mutators, which is what the shim messages in `array-shims.ts` point at, plus the two lodash
-sorts. Ratchet 27 → 21.
-
-`src/mql-sort.ts` is the sixth leaf: a `.toSorted` / `.sortBy` / `.orderBy` argument → the
-`sortBy` value `$sortArray` expects. It reads SOURCE nodes and never lowers one, because
-`$sortArray` takes field names rather than expressions — so a sort key is always resolved at
-compile time or rejected.
-
-Output-neutral; all six were re-checked against their JavaScript and lodash results on a
-live `mongod`.
-
----
-
-## 2026-08-16 — fix: a callback method rejects JavaScript's trailing thisArg instead of dropping it
-
-`$.a.map(x => x, 1)` compiled and silently discarded the `1`. So did `.filter`, `.find`,
-`.findLast`, `.some`, `.every`, `.flatMap`, `.findIndex` and `.findLastIndex` — every method
-that reached `requireLambda`, which only ever read `args[0]`.
-
-`.map(fn, thisArg)` is real JavaScript, so this is not a typo the user can be told to look
-up: it is a signature they know, whose second half has no meaning in an expression that has
-no `this`. The message says exactly that. `requireLambda` raises it rather than an arity
-rule, because "is there a callback here?" is one question and a count rule would fire first
-with the worse of the two answers (".map() requires a lambda as its first argument, e.g.
-x => x > 0" tells a reader what to write; "requires exactly 1 argument" does not).
-`.reduce` / `.reduceRight` legitimately take two arguments and pass their own limit.
-
-Same class as the `.trim("x")` fix, and found the same way — by migrating the family to the
-declaration grid, where a method cannot skip its own rule. The differential corpus gained
-three cases so the change is recorded rather than merely believed.
-
----
-
-## 2026-08-16 — refactor: the JavaScript array callbacks join the grid
-
-`.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every` and `.flatMap` become
-`src/methods/array-callbacks.ts`, on one new service: `LowerInput.callback()`. Ratchet
-34 → 27.
-
-It is richer than `iteratee` and had to be. A JavaScript callback's PARAMETERS decide what
-gets iterated — reference the index and the input becomes a `$zip` of index and element
-rather than the array — and they decide what the body's scope binds. Only the compiler can
-build that. What comes back is leaf-shaped: the input, the element variable, whether the
-input holds pairs, and the lowered body. The two body forms (value and boolean) are lazy,
-because lowering one mints variable names and producing both eagerly would advance the
-gensym counter for a body nobody emits.
-
-`paired` is the one thing each declaration handles, and handles differently: `.map` has
-nothing to undo (the callback's result IS the element), `.filter` projects back out of the
-pair with a `$map`, `.find` takes element 1 of the matched pair, and `.some` / `.every`
-ignore it entirely because they collapse to a boolean either way.
-
-The arity rule for these is `resolverChecksArgs(sig)`. A callback method asks ONE question —
-"is there a callback here?" — and the answer has to name the shape (".map() requires a
-lambda as its first argument, e.g. x => x > 0"), which no count can. Splitting that into a
-count rule plus a shape check would produce two errors for one mistake and let the worse one
-win.
-
-Output-neutral; eight callback lowerings, including the index-referencing forms, were
-re-checked against their JavaScript results on a live `mongod`.
-
----
-
-## 2026-08-16 — refactor: the date family joins the grid, and an arity rule can carry a reason
-
-`src/methods/date.ts` takes the 18 date methods JavaScript does NOT have — `.plus` /
-`.minus`, `.isSame` / `.isBefore` / `.isAfter`, `.startOf` / `.endOf`, `.diff`, `.format`,
-`.set`, `.getTime`, `.toISOString` and the six parts JS has no getter for. The 16 accessors
-JS does have stay in `date-accessors.ts`. Ratchet 52 → 34.
-
-`src/mql-date.ts` is the fifth leaf: the trailing-options rule, the two `$dateFromParts`
-part families, the `.format()` specifier gate and the Moment-token translator. `dateOptions`
-takes a `Gen`, the same shape the index resolvers do.
-
-The migration surfaced a real ordering rule. `.isSame(other)` — no unit — used to be
-intercepted BEFORE the arity check, so it could say "without a unit that is just '===' —
-write 'a === b'" rather than "requires 2 or 3 arguments". Dispatch applies a declaration's
-arity rule first, so the tailored message was being buried. `MethodArgs` now carries
-`reject`: counts that parse fine but are wrong for a REASON, paired with the message that
-reason deserves, checked ahead of the count rule. It is the `unsupported` principle at
-argument-count granularity — where jsmql refuses, the answer IS the message, and a generic
-count complaint wastes the one chance to say what to write instead.
-
-`requireIntCount` went back to throwing `CodegenError` directly, now that `errors.ts` is a
-leaf. That settles the rule: a leaf HELPER throws directly, because it always has an AST
-node's `pos` to hand; `LowerInput.err` exists for the other case, a declaration that wants
-the CALL position defaulted for it.
-
-Output-neutral; nine date lowerings were re-checked on a live `mongod` against the values
-Moment and Luxon give.
-
----
-
-## 2026-08-16 — chore: the error classes and the arity checker move to leaves
-
-`CodegenError`, `UnknownIdentifierError` and `internalError` now live in `src/errors.ts`;
-`checkArity` and its rule type live in `src/arity.ts`. `codegen.ts` re-exports both sets, so
-no import path outside those two files changed.
-
-The reason is structural. Throwing is not a compiler service, and neither is counting
-arguments — but declaring them in `codegen.ts` meant every module that merely REJECTS
-something depended on the whole compiler. For the modules `codegen.ts` imports back
-(`literal-gate.ts`, `operator-validation.ts`, and any future method family that needs a
-literal gate) that dependency closes a cycle, and a cycle here is not a style complaint: it
-evaluates the importer first, which is how nine string methods once fell silently out of the
-registry with no error anywhere. `literal-gate.ts` is now a true leaf, and
-`operator-validation.ts` keeps only a type-only edge, which has no runtime existence.
-
-`arity.ts` also collapses a real duplicate: `Arity` in `codegen.ts` and `MethodArgs` in
-`src/methods/types.ts` were the same five fields written twice. One type now, read by the
-grid's declarations, the `$op(...)` validator, the stage validators and the static-call
-families alike.
-
-Output-neutral; the harness reports the same 209 accepted divergences.
-
----
-
-## 2026-08-16 — refactor: the positional array methods join the grid
-
-`src/methods/array-slicing.ts` takes 16 — `.take` / `.drop` / `.takeRight` / `.dropRight`,
-`.tail` / `.initial`, `.head` / `.first` / `.last`, `.chunk`, `.sampleSize`, `.flat`,
-`.zip` / `.unzip`, `.zipObject` and `.fromPairs`. Ratchet 68 → 52.
-
-The file states its three server rejections once, at the top, because the workarounds look
-arbitrary otherwise: `$slice`'s 3-argument count must be POSITIVE (so a lowering that could
-compute 0 uses the 2-argument first-n form, or floors the count at 1), `$slice` aborts the
-query on a FRACTION, and `$arrayToObject` needs a string `k`. Four separate lowerings here
-dodge the first one, in three different ways.
-
-`negate`, `isNegativeLiteral` and `requireIntCount` moved to `src/mql-shape.ts` on the way —
-the last one taking the error factory, the same pattern the string family already uses.
-
-Two of the family stay in the switch and the file says why. `.zipWith`'s iteratee takes one
-parameter per zipped ARRAY, so it cannot go through the one-parameter iteratee service;
-`.join` reads its receiver's shape to reject a nested array. Splitting `.zip` out of the
-shared arm left `.zipWith` able to say what it does without an `isWith` flag through every
-line.
-
-Output-neutral; `.take` through `.flat` were re-checked against their JavaScript and lodash
-results on a live `mongod`.
-
----
-
-## 2026-08-16 — refactor: the rejection shims become declarations
-
-`src/methods/array-shims.ts` holds the fourteen array methods jsmql answers with a
-REJECTION — the nine mutators (`.sort`, `.push`, `.fill`, …) and the five iterator/void
-methods (`.forEach`, `.keys`, …). Each is one `unsupported(reason)` declaration, which is
-what that cell was designed for: not a gap, but the recorded answer carrying the text the
-user reads. Ratchet 82 → 68.
-
-Dispatch now checks the unsupported answer BEFORE it counts arguments. A method that cannot
-be lowered at all has no arity to complain about, and its tailored message is the useful
-error — `.push(1, 2)` should say "use '.concat(x)'", not "requires exactly 1 argument".
-`NO_ARITY` in `src/methods/types.ts` states that absence as a decision instead of inventing
-a rule nothing reads.
-
-All fourteen declare the array family even though the lowering only throws, so a chain
-type-check on a non-array receiver fires first — "use '.toSorted()'" is the wrong advice for
-a string. `.toLocaleString` is the one that stays in the switch: it is genuinely universal
-in JavaScript (Number, Date and Array all carry it), so it has no family to declare.
-
-Output-neutral, message-for-message: all fourteen errors were re-read verbatim, and the
-statement-position mutator rewrites (`$.tags.push("x");` → `$set`/`$concatArrays`) are
-untouched — they never reach `generateMethodCall`.
-
----
-
-## 2026-08-16 — refactor: the object iteratee methods join the grid
-
-`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` complete `src/methods/object.ts`, which
-now holds 8. They needed the sixth service, `objIteratee` — the `(value[, key])` form over
-`$objectToArray` entries, where the arrow's parameters bind to the entry's `.v` and `.k`
-and the body lowers against that scope. Same reason as `iteratee`: only the compiler holds
-the scope, and the result is leaf-shaped.
-
-The four are two pairs that differ in one place each, so they declare as two factories:
-`pairMapper` swaps either half of the pair, `pairFilter` keeps or drops it. Ratchet 86 → 82.
-
-Output-neutral; the harness reports the same 209 accepted divergences.
-
----
-
-## 2026-08-16 — refactor: the lodash array family joins the grid, and the iteratee becomes a service
-
-The largest family so far: 33 declarations in `src/methods/lodash-array.ts`, ratchet
-119 → 86.
-
-Two things had to move first. `src/mql-array.ts` is a third leaf, holding the shapes the
-array lowerings share — `singleArrayArg` and its four constructors, `jsBool`,
-`stringKeyExpr`, `uniqByReduce`, `takeDropWhile` — plus the `ResolvedIteratee` type. And
-`LowerInput` gained its fourth and fifth services, `iteratee` and `predicate`. Those two
-genuinely cannot be leaves: resolving an iteratee lowers a lambda body against a scope that
-binds the element, and only the compiler holds that scope. The RESULT is leaf-shaped, which
-is exactly what lets `mql-array.ts` build from it.
-
-A resolved iteratee now carries its own `innerVar` — the minter for a variable read from
-INSIDE the element binding, gensymmed against the user's parameter name as well as the
-outer scope. Four call sites used to spell that out by hand as
-`internalVar(extendCtx(ctx, [it.as]), …)`, and one that forgot would have emitted MQL that
-captures a user parameter. Carrying the scoped minter on the iteratee makes it unforgettable.
-
-What stays in the switch from this family is the JavaScript CALLBACK methods — `.map`,
-`.filter`, `.reduce`, `.some` and friends. Their callbacks take up to three parameters
-(element, index, array), and the index form iterates a `$zip`, so lowering one needs a body
-CONTEXT the compiler builds rather than a resolved value. That is a larger service than an
-iteratee, and the family file says so.
-
-Output-neutral: the harness reports the same 209 accepted divergences and nothing
-unclassified, and `.xorBy` / `.groupBy` were re-checked against lodash's own results on a
-live `mongod`.
-
----
-
-## 2026-08-16 — refactor: the slice-index resolvers become leaves, and seven string methods follow
-
-`normaliseSliceIndex`, `resolveSliceIndex` and `clampNonNegativeIndex` each read
-an AST node *and* lower it, which is why they had sat in `codegen.ts` taking a
-`GenerateCtx`. They wanted one function out of it. Each now takes a `Gen` —
-`(node) => unknown`, the same shape `LowerInput.gen` already has — and moves to
-`src/mql-shape.ts` (the two array/index ones) and `src/mql-string.ts` (the string
-analogue, which needs `strLenOf`). `genIn(ctx)` in `codegen.ts` binds the
-function at each call site.
-
-That unblocked seven declarations: `.substr`, `.substring`, `.replace`,
-`.replaceAll`, `.match`, `.matchAll` and `.truncate` join `src/methods/string.ts`,
-which now holds 22. The pattern generalises and is written into the spec — before
-concluding a lowering needs the compiler, check whether it needs one function the
-compiler happens to carry.
-
-What is left in the switch from this family is a different problem, and the file
-now says so: `.indexOf`, `.lastIndexOf`, `.includes`, `.at` and `.slice` are
-DUAL-receiver. Each works on a string and on an array and picks its lowering from
-what the receiver is inferred to be, so the family they would declare is not one
-of the five the grid has. Ratchet 126 → 119.
-
-Output-neutral, as a migration must be: the differential harness reports the same
-209 accepted divergences and nothing unclassified, and `.substr(-3, 2)` /
-`.truncate({ length: 8 })` were re-checked on a live `mongod`.
-
----
-
-## 2026-08-16 — refactor: the number and object families join the grid
-
-Eight more declarations. `.round` / `.ceil` / `.floor` / `.inRange` become
-`src/methods/number.ts`; `.invert` / `.toPairs` / `.pick` / `.omit` become
-`src/methods/object.ts`. Grouping them makes their shared shape legible — three
-of the four object methods are the same round trip (`$objectToArray`, transform
-the pairs, `$arrayToObject`), and `.pick` is the one that escapes it because a
-fixed key list needs no round trip at all.
-
-`.pick` and `.omit` reject their argument, which needed a third service:
-`LowerInput.err`. Importing `CodegenError` would have recreated the cycle that
-silently dropped nine string methods earlier, so the factory is injected at
-dispatch instead. That is now the documented rule — what a lowering needs from
-the compiler arrives as a service, never as an import, and a service is added
-only when a lowering genuinely cannot be written without it.
-
-`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` stay in the switch, and the
-family file says why: each takes an iteratee whose body is lowered against a scope
-binding the pair variable, and that resolver needs a `GenerateCtx`.
-
-No output change across 2 527 corpus sources. Ratchet: 126.
-
----
-
-## 2026-08-16 — refactor: six more string methods, and a second shape leaf
-
-`.charAt`, `.startsWith`, `.endsWith`, `.search`, `.padStart` and `.padEnd` move
-to the grid. What unblocked them was not new machinery but noticing that the
-helpers they needed were already pure: `cond`, `clampNonNegative`,
-`coerceStringBinding`, `foldedSubtract`, `isSingleCodePointLiteral`,
-`mongoRegexOptions` and `literalIndexValue` all take an already-lowered value or
-a literal AST node and return MQL. None needs a `GenerateCtx`.
-
-So they move to `src/mql-shape.ts`, a leaf beside `src/mql-string.ts`. That is the
-pattern for the rest of the migration: a lowering that seems to need codegen
-usually needs a handful of pure builders that happen to live there, and moving
-them is what makes the family declarable.
-
-`.substr`, `.substring`, `.replace`, `.replaceAll`, `.match` and `.matchAll` stay
-in the switch, and the family file says why: the slice-index normalisers read the
-AST *and* lower it, so they take a `GenerateCtx` and cannot be a leaf without more
-surgery. That is a real reason, written down where the next person will look.
-
-No output change across 2 527 corpus sources. Ratchet: 134.
-
----
-
-## 2026-08-16 — refactor: the lodash case/word methods join the grid
-
-Nine methods — `.capitalize`, `.upperFirst`, `.lowerFirst`, `.words`,
-`.kebabCase`, `.snakeCase`, `.startCase`, `.camelCase`, `.escape` — move to
-`src/methods/lodash-string.ts`. In the switch they were nine `case` labels
-sharing one arity check and a nested switch; as declarations the shape they
-actually share is visible, because seven of them are the same two primitives:
-split into words, rejoin with a separator and a per-word transform.
-
-Their expression builders move to `src/mql-string.ts`. Each takes an
-already-lowered value and returns MQL — no `GenerateCtx` — which is exactly why
-they can be a leaf that `codegen.ts` and the families both import. `strLenOf`
-goes with them, carrying the comment that explains why it coerces: `$strLenCP` is
-the one string primitive that ABORTS on a missing input, so without the coercion
-`.endsWith()` would take down a query where the same predicate spelled
-`.startsWith()` returned false.
-
-`.camelCase` needed a gensymmed binding, so `LowerInput` gained `internalVar`.
-That is a service, not a context bag — the note beside it says to add another
-only when a lowering genuinely cannot be written without one, because
-`GenerateCtx` already demonstrated where a grab-bag ends up.
-
-The shared builders sit BESIDE `src/methods/`, not inside it. Putting them in the
-directory broke the assembly test immediately, and correctly: that test compares
-the directory to the registry, which only works while the directory holds
-families and nothing else.
-
-No output change across 2 527 corpus sources. Ratchet: 140.
-
----
-
-## 2026-08-16 — fix: `.trim("x")` is rejected instead of silently discarded
-
-Moving the self-contained string methods into the declaration grid turned up a
-gap none of the 4 000 tests covered. `.trim`, `.trimStart`, `.trimEnd`,
-`.toLowerCase` and `.toUpperCase` had switch arms that returned an operator
-without ever checking arity, so `$.s.trim("x")` compiled to a plain `$trim` and
-the argument vanished. The developer wrote something that did nothing, and jsmql
-said nothing.
-
-Nothing about that was a hard problem — it is what happens when the arity rule
-and the lowering are two separate statements and only one of them is consulted.
-In a declaration they are the same object, and dispatch applies the rule before
-the lowering runs, so an arm cannot skip its own check. The nine methods in
-`src/methods/string.ts` got the rejection for free by being declared.
-
-Rejecting is faithful to both languages: JavaScript's `trim` takes no arguments,
-and MQL's `chars` option stays reachable through the operator form,
-`$trim({ input, chars })`.
-
-One constraint the migration surfaced: `src/methods/` must be a **leaf**. The
-first version of the string family imported `CodegenError` to write a nicer
-message, which made `codegen.ts` and the registry mutually dependent — the
-registry then assembled before the family initialised, `lookupMethod` returned
-nothing for every string method, and all nine silently fell back to the switch.
-The declarative arity rule says the same thing without the import.
-
----
-
-## 2026-08-16 — refactor: the declaration grid takes its first family
-
-`src/methods/` is the shape every JS method is heading for: one declaration holding
-the receiver family, the argument rule, and the lowering — so the arity check and
-the lowering cannot disagree, because they read the same object.
-
-The date component accessors go first because they are the most uniform family
-and therefore prove the mechanism rather than the exceptions. Sixteen `case`
-labels become a sixteen-row table of method name to MongoDB operator. `.getHours`
-and `.getUTCHours` collapse to the same row: the operators are UTC already, so the
-pair differ only in which name the developer typed.
-
-`generateMethodCall` consults the grid before its switch, so a migrated method
-never reaches the switch and an un-migrated one is untouched. The differential
-harness reports **no output change at all** across 2 524 corpus sources — which is
-the point: a migration that moves where a lowering lives must not move what it
-emits.
-
-Two things the tests caught immediately. The registry needed a null prototype:
-`METHODS` contains `toString`, `valueOf` and `toLocaleString`, so a plain `{}`
-resolved them to inherited functions — truthy, no `args`, straight into the arity
-checker. And `test/methods-grid.test.ts` compares the family directory against the
-assembly, because a family file nobody imports is silently absent, which is the
-class of failure the grid exists to remove.
-
-The migration is in progress, so that file carries a ratchet: 158 methods still
-lower from the switch, and the count may only fall. A rise means a method was
-added to the switch instead of the grid — the habit this is meant to break. The
-ratchet also fails if it drifts more than five above the real count, so it cannot
-quietly become decoration.
-
----
-
-## 2026-08-16 — chore: `ArgRules` drops six dimensions nothing ever used
-
-`ArgRules` declared `positionalTypes`, `keyIntBounds`, `exactlyOneOf`,
-`atLeastOneOf`, `mutuallyExclusive` and `branches`. No operator populated any of
-them. `positionalTypes` even had a live read path in the validator, walking a
-field that was always undefined; the other five were read by nothing at all.
-
-A rule nothing produces and nothing reads is not a capability. It is a claim the
-registry cannot back, and it makes the vocabulary look wider than it is — which
-matters now, because the argument vocabulary is about to be shared across all
-four feature kinds and a reader needs to know what it really does.
-
-Two of the six describe checks that genuinely exist, hand-written in
-`stage-validation.ts`: `$setWindowFields`'s window cannot carry both `documents`
-and `range`, and a `$fill` output field cannot carry both `value` and `method`.
-Those are STAGE body rules, and `StageDef` has no `args` field yet. So the shared
-vocabulary gets rebuilt from what the stages actually need rather than from what
-was guessed in advance — the comment left in `operators.ts` says so, and points
-at the grid spec.
-
----
-
-## 2026-08-16 — refactor: the set methods lower to MongoDB's set operators
-
-`.uniq`, `.union`, `.intersection` and `.xor` each built an order-preserving
-`$reduce` or `$filter` by hand, reproducing lodash's input order. Nobody writes
-an ordering when they write `.uniq()` — SR2 — so all four now lower to the
-operators MongoDB ships. `$.tags.uniq()` drops from 144 characters to 21, and
-`$.a.xor($.b)` from 403 to 77.
-
-Two of the four needed more than an order argument.
-
-`.intersection` was returning `[3,3,2]` for `a=[3,3,2,1]`, `b=[3,2]` — it kept
-the receiver's duplicates, which matches **neither** lodash (documented as
-returning unique values) nor `$setIntersection`. Switching moves it toward the
-documented contract, so this one changes the set and not only its order.
-
-`.difference` is deliberately left alone. lodash documents it as keeping the
-receiver's duplicates, and `$setDifference` drops them — that would change which
-values come back, which is the developer's written meaning rather than an
-unwritten ordering. It stays a `$filter`.
-
-Every shape was compared against the reference compiler on a live mongod over
-duplicate, empty, single-element and document-valued inputs. `fold-consistency`
-now compares these four on membership rather than sequence: MongoDB does not
-define set-operator order, so any order is a valid server result and comparing
-sequences would fail on a difference that carries no meaning.
-
----
-
-## 2026-08-16 — fix: `$sampleRate` emits its query form instead of invalid MQL
-
-`$match($sampleRate(0.1))` compiled to an `$expr` wrap containing
-`{ $sampleRate: 0.1 }`, and mongod refuses it: *Unrecognized expression
-'$sampleRate'*. The operator has no expression form at all — it is a `$match`
-body key and nothing else — so every expression-context lowering of it was
-invalid MQL. `CLAUDE.md` introduces the `$op(...)` escape hatch with this exact
-operator, so the documented example did not run.
-
-`OperatorDef` could not express "query position only", which is why the registry
-carried it as an ordinary single-argument expression operator. It can now:
-`matchOnly: true`, read by two places. The match translator lowers it to the bare
-query form ahead of every other rule, and codegen rejects it — reaching codegen
-proves it was written somewhere the translator does not run, so the rejection
-needs no context flag of its own.
-
-It composes: `$.age > 18 && $sampleRate(0.1)` merges into one query document, so
-it now works in `find()` as well as `$match`, which it never did. Verified on a
-live mongod in all three shapes. Raw `$match({ $sampleRate: 0.1 })` passes
-through untouched. This closes the last known HR3 violation from the audit.
-
----
-
-## 2026-08-16 — feat: every array-receiver method answers for its stream form
-
-62 methods work on an in-document array and not on the stream. 14 explained
-themselves — the value-collapsing terminals, which say where they *do* work. The
-other 48 fell to one generic sentence listing what is chainable, which tells a
-developer what else exists and never why the thing they wrote is absent.
-
-The grid rule says an applicable cell must carry an answer, so each now does.
-`STREAM_UNSUPPORTED` holds a written reason per method, and every reason names
-what to write instead: `.reverse` points at `.sort(<key>)`, `.flat` at
-`.flatMap(d => d.<field>)` (which is `$unwind`), `.union` at `.concat(...)`
-(which is `$unionWith`), the from-the-end family at sorting by the opposite key.
-`STREAM_HANDLED_ELSEWHERE` names the four whose answer lives in another file, so
-they cannot look unanswered.
-
-Writing the reasons did what the design predicted: three of them could not be
-written. `.uniq`, `.sortedUniq` and `.sortedUniqBy` had no defensible "why not" —
-`.uniqBy` already lowers to `$group` + `$replaceWith`, and `.uniq` is the same
-thing keyed on the whole document. lodash's "input is already sorted"
-precondition is a hint its runtime uses, never something the developer asked for
-in the output, so the sorted pair are aliases (SR2). All three now lower, and
-their membership matches the value form exactly on a live mongod.
-
-A completeness test fails when an array-receiver method has none of the four
-answers, when a name claims two, or when a reason is too short to help. The
-generic list survives for a name jsmql does not recognise at all — a typo has no
-reason to give, so it still gets the vocabulary and a suggestion.
-
----
-
-## 2026-08-16 — docs: the language reference matches the simplified date lowerings
-
-The `.getUTCxxx()` and `.toISOString()` examples in `LANGUAGE.md` still showed the
-restated-default forms. Each is now verified against the compiler.
-
----
-
-## 2026-08-16 — refactor: the date accessors stop restating MongoDB's defaults
-
-Two lowerings named a default and paid for it in every emitted document.
-
-`.getUTCHours()` and its twelve siblings emitted
-`{ $hour: { date: X, timezone: "UTC" } }`. UTC is what `$hour` does with a bare
-argument, and the method name is where the developer already said UTC, so the
-object form restated it: 40 characters to say what 14 says. `.toISOString()`
-spelled out `%Y-%m-%dT%H:%M:%S.%LZ`, which is `$dateToString`'s own default
-format: 64 characters to say what 31 says. Both verified identical on a live
-mongod across ordinary dates, the epoch, and a missing field (null on both
-sides).
-
-A timezone the developer **types** is untouched — `.week("America/New_York")`
-and `.quarter({ timezone: "UTC" })` keep the object form, including when the
-value they typed happens to be the default. That is the WROTE / NEVER-WROTE line
-from SR2: the method name naming UTC is jsmql's own restatement, an argument is
-an instruction.
-
-`new Date()` was on the same list and is deliberately **not** changed. `$$NOW` is
-already a date, so `{ $toDate: "$$NOW" }` is a no-op on the value — but
-`jsmql.expr` hands back a bare update document, and MongoDB's non-pipeline
-`updateOne(filter, update)` treats every value as a literal. A bare `"$$NOW"`
-there would silently store the eight-character string, where the wrapper fails
-visibly. Twelve characters is not worth a silent wrong write.
+## 2026-08-16 — perf: .startsWith / .endsWith in a filter use an index, and stop aborting
+
+`$.email.startsWith("admin")` in Filter position had no query form. It fell through to
+`{ $expr: { $eq: [{ $indexOfCP: ["$email", "admin"] }, 0] } }`, and that is two problems at
+once.
+
+`$expr` cannot use an index. Measured on a live mongod with an index on the field:
+`{ email: /^admin/ }` plans an IXSCAN, the `$expr` form plans a COLLSCAN. On any collection
+worth indexing, that is the difference between a lookup and a full scan.
+
+Worse, `$indexOfCP` ERRORS on a non-string input. One numeric value anywhere in that field
+aborted the entire query — not a wrong answer, a dead query. The regex simply does not match
+those documents.
+
+The anchored Query cell of the `Contains` IR node now emits a real BSON regex: a `RegExp`
+instance rather than a `$regex` document, because that is what the driver serialises into the
+form the index reads. It is gated on a LITERAL needle and a static field path — a runtime
+needle cannot be baked into a pattern, a computed receiver has nothing to index, and an HR1
+`"$x"` needle is a field reference rather than a literal. All three keep the expression
+fallback, which is exactly what the operand-kind gate is for.
+
+Regex metacharacters in the needle are escaped through a replacer FUNCTION, not a replacement
+string: `String.replace` reads `$&` and `$$` as substitution patterns, so a needle containing
+`$` would otherwise corrupt itself. `.startsWith("a.b")` matches the literal `a.b`.
+
+The overview of docs/specs/predicate-ir.md predicted this one — "they gain an indexed query
+form the day the anchored case gets one". It has.
 
 ---
 
@@ -4607,25 +4351,6 @@ harness records the nine affected corpus rows with that reasoning.
 
 ---
 
-## 2026-08-16 — refactor: the hand-rolled tree walks are gone
-
-With the child-list table in place, the private walkers that predate it have
-nothing left to do. `walkContainsLookup` and its argument helper — 85 lines
-re-deriving the `Expr` union so `containsLookupCall` could ask one question —
-collapse into that question: a predicate handed to `someExpr`. The gate behaves
-identically across every callback shape, including the `ExprBlock` body that its
-sibling walker used to miss.
-
-Two dead things go with them. `findFirstLookupInElement` and
-`findFirstLookupInExpr` (107 lines) call only each other; no caller exists, and
-their doc comment names one that does not. `isExprVar` has none either. Both were
-reported by the audit and both check out.
-
-198 lines net removed from `src/`, no output change across 2 519 corpus sources,
-and one fewer place for the next node kind to be forgotten.
-
----
-
 ## 2026-08-16 — refactor: every AST walk derives from one child-list table
 
 `ast-walk.ts` exists so a traversal is written once. Its own walk ended in
@@ -4657,73 +4382,479 @@ no output change across 2 519 sources.
 
 ---
 
-## 2026-08-16 — fix: a `let` tombstone survives every lambda depth
+## 2026-08-16 — refactor: Mod and RegexMatch join the Predicate IR
 
-`extendCtx` built its result by naming fields — nineteen of `GenerateCtx`'s
-twenty-three. The four it did not name were dropped, and nothing marked the drop
-as deliberate, because an omission in a literal of optional fields looks exactly
-like a field that does not apply.
+Two more nodes, both output-neutral — the agreement suite already showed these two targets
+agreeing, so this is the tidying half of the work rather than the bug-finding half.
 
-One of the four was `sourceSwitch`, the tombstone recording which `let` bindings
-a stream switch invalidated. So `let k = $.x; $$ = $$$.orders.map(o => o.total + k)`
-produced the message that explains what happened, and adding one more `.map`
-level produced `Unknown identifier 'k'. Did you mean '$.k'?` — the same mistake,
-diagnosed well at depth 1 and badly at depth 2.
+`Mod` earns its place on one detail: `$mod` takes `[divisor, remainder]`, which is the most
+swappable pair on the whole surface. That order is now written once. `RegexMatch` earns its
+on another: the Query cell must emit a live `RegExp` instance rather than a `$regex`
+document, because the driver serialises the former into the BSON regex an index reads and the
+latter into a plain document.
 
-It now spreads. A lambda body is inside everything its surroundings are inside —
-the same sub-pipeline, the same `$lookup`, the same source switch — so the
-default is that every field carries through, and a field that must stop is
-written as an explicit `undefined` with a reason. The differential harness
-confirms the blast radius: across 2 518 sources and five entry points, exactly
-two outputs changed, and both are the improved message.
+`Mod`'s Expr cell is declared but not yet CALLED — codegen still reaches that shape through
+its generic binary path. That is honest only while the two agree, so a test asserts the
+declared cell equals the emitted MQL for both the plain and negated forms. A cell nobody
+checks is a comment pretending to be code, and the whole point of the IR is that a cell
+cannot quietly stop describing reality.
 
-That is the third context bug of the same shape, so the rule is now stated in
-`src/CLAUDE.md`: never enumerate a `GenerateCtx` literal.
+Five of eleven nodes now share their vocabulary.
 
 ---
 
-## 2026-08-16 — test: the server halves of two suites were never running
+## 2026-08-16 — refactor: one required-key rule, and two enum checkers that must stay two
 
-`permutations.test.ts` generates 2 277 method chains and checks two things: that
-each compiles, and that the emitted MQL runs on a real mongod. The second half
-was gated on `JSMQL_PERM_MONGO`, which nothing in the repo sets and `npm test`
-never passes. So the half that catches server rejections — the half its own
-header credits with finding two real bugs — had not run in a normal test run.
-It now defaults to a local mongod and self-skips when none is reachable, the
-same shape `fold-consistency.test.ts` already used.
+The argument-vocabulary unification, done on the narrow basis its own audit argued for:
+merge what is genuinely one rule, and leave what only looks like one.
 
-Defaulting it is not enough on its own, because a suite that degrades to
-compile-only still reads as green. Both suites now assert which of the two
-happened. `permutations` counts the chains that reached the server and requires
-that to be all of them or none. `fold-consistency` counts the cases that
-actually compared a folded value against a server value — 43 of its 793 cases
-early-return, asserting nothing, and nothing said so — and requires at least
-90% to compare. Both floors were checked by tightening them until they failed,
-because a guard nobody has seen fail is not a guard.
+**Required keys were one rule written twice.** `requireKeys` in `literal-gate.ts` and a loop
+in `operator-validation.ts` had the same behaviour and a byte-identical message, differing
+only in how each learned which keys a body carried. `requirePresentKeys` is now the single
+rule; it takes the present KEY LIST rather than an object, which is what lets both call it —
+an operator call may be POSITIONAL, where there is no object body to read keys off. Twelve
+stage sites and the operator path share it.
+
+**The enum checkers are NOT one rule, and merging them would have been a bug.** They look
+like duplicates: same message shape, same closed-set idea. They differ in whether a source
+`"$x"` is skipped, and that difference is load-bearing, because the SLOTS differ in kind. An
+operator's enum slot is an EXPRESSION slot — `$dateTrunc({ date: $.d, unit: "$u" })` runs on
+mongod and returns the truncated date — so a `$`-string there is a field reference (HR1) that
+only the server can judge, and skipping it is right. A stage's enum slot is literal-only:
+mongod answers `$bucketAuto({ granularity: "$g" })` with "Unknown rounding granularity '$g'"
+and `$merge`'s `whenMatched: "$g"` with "Enumeration value '$g' … is not a valid value", so
+the field reference IS a certain violation and belongs at the keyboard. Both checked on a
+live server.
+
+Routing stages through the operator checker would emit MQL the server refuses (HR3); routing
+operators through the stage checker would reject a valid query. So the gates stay two, the
+WORDING stays one, and each now carries the reason plus a test that pins it — a future
+attempt to merge them fails loudly instead of quietly breaking one side.
+
+That is the whole of the argument-vocabulary work as scoped. The rest of what the plan
+proposed — one `args` shape across operators, stages and methods — was superficial
+similarity, and forcing it would have cost more than the duplication does.
+
+Output-neutral: 302 accepted rows, nothing unclassified.
 
 ---
 
-## 2026-08-16 — test: a value/stream parity gate
+## 2026-08-16 — refactor: six more string methods, and a second shape leaf
 
-21 method names carry two lowerings — a value form over an array inside a
-document, and a stream form over the pipeline's documents. They live in
-different files and share no code, so nothing structural keeps them meaning the
-same thing, and nothing compared them. `.uniqBy("t")` returned `[1,2,4]` in
-value position and `[2,1,4]` in stream position under a fully green suite.
+`.charAt`, `.startsWith`, `.endsWith`, `.search`, `.padStart` and `.padEnd` move
+to the grid. What unblocked them was not new machinery but noticing that the
+helpers they needed were already pure: `cond`, `clampNonNegative`,
+`coerceStringBinding`, `foldedSubtract`, `isSingleCodePointLiteral`,
+`mongoRegexOptions` and `literalIndexValue` all take an already-lowered value or
+a literal AST node and return MQL. None needs a `GenerateCtx`.
 
-`test/parity.test.ts` runs both forms over the same documents on a real mongod
-and compares what comes back. The comparison is deliberately order-insensitive,
-because order is the one thing parity does NOT contract: SR2 says an ordering
-guarantee the developer never wrote gives way to MongoDB's behaviour, and
-`$group` is unordered. So `.uniqBy` passes on its differing order and would fail
-the moment an element appeared or vanished — verified both ways before the gate
-was trusted.
+So they move to `src/mql-shape.ts`, a leaf beside `src/mql-string.ts`. That is the
+pattern for the rest of the migration: a lowering that seems to need codegen
+usually needs a handful of pure builders that happen to live there, and moving
+them is what makes the family declarable.
 
-Two coverage floors come with it, because a comparison suite that quietly stops
-comparing is worse than none. One asserts every case names a genuinely
-dual-declared method; the other fails if the shared surface grows without cases
-joining it. The suite self-skips when no mongod is reachable, matching
-`fold-consistency.test.ts`.
+`.substr`, `.substring`, `.replace`, `.replaceAll`, `.match` and `.matchAll` stay
+in the switch, and the family file says why: the slice-index normalisers read the
+AST *and* lower it, so they take a `GenerateCtx` and cannot be a leaf without more
+surgery. That is a real reason, written down where the next person will look.
+
+No output change across 2 527 corpus sources. Ratchet: 134.
+
+---
+
+## 2026-08-16 — refactor: the date accessors stop restating MongoDB's defaults
+
+Two lowerings named a default and paid for it in every emitted document.
+
+`.getUTCHours()` and its twelve siblings emitted
+`{ $hour: { date: X, timezone: "UTC" } }`. UTC is what `$hour` does with a bare
+argument, and the method name is where the developer already said UTC, so the
+object form restated it: 40 characters to say what 14 says. `.toISOString()`
+spelled out `%Y-%m-%dT%H:%M:%S.%LZ`, which is `$dateToString`'s own default
+format: 64 characters to say what 31 says. Both verified identical on a live
+mongod across ordinary dates, the epoch, and a missing field (null on both
+sides).
+
+A timezone the developer **types** is untouched — `.week("America/New_York")`
+and `.quarter({ timezone: "UTC" })` keep the object form, including when the
+value they typed happens to be the default. That is the WROTE / NEVER-WROTE line
+from SR2: the method name naming UTC is jsmql's own restatement, an argument is
+an instruction.
+
+`new Date()` was on the same list and is deliberately **not** changed. `$$NOW` is
+already a date, so `{ $toDate: "$$NOW" }` is a no-op on the value — but
+`jsmql.expr` hands back a bare update document, and MongoDB's non-pipeline
+`updateOne(filter, update)` treats every value as a literal. A bare `"$$NOW"`
+there would silently store the eight-character string, where the wrapper fails
+visibly. Twelve characters is not worth a silent wrong write.
+
+---
+
+## 2026-08-16 — refactor: the date family joins the grid, and an arity rule can carry a reason
+
+`src/methods/date.ts` takes the 18 date methods JavaScript does NOT have — `.plus` /
+`.minus`, `.isSame` / `.isBefore` / `.isAfter`, `.startOf` / `.endOf`, `.diff`, `.format`,
+`.set`, `.getTime`, `.toISOString` and the six parts JS has no getter for. The 16 accessors
+JS does have stay in `date-accessors.ts`. Ratchet 52 → 34.
+
+`src/mql-date.ts` is the fifth leaf: the trailing-options rule, the two `$dateFromParts`
+part families, the `.format()` specifier gate and the Moment-token translator. `dateOptions`
+takes a `Gen`, the same shape the index resolvers do.
+
+The migration surfaced a real ordering rule. `.isSame(other)` — no unit — used to be
+intercepted BEFORE the arity check, so it could say "without a unit that is just '===' —
+write 'a === b'" rather than "requires 2 or 3 arguments". Dispatch applies a declaration's
+arity rule first, so the tailored message was being buried. `MethodArgs` now carries
+`reject`: counts that parse fine but are wrong for a REASON, paired with the message that
+reason deserves, checked ahead of the count rule. It is the `unsupported` principle at
+argument-count granularity — where jsmql refuses, the answer IS the message, and a generic
+count complaint wastes the one chance to say what to write instead.
+
+`requireIntCount` went back to throwing `CodegenError` directly, now that `errors.ts` is a
+leaf. That settles the rule: a leaf HELPER throws directly, because it always has an AST
+node's `pos` to hand; `LowerInput.err` exists for the other case, a declaration that wants
+the CALL position defaulted for it.
+
+Output-neutral; nine date lowerings were re-checked on a live `mongod` against the values
+Moment and Luxon give.
+
+---
+
+## 2026-08-16 — refactor: the declaration grid takes its first family
+
+`src/methods/` is the shape every JS method is heading for: one declaration holding
+the receiver family, the argument rule, and the lowering — so the arity check and
+the lowering cannot disagree, because they read the same object.
+
+The date component accessors go first because they are the most uniform family
+and therefore prove the mechanism rather than the exceptions. Sixteen `case`
+labels become a sixteen-row table of method name to MongoDB operator. `.getHours`
+and `.getUTCHours` collapse to the same row: the operators are UTC already, so the
+pair differ only in which name the developer typed.
+
+`generateMethodCall` consults the grid before its switch, so a migrated method
+never reaches the switch and an un-migrated one is untouched. The differential
+harness reports **no output change at all** across 2 524 corpus sources — which is
+the point: a migration that moves where a lowering lives must not move what it
+emits.
+
+Two things the tests caught immediately. The registry needed a null prototype:
+`METHODS` contains `toString`, `valueOf` and `toLocaleString`, so a plain `{}`
+resolved them to inherited functions — truthy, no `args`, straight into the arity
+checker. And `test/methods-grid.test.ts` compares the family directory against the
+assembly, because a family file nobody imports is silently absent, which is the
+class of failure the grid exists to remove.
+
+The migration is in progress, so that file carries a ratchet: 158 methods still
+lower from the switch, and the count may only fall. A rise means a method was
+added to the switch instead of the grid — the habit this is meant to break. The
+ratchet also fails if it drifts more than five above the real count, so it cannot
+quietly become decoration.
+
+---
+
+## 2026-08-16 — refactor: the hand-rolled tree walks are gone
+
+With the child-list table in place, the private walkers that predate it have
+nothing left to do. `walkContainsLookup` and its argument helper — 85 lines
+re-deriving the `Expr` union so `containsLookupCall` could ask one question —
+collapse into that question: a predicate handed to `someExpr`. The gate behaves
+identically across every callback shape, including the `ExprBlock` body that its
+sibling walker used to miss.
+
+Two dead things go with them. `findFirstLookupInElement` and
+`findFirstLookupInExpr` (107 lines) call only each other; no caller exists, and
+their doc comment names one that does not. `isExprVar` has none either. Both were
+reported by the audit and both check out.
+
+198 lines net removed from `src/`, no output change across 2 519 corpus sources,
+and one fewer place for the next node kind to be forgotten.
+
+---
+
+## 2026-08-16 — refactor: the JavaScript array callbacks join the grid
+
+`.map`, `.filter`, `.find`, `.findLast`, `.some`, `.every` and `.flatMap` become
+`src/methods/array-callbacks.ts`, on one new service: `LowerInput.callback()`. Ratchet
+34 → 27.
+
+It is richer than `iteratee` and had to be. A JavaScript callback's PARAMETERS decide what
+gets iterated — reference the index and the input becomes a `$zip` of index and element
+rather than the array — and they decide what the body's scope binds. Only the compiler can
+build that. What comes back is leaf-shaped: the input, the element variable, whether the
+input holds pairs, and the lowered body. The two body forms (value and boolean) are lazy,
+because lowering one mints variable names and producing both eagerly would advance the
+gensym counter for a body nobody emits.
+
+`paired` is the one thing each declaration handles, and handles differently: `.map` has
+nothing to undo (the callback's result IS the element), `.filter` projects back out of the
+pair with a `$map`, `.find` takes element 1 of the matched pair, and `.some` / `.every`
+ignore it entirely because they collapse to a boolean either way.
+
+The arity rule for these is `resolverChecksArgs(sig)`. A callback method asks ONE question —
+"is there a callback here?" — and the answer has to name the shape (".map() requires a
+lambda as its first argument, e.g. x => x > 0"), which no count can. Splitting that into a
+count rule plus a shape check would produce two errors for one mistake and let the worse one
+win.
+
+Output-neutral; eight callback lowerings, including the index-referencing forms, were
+re-checked against their JavaScript results on a live `mongod`.
+
+---
+
+## 2026-08-16 — refactor: the lodash array family joins the grid, and the iteratee becomes a service
+
+The largest family so far: 33 declarations in `src/methods/lodash-array.ts`, ratchet
+119 → 86.
+
+Two things had to move first. `src/mql-array.ts` is a third leaf, holding the shapes the
+array lowerings share — `singleArrayArg` and its four constructors, `jsBool`,
+`stringKeyExpr`, `uniqByReduce`, `takeDropWhile` — plus the `ResolvedIteratee` type. And
+`LowerInput` gained its fourth and fifth services, `iteratee` and `predicate`. Those two
+genuinely cannot be leaves: resolving an iteratee lowers a lambda body against a scope that
+binds the element, and only the compiler holds that scope. The RESULT is leaf-shaped, which
+is exactly what lets `mql-array.ts` build from it.
+
+A resolved iteratee now carries its own `innerVar` — the minter for a variable read from
+INSIDE the element binding, gensymmed against the user's parameter name as well as the
+outer scope. Four call sites used to spell that out by hand as
+`internalVar(extendCtx(ctx, [it.as]), …)`, and one that forgot would have emitted MQL that
+captures a user parameter. Carrying the scoped minter on the iteratee makes it unforgettable.
+
+What stays in the switch from this family is the JavaScript CALLBACK methods — `.map`,
+`.filter`, `.reduce`, `.some` and friends. Their callbacks take up to three parameters
+(element, index, array), and the index form iterates a `$zip`, so lowering one needs a body
+CONTEXT the compiler builds rather than a resolved value. That is a larger service than an
+iteratee, and the family file says so.
+
+Output-neutral: the harness reports the same 209 accepted divergences and nothing
+unclassified, and `.xorBy` / `.groupBy` were re-checked against lodash's own results on a
+live `mongod`.
+
+---
+
+## 2026-08-16 — refactor: the lodash case/word methods join the grid
+
+Nine methods — `.capitalize`, `.upperFirst`, `.lowerFirst`, `.words`,
+`.kebabCase`, `.snakeCase`, `.startCase`, `.camelCase`, `.escape` — move to
+`src/methods/lodash-string.ts`. In the switch they were nine `case` labels
+sharing one arity check and a nested switch; as declarations the shape they
+actually share is visible, because seven of them are the same two primitives:
+split into words, rejoin with a separator and a per-word transform.
+
+Their expression builders move to `src/mql-string.ts`. Each takes an
+already-lowered value and returns MQL — no `GenerateCtx` — which is exactly why
+they can be a leaf that `codegen.ts` and the families both import. `strLenOf`
+goes with them, carrying the comment that explains why it coerces: `$strLenCP` is
+the one string primitive that ABORTS on a missing input, so without the coercion
+`.endsWith()` would take down a query where the same predicate spelled
+`.startsWith()` returned false.
+
+`.camelCase` needed a gensymmed binding, so `LowerInput` gained `internalVar`.
+That is a service, not a context bag — the note beside it says to add another
+only when a lowering genuinely cannot be written without one, because
+`GenerateCtx` already demonstrated where a grab-bag ends up.
+
+The shared builders sit BESIDE `src/methods/`, not inside it. Putting them in the
+directory broke the assembly test immediately, and correctly: that test compares
+the directory to the registry, which only works while the directory holds
+families and nothing else.
+
+No output change across 2 527 corpus sources. Ratchet: 140.
+
+---
+
+## 2026-08-16 — refactor: the number and object families join the grid
+
+Eight more declarations. `.round` / `.ceil` / `.floor` / `.inRange` become
+`src/methods/number.ts`; `.invert` / `.toPairs` / `.pick` / `.omit` become
+`src/methods/object.ts`. Grouping them makes their shared shape legible — three
+of the four object methods are the same round trip (`$objectToArray`, transform
+the pairs, `$arrayToObject`), and `.pick` is the one that escapes it because a
+fixed key list needs no round trip at all.
+
+`.pick` and `.omit` reject their argument, which needed a third service:
+`LowerInput.err`. Importing `CodegenError` would have recreated the cycle that
+silently dropped nine string methods earlier, so the factory is injected at
+dispatch instead. That is now the documented rule — what a lowering needs from
+the compiler arrives as a service, never as an import, and a service is added
+only when a lowering genuinely cannot be written without it.
+
+`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` stay in the switch, and the
+family file says why: each takes an iteratee whose body is lowered against a scope
+binding the pair variable, and that resolver needs a `GenerateCtx`.
+
+No output change across 2 527 corpus sources. Ratchet: 126.
+
+---
+
+## 2026-08-16 — refactor: the object iteratee methods join the grid
+
+`.mapValues`, `.mapKeys`, `.pickBy` and `.omitBy` complete `src/methods/object.ts`, which
+now holds 8. They needed the sixth service, `objIteratee` — the `(value[, key])` form over
+`$objectToArray` entries, where the arrow's parameters bind to the entry's `.v` and `.k`
+and the body lowers against that scope. Same reason as `iteratee`: only the compiler holds
+the scope, and the result is leaf-shaped.
+
+The four are two pairs that differ in one place each, so they declare as two factories:
+`pairMapper` swaps either half of the pair, `pairFilter` keeps or drops it. Ratchet 86 → 82.
+
+Output-neutral; the harness reports the same 209 accepted divergences.
+
+---
+
+## 2026-08-16 — refactor: the positional array methods join the grid
+
+`src/methods/array-slicing.ts` takes 16 — `.take` / `.drop` / `.takeRight` / `.dropRight`,
+`.tail` / `.initial`, `.head` / `.first` / `.last`, `.chunk`, `.sampleSize`, `.flat`,
+`.zip` / `.unzip`, `.zipObject` and `.fromPairs`. Ratchet 68 → 52.
+
+The file states its three server rejections once, at the top, because the workarounds look
+arbitrary otherwise: `$slice`'s 3-argument count must be POSITIVE (so a lowering that could
+compute 0 uses the 2-argument first-n form, or floors the count at 1), `$slice` aborts the
+query on a FRACTION, and `$arrayToObject` needs a string `k`. Four separate lowerings here
+dodge the first one, in three different ways.
+
+`negate`, `isNegativeLiteral` and `requireIntCount` moved to `src/mql-shape.ts` on the way —
+the last one taking the error factory, the same pattern the string family already uses.
+
+Two of the family stay in the switch and the file says why. `.zipWith`'s iteratee takes one
+parameter per zipped ARRAY, so it cannot go through the one-parameter iteratee service;
+`.join` reads its receiver's shape to reject a nested array. Splitting `.zip` out of the
+shared arm left `.zipWith` able to say what it does without an `isWith` flag through every
+line.
+
+Output-neutral; `.take` through `.flat` were re-checked against their JavaScript and lodash
+results on a live `mongod`.
+
+---
+
+## 2026-08-16 — refactor: the Predicate IR is complete — every query shape is stated once
+
+The remaining six nodes join `src/predicate-ir.ts`: `Cmp` (equality, ordered, and the two
+null modes), `Membership`, `Contains` unanchored, `Quantify`, `Logical` and the two that have
+no query cell at all.
+
+The measurable end state is that `src/match-translation.ts` builds NO query document of its
+own. Every `{ [field]: … }` it used to assemble now comes from a named cell, and a test reads
+its source and asserts that, because the IR's entire value is that a shape exists in one
+place. `fieldQueryOrNegated` — the generic negation helper the old sites shared — turned out
+to have no callers left once the nodes absorbed them, and is gone.
+
+Three cells were worth writing out rather than folding together. `Cmp`'s null modes are
+separate functions because they are genuinely different queries: JS `===` must EXCLUDE a
+missing field, which only `{ p: { $type: "null" } }` does, while `==` wants the looser
+`{ p: null }` that matches missing too. Equality does NOT route through the ordered builder,
+because `{ p: v }` is both the indexed spelling and the one that matches an array containing
+`v` — `{ p: { $eq: v } }` is neither. And `Contains` unanchored keeps the array-membership
+form with the divergence stated on it.
+
+Two Query cells are deliberately absent rather than unwritten: `Quantify(every)` needs De
+Morgan and `Logical(not)` flips index usage with the data's shape. Both would change which
+documents an index can serve, so they take the `$expr` fallback BY CONSTRUCTION — which is
+the property the IR was designed around. A missing query rule is never a wrong answer, only a
+larger document.
+
+Output-neutral throughout: 443 accepted rows, nothing unclassified, and the agreement suite
+still shows the two targets selecting the same documents.
+
+---
+
+## 2026-08-16 — refactor: the rejection shims become declarations
+
+`src/methods/array-shims.ts` holds the fourteen array methods jsmql answers with a
+REJECTION — the nine mutators (`.sort`, `.push`, `.fill`, …) and the five iterator/void
+methods (`.forEach`, `.keys`, …). Each is one `unsupported(reason)` declaration, which is
+what that cell was designed for: not a gap, but the recorded answer carrying the text the
+user reads. Ratchet 82 → 68.
+
+Dispatch now checks the unsupported answer BEFORE it counts arguments. A method that cannot
+be lowered at all has no arity to complain about, and its tailored message is the useful
+error — `.push(1, 2)` should say "use '.concat(x)'", not "requires exactly 1 argument".
+`NO_ARITY` in `src/methods/types.ts` states that absence as a decision instead of inventing
+a rule nothing reads.
+
+All fourteen declare the array family even though the lowering only throws, so a chain
+type-check on a non-array receiver fires first — "use '.toSorted()'" is the wrong advice for
+a string. `.toLocaleString` is the one that stays in the switch: it is genuinely universal
+in JavaScript (Number, Date and Array all carry it), so it has no family to declare.
+
+Output-neutral, message-for-message: all fourteen errors were re-read verbatim, and the
+statement-position mutator rewrites (`$.tags.push("x");` → `$set`/`$concatArrays`) are
+untouched — they never reach `generateMethodCall`.
+
+---
+
+## 2026-08-16 — refactor: the reshaping array methods join the grid
+
+`.toReversed`, `.toSorted`, `.sortBy`, `.orderBy`, `.toSpliced` and `.with` become
+`src/methods/array-reshape.ts` — the immutable spellings JavaScript added beside its
+mutators, which is what the shim messages in `array-shims.ts` point at, plus the two lodash
+sorts. Ratchet 27 → 21.
+
+`src/mql-sort.ts` is the sixth leaf: a `.toSorted` / `.sortBy` / `.orderBy` argument → the
+`sortBy` value `$sortArray` expects. It reads SOURCE nodes and never lowers one, because
+`$sortArray` takes field names rather than expressions — so a sort key is always resolved at
+compile time or rejected.
+
+Output-neutral; all six were re-checked against their JavaScript and lodash results on a
+live `mongod`.
+
+---
+
+## 2026-08-16 — refactor: the set methods lower to MongoDB's set operators
+
+`.uniq`, `.union`, `.intersection` and `.xor` each built an order-preserving
+`$reduce` or `$filter` by hand, reproducing lodash's input order. Nobody writes
+an ordering when they write `.uniq()` — SR2 — so all four now lower to the
+operators MongoDB ships. `$.tags.uniq()` drops from 144 characters to 21, and
+`$.a.xor($.b)` from 403 to 77.
+
+Two of the four needed more than an order argument.
+
+`.intersection` was returning `[3,3,2]` for `a=[3,3,2,1]`, `b=[3,2]` — it kept
+the receiver's duplicates, which matches **neither** lodash (documented as
+returning unique values) nor `$setIntersection`. Switching moves it toward the
+documented contract, so this one changes the set and not only its order.
+
+`.difference` is deliberately left alone. lodash documents it as keeping the
+receiver's duplicates, and `$setDifference` drops them — that would change which
+values come back, which is the developer's written meaning rather than an
+unwritten ordering. It stays a `$filter`.
+
+Every shape was compared against the reference compiler on a live mongod over
+duplicate, empty, single-element and document-valued inputs. `fold-consistency`
+now compares these four on membership rather than sequence: MongoDB does not
+define set-operator order, so any order is a valid server result and comparing
+sequences would fail on a difference that carries no meaning.
+
+---
+
+## 2026-08-16 — refactor: the slice-index resolvers become leaves, and seven string methods follow
+
+`normaliseSliceIndex`, `resolveSliceIndex` and `clampNonNegativeIndex` each read
+an AST node *and* lower it, which is why they had sat in `codegen.ts` taking a
+`GenerateCtx`. They wanted one function out of it. Each now takes a `Gen` —
+`(node) => unknown`, the same shape `LowerInput.gen` already has — and moves to
+`src/mql-shape.ts` (the two array/index ones) and `src/mql-string.ts` (the string
+analogue, which needs `strLenOf`). `genIn(ctx)` in `codegen.ts` binds the
+function at each call site.
+
+That unblocked seven declarations: `.substr`, `.substring`, `.replace`,
+`.replaceAll`, `.match`, `.matchAll` and `.truncate` join `src/methods/string.ts`,
+which now holds 22. The pattern generalises and is written into the spec — before
+concluding a lowering needs the compiler, check whether it needs one function the
+compiler happens to carry.
+
+What is left in the switch from this family is a different problem, and the file
+now says so: `.indexOf`, `.lastIndexOf`, `.includes`, `.at` and `.slice` are
+DUAL-receiver. Each works on a string and on an array and picks its lowering from
+what the receiver is inferred to be, so the family they would declare is not one
+of the five the grid has. Ratchet 126 → 119.
+
+Output-neutral, as a migration must be: the differential harness reports the same
+209 accepted divergences and nothing unclassified, and `.substr(-3, 2)` /
+`.truncate({ length: 8 })` were re-checked on a live `mongod`.
 
 ---
 
@@ -4762,182 +4893,81 @@ classified against the six fixes that produced them.
 
 ---
 
-## 2026-08-16 — fix: the date accessors accept the `{ date, timezone }` object form
+## 2026-08-16 — test: a value/stream parity gate
 
-All 13 date-component accessors — `$year`, `$hour`, `$isoWeekYear` and their
-siblings — take either a date directly or a `{ date, timezone }` document, and
-the server accepts both. jsmql declared them `single`-shaped with
-`singleType: "date"`, so the object form was refused at compile time with
-*'$year' expects a date, but got an object*. The documented, server-valid
-spelling was unreachable, and the escape hatch could not route around it,
-because the escape hatch is the thing that was rejecting it.
+21 method names carry two lowerings — a value form over an array inside a
+document, and a stream form over the pipeline's documents. They live in
+different files and share no code, so nothing structural keeps them meaning the
+same thing, and nothing compared them. `.uniqBy("t")` returned `[1,2,4]` in
+value position and `[2,1,4]` in stream position under a fully green suite.
 
-A false rejection is worse than a missing feature: the developer wrote valid
-MQL and jsmql refused to emit it. The `singleType` gate now exempts an object
-literal, which restores the literal-gating invariant it was breaking — a
-validator rejects only what is *certainly* wrong, and an object argument to
-these operators is certainly right about half the time. A string or a number
-still fails, since neither is a date in either form.
+`test/parity.test.ts` runs both forms over the same documents on a real mongod
+and compares what comes back. The comparison is deliberately order-insensitive,
+because order is the one thing parity does NOT contract: SR2 says an ordering
+guarantee the developer never wrote gives way to MongoDB's behaviour, and
+`$group` is unordered. So `.uniqBy` passes on its differing order and would fail
+the moment an element appeared or vanished — verified both ways before the gate
+was trusted.
 
-All 13 object-form outputs were executed against a live `mongod` and accepted.
-Full validation of the object form's own keys waits for the argument vocabulary
-to be able to say "single or object" — see
-[specs/lowering-grid.md](specs/lowering-grid.md).
-
----
-
-## 2026-08-16 — fix!: `jsmql.expr()` refuses root- and stream-replace instead of returning stages
-
-`jsmql.expr()` returns one aggregation expression — the shape that goes inside a
-stage body or an `updateOne` update document. It gated three sugar forms that
-lower to stages (`$lookup`, `$unionWith`, `$out`) and missed the other three.
-`$ = <expr>`, `$$ = <expr>` and the facet-shaped `$ = { k: $$.filter(…) }` fell
-through to the pipeline lowerer, so the expression-only entry point handed back
-a stage ARRAY.
-
-The cause is shared machinery doing the right thing for the wrong caller:
-`lowerProgram` reroutes a one-op `UpdateFilter` whose target is `$` or `$$`
-through `generateImplicitPipeline`, because a bare `$ = { a: 1 }` with no `;` is
-still a root replacement. That reroute is correct for `jsmql()` and
-`jsmql.pipeline()`, and wrong for the two entry points that cannot hold stages.
-`jsmql.filter()` already guarded against it; `jsmql.expr()` now does the same,
-with a message that names both ways out — drop the `$ = ` to build the
-expression alone, or move to a Pipeline entry.
-
-This changes an accepted input into a rejected one, so it is breaking. The test
-that asserted `jsmql.expr("$ = $.profile")` returned `[{ $replaceWith: … }]` was
-asserting the defect; it now asserts the rejection, alongside a case confirming
-the ordinary `$.a = 1` update-op form still returns its bare `{ $set: … }`
-building block.
+Two coverage floors come with it, because a comparison suite that quietly stops
+comparing is worse than none. One asserts every case names a genuinely
+dual-declared method; the other fails if the shared surface grows without cases
+joining it. The suite self-skips when no mongod is reachable, matching
+`fold-consistency.test.ts`.
 
 ---
 
-## 2026-08-16 — fix: assignment sugar inside a literal sub-pipeline no longer emits an empty field path
+## 2026-08-16 — test: the server halves of two suites were never running
 
-Three loops assemble pipeline elements. Two of them route an assignment through
-the sugar hub; the third — the one that lowers a literal sub-pipeline array —
-buffered every assignment as an update op. `$ = …` has an empty target path, so
-`$lookup({ pipeline: [$ = { t: $.total }] })` emitted
-`{ $set: { "": { t: "$total" } } }`, which mongod refuses with *FieldPath cannot
-be constructed with empty string*. `$$$.<coll> = …` in the same slot reached
-`internalError`, a helper reserved for states a valid program cannot produce.
+`permutations.test.ts` generates 2 277 method chains and checks two things: that
+each compiles, and that the emitted MQL runs on a real mongod. The second half
+was gated on `JSMQL_PERM_MONGO`, which nothing in the repo sets and `npm test`
+never passes. So the half that catches server rejections — the half its own
+header credits with finding two real bugs — had not run in a normal test run.
+It now defaults to a local mongod and self-skips when none is reachable, the
+same shape `fold-consistency.test.ts` already used.
 
-That loop has no slot allocator, so it cannot run the sugar itself. It now
-recognises the three sugar shapes and rejects each one by naming the spelling
-that does work there: `$replaceWith({ … })` for a root replacement, `$match(…)`
-for narrowing a stream a sub-pipeline already owns, and — for a collection write
-— the fact that `$out` and `$merge` are forbidden inside any sub-pipeline, so
-the write belongs at the end of the outer one. An ordinary `$.a = 1` and a
-`delete $.x` are untouched.
-
-The rejection is the interim shape. Sugar becomes an explicit node before any
-loop runs once the desugar pass lands, at which point no loop can encounter a
-sugar form at all — see [specs/desugar-pass.md](specs/desugar-pass.md).
+Defaulting it is not enough on its own, because a suite that degrades to
+compile-only still reads as green. Both suites now assert which of the two
+happened. `permutations` counts the chains that reached the server and requires
+that to be all of them or none. `fold-consistency` counts the cases that
+actually compared a folded value against a server value — 43 of its 793 cases
+early-return, asserting nothing, and nothing said so — and requires at least
+90% to compare. Both floors were checked by tightening them until they failed,
+because a guard nobody has seen fail is not a guard.
 
 ---
 
-## 2026-08-16 — fix: a fractional count is rejected instead of handed to `$slice`
+## 2026-08-16 — test: the two predicate targets are compared on a live server
 
-`$slice` needs a 32-bit integer in every count and position slot, so a fraction
-is not a wrong answer — it is an abort at query time. `.chunk` checked for one.
-`.take`, `.drop`, `.takeRight`, `.dropRight`, `.sampleSize` and `.slice` did
-not, and passed `1.5` straight through into the emitted document. The stream
-forms of the same methods rejected it, because that side gates its count
-through one shared validator; the value side had no equivalent, so one method
-disagreed with itself depending on where it was written.
+Before migrating nine more nodes into the Predicate IR, the question worth answering was
+which of them actually disagree. `test/query-expr-agreement.test.ts` answers it the only way
+that works: run BOTH lowerings of one source over the SAME documents on a real mongod and
+compare the ids that come back.
 
-The check now lives with the argument rather than with the method, as
-`requireIntCount`, and every count-taking arm calls it. It stays literal-gated:
-a field path or any expression passes untouched, because only a literal is
-certainly wrong. A written negative index is still honoured — `.slice(-3)`
-means what the developer typed, and only the fraction is refused.
+That is the query/expr analogue of `parity.test.ts`, and it exists because unit tests
+structurally cannot catch this class. `typeof $.a === "boolean"` selected documents as a
+filter and matched nothing as an expression, with a passing `toEqual` on each side, because
+each side was individually self-consistent.
 
----
+Twenty-seven predicates agree, verified on the server. Three diverge, and TWO of those were
+undocumented:
 
-## 2026-08-16 — fix: a `jsmql.compile` param resolves inside `.reduce` and `Object.groupBy`
+- **Ordered comparison against a missing field.** `{age:{$lt:18}}` requires the field to
+  exist; `{$lt:["$age",18]}` reads a missing field as sorting before every number in BSON
+  order, so the expression form matches a document the query form does not. Divergence 3.
+- **`.includes()` on a receiver whose type cannot be proved.** The query form is MongoDB's
+  `{s:"ell"}` — equality OR array-membership — while the expression form dispatches on
+  `$isArray` and does a substring test for a string. Divergence 4. It is reached ONLY for a
+  bare field path: a receiver jsmql can prove is a string fails `asFieldPath`, takes the
+  `$expr` fallback, and agrees. So the divergence sits exactly where the type is unknowable
+  and never where it is known, which is the defensible half of it.
 
-`GenerateCtx` carries 23 fields and only two of them are required. A context
-literal that omits one of the other 21 still type-checks, so an omission is
-invisible at the point it is written and invisible in review. Two builders —
-the one `.reduce` uses for its callback and the one `Object.groupBy` uses for
-its key lambda — enumerated eight fields each, and `bindings` was not among
-them. The result was a parameter that resolved in `.map` and `.filter` and
-threw `Unknown identifier` in `.reduce`, for the same query.
+The source comment on that second one claimed it was "Documented in
+match-query-translation.md". It was not. Both are now, and both are asserted live.
 
-Both now spread the caller's context and override only what they actually
-change. The rule the comment states is the general one: never enumerate this
-type, because the field you forget is the field nobody can see you forgot. A
-builder that means to drop a field writes it as an explicit `undefined` with a
-reason, which reads as a decision instead of an accident.
-
----
-
-## 2026-08-16 — fix: `$$.push(...)` is detected in every callback body shape
-
-`jsmql.update()` pre-rejects the statement-only union syntax with a message that
-names it. That gate walked the tree through a private copy of the traversal,
-and the copy handled a lambda's expression body and its statement block but not
-its `ExprBlock` — the `{ const q = …; return q }` shape. So the same buried
-`$$.push(...)` produced the actionable message from one callback spelling and a
-misdirecting downstream error from another. The sibling gate for lookup syntax
-walked all four forms and behaved correctly, which is what made the difference
-visible.
-
-The private walker is deleted. `containsUnionPush` now runs `someExpr` /
-`someStmt` from `ast-walk.ts` — the module that exists so a traversal is written
-once and is complete over the `Expr` union by construction. That removes about
-seventy lines and the whole class of divergence, since the two gates now share
-one walk instead of agreeing by inspection.
-
----
-
-## 2026-08-16 — docs: the target architecture for MQL code generation
-
-The compiler has a clean front end and no back end. The lexer and parser are one
-straight line, and then the AST goes directly to JSON — so scope resolution,
-type inference, desugaring, constant folding and validation all run *during*
-emission, wherever the code first needs them. A feature has no single home, so
-each new one lands wherever is nearest to hand. The measurable result: one JS
-method can carry four separate declarations of its own contract (a TypeScript
-signature for the value form, another for the stream form, an arity check in the
-value lowering, an argument validator in the stream registry) and no two of them
-have to agree. `.take` currently disagrees with itself in all four.
-
-These specs describe the architecture that replaces it, and they are written
-before the code so the design is reviewable while it is still cheap to change.
-[`specs/architecture.md`](specs/architecture.md) is rewritten around the three
-MQL target languages (Query, Expr, Stage) and the two receiver kinds (Value,
-Stream), with the target implied by position rather than threaded as a value —
-a field can be dropped, and dropping this one would emit the wrong language.
-[`specs/lowering-grid.md`](specs/lowering-grid.md) is new: one declaration per
-feature, applicability derived from the declared receiver, and every applicable
-cell answered by a lowering or an `unsupported(reason)` a user will read.
-[`specs/predicate-ir.md`](specs/predicate-ir.md) is new: eleven nodes shared by
-the Query and Expr targets, each declaring the operand kinds its query form
-accepts, so a node that cannot index falls back to `{ $expr: … }` by
-construction instead of by omission. [`specs/desugar-pass.md`](specs/desugar-pass.md)
-is new: the seventeen sugar forms become explicit nodes before any lowering
-runs, with the five load-bearing precedence constraints written down and proved
-by the input that discriminates each pair.
-
-`SR2` in [`LANG_RULES.md`](LANG_RULES.md) is amended, because it promised the
-opposite of what the language should do. "A native JavaScript API behaves as its
-JavaScript self" reads as a promise about the runtime; the promise jsmql
-actually makes is about the *notation*. The line runs between what the developer
-wrote and what they never wrote: a typed `-3` in `.substr(-3, 2)` is an
-instruction and is honoured at whatever MQL cost, while lodash's ordering
-guarantee in `.uniqBy()` was never expressed by anyone and gives way to
-MongoDB's behaviour and the smaller document. The rule explicitly does not
-license guessing a value's type — a `$cond` on `$isArray` is missing
-information, not JavaScript behaviour.
-
-`vendor/fetch-mql-specs.mjs` now also fetches `definitions/types` and
-`definitions/query`. The first carries the enum members that
-`operator-validation.ts` otherwise holds as hand-written lists with nothing to
-check them against — the vendored `timeUnit` matches ours exactly, which is the
-point: it can now be asserted rather than assumed. The second describes the MQL
-query language, the one surface jsmql emits into with no spec to reconcile
-against, and the surface the predicate IR targets.
+The divergences are asserted to STILL diverge, not merely tolerated: repairing one fails the
+suite and forces its row to move to the agreeing set, so a fix cannot land unnoticed.
 
 ---
 
@@ -4974,6 +5004,49 @@ change. Each site now names the rule and its source of truth instead of listing
 members. In the same spirit, `src/codegen.ts` lost nine `(Phase 1)` banner
 comments — a work-batch label is development history, which belongs here and
 nowhere else.
+
+---
+
+## 2026-08-15 — feat: `interface Date` completes jsmql's date vocabulary
+
+`@koresar/jsmql/globals` now augments `Date` alongside `Array<T>` / `String` /
+`Number`. Sixteen methods gained completion: `.plus`, `.minus`, `.diff`,
+`.startOf`, `.endOf`, `.format`, `.set`, `.week`, `.isoWeek`, `.isoWeekYear`,
+`.isoWeekday`, `.dayOfYear`, `.quarter`, `.isSame`, `.isBefore`, `.isAfter` —
+plus `.clamp`, which turned out to be a seventeenth (below).
+
+This is not the same kind of win the array/string augmentations were. Those
+added completion to methods that were merely un-suggested. jsmql's date
+vocabulary has **no** counterpart in JavaScript's `Date`, so
+`$.placedAt.startOf("month")` on a typed receiver was a TS2339 *error* on code
+the compiler accepts. The augmentation removes a false positive; completion is
+the bonus. Verified against every `interface Date` declaration TypeScript ships
+(lib.es5, es2015.symbol.wellknown, es2017.date, es2019/2020/2021.intl,
+esnext.date, esnext.temporal, scripthost): not one of the sixteen names
+collides, and the emitted members are method syntax, which merges as overloads
+and cannot conflict with a third party's augmentation the way a property could.
+
+`Date` clears the bar `interface Object` failed. The §B rejection of the
+object-receiver methods rests on `Object` being the base of every type, so its
+members would surface on numbers, strings and arrays alike. `Date` is a leaf:
+its members appear on dates and nothing else — a narrower blast radius than the
+`Number` augmentation already shipped.
+
+Three supporting changes. `.clamp` bounds a number **or** a date, so a
+signature entry's `recv` now accepts an array of receivers and its `sig` a map
+keyed by receiver; `.clamp` emits onto both, returning `number` on one and
+`Date` on the other. Every `unit` parameter is the MQL time-unit literal union
+rather than `string`, and that union is now derived from the same `TIME_UNIT`
+the runtime `checkEnum` validates against, so the editor rejects
+`.startOf("fortnight")` by the same closed set the compiler does. And the skip
+bucket for native date methods is now the exported `NATIVE_DATE_METHODS`, the
+list that also drives their zero-argument arity check.
+
+Docs: [specs/globals-generation.md](specs/globals-generation.md)
+§ Value-method augmentations, [LANGUAGE.md](LANGUAGE.md) § Value-method
+completion. Locked in by positive chains and four `@ts-expect-error` negatives
+(a method typo, a bad unit, an argument on a zero-argument accessor, a date
+method on a string result) in `test/types/globals-completion.ts`.
 
 ---
 
@@ -5061,46 +5134,56 @@ row's remit.
 
 ---
 
-## 2026-08-15 — feat: `interface Date` completes jsmql's date vocabulary
+## 2026-08-15 — feat!: the ambient-types subpath is `@koresar/jsmql/globals`
 
-`@koresar/jsmql/globals` now augments `Date` alongside `Array<T>` / `String` /
-`Number`. Sixteen methods gained completion: `.plus`, `.minus`, `.diff`,
-`.startOf`, `.endOf`, `.format`, `.set`, `.week`, `.isoWeek`, `.isoWeekYear`,
-`.isoWeekday`, `.dayOfYear`, `.quarter`, `.isSame`, `.isBefore`, `.isAfter` —
-plus `.clamp`, which turned out to be a seventeenth (below).
+`@koresar/jsmql/ops` is now `@koresar/jsmql/globals`, and `src/ops.ts` is
+`src/globals.ts`. The name had stopped describing the file. It was accurate when
+the module held operator declarations and nothing else; it now also carries every
+pipeline stage, the `$$` / `$$$` / `$$$$` context refs, `ObjectId`, `assert`, and
+the prototype augmentations on `Array<T>` / `String` / `Number`. What every one
+of those has in common is that they are **ambient globals** — which is what the
+module is, a `declare global { … } export {};` with no runtime exports.
 
-This is not the same kind of win the array/string augmentations were. Those
-added completion to methods that were merely un-suggested. jsmql's date
-vocabulary has **no** counterpart in JavaScript's `Date`, so
-`$.placedAt.startOf("month")` on a typed receiver was a TS2339 *error* on code
-the compiler accepts. The augmentation removes a false positive; completion is
-the bonus. Verified against every `interface Date` declaration TypeScript ships
-(lib.es5, es2015.symbol.wellknown, es2017.date, es2019/2020/2021.intl,
-esnext.date, esnext.temporal, scripthost): not one of the sixteen names
-collides, and the emitted members are method syntax, which merges as overloads
-and cannot conflict with a third party's augmentation the way a property could.
+`globals` is also the name the ecosystem already uses for exactly this shape:
+`vitest/globals` is the same "side-effect import, or list it in tsconfig
+`compilerOptions.types`" module. A reader who has seen one knows what the other
+does.
 
-`Date` clears the bar `interface Object` failed. The §B rejection of the
-object-receiver methods rests on `Object` being the base of every type, so its
-members would surface on numbers, strings and arrays alike. `Date` is a leaf:
-its members appear on dates and nothing else — a narrower blast radius than the
-`Number` augmentation already shipped.
+The rename is total and carries no alias — pre-1.0, a second spelling would only
+create the "which one does my codebase use?" question. Renamed with it:
+`scripts/generate-ops.mjs` → `generate-globals.mjs`, its `generateOpsSource()`
+export → `generateGlobalsSource()`, the npm script `generate:ops` →
+`generate:globals`, `docs/specs/ops-generation.md` →
+[globals-generation.md](specs/globals-generation.md),
+`test/types/ops-completion.ts` → `globals-completion.ts`, and the
+`dist/globals.*` / `dist/cjs/globals.*` build outputs behind the `./globals`
+condition in `package.json#exports`. No emitted MQL changes — this is a
+packaging-and-types rename only.
 
-Three supporting changes. `.clamp` bounds a number **or** a date, so a
-signature entry's `recv` now accepts an array of receivers and its `sig` a map
-keyed by receiver; `.clamp` emits onto both, returning `number` on one and
-`Date` on the other. Every `unit` parameter is the MQL time-unit literal union
-rather than `string`, and that union is now derived from the same `TIME_UNIT`
-the runtime `checkEnum` validates against, so the editor rejects
-`.startOf("fortnight")` by the same closed set the compiler does. And the skip
-bucket for native date methods is now the exported `NATIVE_DATE_METHODS`, the
-list that also drives their zero-argument arity check.
+---
 
-Docs: [specs/globals-generation.md](specs/globals-generation.md)
-§ Value-method augmentations, [LANGUAGE.md](LANGUAGE.md) § Value-method
-completion. Locked in by positive chains and four `@ts-expect-error` negatives
-(a method typo, a bad unit, an argument on a zero-argument accessor, a date
-method on a string result) in `test/types/globals-completion.ts`.
+## 2026-08-15 — fix: the terminal-stage guard fires between chain links, not just between statements
+
+`$$.filter(d => d.a).$out("archive").$limit(1);` emitted
+`[{$match…}, {$out: "archive"}, {$limit: 1}]` — a pipeline mongod refuses,
+because nothing may follow `$out`. The statement spelling of the same mistake,
+`$out("archive"); $limit(1);`, threw correctly. jsmql was emitting MQL it knows
+is invalid, which HR3 forbids.
+
+`makePipelineValidator` already had the machinery: `checkStage` records a
+must-be-last stage and `checkBeforeElement` throws for anything after it. The
+gap was where that second call sits — once per *element/statement*, so a whole
+chain passed it once and every link after `$out` went unchecked. Both chain
+loops in [pipeline.ts](../src/pipeline.ts) (the current stream, and the
+`$unionWith` source-switch) now call `checkBeforeElement` per link. A chain link
+is as much a "next stage" as the next statement is, so the same guard, wording
+and all, now covers both spellings. Stream methods are caught too, not only
+stage links — `.$out("a").take(1)` was the same hole.
+
+Found while typing the chainable stage surface for
+[globals-generation.md](specs/globals-generation.md): declaring `.$out()` as a
+chain member would have advertised in the IDE exactly the chain the compiler
+mis-emitted.
 
 ---
 
@@ -5130,150 +5213,23 @@ accessors.
 
 ---
 
-## 2026-08-15 — fix: the terminal-stage guard fires between chain links, not just between statements
+## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
 
-`$$.filter(d => d.a).$out("archive").$limit(1);` emitted
-`[{$match…}, {$out: "archive"}, {$limit: 1}]` — a pipeline mongod refuses,
-because nothing may follow `$out`. The statement spelling of the same mistake,
-`$out("archive"); $limit(1);`, threw correctly. jsmql was emitting MQL it knows
-is invalid, which HR3 forbids.
+Three places sold JSMQL partly on `--noscripting`: the README headline, the
+landing-page hero, and the `$function` passthrough note in
+[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
+run `mongod` with it learns nothing from the mention and has to stop and look it
+up, which costs more attention than the point is worth.
 
-`makePipelineValidator` already had the machinery: `checkStage` records a
-must-be-last stage and `checkBeforeElement` throws for anything after it. The
-gap was where that second call sits — once per *element/statement*, so a whole
-chain passed it once and every link after `$out` went unchecked. Both chain
-loops in [pipeline.ts](../src/pipeline.ts) (the current stream, and the
-`$unionWith` source-switch) now call `checkBeforeElement` per link. A chain link
-is as much a "next stage" as the next statement is, so the same guard, wording
-and all, now covers both spellings. Stream methods are caught too, not only
-stage links — `.$out("a").take(1)` was the same hole.
+The surrounding claims all stand on their own without it. JSMQL compiles ahead
+of time, so the server evaluates no JavaScript at query time — that is the whole
+argument, and it needs no flag name to land. Where the point was that operators
+often cannot run at all, the text now says deployments refuse server-side
+JavaScript, which is the fact that matters to the reader and does not depend on
+knowing how an administrator spelled it.
 
-Found while typing the chainable stage surface for
-[globals-generation.md](specs/globals-generation.md): declaring `.$out()` as a
-chain member would have advertised in the IDE exactly the chain the compiler
-mis-emitted.
-
----
-
-## 2026-08-15 — feat!: the ambient-types subpath is `@koresar/jsmql/globals`
-
-`@koresar/jsmql/ops` is now `@koresar/jsmql/globals`, and `src/ops.ts` is
-`src/globals.ts`. The name had stopped describing the file. It was accurate when
-the module held operator declarations and nothing else; it now also carries every
-pipeline stage, the `$$` / `$$$` / `$$$$` context refs, `ObjectId`, `assert`, and
-the prototype augmentations on `Array<T>` / `String` / `Number`. What every one
-of those has in common is that they are **ambient globals** — which is what the
-module is, a `declare global { … } export {};` with no runtime exports.
-
-`globals` is also the name the ecosystem already uses for exactly this shape:
-`vitest/globals` is the same "side-effect import, or list it in tsconfig
-`compilerOptions.types`" module. A reader who has seen one knows what the other
-does.
-
-The rename is total and carries no alias — pre-1.0, a second spelling would only
-create the "which one does my codebase use?" question. Renamed with it:
-`scripts/generate-ops.mjs` → `generate-globals.mjs`, its `generateOpsSource()`
-export → `generateGlobalsSource()`, the npm script `generate:ops` →
-`generate:globals`, `docs/specs/ops-generation.md` →
-[globals-generation.md](specs/globals-generation.md),
-`test/types/ops-completion.ts` → `globals-completion.ts`, and the
-`dist/globals.*` / `dist/cjs/globals.*` build outputs behind the `./globals`
-condition in `package.json#exports`. No emitted MQL changes — this is a
-packaging-and-types rename only.
-
----
-
-## 2026-08-14 — feat(site): the flagship example reads the same on both published pages
-
-The collaborative-filtering example exists as two copies — the first `it()` in
-[realistic.test.ts](../test/realistic.test.ts), which the playground embeds, and
-a hand-authored copy as the last example on the landing page. The two had
-drifted: the test copy shows `.$sort(…)` / `.$limit(500)` with comments that name
-what each line does, the page copy still showed `.toSorted(…)` / `.take(500)`
-with older comments. A reader who followed "Open in playground" from the landing
-page landed on a different source for the same example, which reads as a bug in
-one of the two pages.
-
-The page copy is now character-identical to the test copy, and `playground.html`
-is regenerated so its embedded copy matches the test file it is generated from
-(one line: the examples JSON island and its stamp). The emitted MQL is unchanged
-— `.$sort` and `.toSorted` lower to the same `$sort`, `.$limit(500)` and
-`.take(500)` to the same `$limit` — so this changes what the pages *show*, not
-what the compiler produces.
-
-Two copies of one example is the underlying cost, and it stays: the landing page
-holds its JSMQL inline so the page reads with JavaScript off and so
-`site.test.ts` can compile what a reader actually sees. Nothing enforces that the
-two stay equal, which is why they drifted. See [specs/site.md](specs/site.md).
-
----
-
-## 2026-08-14 — feat(site): the landing page prints MQL with the playground's fit-or-break printer
-
-[index.html](../index.html) now formats every compiled document with the
-playground's `pretty` / `compact` pair instead of its own always-expand printer,
-at the same 80-column budget. A node stays on one line while it fits. The first
-filter example is the case that shows why: it went from six lines of one-brace-
-per-line to the single line `{ "age": { "$gt": 18 }, "status": "active" }`,
-directly opposite the single line of JSMQL that produced it. That equivalence is
-the page's whole argument, and the old printer buried it under vertical
-structure. The recommender example drops from 414 rendered lines to 297, and the
-`data-loc` counter reports the new figure by itself because it measures the text
-it has just rendered.
-
-Two printers for one job was the real defect. The page and the editor showed the
-same document in two different shapes, so an example and the "Open in playground"
-link under it disagreed on sight. One printer, one shape. The trade it carries is
-width: a pane is about 60 columns at the page's 1080px column, so the widest
-lines scroll inside their own `pre` — 21 of the recommender's 297 lines, none to
-one line in every other example. A narrower budget for this page alone would fix
-the scroll and re-open the disagreement, which is the worse of the two.
-
-The printer stays copied rather than shared, as `isObjectId` and the old
-formatter already were: both pages are standalone HTML that share only
-`dist/jsmql.js`, and neither can import from the other. A formatter on the public
-API (`jsmql.format`) would let both import one copy, and would give library users
-the same pasteable-source output — worth its own decision, not a side effect of
-this change. See [specs/site.md](specs/site.md).
-
----
-
-## 2026-08-14 — feat(site): the landing page paints JSMQL and MQL with the playground's highlighter
-
-Both panes of every example on [index.html](../index.html) now carry syntax
-colours, and they are the playground's colours exactly: the same pinned
-CodeMirror release, the same JavaScript mode in the same two configurations
-(plain for JSMQL, `json: true` for MQL), and the same `neo` theme. The page
-made the weaker version of its own argument until now — it claims JSMQL *is*
-JavaScript, then showed it as two columns of flat monospace while the editor one
-click away coloured it. A hand-rolled highlighter would have made that worse, not
-better: a second tokeniser drifts from the editor's, and then the two surfaces
-disagree about what a token is.
-
-The tool that makes this cheap is `CodeMirror.runMode` — the tokeniser with no
-editor around it. It fills an element with the same `cm-*` spans an editor holds,
-which the `neo` stylesheet then colours, so parity is by construction rather than
-by a second set of hand-picked hexes. The page loads it as
-`runmode-standalone.min.js`, 5.5 KB against the 170 KB editor core, because a
-landing page has no editor to put on screen. That substitution is only safe if
-the small loader tokenises identically, so it was checked rather than assumed:
-both loaders were run over the page's own corpus (every JSMQL source it shows
-plus MQL documents, in both modes) and emit a byte-identical `[text, style]`
-stream.
-The rendered spans and their computed colours were then compared against the live
-playground for the same source, token for token.
-
-Two details are worth knowing before someone edits this. The markup still holds
-each JSMQL source as plain text and the script rewrites the block in place —
-that keeps the source readable with JavaScript off, keeps it selectable, and
-keeps it in the single shape that both the page and the `pre.src > code`
-extraction in [site.test.ts](../test/site.test.ts) read. And the page states one
-colour of its own, `#2e383c`: `neo` keeps its base text colour behind
-`.cm-s-neo.CodeMirror`, a selector only a live editor matches, so without that
-line every operator, brace and comma would stay the page's darker `--fg` while
-the tokens moved. Failures stay plain: no CodeMirror (a blocked CDN) means text
-with no colours, and a compile error is prose rather than JavaScript, so it keeps
-the red `pre.out.failed` styling. See [specs/site.md](specs/site.md).
+The general rule this follows: name a server flag only when the reader must set
+or unset it. Nobody has to touch this one to use JSMQL.
 
 ---
 
@@ -5305,76 +5261,6 @@ feature, and [LANGUAGE.md](LANGUAGE.md#bare-built-in-callbacks) says so.
 `Date` stays excluded alongside `parseInt`/`parseFloat`, on one rule: a bare
 built-in must mean what it reads as. `Date` called without `new` ignores its
 argument and returns a string, so `.map(Date)` would convert nothing.
-
----
-
-## 2026-08-14 — fix: the collaborative-filtering example casts countBy keys back to ObjectId
-
-The flagship example — first in [realistic.test.ts](../test/realistic.test.ts),
-the playground's default, and the last example on the landing page — returned
-documents with no `name` field on real data. `.countBy()` tallies into a MongoDB
-object, and an object has string keys, so `Object.keys()` handed back hex strings.
-Both joins then compared a string to an `ObjectId` `_id`: `candidateProducts` came
-back empty, every `name` resolved to missing, and the key dropped out of the
-document. `productId` came out as a hex string too. The example now casts once, at
-the point where the strings appear — `Object.keys(counts).map(id => ObjectId(id))`
-— which repairs both joins and makes `productId` a real id. The `[id]` score
-lookup is unaffected, because it already stringifies its key.
-
-The server accepts the pipeline either way, so this was never an invalid-MQL bug,
-and the `toEqual(<MQL>)` in realistic.test.ts could not see it: that assertion
-proves what jsmql emits, never what mongod returns. The guard that does see it is
-a new case in [integration.test.ts](../test/integration.test.ts), which runs the
-same shape against the fixture and asserts the rows — `name` present, `productId`
-an `ObjectId`. Without the cast that case fails on both. This is the second time in
-one day that an `ObjectId` silently degraded to a string; the entry below fixed the
-same class in the landing page's *output*, this one fixes it in the *query*.
-
-The trap is general: any key read back out of `keyBy`/`groupBy`/`countBy` is a
-string, whatever went in. [LANGUAGE.md](LANGUAGE.md#lodash-array-methods) now says
-so in the footgun note for those three, with the cast to write instead, and
-[stream-methods.md](specs/stream-methods.md) points at it from the
-`stringKeyExpr` note that owns the mechanism. jsmql does **not** warn about this at
-compile time: it cannot know the type of a bare `$.field`, so the only available
-check would be a guess from the field's name, and a heuristic that changes output
-or emits noise on a name is exactly the opaque behaviour the language rejects.
-
----
-
-## 2026-08-14 — fix: a saved playground session stops hiding newly shipped examples
-
-The playground restores a saved session from `localStorage` ahead of showing the
-default example, and the very first visit already writes one — the `setValue`
-calls on load fire the change hooks that call `saveState`. So from the second
-visit onward the default-example rung was unreachable. Ship a new example, or
-edit an existing one, and a returning visitor still opened the copy their browser
-had kept. The page was freshly generated every time; only the editor pane looked
-old, which is a convincing way to look stale.
-
-`sync-playground.mjs` now stamps the injected `<script id="examples-data">` with a
-short sha256 of the manifest, so the value changes when — and only when — an
-example's slug, title, query or metadata does. A saved session records the stamp
-it was written against, and a mismatch means the examples have moved on.
-
-A mismatch alone is not licence to delete someone's work. The session also records
-`activeSlug`, which is non-null only while the editor holds an example verbatim and
-which `clearActiveOnUserEdit` nulls on the first keystroke that diverges. Only an
-example-only session is discarded; a query the visitor wrote survives any number of
-example-set changes, and their Variables value is kept either way, since it is
-edited separately from the query. Sessions saved before the stamp existed carry
-neither field, so those fall back to matching the text against the current example
-set — anything that is not an example verbatim counts as theirs.
-
-When a discarded session named an example that still exists, the ladder re-selects
-that example rather than dropping to the first one, so the visitor stays where they
-were and simply gets the current text. That is a new rung between the `#slug` hash
-and the saved-query rung.
-
-Verified in the browser across the five cases that matter: stale stamp with a live
-slug lands on that example's current text and re-stamps; stale stamp with a
-hand-written query keeps it; a legacy session holding an example verbatim is
-dropped; a legacy hand-written query is kept; and a stale stamp naming a deleted
-example falls through to the default. `#s=` share links still outrank all of it.
 
 ---
 
@@ -5424,26 +5310,6 @@ than the emitted one, so it is tracked on its own instead of riding along here.
 
 ---
 
-## 2026-08-14 — docs: the server-side-JS pitch drops `--noscripting`
-
-Three places sold JSMQL partly on `--noscripting`: the README headline, the
-landing-page hero, and the `$function` passthrough note in
-[LANGUAGE.md](LANGUAGE.md). The flag is obscure. A reader who does not already
-run `mongod` with it learns nothing from the mention and has to stop and look it
-up, which costs more attention than the point is worth.
-
-The surrounding claims all stand on their own without it. JSMQL compiles ahead
-of time, so the server evaluates no JavaScript at query time — that is the whole
-argument, and it needs no flag name to land. Where the point was that operators
-often cannot run at all, the text now says deployments refuse server-side
-JavaScript, which is the fact that matters to the reader and does not depend on
-knowing how an administrator spelled it.
-
-The general rule this follows: name a server flag only when the reader must set
-or unset it. Nobody has to touch this one to use JSMQL.
-
----
-
 ## 2026-08-14 — feat: the site moves to jsmql.js.org and gains a landing page
 
 The published site was one file: `playground.html`. The root of the Pages site,
@@ -5479,6 +5345,100 @@ files is full of JavaScript and MQL braces.
 
 Detail lives in [docs/specs/site.md](specs/site.md), including the
 `cnames_active.js` entry JS.ORG needs.
+
+---
+
+## 2026-08-14 — feat(site): the flagship example reads the same on both published pages
+
+The collaborative-filtering example exists as two copies — the first `it()` in
+[realistic.test.ts](../test/realistic.test.ts), which the playground embeds, and
+a hand-authored copy as the last example on the landing page. The two had
+drifted: the test copy shows `.$sort(…)` / `.$limit(500)` with comments that name
+what each line does, the page copy still showed `.toSorted(…)` / `.take(500)`
+with older comments. A reader who followed "Open in playground" from the landing
+page landed on a different source for the same example, which reads as a bug in
+one of the two pages.
+
+The page copy is now character-identical to the test copy, and `playground.html`
+is regenerated so its embedded copy matches the test file it is generated from
+(one line: the examples JSON island and its stamp). The emitted MQL is unchanged
+— `.$sort` and `.toSorted` lower to the same `$sort`, `.$limit(500)` and
+`.take(500)` to the same `$limit` — so this changes what the pages *show*, not
+what the compiler produces.
+
+Two copies of one example is the underlying cost, and it stays: the landing page
+holds its JSMQL inline so the page reads with JavaScript off and so
+`site.test.ts` can compile what a reader actually sees. Nothing enforces that the
+two stay equal, which is why they drifted. See [specs/site.md](specs/site.md).
+
+---
+
+## 2026-08-14 — feat(site): the landing page paints JSMQL and MQL with the playground's highlighter
+
+Both panes of every example on [index.html](../index.html) now carry syntax
+colours, and they are the playground's colours exactly: the same pinned
+CodeMirror release, the same JavaScript mode in the same two configurations
+(plain for JSMQL, `json: true` for MQL), and the same `neo` theme. The page
+made the weaker version of its own argument until now — it claims JSMQL *is*
+JavaScript, then showed it as two columns of flat monospace while the editor one
+click away coloured it. A hand-rolled highlighter would have made that worse, not
+better: a second tokeniser drifts from the editor's, and then the two surfaces
+disagree about what a token is.
+
+The tool that makes this cheap is `CodeMirror.runMode` — the tokeniser with no
+editor around it. It fills an element with the same `cm-*` spans an editor holds,
+which the `neo` stylesheet then colours, so parity is by construction rather than
+by a second set of hand-picked hexes. The page loads it as
+`runmode-standalone.min.js`, 5.5 KB against the 170 KB editor core, because a
+landing page has no editor to put on screen. That substitution is only safe if
+the small loader tokenises identically, so it was checked rather than assumed:
+both loaders were run over the page's own corpus (every JSMQL source it shows
+plus MQL documents, in both modes) and emit a byte-identical `[text, style]`
+stream.
+The rendered spans and their computed colours were then compared against the live
+playground for the same source, token for token.
+
+Two details are worth knowing before someone edits this. The markup still holds
+each JSMQL source as plain text and the script rewrites the block in place —
+that keeps the source readable with JavaScript off, keeps it selectable, and
+keeps it in the single shape that both the page and the `pre.src > code`
+extraction in [site.test.ts](../test/site.test.ts) read. And the page states one
+colour of its own, `#2e383c`: `neo` keeps its base text colour behind
+`.cm-s-neo.CodeMirror`, a selector only a live editor matches, so without that
+line every operator, brace and comma would stay the page's darker `--fg` while
+the tokens moved. Failures stay plain: no CodeMirror (a blocked CDN) means text
+with no colours, and a compile error is prose rather than JavaScript, so it keeps
+the red `pre.out.failed` styling. See [specs/site.md](specs/site.md).
+
+---
+
+## 2026-08-14 — feat(site): the landing page prints MQL with the playground's fit-or-break printer
+
+[index.html](../index.html) now formats every compiled document with the
+playground's `pretty` / `compact` pair instead of its own always-expand printer,
+at the same 80-column budget. A node stays on one line while it fits. The first
+filter example is the case that shows why: it went from six lines of one-brace-
+per-line to the single line `{ "age": { "$gt": 18 }, "status": "active" }`,
+directly opposite the single line of JSMQL that produced it. That equivalence is
+the page's whole argument, and the old printer buried it under vertical
+structure. The recommender example drops from 414 rendered lines to 297, and the
+`data-loc` counter reports the new figure by itself because it measures the text
+it has just rendered.
+
+Two printers for one job was the real defect. The page and the editor showed the
+same document in two different shapes, so an example and the "Open in playground"
+link under it disagreed on sight. One printer, one shape. The trade it carries is
+width: a pane is about 60 columns at the page's 1080px column, so the widest
+lines scroll inside their own `pre` — 21 of the recommender's 297 lines, none to
+one line in every other example. A narrower budget for this page alone would fix
+the scroll and re-open the disagreement, which is the worse of the two.
+
+The printer stays copied rather than shared, as `isObjectId` and the old
+formatter already were: both pages are standalone HTML that share only
+`dist/jsmql.js`, and neither can import from the other. A formatter on the public
+API (`jsmql.format`) would let both import one copy, and would give library users
+the same pasteable-source output — worth its own decision, not a side effect of
+this change. See [specs/site.md](specs/site.md).
 
 ---
 
@@ -5522,6 +5482,76 @@ user typed the trailing `;`** — is now stated in
 with the reroute sites a future statement-shaped sugar has to register with. Every
 `$$ = …` shape was re-run against a live `mongod` per HR3, including the correlated
 `$lookup` pivot, which returns the same documents from both entry points.
+
+---
+
+## 2026-08-14 — fix: a saved playground session stops hiding newly shipped examples
+
+The playground restores a saved session from `localStorage` ahead of showing the
+default example, and the very first visit already writes one — the `setValue`
+calls on load fire the change hooks that call `saveState`. So from the second
+visit onward the default-example rung was unreachable. Ship a new example, or
+edit an existing one, and a returning visitor still opened the copy their browser
+had kept. The page was freshly generated every time; only the editor pane looked
+old, which is a convincing way to look stale.
+
+`sync-playground.mjs` now stamps the injected `<script id="examples-data">` with a
+short sha256 of the manifest, so the value changes when — and only when — an
+example's slug, title, query or metadata does. A saved session records the stamp
+it was written against, and a mismatch means the examples have moved on.
+
+A mismatch alone is not licence to delete someone's work. The session also records
+`activeSlug`, which is non-null only while the editor holds an example verbatim and
+which `clearActiveOnUserEdit` nulls on the first keystroke that diverges. Only an
+example-only session is discarded; a query the visitor wrote survives any number of
+example-set changes, and their Variables value is kept either way, since it is
+edited separately from the query. Sessions saved before the stamp existed carry
+neither field, so those fall back to matching the text against the current example
+set — anything that is not an example verbatim counts as theirs.
+
+When a discarded session named an example that still exists, the ladder re-selects
+that example rather than dropping to the first one, so the visitor stays where they
+were and simply gets the current text. That is a new rung between the `#slug` hash
+and the saved-query rung.
+
+Verified in the browser across the five cases that matter: stale stamp with a live
+slug lands on that example's current text and re-stamps; stale stamp with a
+hand-written query keeps it; a legacy session holding an example verbatim is
+dropped; a legacy hand-written query is kept; and a stale stamp naming a deleted
+example falls through to the default. `#s=` share links still outrank all of it.
+
+---
+
+## 2026-08-14 — fix: the collaborative-filtering example casts countBy keys back to ObjectId
+
+The flagship example — first in [realistic.test.ts](../test/realistic.test.ts),
+the playground's default, and the last example on the landing page — returned
+documents with no `name` field on real data. `.countBy()` tallies into a MongoDB
+object, and an object has string keys, so `Object.keys()` handed back hex strings.
+Both joins then compared a string to an `ObjectId` `_id`: `candidateProducts` came
+back empty, every `name` resolved to missing, and the key dropped out of the
+document. `productId` came out as a hex string too. The example now casts once, at
+the point where the strings appear — `Object.keys(counts).map(id => ObjectId(id))`
+— which repairs both joins and makes `productId` a real id. The `[id]` score
+lookup is unaffected, because it already stringifies its key.
+
+The server accepts the pipeline either way, so this was never an invalid-MQL bug,
+and the `toEqual(<MQL>)` in realistic.test.ts could not see it: that assertion
+proves what jsmql emits, never what mongod returns. The guard that does see it is
+a new case in [integration.test.ts](../test/integration.test.ts), which runs the
+same shape against the fixture and asserts the rows — `name` present, `productId`
+an `ObjectId`. Without the cast that case fails on both. This is the second time in
+one day that an `ObjectId` silently degraded to a string; the entry below fixed the
+same class in the landing page's *output*, this one fixes it in the *query*.
+
+The trap is general: any key read back out of `keyBy`/`groupBy`/`countBy` is a
+string, whatever went in. [LANGUAGE.md](LANGUAGE.md#lodash-array-methods) now says
+so in the footgun note for those three, with the cast to write instead, and
+[stream-methods.md](specs/stream-methods.md) points at it from the
+`stringKeyExpr` note that owns the mechanism. jsmql does **not** warn about this at
+compile time: it cannot know the type of a bare `$.field`, so the only available
+check would be a guess from the field's name, and a heuristic that changes output
+or emits noise on a name is exactly the opaque behaviour the language rejects.
 
 ---
 

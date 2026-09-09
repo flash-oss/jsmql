@@ -47,6 +47,13 @@
 
     <style>
       :root {
+        /* Both themes come from this token block and its dark counterpart
+           below. Every rule on the page reads a token, so the two themes share
+           one set of rules and cannot drift apart. `color-scheme` tells the
+           browser to paint its own surfaces — scroll bars, form controls, the
+           canvas behind the page — to match. */
+        color-scheme: light dark;
+
         --fg: #1a1a1a;
         --muted: #6b6b6b;
         --subtle: #94a3b8;
@@ -56,7 +63,9 @@
         --border: #e3e6ea;
         --border-strong: #d4d9e0;
         --accent: #2a6df4;
+        --accent-hover: #1f5ad4;
         --accent-soft: rgba(42, 109, 244, 0.1);
+        --on-accent: #fff;
         --expr: #2a6df4;
         --expr-soft: rgba(42, 109, 244, 0.1);
         --pipe: #b45309;
@@ -67,7 +76,94 @@
         --update-soft: rgba(124, 58, 237, 0.12);
         --error: #c0392b;
         --error-bg: #fdf3f2;
+        --code-fg: #2e383c;
         --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
+
+        /* Width of one code panel — the only measure on the page the code
+           dictates. The pretty-printer below breaks a line at 80 columns, so a
+           panel holds a whole line once it fits 80 monospace characters, its
+           line-number gutter, and the space around both:
+
+             627px  80 columns — each character advances 0.6em ≈ 7.83px at the
+                    13px `--mono` size
+              24px  the 3-digit gutter the longest panel reaches
+              10px  --gutter-gap
+              28px  the `pre` padding, 14px a side
+               2px  the `pre` border
+              17px  a vertical scroll bar, which a panel taller than its cap
+                    grows and which takes layout width on every platform that
+                    does not overlay it
+              12px  slack, because the scroll bar width and the character
+                    advance both vary a little by platform and by font
+
+           A window too narrow to give a panel this much scrolls it sideways
+           instead — the panel never breaks a line to fit. */
+        --code-panel: 720px;
+        --gutter-gap: 10px;
+      }
+
+      /* The reader's system theme selects the palette. There is no switch on
+         the page: a browser set to dark gets the tokens below, and the layout,
+         the spacing and the colour meanings stay exactly as they are above. */
+      @media (prefers-color-scheme: dark) {
+        :root {
+          --fg: #e6e9ef;
+          --muted: #a2abb8;
+          --subtle: #838d9b;
+          --bg: #181b22;
+          --panel: #1e222a;
+          --sidebar-bg: #14171d;
+          --border: #2b313a;
+          --border-strong: #3b434f;
+          --accent: #6ea8fe;
+          --accent-hover: #8bbaff;
+          --accent-soft: rgba(110, 168, 254, 0.16);
+          --on-accent: #10131a;
+          --expr: #6ea8fe;
+          --expr-soft: rgba(110, 168, 254, 0.16);
+          --pipe: #f0a35e;
+          --pipe-soft: rgba(240, 163, 94, 0.16);
+          --filter: #3fcf9e;
+          --filter-soft: rgba(63, 207, 158, 0.16);
+          --update: #b18aff;
+          --update-soft: rgba(177, 138, 255, 0.16);
+          --error: #ff8072;
+          --error-bg: #2b1a18;
+          --code-fg: #d7dce4;
+        }
+
+        /* The pinned `neo` stylesheet picks its token colours against white,
+           so a dark surface needs them again. Each keeps the hue `neo` gives
+           it and changes only lightness, so a keyword stays blue and a string
+           stays orange in both themes — and the playground, which loads the
+           same stylesheet and repeats these rules, matches this page. */
+        .cm-s-neo .cm-comment {
+          color: #7f8b98;
+        }
+
+        .cm-s-neo .cm-keyword,
+        .cm-s-neo .cm-property {
+          color: #7bb0e8;
+        }
+
+        .cm-s-neo .cm-atom,
+        .cm-s-neo .cm-number {
+          color: #c9a3e8;
+        }
+
+        .cm-s-neo .cm-node,
+        .cm-s-neo .cm-tag {
+          color: #ef8a7d;
+        }
+
+        .cm-s-neo .cm-string {
+          color: #e0a76a;
+        }
+
+        .cm-s-neo .cm-qualifier,
+        .cm-s-neo .cm-variable {
+          color: #4fc9a8;
+        }
       }
 
       * {
@@ -101,6 +197,17 @@
         max-width: 1080px;
         margin: 0 auto;
         padding: 0 20px;
+      }
+
+      /* The example cards are the one thing on the page that reads at the code
+         measure rather than the page measure: two side-by-side panels of
+         `--code-panel`, their 14px gap, the 38px the card spends on padding and
+         border, and the wrap's own 20px gutters. On a wide screen the cards
+         therefore reach past the prose column on both sides and show an
+         80-column line whole; on a narrow one this cap never binds and the
+         cards sit in the page measure like everything else. */
+      .wrap.code {
+        max-width: calc(var(--code-panel) * 2 + 92px);
       }
 
       /* ── Header ──────────────────────────────────────────────────────────── */
@@ -156,17 +263,19 @@
         letter-spacing: -0.02em;
       }
 
+      /* Prose takes the full page measure, the same span the heading, the
+         buttons, the card grids and the footer take. A narrower reading cap
+         would pin these paragraphs to the left of a column everything around
+         them fills, which reads as a page that lost its centre. */
       .hero .lede {
         margin: 14px 0 0;
         font-size: 20px;
         line-height: 1.45;
-        max-width: 40em;
       }
 
       .hero .sub {
         margin: 14px 0 0;
         color: var(--muted);
-        max-width: 46em;
       }
 
       .cta {
@@ -197,13 +306,13 @@
       .btn.primary {
         background: var(--accent);
         border-color: var(--accent);
-        color: #fff;
+        color: var(--on-accent);
       }
 
       .btn.primary:hover {
-        background: #1f5ad4;
-        border-color: #1f5ad4;
-        color: #fff;
+        background: var(--accent-hover);
+        border-color: var(--accent-hover);
+        color: var(--on-accent);
       }
 
       .install {
@@ -243,7 +352,6 @@
       section > .wrap > .section-intro {
         margin: 0 0 26px;
         color: var(--muted);
-        max-width: 46em;
       }
 
       /* ── Examples ────────────────────────────────────────────────────────── */
@@ -337,12 +445,16 @@
         margin-bottom: 5px;
       }
 
+      /* Lines are never broken: code reads as it was written. `--code-panel`
+         sizes the panel to hold the 80 columns the printer breaks at, so a
+         window wide enough for that cap shows every line whole and no
+         horizontal scroll bar appears. A narrower window scrolls instead. */
       pre {
         margin: 0;
         padding: 12px 14px;
         border: 1px solid var(--border);
         border-radius: 8px;
-        background: var(--sidebar-bg);
+        background-color: var(--sidebar-bg);
         font-family: var(--mono);
         font-size: 13px;
         line-height: 1.55;
@@ -352,7 +464,30 @@
       }
 
       pre.out {
-        background: #fff;
+        background-color: var(--panel);
+      }
+
+      /* Line numbers, as the playground's editors show them: right-aligned in
+         a gutter the script sizes to the widest number the block reaches. The
+         number is generated content, so it stays out of a copied selection. */
+      pre code {
+        display: block;
+        counter-reset: line;
+      }
+
+      .ln {
+        display: block;
+        counter-increment: line;
+      }
+
+      .ln::before {
+        content: counter(line);
+        display: inline-block;
+        width: var(--gutter, 2ch);
+        margin-right: var(--gutter-gap);
+        text-align: right;
+        color: var(--subtle);
+        user-select: none;
       }
 
       /* A highlighted block. The `neo` stylesheet paints the `cm-*` spans the
@@ -362,7 +497,7 @@
          arrives from the script, so a block it never reached keeps the page's
          own text colour, and `.pending` / `.failed` below outrank it anyway. */
       pre.cm-s-neo {
-        color: #2e383c;
+        color: var(--code-fg);
       }
 
       /* One example compiles a whole recommendation engine. Its MQL runs to
@@ -373,7 +508,7 @@
       }
 
       pre.out.failed {
-        background: var(--error-bg);
+        background-color: var(--error-bg);
         border-color: var(--error);
         color: var(--error);
       }
@@ -536,7 +671,12 @@
             <a href="https://github.com/flash-oss/jsmql/blob/master/README.md">README</a>.
           </div>
         </noscript>
+      </div>
 
+      <!-- The examples take their own, wider wrap: the heading and the notices
+           above read as prose and keep the page measure, while these cards are
+           sized by the code they hold. See `.wrap.code`. -->
+      <div class="wrap code">
         <article class="example" data-example data-mode="filter">
           <h3><span class="chip filter">Filter</span> Comparisons stay index-friendly</h3>
           <p class="blurb">
@@ -937,17 +1077,52 @@ $$ = candidateProductIds
       const JSMQL_MODE = { name: "javascript" };
       const MQL_MODE = { name: "javascript", json: true };
 
-      // Highlight one block. `runMode` is CodeMirror's tokeniser without an
-      // editor: it fills the element with the same `cm-*` spans the playground's
-      // editors carry, which the `neo` stylesheet colours. With no CodeMirror on
-      // the page — a blocked CDN — the text still lands, just uncoloured.
+      // Highlight one block into numbered lines. `runMode` is CodeMirror's
+      // tokeniser without an editor, and its callback form reports one token at
+      // a time with the style the mode gives it — the same `cm-*` names the
+      // playground's editors carry, which the `neo` stylesheet colours. The
+      // callback form is what makes the line split safe: one run tokenises the
+      // whole text, so a construct that spans lines still reads correctly,
+      // while each line lands in its own element for the CSS counter to number.
+      // With no CodeMirror on the page — a blocked CDN — the lines still land,
+      // just uncoloured.
       function paint(codeEl, mode, text = codeEl.textContent) {
-        if (typeof CodeMirror === "undefined") {
-          codeEl.textContent = text;
-          return;
+        const lines = [];
+        const openLine = () => {
+          const line = document.createElement("span");
+          line.className = "ln";
+          lines.push(line);
+          return line;
+        };
+
+        let line = openLine();
+        const emit = (chunk, style) => {
+          // A token can carry newlines (a run of blank lines arrives as one
+          // chunk), so every chunk is split rather than only the ones that
+          // look like line breaks.
+          chunk.split("\n").forEach((part, i) => {
+            if (i > 0) line = openLine();
+            if (!part) return;
+            if (!style) return void line.append(part);
+            const span = document.createElement("span");
+            // A style is space-separated ("string property"), and each name
+            // takes the `cm-` prefix the stylesheet matches on.
+            span.className = "cm-" + style.split(" ").join(" cm-");
+            span.textContent = part;
+            line.append(span);
+          });
+        };
+
+        if (typeof CodeMirror === "undefined") emit(text, null);
+        else {
+          codeEl.closest("pre").classList.add("cm-s-neo");
+          CodeMirror.runMode(text, mode, emit);
         }
-        codeEl.closest("pre").classList.add("cm-s-neo");
-        CodeMirror.runMode(text, mode, codeEl);
+
+        codeEl.replaceChildren(...lines);
+        // Size the gutter to the widest number this block reaches, so a short
+        // example spends no width on digits it never shows.
+        codeEl.closest("pre").style.setProperty("--gutter", String(lines.length).length + "ch");
       }
 
       // Read every JSMQL source before anything rewrites its block, and paint it
