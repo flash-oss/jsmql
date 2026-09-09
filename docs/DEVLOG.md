@@ -10,6 +10,62 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — fix!: six defects the acceptance gate found, each measured on the server
+
+The gate compares this compiler with the shipped one over 2912 sources × six entry
+points. Classifying the last of its divergences — one agent per cluster, each with
+an adversarial verifier, every answer that could differ run on a mongod — turned up
+six real defects. All six are HR3 or correctness, and none had a test.
+
+**A callback parameter over a string array lost its kind.** A parameter bound over
+`["sender", "recipient"]` or a `.split(",")` is a STRING, so `$.m[k]` is a field
+read. The proof was gone, so the bracket read took the runtime array/object
+dispatch — whose array arm hands `$arrayElemAt` a string, which MEASURED the server
+refuses ("must be a numeric value, but is string"). The binder now takes the
+element kind the row states:
+
+```
+["a", "b"].map(k => $.m[k])
+before: { $map: { … in: { $cond: { if: { $isArray: "$m" }, then: { $arrayElemAt: ["$m", "$$k"] }, … } } } }
+after:  { $map: { input: ["a","b"], as: "k", in: { $getField: { field: "$$k", input: "$m" } } } }
+```
+
+The `?.` neutral follows the same proof: `$.legs?.[party]` now takes `{}` (a
+document) rather than `[]`, so a document with no `legs` no longer reaches
+`$arrayElemAt` at all.
+
+**An anonymous callback took a name a developer can write.** `() => v` bound its
+missing parameter as the JavaScript name `_`, which encodes to `v__5f` — the same
+variable a developer's own `_` takes. It is minted now, `jsmqlUnused`.
+
+**`$and([])` / `$or([])` emitted MQL that cannot run.** MEASURED,
+`find({ $and: [] })` is refused ("$and argument must be a non-empty array") where
+`{ $expr: { $and: [] } }` runs and matches every document — JavaScript's answer for
+`[].every(…)`. The query cell answers null for the empty list, so the value road
+wraps it. `$nor` is filter-only and has no value road, so its row states
+`nonEmpty` and refuses with what "none of nothing" already means.
+
+**`$where` in a `$match` emitted a stage the server refuses.** MEASURED,
+`find({ $where: … })` runs where server-side JavaScript is enabled and an
+aggregation `$match` refuses it at any depth of the body. So the raw filter still
+passes through (HR1) and the same document inside a `$match` is refused, through
+the placement machinery `$text` uses.
+
+**`$$.length` stopped reusing its stamp.** `docs/specs/stream-length.md` states
+compute-once, and two reads were emitting two `$setWindowFields`. The chain caches
+the paths it has stamped and clears them at the first stage whose row does not
+state `preservesCount` — and a lowering that is TAKEN BACK (a join whose chain goes
+on) rewinds its stamps with its hoists, or the retry reads a field the discarded
+stage was going to write.
+
+**`$in` and `$size` are the two array operators that abort on null.** MEASURED, the
+other eight answer null in turn. A reader over a missing field answers null, so a
+value the compiler PROVED is an array can still be null at run time — and
+`$.items.map(x => x).length` aborted the whole command on a document with no
+`items`. Both operands now take the `[]` neutral.
+
+---
+
 ## 2026-09-09 — docs: the specs and the CLAUDE.md files name symbols that exist
 
 Forty-odd pointers across `docs/specs/`, the `CLAUDE.md` files and

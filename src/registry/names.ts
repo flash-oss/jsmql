@@ -697,12 +697,39 @@ const queryOnlyClause = ({ name, args, fieldPath, literal }: FilterIn): QueryDoc
   [fieldPath(args[0])]: { [name]: literal(args[1]) },
 });
 
-/** `$and([p, q])` / `$and(p, q)` — each predicate as a filter of its own. */
-const logicalList = ({ name, args, query }: FilterIn): QueryDoc => {
+/**
+ * `$and([p, q])` / `$and(p, q)` — each predicate as a filter of its own.
+ *
+ * An EMPTY list has no query form: MEASURED, `find({ $and: [] })` is refused with
+ * "$and argument must be a non-empty array", where the expression `{ $expr: { $and: [] } }`
+ * runs and answers true — JavaScript's answer for `[].every(…)`. Answering null hands
+ * the empty list to the value road, which wraps it.
+ */
+const logicalList = ({ name, args, query }: FilterIn): QueryDoc | null => {
   const list = args.length === 1 && args[0].type === "ArrayLiteral" ? args[0].elements.filter(isExprNode) : args;
+  if (list.length === 0) return null;
   return { [name]: list.map(query) };
 };
 const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement";
+
+/**
+ * An array operand that ABORTS the command when it is null, given the `[]` neutral.
+ *
+ * A reader over a missing field answers null, not `[]` — MEASURED, `$map`, `$filter`,
+ * `$setUnion`, `$slice`, `$sortArray` and `$reduce` all do — so a value the compiler
+ * proved is an array can still be null at run time. Most operators take that in their
+ * stride and answer null in turn; `$in` and `$size` are the two that refuse ("$in
+ * requires an array as a second argument, found: null"), and they take the neutral.
+ * A literal is already an array, so it is handed through untouched.
+ */
+const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
+
+/**
+ * `$nor([p, q])` — `logicalList` where the list is never empty. `$nor` is
+ * filter-only, so its cell is TOTAL: the empty case is refused by the row's
+ * `nonEmpty` fact before the cell runs, and the null branch is unreachable.
+ */
+const norList = (input: FilterIn): QueryDoc => logicalList(input) ?? { $nor: [] };
 
 /**
  * lodash's `_.difference`: the receiver's elements that the other array does not
@@ -6800,7 +6827,7 @@ export const NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => …)'.",
             },
           },
-          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), recv] }),
+          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), arrayOrEmpty(recv)] }),
         },
         string: {
           args: {
@@ -12059,7 +12086,22 @@ export const NAMES = {
     doc: "Joins query clauses with a logical NOR returns all documents that fail to match both clauses.",
     category: "boolean",
     where: ["filter"],
-    filter: { args: { sig: "predicates", atLeast: 1 }, emit: logicalList },
+    // MEASURED: `find({ $nor: [] })` is refused ("$nor argument must be a non-empty
+    // array"), and `$nor` has no expression form to fall back to — so the empty list
+    // is refused here rather than emitted.
+    filter: {
+      args: {
+        sig: "predicates",
+        atLeast: 1,
+        nonEmpty: {
+          0: {
+            noun: "predicate",
+            instead: "'none of nothing' is every document, which an empty filter ('{}') already says.",
+          },
+        },
+      },
+      emit: norList,
+    },
     expr: unsupported(
       "'$nor' is a query operator with no aggregation-expression form. '$nor' is a top-level query operator: write it as the whole filter, e.g. '{ $nor: … }'.",
     ),
@@ -12132,7 +12174,15 @@ export const NAMES = {
   $where: mongo({
     doc: "Matches documents that satisfy a JavaScript expression.",
     where: [],
-    // MEASURED: { $match: { $where: … } } → $where is not allowed in this context; find() runs it only where server-side JavaScript is enabled
+    // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled, and
+    // an aggregation `$match` refuses it at any depth of the body — "$where is not
+    // allowed in this context". A raw `{ $where: … }` filter therefore passes through
+    // (HR1) and the same document written into a `$match` is refused here.
+    forbiddenIn: ["$match"],
+    placement: {
+      container:
+        "Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query, in a '$match' or a 'find' filter alike.",
+    },
     filter: unsupported(
       "'$where' runs JavaScript on the server, which '$match' refuses and deployments disable. Write the predicate in JSMQL — '$.x > 1', '$.tags.includes(\"a\")' — and it runs as a query.",
     ),
@@ -13430,7 +13480,10 @@ export const NAMES = {
       perFamily: {
         // An array LITERAL receiver is the value, not an operand list: `[$.a, 2].length`
         // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
-        array: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : recv }) },
+        array: {
+          args: { sig: "", none: true },
+          emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : arrayOrEmpty(recv) }),
+        },
         // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
           args: { sig: "", none: true },

@@ -35,7 +35,7 @@ import {
   streamHandleAfterReplace,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { kindOf } from "./types.ts";
+import { elementKindOf, kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -91,6 +91,7 @@ function readsParam(node: unknown, name: string): boolean {
 function arrayCallback(
   cb: Expr,
   recv: unknown,
+  recvNode: Expr | undefined,
   env: Env,
   read: (body: Expr, e: Env) => unknown,
   name: string,
@@ -98,9 +99,17 @@ function arrayCallback(
   if (cb.type !== "Lambda" || cb.body === undefined) throw notAnArrowCallback(name, (cb as { pos: number }).pos);
   if (cb.params.length > 3) throw tooManyCallbackParams(name, cb.params.length, cb.pos);
   const [elem, index, arr] = cb.params;
+  // What ONE element of the receiver is, where the registry can show it: a written
+  // list of strings, a `.split()`, a row that states `elementKind`. Without it a
+  // string key read as `$.m[k]` would take the runtime array/object dispatch, whose
+  // array arm hands `$arrayElemAt` a string — MEASURED, the server refuses that.
+  const element = recvNode === undefined ? "unknown" : elementKindOf(recvNode, env);
   const usesIndex = index !== undefined && readsParam(cb.body, index);
   if (!usesIndex) {
-    const bound = env.param(elem ?? "_", "unknown", cb.pos);
+    // A callback that names no parameter still needs a binder, and it must be a name
+    // the program cannot spell: `() => v` bound as `_` collides with a developer's
+    // own `_`, which encodes to the same MongoDB variable.
+    const bound = elem === undefined ? env.fresh("unused") : env.param(elem, element, cb.pos);
     let bodyEnv = bound.env;
     const vars: Record<string, unknown> = {};
     if (arr !== undefined) {
@@ -120,7 +129,7 @@ function arrayCallback(
   const pair = env.fresh("pair");
   let bodyEnv = pair.env;
   const vars: Record<string, unknown> = {};
-  const x = bodyEnv.param(elem, "unknown", cb.pos);
+  const x = bodyEnv.param(elem, element, cb.pos);
   vars[x.as] = { $arrayElemAt: [pair.ref, 1] };
   bodyEnv = x.env;
   const i = bodyEnv.param(index, "number", cb.pos);
@@ -249,6 +258,8 @@ export function exprInputs(
   node: object,
   read: Reader,
   overrides: ReadonlyMap<Expr, unknown> = new Map(),
+  /** The receiver as WRITTEN, where a callback needs the kind of one of its elements. */
+  recvNode?: Expr,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
   const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
@@ -261,7 +272,7 @@ export function exprInputs(
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
     predicate: (cb) => callback(cb, argEnv, read.truth) as { as: string; ref: string; in: Truth },
-    callback: (cb, mode) => arrayCallback(cb, recv, argEnv, mode === "value" ? read.value : read.truth, name),
+    callback: (cb, mode) => arrayCallback(cb, recv, recvNode, argEnv, mode === "value" ? read.value : read.truth, name),
     reducer: (cb, seed) => reducerCallback(cb, seed, recv, argEnv, read.value, name),
     elements: (cb, count) => elementsCallback(cb, count, argEnv, read.value, name),
     sortSpec: (e, objects) => sortSpecOf(e, name, objects),

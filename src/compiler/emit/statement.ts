@@ -292,6 +292,7 @@ function letStages(decl: LetDecl, env: Env): Step {
  * the cleanup is not owed for what is already gone.
  */
 function afterStages(stages: readonly Stage[], env: Env): Env {
+  env.chain.advance(stages);
   let out = env;
   for (const stage of stages) {
     const name = Object.keys(stage)[0];
@@ -372,9 +373,15 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   // depth of its body. So every registry name the emitted document mentions is judged,
   // not just the stage's own.
   for (const held of [name, ...namesWithin(stage[name])]) {
-    for (const boundary of env.site.boundaries) {
-      if (forbiddenInOf(held).includes(boundary.stage) || bansNestedOf(boundary.stage).includes(held)) {
-        throw E.forbiddenInContainer(held, boundary.stage, pos, placementOf(held).container);
+    // The containers a name may not stand in: every sub-pipeline boundary crossed to
+    // get here, and — for a name the BODY holds — the stage carrying it. MEASURED,
+    // `$where` runs in a `find` filter and is refused in an aggregation `$match` at
+    // any depth of the body, which is a fact about the pair and about nothing else.
+    const containers =
+      held === name ? env.site.boundaries.map((b) => b.stage) : [name, ...env.site.boundaries.map((b) => b.stage)];
+    for (const container of containers) {
+      if (forbiddenInOf(held).includes(container) || bansNestedOf(container).includes(held)) {
+        throw E.forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
     if (held !== name && onlyOf(held).includes("stageFirst") && !first) {

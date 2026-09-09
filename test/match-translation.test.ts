@@ -334,7 +334,10 @@ describe("$match translation — .includes() → $in / array-element", () => {
           $expr: {
             $switch: {
               branches: [
-                { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["$target", "$tags"] } },
+                {
+                  case: { $in: [{ $type: "$tags" }, ["array"]] },
+                  then: { $in: ["$target", { $ifNull: ["$tags", []] }] },
+                },
                 {
                   case: { $in: [{ $type: "$tags" }, ["string"]] },
                   then: { $gte: [{ $indexOfCP: ["$tags", "$target"] }, 0] },
@@ -525,7 +528,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -551,7 +554,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -578,7 +581,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -603,7 +606,10 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$order.items" }, ["array"]] }, then: { $size: "$order.items" } },
+                    {
+                      case: { $in: [{ $type: "$order.items" }, ["array"]] },
+                      then: { $size: { $ifNull: ["$order.items", []] } },
+                    },
                     {
                       case: { $in: [{ $type: "$order.items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$order.items", ""] } },
@@ -629,7 +635,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -652,7 +658,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -676,7 +682,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -702,7 +708,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -725,7 +731,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -748,7 +754,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -786,7 +792,7 @@ describe("$match translation — .length vs natural number → string-or-array $
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
+                    { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
                     {
                       case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$items", ""] } },

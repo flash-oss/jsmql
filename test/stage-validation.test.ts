@@ -291,7 +291,14 @@ describe("$match query-operator placement", () => {
     expect(() => jsmql("[ $sort({ x: 1 }), $match({ loc: { $nearSphere: [0, 0] } }) ]")).toThrow(
       /'\$nearSphere' is not allowed.*\$geoNear/,
     );
-    expect(jsmql("[ $match({ $where: 'this.x > 1' }) ]")).toEqual([{ $match: { $where: "this.x > 1" } }]);
+    // MEASURED: `find({ $where: … })` runs where server-side JavaScript is enabled,
+    // and an aggregation `$match` refuses it at any depth of the body. So the RAW
+    // filter passes through (HR1) and the same document inside a `$match` does not.
+    expect(jsmql("{ $where: 'this.x > 1' }")).toEqual({ $where: "this.x > 1" });
+    expect(() => jsmql("[ $match({ $where: 'this.x > 1' }) ]")).toThrow(/'\$where' cannot stand inside '\$match'/);
+    expect(() => jsmql("[ $match({ $and: [{ $where: 'this.x > 1' }] }) ]")).toThrow(
+      /'\$where' cannot stand inside '\$match'/,
+    );
   });
   it("leaves an ordinary $match (object or expression body) alone", () => {
     expect(jsmql("[ $sort({ x: 1 }), $match({ x: { $gt: 1 } }) ]")).toEqual([

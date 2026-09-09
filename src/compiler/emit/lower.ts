@@ -587,7 +587,9 @@ function dispatchOn(
       receiver.kind === "value" || receiver.kind === "opaque"
         ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
         : null;
-    return sel.rule.emit(exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ));
+    return sel.rule.emit(
+      exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode),
+    );
   }
   if (sel.kind === "dispatch") {
     if (receiver.kind !== "opaque") internalError("a dispatch was selected for a proven receiver");

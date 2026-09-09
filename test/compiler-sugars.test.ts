@@ -452,7 +452,7 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
         "$.ys = $.xs; $.ys.fill(0);",
         after((ys) => ys.fill(0)),
       ),
-    ).toEqual([{ $set: { ys: "$xs" } }, { $set: { ys: { $map: { input: "$ys", as: "v__5f", in: 0 } } } }]);
+    ).toEqual([{ $set: { ys: "$xs" } }, { $set: { ys: { $map: { input: "$ys", as: "jsmqlUnused", in: 0 } } } }]);
     compiled(
       "$.ys = $.xs; $.ys.fill(9, 1);",
       after((ys) => ys.fill(9, 1)),

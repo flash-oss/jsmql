@@ -89,7 +89,9 @@ describe("compiler/emit/select — a per-family cell and the receiver's proof", 
   it("runs the branch a proven receiver names", () => {
     const r = at("length", value("array"));
     expect(r.kind).toBe("rule");
-    expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({ $size: "$x" });
+    expect((r as { rule: { emit: (i: unknown) => unknown } }).rule.emit({ recv: "$x" })).toEqual({
+      $size: { $ifNull: ["$x", []] },
+    });
   });
 
   it("dispatches an unprovable receiver over the field families, with the row's `uncertain` as default", () => {

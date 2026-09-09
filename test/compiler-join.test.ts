@@ -186,7 +186,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       ]),
     ).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
-      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
+      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
       { $unset: "__jsmql" },
     ]);
     expect(
@@ -218,7 +218,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
     // inside a stage body the `$lookup` is hoisted ahead of the stage
     expect(compiled("$match($$$.orders.filter(o => o.userId === $._id).length > 1);", [{ _id: 1 }])).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
-      { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 1] } } },
+      { $match: { $expr: { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 1] } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -264,7 +264,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       ]),
     ).toEqual([
       { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.var.os" } },
-      { $set: { n: { $size: "$__jsmql.var.os" } } },
+      { $set: { n: { $size: { $ifNull: ["$__jsmql.var.os", []] } } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -405,7 +405,12 @@ describe("compiler/emit/join — inside the body", () => {
             { $lookup: { from: "items", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
             {
               $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] },
+                $expr: {
+                  $and: [
+                    { $eq: ["$userId", "$$jsmql_f0__id"] },
+                    { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 0] },
+                  ],
+                },
               },
             },
             { $unset: "__jsmql" },

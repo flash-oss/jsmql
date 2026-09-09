@@ -142,7 +142,7 @@ describe("compiler/emit/lower — access", () => {
     expect(out).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: "$x" } },
+          { case: { $in: [{ $type: "$x" }, ["array"]] }, then: { $size: { $ifNull: ["$x", []] } } },
           {
             case: { $in: [{ $type: "$x" }, ["string", "null", "missing"]] },
             then: { $strLenCP: { $ifNull: ["$x", ""] } },

@@ -25,7 +25,7 @@ import type { Binding, Binder, Declared, FieldSlot, Located, MongoVar, VarRef } 
 import { Capture, Scope, scratchSlot } from "./names.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
-import { pipelineOverOf } from "../rows.ts";
+import { pipelineOverOf, preservesCountOf } from "../rows.ts";
 import { noCorrelationSlot, readInUpdateDocument } from "./errors.ts";
 
 /**
@@ -115,11 +115,52 @@ export class Chain {
     return scratchSlot(this.slots++);
   }
 
+  /**
+   * The field paths a materialiser has already stamped and that are still FRESH —
+   * see docs/specs/stream-length.md § Compute-once / reuse / recompute. A second read
+   * of a stamped path costs no stage; a stage whose row does not state
+   * `preservesCount` clears the set, so the next read stamps again.
+   */
+  private stamped = new Set<string>();
+
+  /**
+   * A mark for a lowering that may be TAKEN BACK. A chain that goes on after a join
+   * lowers the body twice, and the first attempt's hoists are discarded — so the
+   * stamps it took have to go with them, or the second attempt reuses a field the
+   * discarded stage was going to write.
+   */
+  mark(): { hoisted: number; stamped: ReadonlySet<string> } {
+    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped) };
+  }
+
+  /** Undo everything hoisted and stamped since `mark`. */
+  rewind(m: { hoisted: number; stamped: ReadonlySet<string> }): void {
+    this.hoisted.length = m.hoisted;
+    this.stamped = new Set(m.stamped);
+  }
+
   /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
   hoist(stages: readonly Stage[], reads: string): string {
-    this.hoisted.push(...stages);
-    this.dirty = true;
+    if (!this.stamped.has(reads)) {
+      this.hoisted.push(...stages);
+      this.stamped.add(reads);
+      this.dirty = true;
+    }
     return "$" + reads;
+  }
+
+  /**
+   * A statement's stages have landed. A stage that does not state `preservesCount`
+   * changes how many documents there are, or what fields they carry, so every stamp
+   * taken before it now says something that is no longer true.
+   */
+  advance(stages: readonly Stage[]): void {
+    for (const stage of stages) {
+      if (!preservesCountOf(Object.keys(stage)[0])) {
+        this.stamped.clear();
+        return;
+      }
+    }
   }
 
   /** Move the hoisted stages into the emitted list — called before the statement that triggered them. */

@@ -138,7 +138,7 @@ $$ = candidateProductIds
                       $map: {
                         input: { $ifNull: ["$productIds", []] },
                         as: "p",
-                        in: { $in: ["$$p", "$$jsmql_v0_myProductIds"] },
+                        in: { $in: ["$$p", { $ifNull: ["$$jsmql_v0_myProductIds", []] }] },
                       },
                     },
                   },
@@ -174,7 +174,7 @@ $$ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
+                              cond: { $not: { $in: ["$$p", { $ifNull: ["$__jsmql.var.myProductIds", []] }] } },
                             },
                           },
                           as: "jsmqlX",
@@ -205,7 +205,7 @@ $$ = candidateProductIds
                                 },
                               },
                               as: "p",
-                              cond: { $not: { $in: ["$$p", "$__jsmql.var.myProductIds"] } },
+                              cond: { $not: { $in: ["$$p", { $ifNull: ["$__jsmql.var.myProductIds", []] }] } },
                             },
                           },
                           as: "jsmqlX",
@@ -839,20 +839,7 @@ $$ = ["sender", "recipient"].map(party => {
                   as: "party",
                   in: {
                     $let: {
-                      vars: {
-                        leg: {
-                          $cond: {
-                            if: { $isArray: { $ifNull: ["$legs", []] } },
-                            then: { $arrayElemAt: [{ $ifNull: ["$legs", []] }, "$$party"] },
-                            else: {
-                              $getField: {
-                                field: { $toString: { $ifNull: ["$$party", ""] } },
-                                input: { $ifNull: ["$legs", []] },
-                              },
-                            },
-                          },
-                        },
-                      },
+                      vars: { leg: { $getField: { field: "$$party", input: { $ifNull: ["$legs", {}] } } } },
                       in: {
                         $let: {
                           vars: { score: "$$leg.riskScore" },
@@ -1190,7 +1177,10 @@ $.customer.region.trim().toLowerCase() === "us"
               {
                 $switch: {
                   branches: [
-                    { case: { $in: [{ $type: "$cart.items" }, ["array"]] }, then: { $size: "$cart.items" } },
+                    {
+                      case: { $in: [{ $type: "$cart.items" }, ["array"]] },
+                      then: { $size: { $ifNull: ["$cart.items", []] } },
+                    },
                     {
                       case: { $in: [{ $type: "$cart.items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
@@ -1479,7 +1469,7 @@ describe("CSV field word count", { features: ["String methods"] }, () => {
     "compiles to the expected MQL",
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { tagCount: jsmql.expr(...) } }])" },
     () => {
-      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({ $size: { $split: ["$tags", ","] } });
+      expect(jsmql.expr(`$.tags.split(",").length`)).toEqual({ $size: { $ifNull: [{ $split: ["$tags", ","] }, []] } });
     },
   );
 });
@@ -1794,7 +1784,12 @@ $.file.size <= 25_000_000
 describe("chat moderation with ?. inside an array spread", { features: ["Optional chaining"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.chatRooms.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }] },
+      $expr: {
+        $in: [
+          "$userId",
+          { $ifNull: [{ $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }, []] },
+        ],
+      },
     });
   });
 });
@@ -1872,7 +1867,7 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
 describe("moderator membership check via [...a, ...b]", { features: ["Array spread"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.threads.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }] },
+      $expr: { $in: ["$userId", { $ifNull: [{ $concatArrays: ["$moderators", "$room.mods", ["root"]] }, []] }] },
     });
   });
 });
@@ -2205,7 +2200,7 @@ $project({ name: 1, recentOrders: 1, nOrders });
         },
       },
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-      { $set: { "__jsmql.var.nOrders": { $size: "$__jsmql.tmp.0" } } },
+      { $set: { "__jsmql.var.nOrders": { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
       { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.var.nOrders" } },
       { $unset: "__jsmql" },
     ]);
@@ -2551,9 +2546,7 @@ assert($$.length <= 1000, "too many in-stock products to render");
           { $match: { inStock: true } },
           { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
           { $set: { totalInStock: "$__jsmql.length" } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
           { $set: { sharePct: { $divide: [100, "$__jsmql.length"] } } },
-          { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
           {
             $match: {
               $expr: {
@@ -3197,7 +3190,7 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {
-                totalShipments: { $size: "$__jsmql.tmp.0" },
+                totalShipments: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } },
                 totalOrders: "$__jsmql.length",
                 totalUsers: "$$jsmql_s0_length",
               },
@@ -3242,7 +3235,7 @@ $.recentCoPurchaseOrders = $$$.orders
                     branches: [
                       {
                         case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                        then: { $in: ["$$jsmql_f0__id", "$productIds"] },
+                        then: { $in: ["$$jsmql_f0__id", { $ifNull: ["$productIds", []] }] },
                       },
                       {
                         case: { $in: [{ $type: "$productIds" }, ["string"]] },
@@ -3298,7 +3291,6 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                 let: { jsmql_f1__id: "$_id" },
                 pipeline: [
                   { $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {

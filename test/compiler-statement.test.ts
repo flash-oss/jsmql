@@ -650,7 +650,11 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
   it("a binding holding an array-returning method's value is typed, so a read dispatches at compile time", () => {
     expect(pipeline('const ids = $.tags.uniq(); $.y = ids.includes("a")')).toEqual([
       { $set: { "__jsmql.var.ids": { $setUnion: "$tags" } } },
-      { $set: { y: { $in: ["a", "$__jsmql.var.ids"] } } },
+      // A reader over a MISSING field answers null, so a value the compiler proved is
+      // an array can still be null at run time — and `$in` is one of the two operators
+      // that refuse that rather than answer null. MEASURED: "$in requires an array as
+      // a second argument, found: null".
+      { $set: { y: { $in: ["a", { $ifNull: ["$__jsmql.var.ids", []] }] } } },
       { $unset: "__jsmql" },
     ]);
   });

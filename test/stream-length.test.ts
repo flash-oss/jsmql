@@ -41,7 +41,6 @@ describe("$$.length — compute-once / reuse / recompute", () => {
     expect(jsmql("$.a = $$.length; $.b = $$.length + 1")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { a: "$__jsmql.length" } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { b: { $add: ["$__jsmql.length", 1] } } },
       { $unset: "__jsmql" },
     ]);
@@ -52,7 +51,6 @@ describe("$$.length — compute-once / reuse / recompute", () => {
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { a: "$__jsmql.length" } },
       { $sort: { a: 1 } },
-      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { b: "$__jsmql.length" } },
       { $unset: "__jsmql" },
     ]);
@@ -228,7 +226,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {
-                totalShipments: { $size: "$__jsmql.tmp.0" },
+                totalShipments: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } },
                 totalOrders: "$__jsmql.length",
                 totalUsers: "$$jsmql_s0_length",
               },
