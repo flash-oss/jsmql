@@ -10,6 +10,29 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-09 — chore: the acceptance gate is clean
+
+`scripts/diff-compilers.mjs` exits 0. Every one of the 10993 divergences between
+this compiler and the shipped one — 2915 sources × six entry points — carries a
+reason a reviewer can judge, and none is a TODO.
+
+The reasons are written per CLASS of change, not per row, because that is what a
+reader needs: 2830 rows are one sentence about the strict entries refusing a shape
+they do not take, 2422 about `jsmql.update()` being the update DOCUMENT rather than
+the pipeline form, 96 about a scratch slot numbered from 0, 49 about a callback's
+variable taking the parameter's own name. The rows that needed judgement rather
+than a rule — the last 431 — were judged one cluster at a time, each answer that
+could select different documents run on a mongod, and each judgement checked by a
+second reader whose brief was to refute it. That pass is what found the six
+defects in the entry above.
+
+What the file now records is the shape of the refactor: what changed, and why each
+change is right. `--accept` refreshes the rows and keeps every reason; a row whose
+divergence disappears is pruned. A new divergence arrives as UNCLASSIFIED and the
+gate exits 1 until someone says why it is correct.
+
+---
+
 ## 2026-09-09 — fix!: six defects the acceptance gate found, each measured on the server
 
 The gate compares this compiler with the shipped one over 2912 sources × six entry
