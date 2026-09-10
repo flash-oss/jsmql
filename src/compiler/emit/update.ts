@@ -10,6 +10,7 @@ import { UPDATE_DOC } from "../passes/position.ts";
 import { staticKey } from "../passes/naming.ts";
 import type { Env } from "./env.ts";
 import * as E from "./errors.ts";
+import { setKey } from "../../registry/mql.ts";
 import { childEnv } from "./inputs.ts";
 import { lowerValue } from "./lower.ts";
 
@@ -25,7 +26,7 @@ export function lowerUpdate(program: Program, env: Env): QueryDoc {
     const held = claimed.get(path);
     if (held !== undefined) throw E.updateConflict(path, held, op, pos);
     claimed.set(path, op);
-    (out[op] ??= {})[path] = value;
+    setKey((out[op] ??= {}), path, value);
   };
   // `$.b = $.a; delete $.a;` is one `$rename` — either order.
   const deleted = new Set<string>();

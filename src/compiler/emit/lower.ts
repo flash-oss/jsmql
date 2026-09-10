@@ -15,6 +15,7 @@ import { internalError } from "../../errors.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { ObjectId } from "../../objectid.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
+import { setKey } from "../../registry/mql.ts";
 import { BSON_TYPE_ALIASES, TYPE_GROUPS, typeAliasOf } from "../../registry/vocabulary.ts";
 import { chainBase, namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
@@ -345,7 +346,7 @@ function objectLiteral(node: Expr, entries: readonly ObjectEntry[], env: Env): u
       if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
         throw E.listOperand(e.key.name, e.value.pos);
       }
-      out[e.key.name] = lowerValue(e.value, inner);
+      setKey(out, e.key.name, lowerValue(e.value, inner));
     }
     return out;
   };

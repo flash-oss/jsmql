@@ -74,7 +74,11 @@ type Options = {
   // `number` → that many spaces; `"\t"` → tabs; 0 → compact. Passed straight to
   // JSON.stringify's third argument.
   indent: number | string;
-  params: Record<string, unknown>;
+  /**
+   * A MAP, not an object: `--arg __proto__ x` on a plain object writes the prototype
+   * slot and stores nothing, and the query then reports the parameter as never supplied.
+   */
+  params: Map<string, unknown>;
   hasParams: boolean;
   help: boolean;
   version: boolean;
@@ -109,7 +113,7 @@ function parseJsonArg(name: string, raw: string): unknown {
 }
 
 function parseArgs(argv: string[]): Options {
-  const opts: Options = { mode: "auto", indent: 2, params: {}, hasParams: false, help: false, version: false };
+  const opts: Options = { mode: "auto", indent: 2, params: new Map(), hasParams: false, help: false, version: false };
   const setMode = (m: Mode): void => {
     if (opts.mode !== "auto") {
       throw new UsageError(`conflicting output-shape flags: --${opts.mode} and --${m}. Pick one.`);
@@ -138,13 +142,13 @@ function parseArgs(argv: string[]): Options {
       i++;
       const name = requireValue(argv[i], "--arg");
       i++;
-      opts.params[name] = requireValue(argv[i], "--arg");
+      opts.params.set(name, requireValue(argv[i], "--arg"));
       opts.hasParams = true;
     } else if (a === "--argjson") {
       i++;
       const name = requireValue(argv[i], "--argjson");
       i++;
-      opts.params[name] = parseJsonArg(name, requireValue(argv[i], "--argjson"));
+      opts.params.set(name, parseJsonArg(name, requireValue(argv[i], "--argjson")));
       opts.hasParams = true;
     } else if (a.length > 1 && a[0] === "-") {
       throw new UsageError(`unknown option '${a}'.`);
@@ -293,7 +297,8 @@ function main(): number {
       process.stdout.write(JSON.stringify(result, null, opts.indent) + "\n");
       return result.valid ? 0 : 1;
     }
-    const result = compile(opts.mode, source, opts.hasParams ? opts.params : undefined);
+    const params = opts.hasParams ? Object.fromEntries(opts.params) : undefined;
+    const result = compile(opts.mode, source, params);
     process.stdout.write(render(result, opts.indent) + "\n");
     return 0;
   } catch (err) {

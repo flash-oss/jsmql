@@ -48,6 +48,7 @@ import {
   regexBody,
   resolveSliceIndex,
   reverseArrayOf,
+  setKey,
   singleArrayArg,
   sizeOf,
   sliceArray,
@@ -10680,7 +10681,7 @@ export const NAMES = {
         );
         const obj = bind("obj");
         const out: Record<string, unknown> = {};
-        for (const k of keys) out[k] = { $getField: { field: k, input: obj.ref } };
+        for (const k of keys) setKey(out, k, { $getField: { field: k, input: obj.ref } });
         return { $let: { vars: { [obj.as]: recv }, in: out } };
       },
     },

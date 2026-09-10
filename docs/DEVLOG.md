@@ -10,6 +10,43 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-10 — fix: a field name JavaScript refuses to store the ordinary way
+
+MongoDB reserves no field names, so `__proto__` is ordinary data. It is also the one
+name `out[name] = value` sends to the prototype slot instead of creating an own
+property, and the field then vanishes from the emitted document with no error at
+compile time or run time. Measured before the fix:
+
+    $.__proto__ = 1;                      →  [{ "$set": {} }]
+    $ = { __proto__: 1 };                 →  [{ "$replaceWith": {} }]
+    $sort({ __proto__: 1 });              →  [{ "$sort": {} }]
+    jsmql.update("$.__proto__ = 1")       →  { "$set": {} }
+    $.o.pick(["__proto__"])               →  the projection is empty
+
+Writing is only one of four ways this goes wrong, and the other three had their own
+symptoms. READING an accumulator back — `out[key] ?? []` — answers a function for
+`constructor` and a method for `toString`, values the fold never stored. `name in out`
+answers true for every one of those names, so the `$facet` duplicate guard refused a
+program that had no duplicate: `$ = { toString: $$ };` was rejected as "names two
+'$facet' branches". And a plain object standing in for a set has the same false
+positives.
+
+The write sites go through `setKey` in [src/registry/mql.ts](src/registry/mql.ts),
+which uses `Object.defineProperty` — it never consults the prototype. It lives in the
+registry because one of the unsafe sites is a registry row (the `.pick` cell) and the
+registry imports nothing from outside itself. The other three had no helper, because
+the fix is to stop using an object: the `$facet` guard is a `Set`, the `groupBy` /
+`countBy` accumulator is a `Map`, and the CLI's `--arg` table is a `Map` converted
+with `Object.fromEntries` at the boundary. `--arg __proto__ x` used to be dropped and
+then reported back as "was not supplied", which is the same bug wearing a worse face.
+
+Six names are now asserted across fourteen roads in
+[test/security.test.ts](test/security.test.ts) — `__proto__`, `constructor`,
+`prototype`, `toString`, `hasOwnProperty`, `valueOf`. The suite was checked for teeth
+by disabling `setKey` and watching it go red.
+
+---
+
 ## 2026-09-10 — docs: the prose stops describing a compiler that no longer exists
 
 CLAUDE.md's rule is that every file says WHAT JSMQL IS, and only this one says how it

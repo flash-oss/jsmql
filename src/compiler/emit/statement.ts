@@ -12,6 +12,7 @@
 
 import type { Expr, QueryDoc, Stage } from "../../registry/vocabulary.ts";
 import type { LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
+import { setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
@@ -604,6 +605,9 @@ const isStreamChain = (e: Expr): boolean =>
  */
 function facetStages(doc: Extract<Expr, { type: "ObjectLiteral" }>, env: Env, first: boolean): Stage[] {
   const branches: Record<string, Stage[]> = {};
+  // A SET, not `key in branches`: `in` answers true for every name on
+  // `Object.prototype`, so a branch called `toString` read as a duplicate of nothing.
+  const named = new Set<string>();
   const entries = childEnv(env, doc, "entries");
   for (const e of doc.entries) {
     if (e.type !== "KeyValueEntry") throw E.facetSpread(e.pos);
@@ -612,10 +616,11 @@ function facetStages(doc: Extract<Expr, { type: "ObjectLiteral" }>, env: Env, fi
     if (!isStreamChain(e.value)) throw E.facetMixed(key, e.value.pos);
     if (key === "" || key.includes(".") || key.startsWith("$")) throw E.facetKey(key, e.pos);
     // JavaScript keeps the LAST of two equal keys; two branches under one name is a lost branch, not a choice.
-    if (key in branches) throw E.facetDuplicate(key, e.pos);
+    if (named.has(key)) throw E.facetDuplicate(key, e.pos);
+    named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
     if (e.value.type !== "CollectionRef") body.chain.emitted.push(...streamStages(e.value, body, true));
-    branches[key] = body.chain.close();
+    setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
 }
@@ -820,7 +825,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     }
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
-    sets.fields[path] = replacesWhole(value) ? { $mergeObjects: [value] } : value;
+    setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
       const binding: Declared = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },

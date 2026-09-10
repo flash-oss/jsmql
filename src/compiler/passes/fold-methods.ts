@@ -16,6 +16,7 @@
 import type { Evaluation } from "./evaluate.ts";
 import { ObjectId } from "../../objectid.ts";
 import { sameValue, truthy } from "./evaluate.ts";
+import { setKey } from "../../registry/mql.ts";
 import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
 
 const NO: Evaluation = { ok: false };
@@ -528,7 +529,7 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       const out: Record<string, unknown> = {};
       for (const [k, v] of Object.entries(o)) {
         if (!isKey(v)) return NO;
-        out[String(v)] = k;
+        setKey(out, String(v), k);
       }
       return ok(out);
     }
@@ -537,13 +538,13 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       if (!Array.isArray(a) || !a.every((k) => typeof k === "string")) return NO;
       const keep = new Set(a as string[]);
       const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(o)) if (keep.has(k) === (name === "pick")) out[k] = v;
+      for (const [k, v] of Object.entries(o)) if (keep.has(k) === (name === "pick")) setKey(out, k, v);
       return ok(out);
     }
     case "mapValues": {
       if (fn === undefined) return NO;
       const out: Record<string, unknown> = {};
-      for (const [k, v] of Object.entries(o)) out[k] = fn(v, k, o);
+      for (const [k, v] of Object.entries(o)) setKey(out, k, fn(v, k, o));
       return ok(out);
     }
     case "mapKeys": {
@@ -552,7 +553,7 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
       for (const [k, v] of Object.entries(o)) {
         const key = fn(v, k, o);
         if (!isKey(key)) return NO;
-        out[String(key)] = v;
+        setKey(out, String(key), v);
       }
       return ok(out);
     }
@@ -566,7 +567,7 @@ function objectMethod(o: Record<string, unknown>, name: string, args: readonly A
         // JavaScript's truthiness and MongoDB's part company — `""` and `0` are
         // false there and true here — so it does not fold.
         if (typeof verdict !== "boolean") return NO;
-        if (verdict === (name === "pickBy")) out[k] = v;
+        if (verdict === (name === "pickBy")) setKey(out, k, v);
       }
       return ok(out);
     }
@@ -1001,7 +1002,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       const out: Record<string, unknown> = {};
       xs.forEach((k, i) => {
         if (!isKey(k)) throw NOT_A_KEY;
-        out[String(k)] = i < values.length ? values[i] : null;
+        setKey(out, String(k), i < values.length ? values[i] : null);
       });
       return ok(out);
     }
@@ -1009,7 +1010,7 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       const out: Record<string, unknown> = {};
       for (const pair of xs) {
         if (!Array.isArray(pair) || pair.length === 0 || !isKey(pair[0])) return NO;
-        out[String(pair[0])] = pair.length > 1 ? pair[1] : null;
+        setKey(out, String(pair[0]), pair.length > 1 ? pair[1] : null);
       }
       return ok(out);
     }
@@ -1019,22 +1020,26 @@ function arrayMethod(xs: unknown[], name: string, args: readonly Arg[]): Evaluat
       for (const [i, v] of xs.entries()) {
         const k = fn(v, i, xs);
         if (!isKey(k)) return NO;
-        out[String(k)] = v; // last wins
+        setKey(out, String(k), v); // last wins
       }
       return ok(out);
     }
     case "groupBy":
     case "countBy": {
       if (fn === undefined) return NO;
-      const out: Record<string, unknown> = {};
+      // A MAP, not an object: the accumulator is keyed by a value the DEVELOPER
+      // computed, and reading `out["constructor"]` off a plain object answers a
+      // function that was never stored, while writing `out["__proto__"]` stores
+      // nothing at all. `Object.fromEntries` then builds the answer safely.
+      const out = new Map<string, unknown>();
       for (const [i, v] of xs.entries()) {
         const k = fn(v, i, xs);
         if (!isKey(k)) return NO;
         const key = String(k);
-        if (name === "countBy") out[key] = ((out[key] as number) ?? 0) + 1;
-        else (out[key] = (out[key] as unknown[]) ?? []) && (out[key] as unknown[]).push(v);
+        if (name === "countBy") out.set(key, ((out.get(key) as number) ?? 0) + 1);
+        else out.set(key, [...((out.get(key) as unknown[]) ?? []), v]);
       }
-      return ok(out);
+      return ok(Object.fromEntries(out));
     }
 
     // ── ordering ────────────────────────────────────────────────────────────

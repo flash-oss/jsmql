@@ -14,6 +14,7 @@
 // what it would have been without this pass at all.
 
 import type { Expr } from "../../registry/ast.ts";
+import { setKey } from "../../registry/mql.ts";
 import { isSpellable, readLiteral } from "./literal.ts";
 import type { Arg } from "./fold-methods.ts";
 import {
@@ -707,7 +708,7 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
         }
         const value = at(entry.value, env, depth + 1);
         if (!value.ok) return propagate(value);
-        out[name] = value.value;
+        setKey(out, name, value.value);
       }
       return ok(out);
     }

@@ -10,6 +10,39 @@
 
 import type { Expr } from "./ast.ts";
 
+// ── a field name the DEVELOPER chose ─────────────────────────────────────────
+//
+// MongoDB reserves no field names, so `__proto__` is ordinary data — and it is the
+// one name JavaScript refuses to store the ordinary way. Four operations go wrong,
+// and only the first is about writing:
+//
+//   out[name] = v      writes the PROTOTYPE slot, creates no own property: the field
+//                      vanishes from the emitted document
+//   out[name]          reads a method off `Object.prototype` for "constructor",
+//                      "toString", "valueOf", … so an accumulator sees a value it
+//                      never stored
+//   name in out        answers true for every one of those names, so a duplicate
+//                      guard refuses a program that has no duplicate
+//   seen[name] = true  the same, when a plain object stands in for a set
+//
+// `setKey` answers the first. The other three have no helper because the fix is to
+// stop using an object: a `Map` and a `Set` hold exactly what was put in them.
+
+/**
+ * `out[name] = value`, creating an OWN property even when `name` is `__proto__`.
+ * `Object.defineProperty` is the escape — it never consults the prototype.
+ * (`Object.fromEntries` and object spread are already safe; a site using either
+ * needs no change.)
+ */
+export function setKey<T>(out: Record<string, T>, name: string, value: T): Record<string, T> {
+  if (name === "__proto__") {
+    Object.defineProperty(out, name, { value, enumerable: true, writable: true, configurable: true });
+    return out;
+  }
+  out[name] = value;
+  return out;
+}
+
 /** `{ $cond: { if, then, else } }` — the one spelling of a condition. */
 export const cond = (
   ifExpr: unknown,

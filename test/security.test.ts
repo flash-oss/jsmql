@@ -91,3 +91,62 @@ describe("jsmql.validate() error contract", () => {
     expect(result.errors[0].code).toBe("SYNTAX_ERROR");
   });
 });
+
+// ── a field name JavaScript refuses to store the ordinary way ────────────────
+//
+// MongoDB reserves no field names, so `__proto__` is ordinary data — and it is the
+// one name `out[name] = value` sends to the PROTOTYPE slot, creating no own property.
+// Three more names read back a method that was never stored (`constructor`,
+// `toString`, `valueOf`), and `name in out` answers true for all of them. Each of the
+// four goes wrong differently, so each is asserted here rather than assumed.
+// See the `setKey` header in src/registry/mql.ts.
+describe("a developer-authored field name survives to the output", () => {
+  const HOSTILE = ["__proto__", "constructor", "prototype", "toString", "hasOwnProperty", "valueOf"];
+
+  it("every write road keeps the name", () => {
+    for (const k of HOSTILE) {
+      const q = JSON.stringify(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.${k} = 1;`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$ = { ${q}: 1 };`))).toContain(k);
+      expect(JSON.stringify(jsmql.expr(`({ ${q}: 1 })`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$sort({ ${q}: 1 });`))).toContain(k);
+      expect(JSON.stringify(jsmql.update(`$.${k} = 1`))).toContain(k);
+      expect(JSON.stringify(jsmql.update(`delete $.${k}`))).toContain(k);
+    }
+  });
+
+  it("every folding road that builds an object keeps the name", () => {
+    for (const k of HOSTILE) {
+      const q = JSON.stringify(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a:1}).mapKeys(() => ${q});`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = [[${q}, 1]].fromPairs();`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = ({a: ${q}}).invert();`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = [${q}].zipObject([1]);`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = [{k: ${q}}].groupBy(x => x.k);`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = [{k: ${q}}].countBy(x => x.k);`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = ({[${q}]: 1}).mapValues(v => v);`))).toContain(k);
+      expect(JSON.stringify(jsmql.pipeline(`$.r = $.o.pick([${q}]);`))).toContain(k);
+    }
+  });
+
+  // `key in branches` answers true for every name on `Object.prototype`, so the
+  // duplicate guard used to refuse a program that had no duplicate at all.
+  it("a $facet branch may be named after a prototype member, and a real duplicate is still refused", () => {
+    expect(jsmql.pipeline("$ = { toString: $$ };")).toEqual([{ $facet: { toString: [] } }]);
+    expect(jsmql.pipeline("$ = { valueOf: $$, hasOwnProperty: $$ };")).toEqual([
+      { $facet: { valueOf: [], hasOwnProperty: [] } },
+    ]);
+    expect(() => jsmql.pipeline("$ = { dup: $$, dup: $$ };")).toThrow("names two '$facet' branches");
+  });
+
+  // The fold reads its accumulator back, and a plain object answers a FUNCTION for
+  // `constructor` — a value the fold never stored.
+  it("a fold keyed by a prototype member answers what it stored", () => {
+    expect(jsmql.pipeline("$.r = [{ k: 'constructor' }].groupBy(x => x.k);")).toEqual([
+      { $set: { r: { $mergeObjects: [{ constructor: [{ k: "constructor" }] }] } } },
+    ]);
+    expect(jsmql.pipeline("$.r = [{ k: 'constructor' }].countBy(x => x.k);")).toEqual([
+      { $set: { r: { $mergeObjects: [{ constructor: 1 }] } } },
+    ]);
+  });
+});
