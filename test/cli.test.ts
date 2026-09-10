@@ -11,6 +11,7 @@ import { fileURLToPath } from "node:url";
 import { dirname, resolve, join } from "node:path";
 import { writeFileSync, mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
+import * as mongodb from "mongodb";
 
 const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
@@ -20,17 +21,40 @@ function run(args: string[], input?: string) {
   return { status: r.status, stdout: r.stdout, stderr: r.stderr };
 }
 
+/**
+ * The CLI writes JAVASCRIPT, so the output is read the way a developer reads it —
+ * by pasting it somewhere that has the driver's BSON classes in scope. Evaluating
+ * rather than parsing is itself the assertion the printer exists for: text the driver
+ * would refuse fails here first.
+ */
+const BSON_GLOBALS: Record<string, unknown> = {
+  ObjectId: mongodb.ObjectId,
+  Decimal128: mongodb.Decimal128,
+  Long: mongodb.Long,
+  Int32: mongodb.Int32,
+  Double: mongodb.Double,
+  Binary: mongodb.Binary,
+  UUID: mongodb.UUID,
+  Timestamp: mongodb.Timestamp,
+  MinKey: mongodb.MinKey,
+  MaxKey: mongodb.MaxKey,
+  Code: mongodb.Code,
+  DBRef: mongodb.DBRef,
+};
+const asPasted = (text: string): unknown =>
+  new Function(...Object.keys(BSON_GLOBALS), `return (${text})`)(...Object.values(BSON_GLOBALS));
+
 describe("cli: input sources", () => {
   it("reads JSMQL from stdin and prints MQL JSON (Filter default)", () => {
     const r = run([], "$.age > 18\n");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(asPasted(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("accepts the source as a positional argument", () => {
     const r = run(["$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(asPasted(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("reads the source from --file (in preference to stdin)", () => {
@@ -40,7 +64,7 @@ describe("cli: input sources", () => {
     // stdin carries a different predicate to prove --file wins.
     const r = run(["--file", file], "$.age > 18");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ score: { $gte: 90 } });
+    expect(asPasted(r.stdout)).toEqual({ score: { $gte: 90 } });
   });
 });
 
@@ -48,25 +72,25 @@ describe("cli: output shapes", () => {
   it("--filter forces a Filter document", () => {
     const r = run(["--filter", "$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(asPasted(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("--pipeline forces a stage array", () => {
     const r = run(["--pipeline", "$match($.age > 18); $sort({ age: -1 })"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
+    expect(asPasted(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]);
   });
 
   it("--expr forces a raw aggregation expression", () => {
     const r = run(["--expr", "$.price * (1 - $.discount)"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ $multiply: ["$price", { $subtract: [1, "$discount"] }] });
+    expect(asPasted(r.stdout)).toEqual({ $multiply: ["$price", { $subtract: [1, "$discount"] }] });
   });
 
   it("--update forces an update document", () => {
     const r = run(["--update", "$.score += 1; delete $.tmp"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ $inc: { score: 1 }, $unset: { tmp: "" } });
+    expect(asPasted(r.stdout)).toEqual({ $inc: { score: 1 }, $unset: { tmp: "" } });
   });
 
   it("rejects a bare expression under --pipeline (inherited library error)", () => {
@@ -77,52 +101,56 @@ describe("cli: output shapes", () => {
 });
 
 describe("cli: formatting", () => {
-  it("defaults to pretty (2-space, multiline) output", () => {
-    const r = run(["$.age > 18"]);
-    expect(r.stdout).toBe('{\n  "age": {\n    "$gt": 18\n  }\n}\n');
+  // The output is JAVASCRIPT, not JSON — a Date, an ObjectId, a Decimal128 and a regular
+  // expression have no JSON spelling, and stringifying one is WRONG rather than lossy.
+  // A document is written on one line while it fits in 80 columns and broken once it
+  // does not, because MQL nests deeply and narrowly.
+  it("writes a short document on one line", () => {
+    expect(run(["$.age > 18"]).stdout).toBe("{ age: { $gt: 18 } }\n");
   });
 
-  it("-c / --compact emits single-line JSON", () => {
-    const r = run(["-c", "$.age > 18"]);
-    expect(r.stdout).toBe('{"age":{"$gt":18}}\n');
+  it("breaks a document that does not fit, one entry per line", () => {
+    const r = run([
+      '$.a === 1 && $.b === 2 && $.someLongerFieldName === "a value long enough that the one-line form passes eighty columns"',
+    ]);
+    expect(r.stdout).toBe(
+      '{\n  a: 1,\n  b: 2,\n  someLongerFieldName: "a value long enough that the one-line form passes eighty columns"\n}\n',
+    );
   });
 
-  it("--tab indents with tabs", () => {
-    const r = run(["--tab", "$.age > 18"]);
-    expect(r.stdout).toContain('\n\t"age"');
+  it("-c / --compact keeps the whole document on one line", () => {
+    const src =
+      '$.a === 1 && $.b === 2 && $.someLongerFieldName === "a value long enough that the one-line form passes eighty columns"';
+    expect(run(["-c", src]).stdout).toBe(
+      '{ a: 1, b: 2, someLongerFieldName: "a value long enough that the one-line form passes eighty columns" }\n',
+    );
   });
 
-  it("--indent N indents with N spaces", () => {
-    const r = run(["--indent", "4", "$.age > 18"]);
-    expect(r.stdout).toContain('\n    "age"');
+  it("--tab and --indent N set the indent of a document that breaks", () => {
+    const src =
+      '$.a === 1 && $.b === 2 && $.someLongerFieldName === "a value long enough that the one-line form passes eighty columns"';
+    expect(run(["--tab", src]).stdout).toContain("\n\ta: 1");
+    expect(run(["--indent", "4", src]).stdout).toContain("\n    a: 1");
   });
 
   it("prints a live BSON value as the JavaScript that makes it", () => {
-    // JSON has no spelling for a Date, an ObjectId or a RegExp, and stringifying
-    // one is WRONG rather than lossy: the server compares a stringified date as a
-    // string, and a stringified regular expression is the empty document. Each
-    // prints as the JavaScript that makes it, so the output pastes into a driver
-    // script and asks what the source asked.
     expect(run(["-c", '$.d >= new Date("2026-01-01")']).stdout).toBe(
-      '{"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}\n',
+      '{ d: { $gte: new Date("2026-01-01T00:00:00.000Z") } }\n',
     );
+    // `new` is not decoration: the driver's export is a class and the bare call throws.
     expect(run(["-c", '$._id === ObjectId("507f1f77bcf86cd799439011")']).stdout).toBe(
-      '{"_id":ObjectId("507f1f77bcf86cd799439011")}\n',
+      '{ _id: new ObjectId("507f1f77bcf86cd799439011") }\n',
     );
-    expect(run(["-c", "$.name.match(/^a/i)"]).stdout).toBe('{"name":{"$regex":/^a/i}}\n');
-    // pretty prints it in place, too
-    expect(run(["$.name.match(/^a/i)"]).stdout).toBe('{\n  "name": {\n    "$regex": /^a/i\n  }\n}\n');
+    expect(run(["-c", "$.name.match(/^a/i)"]).stdout).toBe("{ name: { $regex: /^a/i } }\n");
   });
 
-  it("output with no live value is byte for byte what JSON.stringify writes", () => {
-    const cases = ["$.a === 1 && $.b > 2", "$match($.a === 1); $sort({ a: 1 });", "$.n = $.items.map((x) => x * 2);"];
-    for (const src of cases) {
-      const value = JSON.parse(run(["-c", src]).stdout);
-      expect(run(["-c", src]).stdout).toBe(`${JSON.stringify(value)}\n`);
-      expect(run([src]).stdout).toBe(`${JSON.stringify(value, null, 2)}\n`);
-      expect(run(["--tab", src]).stdout).toBe(`${JSON.stringify(value, null, "\t")}\n`);
-      expect(run(["--indent", "4", src]).stdout).toBe(`${JSON.stringify(value, null, 4)}\n`);
-    }
+  // A quoted "__proto__" key sets the prototype when the text is pasted, so the field
+  // would vanish on the way back in. The computed form is the only one that survives.
+  it("writes a __proto__ key as a computed key", () => {
+    expect(run(["-c", "$.__proto__ === 1"]).stdout).toBe('{ ["__proto__"]: 1 }\n');
+    const back = asPasted(run(["-c", "$.__proto__ === 1"]).stdout) as Record<string, unknown>;
+    expect(Object.hasOwn(back, "__proto__")).toBe(true);
+    expect(back.__proto__).toBe(1);
   });
 });
 
@@ -130,13 +158,13 @@ describe("cli: validate", () => {
   it("--validate prints {valid:true} and exits 0 for valid input", () => {
     const r = run(["--validate", "$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ valid: true, errors: [] });
+    expect(asPasted(r.stdout)).toEqual({ valid: true, errors: [] });
   });
 
   it("--validate prints structured errors and exits 1 for invalid input", () => {
     const r = run(["--validate"], "$.age >");
     expect(r.status).toBe(1);
-    const out = JSON.parse(r.stdout);
+    const out = asPasted(r.stdout);
     expect(out.valid).toBe(false);
     expect(out.errors[0]).toHaveProperty("pos");
     expect(out.errors[0]).toHaveProperty("message");
@@ -145,7 +173,7 @@ describe("cli: validate", () => {
   it("--check is an alias for --validate", () => {
     const r = run(["--check", "$.age > 18"]);
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout).valid).toBe(true);
+    expect(asPasted(r.stdout).valid).toBe(true);
   });
 });
 
@@ -153,25 +181,25 @@ describe("cli: parameters", () => {
   it("--argjson binds a JSON value through jsmql.compile", () => {
     const r = run(["--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(asPasted(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("--arg binds a string value", () => {
     const r = run(["--arg", "name", "ann"], "({ name }, { $ }) => $.name === name");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ name: "ann" });
+    expect(asPasted(r.stdout)).toEqual({ name: "ann" });
   });
 
   it("binds params under --filter (routes through jsmql.filter.compile)", () => {
     const r = run(["--filter", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ age: { $gt: 18 } });
+    expect(asPasted(r.stdout)).toEqual({ age: { $gt: 18 } });
   });
 
   it("binds params under --pipeline and enforces the Pipeline shape", () => {
     const r = run(["--pipeline", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => { $match($.age > minAge) }");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }]);
+    expect(asPasted(r.stdout)).toEqual([{ $match: { age: { $gt: 18 } } }]);
   });
 
   it("--pipeline + params rejects a bare-expression arrow (inherited shape error)", () => {
@@ -183,19 +211,19 @@ describe("cli: parameters", () => {
   it("binds params under --update into the update document", () => {
     const r = run(["--update", "--argjson", "tier", "2"], "({ tier }, { $ }) => ($.tier = tier)");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ $set: { tier: 2 } });
+    expect(asPasted(r.stdout)).toEqual({ $set: { tier: 2 } });
   });
 
   it("validates a parameterised arrow under --validate (exit 0 for valid)", () => {
     const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age > minAge");
     expect(r.status).toBe(0);
-    expect(JSON.parse(r.stdout)).toEqual({ valid: true, errors: [] });
+    expect(asPasted(r.stdout)).toEqual({ valid: true, errors: [] });
   });
 
   it("validates a parameterised arrow under --validate (exit 1 for invalid)", () => {
     const r = run(["--validate", "--argjson", "minAge", "18"], "({ minAge }, { $ }) => $.age >");
     expect(r.status).toBe(1);
-    expect(JSON.parse(r.stdout).valid).toBe(false);
+    expect(asPasted(r.stdout).valid).toBe(false);
   });
 
   it("reports invalid --argjson values as a usage error (exit 2)", () => {

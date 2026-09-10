@@ -1,8 +1,8 @@
 # CLI — the `jsmql` bin
 
-The `jsmql` command-line tool transpiles JSMQL source to MongoDB MQL JSON, in
-the spirit of `jq`: **source in (positional arg / `--file` / stdin), MQL JSON
-out (stdout)**, errors on stderr with a non-zero exit code. It is a thin wrapper
+The `jsmql` command-line tool transpiles JSMQL source to MongoDB MQL:
+**source in (positional arg / `--file` / stdin), MQL out (stdout)** as the
+JavaScript that rebuilds it, errors on stderr with a non-zero exit code. It is a thin wrapper
 over the public API in [src/index.ts](../../src/index.ts) — there is no
 compilation logic in the CLI, only argument routing, output formatting, and
 error rendering.
@@ -50,18 +50,17 @@ with one exception. A compiled filter can hold a **live BSON value**: a `Date`
 them is wrong, not merely lossy — a date becomes a string the server compares as
 a string, an ObjectId the same, and a regular expression the empty document
 `{}`. Each is written as the JavaScript that MAKES it (`new Date("…")`,
-`ObjectId("…")`, `/^a/i`), so the output pastes into a driver script or mongosh
-and means what the source meant. Output with no live value in it is unchanged,
-so it is still JSON and still pipes into `jq`.
+`new ObjectId("…")`, `/^a/i`), so the output pastes into a driver script or
+mongosh and means what the source meant.
 
-Default `indent` is `2` (pretty, multiline — matching `jq`). `-c`/`--compact`
+Default `indent` is `2` (pretty, multiline). `-c`/`--compact`
 sets `indent` to `0` (single line); `--tab` sets it to `"\t"`; `--indent N` sets
 it to `N` (an integer 0–10, validated). `--validate` output holds no BSON value,
 and is `JSON.stringify` formatted the same way.
 
 ## Parameters (`--arg` / `--argjson`)
 
-Borrowed from `jq`. Presence of any `--arg`/`--argjson` switches the source
+Presence of any `--arg`/`--argjson` switches the source
 interpretation: instead of a bare query the source must be a **parameterised
 arrow**, and it is routed through `jsmql.compile(source)(params)` (see
 [function-form-params.md](function-form-params.md)):
@@ -147,7 +146,7 @@ that file.
 
 ## Deferred work and non-goals
 
-A deliberate **non-goal** is `jq`'s `-S/--sort-keys`: reordering object keys can
+A deliberate **non-goal** is a `-S`/`--sort-keys` flag: reordering object keys can
 change MQL semantics (e.g. `$project` computed-field order), so it is recorded
 as a won't-implement decision in [DEFERRED.md](../DEFERRED.md) §B rather than
 left as a TODO.

@@ -22,14 +22,49 @@
 //   -o <file>      write output to <file> instead of stdout
 //   -h, --help     show this help
 //
-// Output goes to stdout (or -o <file>) as relaxed extended JSON. The server's own
-// rejection message is printed verbatim when mongod refuses the shape — that refusal
-// IS the signal you're probing for.
+// Input is JAVASCRIPT, which is what the jsmql CLI writes — `new Date(…)`,
+// `new ObjectId(…)`, `/re/i`. It is evaluated with the driver's own BSON classes in
+// scope, so probe refuses exactly what a driver script would refuse: that is the point
+// of it. Plain JSON still works, because JSON is JavaScript. An Extended JSON WRAPPER
+// (`{"$oid": "…"}`) is refused rather than converted — as JavaScript it is a plain
+// subdocument that would silently match nothing.
+//
+// Output goes to stdout (or -o <file>) in the same JavaScript form, so a result can be
+// pasted back into --doc. The server's own rejection message is printed verbatim when
+// mongod refuses the shape — that refusal IS the signal you're probing for.
 
 import { readFileSync, writeFileSync } from "node:fs";
 import * as mongodb from "mongodb";
 const { MongoClient, BSON } = mongodb;
-const EJSON = BSON.EJSON; // mongodb re-exports the bson namespace; EJSON handles $date/$oid/etc.
+import { stringify } from "../src/stringify.ts";
+
+// The classes a pasted document may name — the same list the CLI's output depends on.
+const BSON_GLOBALS = {
+  ObjectId: mongodb.ObjectId, Decimal128: mongodb.Decimal128, Long: mongodb.Long,
+  Int32: mongodb.Int32, Double: mongodb.Double, Binary: mongodb.Binary, UUID: mongodb.UUID,
+  Timestamp: mongodb.Timestamp, MinKey: mongodb.MinKey, MaxKey: mongodb.MaxKey,
+  Code: mongodb.Code, DBRef: mongodb.DBRef, BSONSymbol: BSON.BSONSymbol, BSONRegExp: BSON.BSONRegExp,
+};
+
+// Every Extended JSON wrapper. As JavaScript each is an ordinary subdocument, so a
+// document holding one runs and matches nothing — the exact failure probe exists to catch.
+const WRAPPERS = ["$oid", "$date", "$numberDecimal", "$numberLong", "$numberInt", "$numberDouble",
+  "$binary", "$timestamp", "$minKey", "$maxKey", "$code", "$symbol", "$regularExpression", "$uuid", "$ref"];
+
+const refuseWrappers = (v, path, what) => {
+  if (v === null || typeof v !== "object" || v._bsontype !== undefined) return;
+  if (Array.isArray(v)) return v.forEach((x, i) => refuseWrappers(x, `${path}[${i}]`, what));
+  for (const [k, x] of Object.entries(v)) {
+    if (WRAPPERS.includes(k)) {
+      fail(
+        `${what}${path} holds the Extended JSON wrapper '${k}', which probe does not convert — ` +
+          `as JavaScript it is a plain subdocument and would not match. ` +
+          `Write the value itself instead, e.g. new ObjectId("…") or new Date("…").`,
+      );
+    }
+    refuseWrappers(x, `${path}.${k}`, what);
+  }
+};
 
 const HELP = readFileSync(new URL(import.meta.url), "utf8")
   .split("\n")
@@ -75,12 +110,17 @@ for (let i = 0; i < argv.length; i++) {
   }
 }
 
+// Evaluated, not parsed: the CLI writes JavaScript. `new Function` reproduces a driver
+// script's own scope exactly, so anything it refuses the driver refuses too.
 const parse = (s, what) => {
+  let v;
   try {
-    return EJSON.parse(s, { relaxed: true });
+    v = new Function(...Object.keys(BSON_GLOBALS), `return (${s})`)(...Object.values(BSON_GLOBALS));
   } catch (e) {
-    fail(`Invalid JSON in ${what}: ${e.message}`);
+    fail(`Invalid JavaScript in ${what}: ${e.message}`);
   }
+  refuseWrappers(v, "", what);
+  return v;
 };
 
 // --- read the MQL ----------------------------------------------------------
@@ -146,6 +186,6 @@ try {
 }
 
 // --- emit -------------------------------------------------------------------
-const text = EJSON.stringify(result, null, 2, { relaxed: true }) + "\n";
+const text = stringify(result) + "\n";
 if (opts.out) writeFileSync(opts.out, text);
 else process.stdout.write(text);

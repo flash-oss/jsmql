@@ -137,7 +137,7 @@ Reconsider only if MongoDB adds a stream-reversing stage. A re-implementation ov
 
 ### CLI `-S` / `--sort-keys`
 
-`jq`'s key-sorting flag has no safe analogue here: MQL is order-sensitive in places (`$project` / `$addFields` computed fields can reference earlier siblings; stage-body key order can matter), so sorting object keys could silently change meaning. The `jsmql` CLI prints keys in the order the compiler emits them. This is the same "no silent output drift" principle behind the §A/§B negation and `$let`-peephole decisions — see `feedback_no_silent_output_drift.md` in user memory. Documented in `docs/specs/cli.md`.
+A key-sorting flag has no safe analogue here: MQL is order-sensitive in places (`$project` / `$addFields` computed fields can reference earlier siblings; stage-body key order can matter), so sorting object keys could silently change meaning. The `jsmql` CLI prints keys in the order the compiler emits them. This is the same "no silent output drift" principle behind the §A/§B negation and `$let`-peephole decisions — see `feedback_no_silent_output_drift.md` in user memory. Documented in `docs/specs/cli.md`.
 
 ### `!expr` via De Morgan in `$match`
 

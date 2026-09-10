@@ -4109,7 +4109,7 @@ Each strict entry has a parameterised `.compile` variant (`jsmql.filter.compile`
 
 ## Command Line (`jsmql`)
 
-Installing the package puts a `jsmql` command on your `PATH`. It is a `jq`-style transpiler: **JSMQL source on stdin, MQL JSON on stdout**. A positional argument or `--file <path>` can supply the source instead of stdin.
+Installing the package puts a `jsmql` command on your `PATH`: **JSMQL source on stdin, MQL on stdout**, written as JavaScript you can paste into mongosh or a driver script. A positional argument or `--file <path>` can supply the source instead of stdin.
 
 ```sh
 echo '$.age > 18' | jsmql
@@ -4132,7 +4132,7 @@ With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level
 | `--update` | update document | `jsmql.update()` |
 | `--validate` (or `--check`) | `{ valid, errors }`; exits 1 if invalid | `jsmql.validate()` |
 
-Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. Parameterise a query with `jq`'s own flags — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
+Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. Parameterise a query with `--arg` / `--argjson` — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18

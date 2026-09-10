@@ -24,6 +24,7 @@ import { lowerProgram } from "./compiler/emit/statement.ts";
 import { lowerUpdate } from "./compiler/emit/update.ts";
 import { noStages } from "./compiler/emit/errors.ts";
 import { CodegenError, UnknownIdentifierError } from "./errors.ts";
+import { stringify } from "./stringify.ts";
 
 export { CodegenError, UnknownIdentifierError, ParseError, LexError };
 export { ObjectId } from "./objectid.ts";
@@ -92,23 +93,18 @@ function isCircular(value: unknown, seen: WeakSet<object> = new WeakSet()): bool
   return inside;
 }
 
-/** A value a slot or a parameter may carry: anything the driver can send. */
+/**
+ * A value a slot or a parameter may carry: anything the driver can send.
+ *
+ * The check RECURSES, because a value with no MQL representation is no more
+ * representable one level down. `undefined` in particular is the language's existence
+ * TEST and never a value (docs/LANGUAGE.md § `undefined`), so a nested one used to
+ * reach the compiled document and then disagree with itself — the printer dropped the
+ * key and the driver sent `null` for it.
+ */
 function checkValue(value: unknown, slot: number, key?: string): void {
   const where = key !== undefined ? `parameter '${key}'` : `interpolation slot ${slot}`;
-  if (value === undefined) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} is undefined. Pass null for a missing value, or leave the slot out.`,
-      slot,
-      key,
-    );
-  }
-  if (typeof value === "function" || typeof value === "symbol") {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} has type '${typeof value}', which has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
-      slot,
-      key,
-    );
-  }
+  // The whole value first: a cycle would make the walk below run forever.
   if (isCircular(value)) {
     throw new JsmqlInterpolationError(
       `jsmql ${where} is a circular structure, which has no MQL representation.`,
@@ -116,13 +112,34 @@ function checkValue(value: unknown, slot: number, key?: string): void {
       key,
     );
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where}: ${value} has no MQL representation (NaN and ±Infinity). Replace it with null or a finite number.`,
-      slot,
-      key,
-    );
-  }
+  const refuse = (message: string, path: string): never => {
+    throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
+  };
+  const walk = (v: unknown, path: string): void => {
+    if (v === undefined) refuse("is undefined. Pass null for a missing value, or leave the slot out.", path);
+    if (typeof v === "function" || typeof v === "symbol") {
+      refuse(
+        `has type '${typeof v}', which has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
+        path,
+      );
+    }
+    if (typeof v === "number" && !Number.isFinite(v)) {
+      refuse(
+        `holds ${v}, which has no MQL representation (NaN and ±Infinity). Replace it with null or a finite number.`,
+        path,
+      );
+    }
+    if (v === null || typeof v !== "object") return;
+    // A BSON class carries its own value; its internals are not the developer's data.
+    if ((v as { _bsontype?: unknown })._bsontype !== undefined) return;
+    if (v instanceof Date || v instanceof RegExp) return;
+    if (Array.isArray(v)) {
+      v.forEach((x, i) => walk(x, `${path}[${i}]`));
+      return;
+    }
+    for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`);
+  };
+  walk(value, "");
 }
 
 /** The template tag's parts as one source: each slot is a name bound to its value. */
@@ -495,6 +512,7 @@ function errorToValidationResult(err: unknown): ValidationResult {
 type Jsmql = typeof jsmqlDispatch & {
   compile: CompileBuilder<JsmqlOutput>;
   validate: typeof validateInput;
+  stringify: typeof stringify;
   expr: typeof exprDispatch & { compile: CompileBuilder<JsmqlOutput> };
   filter: typeof filterDispatch & { compile: CompileBuilder<object> };
   pipeline: typeof pipelineDispatch & { compile: CompileBuilder<object[]> };
@@ -508,6 +526,7 @@ type Jsmql = typeof jsmqlDispatch & {
 export const jsmql: Jsmql = Object.assign(jsmqlDispatch, {
   compile: makeCompile<JsmqlOutput>("auto", "jsmql.compile"),
   validate: validateInput,
+  stringify,
   expr: Object.assign(exprDispatch, { compile: makeCompile<JsmqlOutput>("expr", "jsmql.expr.compile") }),
   filter: Object.assign(filterDispatch, { compile: makeCompile<object>("filter", "jsmql.filter.compile") }),
   pipeline: Object.assign(pipelineDispatch, { compile: makeCompile<object[]>("pipeline", "jsmql.pipeline.compile") }),

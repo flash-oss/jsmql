@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// The `jsmql` command — a `jq`-style transpiler: JSMQL source in (positional
+// The `jsmql` command — a transpiler at the shell: JSMQL source in (positional
 // arg / --file / stdin), MQL out (stdout) — JSON, but for a live BSON value the
 // JavaScript that makes it (see `render`). A thin wrapper over the public
 // API in ./index.ts — every shape it can emit already exists there as an
@@ -16,6 +16,7 @@
 // ignore it at runtime.
 /// <reference types="node" />
 import { jsmql } from "./index.ts";
+import { stringify } from "./stringify.ts";
 import { readFileSync } from "node:fs";
 
 // Replaced at build time by esbuild `define` (scripts/build-cjs.mjs) with the
@@ -44,7 +45,7 @@ Output shape (default: polymorphic):
   --check         alias for --validate
 
 Formatting (default: pretty, 2-space):
-  -c, --compact   single-line minified JSON
+  -c, --compact   the whole document on one line
       --tab       indent with tabs
       --indent N  indent with N spaces (0-10)
 
@@ -78,6 +79,8 @@ type Options = {
    * A MAP, not an object: `--arg __proto__ x` on a plain object writes the prototype
    * slot and stores nothing, and the query then reports the parameter as never supplied.
    */
+  /** Break a document across lines once its one-line form passes this. `--compact` lifts it. */
+  width: number;
   params: Map<string, unknown>;
   hasParams: boolean;
   help: boolean;
@@ -113,7 +116,15 @@ function parseJsonArg(name: string, raw: string): unknown {
 }
 
 function parseArgs(argv: string[]): Options {
-  const opts: Options = { mode: "auto", indent: 2, params: new Map(), hasParams: false, help: false, version: false };
+  const opts: Options = {
+    mode: "auto",
+    indent: 2,
+    width: 80,
+    params: new Map(),
+    hasParams: false,
+    help: false,
+    version: false,
+  };
   const setMode = (m: Mode): void => {
     if (opts.mode !== "auto") {
       throw new UsageError(`conflicting output-shape flags: --${opts.mode} and --${m}. Pick one.`);
@@ -130,7 +141,7 @@ function parseArgs(argv: string[]): Options {
     else if (a === "--expr") setMode("expr");
     else if (a === "--update") setMode("update");
     else if (a === "--validate" || a === "--check") setMode("validate");
-    else if (a === "-c" || a === "--compact") opts.indent = 0;
+    else if (a === "-c" || a === "--compact") opts.width = Infinity;
     else if (a === "--tab") opts.indent = "\t";
     else if (a === "--indent") {
       i++;
@@ -199,45 +210,6 @@ function compile(mode: Mode, source: string, params: Record<string, unknown> | u
 // error (LexError / ParseError / CodegenError / UnknownIdentifierError /
 // FunctionInputError) carries `pos: number`; when it is absent we print the
 // message alone.
-/**
- * The compiled MQL, written out.
- *
- * `JSON.stringify` alone is not enough: a filter can hold a LIVE BSON value — a
- * `Date`, an `ObjectId`, a `RegExp` — and JSON has no spelling for any of them.
- * Stringified, a date becomes a string the server compares as a string, an
- * ObjectId the same, and a regular expression the empty document `{}`. Each is
- * written as the JavaScript that MAKES it, so the output pastes into a driver
- * script or mongosh and means what the source meant. Everything else is byte for
- * byte what `JSON.stringify` writes, so output with no live value in it is still
- * JSON, and still pipes into `jq`.
- */
-function render(value: unknown, indent: number | string, depth: number = 0): string {
-  const pad = typeof indent === "string" ? indent : " ".repeat(indent);
-  const nl = pad === "" ? "" : "\n";
-  const at = (d: number): string => pad.repeat(d);
-  const gap = pad === "" ? "" : " ";
-  if (value instanceof Date) return `new Date(${JSON.stringify(value.toISOString())})`;
-  if (value instanceof RegExp) return String(value);
-  if (isObjectId(value)) return `ObjectId(${JSON.stringify(value.toHexString())})`;
-  if (Array.isArray(value)) {
-    if (value.length === 0) return "[]";
-    const items = value.map((v) => at(depth + 1) + render(v, indent, depth + 1));
-    return `[${nl}${items.join(`,${nl}`)}${nl}${at(depth)}]`;
-  }
-  if (value !== null && typeof value === "object") {
-    const entries = Object.entries(value as Record<string, unknown>).filter(([, v]) => v !== undefined);
-    if (entries.length === 0) return "{}";
-    const items = entries.map(([k, v]) => `${at(depth + 1)}${JSON.stringify(k)}:${gap}${render(v, indent, depth + 1)}`);
-    return `{${nl}${items.join(`,${nl}`)}${nl}${at(depth)}}`;
-  }
-  return JSON.stringify(value) ?? "null";
-}
-
-/** jsmql's own ObjectId, recognised without importing it into the bin's bundle. */
-function isObjectId(v: unknown): v is { toHexString: () => string } {
-  return typeof v === "object" && v !== null && typeof (v as { toHexString?: unknown }).toHexString === "function";
-}
-
 function renderError(err: unknown, source: string): string {
   const e = err as { message?: string; pos?: number };
   const message = typeof e.message === "string" ? e.message : String(err);
@@ -299,7 +271,7 @@ function main(): number {
     }
     const params = opts.hasParams ? Object.fromEntries(opts.params) : undefined;
     const result = compile(opts.mode, source, params);
-    process.stdout.write(render(result, opts.indent) + "\n");
+    process.stdout.write(stringify(result, { indent: opts.indent, width: opts.width }) + "\n");
     return 0;
   } catch (err) {
     process.stderr.write(renderError(err, source));

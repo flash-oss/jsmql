@@ -16,7 +16,7 @@ The public API is the `jsmql` callable from `src/index.ts`, carrying six propert
 - `jsmql.expr(input)` — raw aggregation-expression form (no `$expr` wrap, no query translation) for a stage body or `updateOne` update doc. → [LANGUAGE.md](docs/LANGUAGE.md)
 - `jsmql.filter` / `jsmql.pipeline` — strict-shape variants that throw if the input would lower to the *other* shape; `jsmql.update` — the update DOCUMENT (`{ $set, $inc, … }`, constants only) that `updateOne(filter, update)` takes; each carries a `.compile` parameterised builder (`jsmql.filter.compile`, …) narrowed to its shape. → [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md)
 - `require("@koresar/jsmql/mongoose")(mongoose)` — mongoose plugin: patches `find` / `updateOne` / `aggregate` / … to accept jsmql source at the filter/update/pipeline slots. → [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md)
-- `jsmql` **CLI** — `jq`-style bin: source in (positional / `--file` / stdin), MQL JSON out; shape flags route to the matching entry. → [docs/specs/cli.md](docs/specs/cli.md)
+- `jsmql` **CLI** — source in (positional / `--file` / stdin), MQL out as pasteable JavaScript; shape flags route to the matching entry. → [docs/specs/cli.md](docs/specs/cli.md)
 
 jsmql targets both **Filters** (`db.coll.find(filter)`) and **Pipelines** (`db.coll.aggregate(pipeline)`), using the Node.js MongoDB driver's own terminology. Output shape is dispatched on the presence of a top-level `;` (no `;` → Filter, any `;` → Pipeline). → [docs/specs/filter-mode.md](docs/specs/filter-mode.md). Open roadmap items (e.g. query-only predicate operators with no aggregation counterpart) live in [docs/DEFERRED.md](docs/DEFERRED.md).
 
@@ -95,7 +95,7 @@ SSOT rule under `## Rules`). For implementation conventions and "where do I add 
 ```
 src/
   index.ts        Public API: the `jsmql` callable + its properties, polymorphic over string / arrow / template tag; turns input into source and values, and the compiler's errors into `validate()` results.
-  cli.ts          The `jsmql` command-line bin (thin `jq`-style wrapper over index.ts). See docs/specs/cli.md.
+  cli.ts          The `jsmql` command-line bin (a thin wrapper over index.ts). See docs/specs/cli.md.
   mongoose.ts     `@koresar/jsmql/mongoose` plugin. See docs/specs/mongoose-plugin.md.
   errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
   namespace.ts    The three compiler namespaces (`__jsmql` document fields, `jsmql_` correlation vars, `jsmqlXxx` expression vars).
