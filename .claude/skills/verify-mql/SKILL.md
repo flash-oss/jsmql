@@ -31,7 +31,8 @@ execute it against a local `mongod` before trusting it.** Don't guess.
 
 [`test/probe`](test/probe) is the canonical runner — one reusable script
 instead of a throwaway `tmp/*.mjs` per check. It connects to the local `mongod`,
-seeds sample docs, runs the MQL, and prints the server's JSON result. When mongod
+seeds sample docs, runs the MQL, and prints what the server returned — through
+`jsmql.stringify`, so a Date or an ObjectId in the result reads as the value it is. When mongod
 *rejects* a shape, it prints the rejection verbatim and exits non-zero — **that
 refusal is the signal you are probing for.**
 

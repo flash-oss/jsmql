@@ -135,9 +135,9 @@ to run after a cheaper clause had already excluded that document. Measured over
 
 ```js
 ($.a === 1 || $.b * 2 === 2) && $.c > 3
-// per branch:  {$or:[{a:1},{$expr:{$eq:[{$multiply:["$b",2]},2]}}],c:{$gt:3}}
+// per branch:  { $or: [{ a: 1 }, { $expr: { $eq: [{ $multiply: ["$b", 2] }, 2] } }], c: { $gt: 3 } }
 //              the server refuses it: "$multiply only supports numeric types"
-// one $expr:   {c:{$gt:3},$expr:{$or:[{$eq:["$a",1]},{$eq:[{$multiply:["$b",2]},2]}]}}
+// one $expr:   { c: { $gt: 3 }, $expr: { $or: [{ $eq: ["$a", 1] }, { $eq: [{ $multiply: ["$b", 2] }, 2] }] } }
 //              selects _id 1 and 3 — the `c` clause excluded the string `b` first
 ```
 
