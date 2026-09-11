@@ -72,15 +72,14 @@ type Mode = "auto" | "filter" | "pipeline" | "expr" | "update" | "validate";
 
 type Options = {
   mode: Mode;
-  // `number` → that many spaces; `"\t"` → tabs; 0 → compact. Passed straight to
-  // JSON.stringify's third argument.
+  /** `number` → that many spaces; `"\t"` → tabs. What one level of nesting adds. */
   indent: number | string;
+  /** Break a document across lines once its one-line form passes this. `--compact` lifts it. */
+  width: number;
   /**
    * A MAP, not an object: `--arg __proto__ x` on a plain object writes the prototype
    * slot and stores nothing, and the query then reports the parameter as never supplied.
    */
-  /** Break a document across lines once its one-line form passes this. `--compact` lifts it. */
-  width: number;
   params: Map<string, unknown>;
   hasParams: boolean;
   help: boolean;
@@ -266,7 +265,10 @@ function main(): number {
       // `--validate` + params combination validates the arrow's shape (the
       // bound values don't affect validity). No separate params branch needed.
       const result = jsmql.validate(source);
-      process.stdout.write(JSON.stringify(result, null, opts.indent) + "\n");
+      // A report, not MQL: it holds strings and numbers only, so JSON is its format
+      // and a tool can read it. `--compact` puts it on one line, as it does a document.
+      const report = opts.width === Infinity ? JSON.stringify(result) : JSON.stringify(result, null, opts.indent);
+      process.stdout.write(report + "\n");
       return result.valid ? 0 : 1;
     }
     const params = opts.hasParams ? Object.fromEntries(opts.params) : undefined;

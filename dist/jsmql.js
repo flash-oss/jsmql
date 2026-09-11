@@ -528,6 +528,14 @@ var objectBody = (input) => {
 };
 
 // src/registry/mql.ts
+function setKey(out, name2, value) {
+  if (name2 === "__proto__") {
+    Object.defineProperty(out, name2, { value, enumerable: true, writable: true, configurable: true });
+    return out;
+  }
+  out[name2] = value;
+  return out;
+}
 var cond = (ifExpr, thenExpr, elseExpr) => ({
   $cond: { if: ifExpr, then: thenExpr, else: elseExpr }
 });
@@ -6830,7 +6838,7 @@ var NAMES = {
         // else becomes the one-element array it stands for — JavaScript's own answer, and
         // the only operand the operator accepts. MEASURED: the server folds a run of
         // ADJACENT constant operands while it optimises and raises there on a wrong type,
-        // so `$.s.concat("!", "?")` used to kill the pipeline before a branch was chosen.
+        // so an operand left unwrapped kills the pipeline before a branch is chosen.
         // An argument that proves nothing stays as written, and the server decides it.
         array: {
           args: { sig: "...items", atLeast: 1, spread: true },
@@ -10376,7 +10384,7 @@ var NAMES = {
         );
         const obj = bind("obj");
         const out = {};
-        for (const k of keys) out[k] = { $getField: { field: k, input: obj.ref } };
+        for (const k of keys) setKey(out, k, { $getField: { field: k, input: obj.ref } });
         return { $let: { vars: { [obj.as]: recv }, in: out } };
       }
     },
@@ -13057,7 +13065,7 @@ var NAMES = {
       byArgs: {
         // Never folded: `Number("3")` is a DOUBLE on the server, and a folded `3` would
         // be an int. The constant converts like anything else; a string the server
-        // cannot parse is the server's own error, as in the shipped compiler.
+        // cannot parse is the server's own error.
         constant: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDouble: value(args[0]) }) },
         otherwise: unsupported("'Number(x)' takes exactly one value.")
@@ -15398,7 +15406,7 @@ var Parser = class _Parser {
   /**
    * A write target must be a PLACE: a field, a binding, `$`, `$$`, or a chain of
    * accesses on one. `$.a + 1 = 2`, `1 = 2` and `f() = 1` are not — JavaScript
-   * refuses them, and so did the shipped compiler.
+   * refuses them, and so does JSMQL.
    */
   requirePlace(target, pos, op) {
     const t = target.expr.type;
@@ -16450,7 +16458,7 @@ function objectMethod(o, name2, args) {
       const out = {};
       for (const [k, v] of Object.entries(o)) {
         if (!isKey(v)) return NO2;
-        out[String(v)] = k;
+        setKey(out, String(v), k);
       }
       return ok2(out);
     }
@@ -16459,13 +16467,13 @@ function objectMethod(o, name2, args) {
       if (!Array.isArray(a) || !a.every((k) => typeof k === "string")) return NO2;
       const keep = new Set(a);
       const out = {};
-      for (const [k, v] of Object.entries(o)) if (keep.has(k) === (name2 === "pick")) out[k] = v;
+      for (const [k, v] of Object.entries(o)) if (keep.has(k) === (name2 === "pick")) setKey(out, k, v);
       return ok2(out);
     }
     case "mapValues": {
       if (fn === void 0) return NO2;
       const out = {};
-      for (const [k, v] of Object.entries(o)) out[k] = fn(v, k, o);
+      for (const [k, v] of Object.entries(o)) setKey(out, k, fn(v, k, o));
       return ok2(out);
     }
     case "mapKeys": {
@@ -16474,7 +16482,7 @@ function objectMethod(o, name2, args) {
       for (const [k, v] of Object.entries(o)) {
         const key = fn(v, k, o);
         if (!isKey(key)) return NO2;
-        out[String(key)] = v;
+        setKey(out, String(key), v);
       }
       return ok2(out);
     }
@@ -16485,7 +16493,7 @@ function objectMethod(o, name2, args) {
       for (const [k, v] of Object.entries(o)) {
         const verdict = fn(v, k, o);
         if (typeof verdict !== "boolean") return NO2;
-        if (verdict === (name2 === "pickBy")) out[k] = v;
+        if (verdict === (name2 === "pickBy")) setKey(out, k, v);
       }
       return ok2(out);
     }
@@ -16816,7 +16824,7 @@ function arrayMethod(xs, name2, args) {
       const out = {};
       xs.forEach((k, i) => {
         if (!isKey(k)) throw NOT_A_KEY;
-        out[String(k)] = i < values.length ? values[i] : null;
+        setKey(out, String(k), i < values.length ? values[i] : null);
       });
       return ok2(out);
     }
@@ -16824,7 +16832,7 @@ function arrayMethod(xs, name2, args) {
       const out = {};
       for (const pair of xs) {
         if (!Array.isArray(pair) || pair.length === 0 || !isKey(pair[0])) return NO2;
-        out[String(pair[0])] = pair.length > 1 ? pair[1] : null;
+        setKey(out, String(pair[0]), pair.length > 1 ? pair[1] : null);
       }
       return ok2(out);
     }
@@ -16834,22 +16842,22 @@ function arrayMethod(xs, name2, args) {
       for (const [i, v] of xs.entries()) {
         const k = fn(v, i, xs);
         if (!isKey(k)) return NO2;
-        out[String(k)] = v;
+        setKey(out, String(k), v);
       }
       return ok2(out);
     }
     case "groupBy":
     case "countBy": {
       if (fn === void 0) return NO2;
-      const out = {};
+      const out = /* @__PURE__ */ new Map();
       for (const [i, v] of xs.entries()) {
         const k = fn(v, i, xs);
         if (!isKey(k)) return NO2;
         const key = String(k);
-        if (name2 === "countBy") out[key] = (out[key] ?? 0) + 1;
-        else (out[key] = out[key] ?? []) && out[key].push(v);
+        if (name2 === "countBy") out.set(key, (out.get(key) ?? 0) + 1);
+        else out.set(key, [...out.get(key) ?? [], v]);
       }
-      return ok2(out);
+      return ok2(Object.fromEntries(out));
     }
     // ── ordering ────────────────────────────────────────────────────────────
     case "sortBy":
@@ -17325,7 +17333,7 @@ function at(node, env, depth) {
         }
         const value = at(entry.value, env, depth + 1);
         if (!value.ok) return propagate(value);
-        out[name2] = value.value;
+        setKey(out, name2, value.value);
       }
       return ok3(out);
     }
@@ -19417,6 +19425,141 @@ var Env = class _Env {
   }
 };
 
+// src/stringify.ts
+var tagOf = (v) => typeof v === "object" && v !== null ? v._bsontype ?? void 0 : void 0;
+function keySource(key) {
+  if (key === "__proto__") return `[${JSON.stringify(key)}]`;
+  return /^[A-Za-z_$][A-Za-z0-9_$]*$/.test(key) ? key : JSON.stringify(key);
+}
+var str = (s) => JSON.stringify(s);
+var num = (n2) => Object.is(n2, -0) ? "-0" : String(n2);
+function bsonSource(tag, v, render) {
+  const o = v;
+  const own = (name2) => {
+    const f = o[name2];
+    const everyObject = Object.prototype[name2];
+    return typeof f === "function" && f !== everyObject ? f : null;
+  };
+  const text = () => {
+    const f = own("toString");
+    return f === null ? null : String(f.call(v));
+  };
+  switch (tag) {
+    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
+    case "ObjectID":
+    case "ObjectId": {
+      const hex = own("toHexString");
+      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
+    }
+    case "Decimal128": {
+      const s = text();
+      return s === null ? null : `new Decimal128(${str(s)})`;
+    }
+    // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
+    // reader can check, and the two-word constructor is not.
+    case "Long": {
+      const s = text();
+      return s === null ? null : `Long.fromString(${str(s)})`;
+    }
+    case "Int32":
+      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
+    // A whole-number Double must keep its type: `42` would come back as an int.
+    case "Double":
+      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
+    case "Binary": {
+      const bytes = own("toString");
+      if (bytes === null) return null;
+      const sub = Number(o.sub_type ?? 0);
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
+      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
+    }
+    case "Timestamp": {
+      const t = Number(o.t ?? o.high ?? 0);
+      const i = Number(o.i ?? o.low ?? 0);
+      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
+    }
+    case "MinKey":
+      return "new MinKey()";
+    case "MaxKey":
+      return "new MaxKey()";
+    case "Code":
+      if (typeof o.code !== "string") return null;
+      return o.scope === void 0 || o.scope === null ? `new Code(${str(o.code)})` : `new Code(${str(o.code)}, ${render(o.scope)})`;
+    case "DBRef":
+      if (typeof o.collection !== "string") return null;
+      return o.db === void 0 || o.db === null || o.db === "" ? `new DBRef(${str(o.collection)}, ${render(o.oid)})` : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+    case "BSONSymbol": {
+      const s = text();
+      return s === null ? null : `new BSONSymbol(${str(s)})`;
+    }
+    case "BSONRegExp":
+      return typeof o.pattern === "string" ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})` : null;
+    default:
+      return null;
+  }
+}
+function stringify(value, options) {
+  const indent = options?.indent ?? 2;
+  const width = options?.width ?? 80;
+  const pad = typeof indent === "string" ? indent : " ".repeat(indent);
+  const seen = /* @__PURE__ */ new Set();
+  const leaf2 = (v) => {
+    if (v === null) return "null";
+    if (v instanceof Date) {
+      if (Number.isNaN(v.getTime()))
+        throw new TypeError("jsmql.stringify(): an Invalid Date has no BSON value to write.");
+      return `new Date(${str(v.toISOString())})`;
+    }
+    if (v instanceof RegExp) return String(v);
+    if (v instanceof Uint8Array) return `new Uint8Array([${Array.from(v).join(", ")}])`;
+    const tag = tagOf(v);
+    if (tag !== void 0) {
+      const spelled3 = bsonSource(tag, v, (x) => render(x, 0));
+      if (spelled3 !== null) return spelled3;
+    }
+    const t = typeof v;
+    if (t === "string") return str(v);
+    if (t === "boolean") return String(v);
+    if (t === "bigint") return `${String(v)}n`;
+    if (t === "number") return num(v);
+    if (t === "undefined") {
+      throw new TypeError("jsmql.stringify(): 'undefined' is not a value MQL can hold.");
+    }
+    return null;
+  };
+  const render = (v, depth) => {
+    const simple = leaf2(v);
+    if (simple !== null) return simple;
+    if (seen.has(v)) throw new TypeError("jsmql.stringify(): the document contains a circular reference.");
+    seen.add(v);
+    try {
+      if (Array.isArray(v)) {
+        if (v.length === 0) return "[]";
+        const parts2 = v.map((x) => render(x, depth + 1));
+        const flat2 = `[${parts2.join(", ")}]`;
+        if (pad === "" || fits(flat2, depth)) return flat2;
+        return `[
+${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}]`;
+      }
+      const entries = Object.entries(v);
+      if (entries.length === 0) return "{}";
+      const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
+      const flat = `{ ${parts.join(", ")} }`;
+      if (pad === "" || fits(flat, depth)) return flat;
+      return `{
+${parts.map((p) => at2(depth + 1) + p).join(",\n")}
+${at2(depth)}}`;
+    } finally {
+      seen.delete(v);
+    }
+  };
+  const at2 = (d) => pad.repeat(d);
+  const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
+  return render(value, 0);
+}
+
 // src/compiler/emit/check.ts
 function literal(e) {
   switch (e.type) {
@@ -19639,7 +19782,7 @@ function checkBody(name2, rule, args, keys, pos) {
     const held = lit.kind === "number" ? numberOf(v) : lit.kind === "string" && v.type === "StringLiteral" ? v.value : null;
     if (held === null || !allowed.includes(held)) {
       throw new CodegenError(
-        `'${name2}' takes ${allowed.map((one) => JSON.stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : JSON.stringify(held)}.`,
+        `'${name2}' takes ${allowed.map((one) => stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : stringify(held)}.`,
         v.pos
       );
     }
@@ -19695,7 +19838,7 @@ function checkBody(name2, rule, args, keys, pos) {
       const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
       if (hit !== void 0) {
         throw new CodegenError(
-          `'${name2}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => JSON.stringify(e)).join(" or ")} \u2014 the server refuses it without one.`,
+          `'${name2}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify(e)).join(" or ")} \u2014 the server refuses it without one.`,
           hit.pos
         );
       }
@@ -19746,7 +19889,7 @@ function checkBody(name2, rule, args, keys, pos) {
       const ordered = typeof a === typeof b && (typeof a === "number" || typeof a === "string" || a instanceof Date) ? a < b : true;
       if (!ordered) {
         throw new CodegenError(
-          `'${name2}' ${k} must be sorted ascending: ${JSON.stringify(a)} is not less than ${JSON.stringify(b)} \u2014 the server refuses it.`,
+          `'${name2}' ${k} must be sorted ascending: ${stringify(a)} is not less than ${stringify(b)} \u2014 the server refuses it.`,
           v.elements[i].pos
         );
       }
@@ -21619,7 +21762,7 @@ function objectLiteral(node, entries, env) {
       if (e.key.name.startsWith("$") && operandShapeOf(e.key.name) === "array" && e.value.type !== "ArrayLiteral") {
         throw listOperand(e.key.name, e.value.pos);
       }
-      out[e.key.name] = lowerValue(e.value, inner);
+      setKey(out, e.key.name, lowerValue(e.value, inner));
     }
     return out;
   };
@@ -22768,6 +22911,7 @@ function isFacet(doc) {
 var isStreamChain = (e) => e.type === "CollectionRef" || e.type === "MethodCall" && chainBase(e).type === "CollectionRef";
 function facetStages(doc, env, first) {
   const branches = {};
+  const named = /* @__PURE__ */ new Set();
   const entries = childEnv(env, doc, "entries");
   for (const e of doc.entries) {
     if (e.type !== "KeyValueEntry") throw facetSpread(e.pos);
@@ -22775,10 +22919,11 @@ function facetStages(doc, env, first) {
     if (key === null) throw facetComputedKey(e.pos);
     if (!isStreamChain(e.value)) throw facetMixed(key, e.value.pos);
     if (key === "" || key.includes(".") || key.startsWith("$")) throw facetKey(key, e.pos);
-    if (key in branches) throw facetDuplicate(key, e.pos);
+    if (named.has(key)) throw facetDuplicate(key, e.pos);
+    named.add(key);
     const body = childEnv(entries, e, "value").enter({ stage: "$facet", path: [key] }, new Chain());
     if (e.value.type !== "CollectionRef") body.chain.emitted.push(...streamStages(e.value, body, true));
-    branches[key] = body.chain.close();
+    setKey(branches, key, body.chain.close());
   }
   return place("$facet", { $facet: branches }, env, first, doc.pos);
 }
@@ -22907,7 +23052,7 @@ function writeStages(uf, env, first) {
     }
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
-    sets.fields[path] = replacesWhole(value) ? { $mergeObjects: [value] } : value;
+    setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
     if (op.target.type === "Ident" && inner.lookup(op.target.name, op.target.pos).ref.kind === "dropped") {
       const binding = {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
@@ -23100,7 +23245,7 @@ function lowerUpdate(program, env) {
     const held = claimed.get(path);
     if (held !== void 0) throw updateConflict(path, held, op, pos);
     claimed.set(path, op);
-    (out[op] ??= {})[path] = value;
+    setKey(out[op] ??= {}, path, value);
   };
   const deleted = /* @__PURE__ */ new Set();
   for (const s of stmts) {
@@ -23268,20 +23413,6 @@ function isCircular(value, seen = /* @__PURE__ */ new WeakSet()) {
 }
 function checkValue(value, slot, key) {
   const where = key !== void 0 ? `parameter '${key}'` : `interpolation slot ${slot}`;
-  if (value === void 0) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} is undefined. Pass null for a missing value, or leave the slot out.`,
-      slot,
-      key
-    );
-  }
-  if (typeof value === "function" || typeof value === "symbol") {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where} has type '${typeof value}', which has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
-      slot,
-      key
-    );
-  }
   if (isCircular(value)) {
     throw new JsmqlInterpolationError(
       `jsmql ${where} is a circular structure, which has no MQL representation.`,
@@ -23289,13 +23420,33 @@ function checkValue(value, slot, key) {
       key
     );
   }
-  if (typeof value === "number" && !Number.isFinite(value)) {
-    throw new JsmqlInterpolationError(
-      `jsmql ${where}: ${value} has no MQL representation (NaN and \xB1Infinity). Replace it with null or a finite number.`,
-      slot,
-      key
-    );
-  }
+  const refuse = (message, path) => {
+    throw new JsmqlInterpolationError(`jsmql ${where}${path === "" ? "" : ` at ${path}`} ${message}`, slot, key);
+  };
+  const walk = (v, path) => {
+    if (v === void 0) refuse("is undefined. Pass null for a missing value, or leave the slot out.", path);
+    if (typeof v === "function" || typeof v === "symbol") {
+      refuse(
+        `has type '${typeof v}', which has no MQL representation. Pass a string, number, boolean, null, Date, ObjectId, array, or plain object.`,
+        path
+      );
+    }
+    if (typeof v === "number" && !Number.isFinite(v)) {
+      refuse(
+        `holds ${v}, which has no MQL representation (NaN and \xB1Infinity). Replace it with null or a finite number.`,
+        path
+      );
+    }
+    if (v === null || typeof v !== "object") return;
+    if (v._bsontype !== void 0) return;
+    if (v instanceof Date || v instanceof RegExp) return;
+    if (Array.isArray(v)) {
+      v.forEach((x, i) => walk(x, `${path}[${i}]`));
+      return;
+    }
+    for (const [k, x] of Object.entries(v)) walk(x, `${path}.${k}`);
+  };
+  walk(value, "");
 }
 function templateSource(strings, values) {
   let src = "";
@@ -23577,6 +23728,7 @@ function errorToValidationResult(err) {
 var jsmql = Object.assign(jsmqlDispatch, {
   compile: makeCompile("auto", "jsmql.compile"),
   validate: validateInput,
+  stringify,
   expr: Object.assign(exprDispatch, { compile: makeCompile("expr", "jsmql.expr.compile") }),
   filter: Object.assign(filterDispatch, { compile: makeCompile("filter", "jsmql.filter.compile") }),
   pipeline: Object.assign(pipelineDispatch, { compile: makeCompile("pipeline", "jsmql.pipeline.compile") }),

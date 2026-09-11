@@ -43,20 +43,21 @@ message the JS `jsmql.pipeline()` throws) — the CLI invents no new wording.
 
 ## Formatting
 
-Output is what `JSON.stringify(result, null, indent)` writes, byte for byte —
-with one exception. A compiled filter can hold a **live BSON value**: a `Date`
-(`new Date("2026-01-01")` folded in a query slot), an `ObjectId`, a `RegExp`
-(`.match(/^a/i)`). JSON has no spelling for any of the three, and stringifying
-them is wrong, not merely lossy — a date becomes a string the server compares as
-a string, an ObjectId the same, and a regular expression the empty document
-`{}`. Each is written as the JavaScript that MAKES it (`new Date("…")`,
-`new ObjectId("…")`, `/^a/i`), so the output pastes into a driver script or
-mongosh and means what the source meant.
+Output is what `jsmql.stringify(result, { indent, width })` writes — the
+library's own printer, which the CLI holds no copy of. It writes the document as
+the JavaScript that rebuilds it, so the text pastes into a driver script or into
+mongosh and means what the source meant. The rules, the BSON classes and the
+layout are in [mql-stringify.md](mql-stringify.md).
 
-Default `indent` is `2` (pretty, multiline). `-c`/`--compact`
-sets `indent` to `0` (single line); `--tab` sets it to `"\t"`; `--indent N` sets
-it to `N` (an integer 0–10, validated). `--validate` output holds no BSON value,
-and is `JSON.stringify` formatted the same way.
+`--indent N` sets the indent to N spaces (an integer 0–10, validated) and
+`--tab` sets it to a tab; the default is 2. `-c`/`--compact` lifts the line
+width to infinity, which puts the whole document on one line whatever the
+indent says.
+
+`--validate` is the exception: it reports `{ valid, errors }`, which holds
+strings and numbers only. That is a machine-readable report rather than a
+document, so it is written as JSON — indented by `--indent`, on one line under
+`--compact`.
 
 ## Parameters (`--arg` / `--argjson`)
 
@@ -67,7 +68,7 @@ arrow**, and it is routed through `jsmql.compile(source)(params)` (see
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
-# → { "age": { "$gt": 18 } }
+# → { age: { $gt: 18 } }
 ```
 
 `--arg NAME VALUE` binds `NAME` to the string `VALUE`; `--argjson NAME VALUE`
@@ -82,7 +83,7 @@ which binds the values and still enforces that mode's shape contract:
 
 ```sh
 echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
-# → [ { "$match": { "age": { "$gt": 18 } } } ]
+# → [{ $match: { age: { $gt: 18 } } }]
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --pipeline --argjson minAge 18
 # → exit 1: jsmql.pipeline() expects a Pipeline … (the arrow lowers to a Filter)
 ```

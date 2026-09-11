@@ -52,23 +52,18 @@ Each example is one `<article>` carrying:
 - optionally an empty `<span data-loc>`, which the script fills with the
   source-to-output line counts, measured from the text it has just rendered.
 
-The script writes output as **pasteable JavaScript source, not JSON**.
-`JSON.stringify` is wrong for the two BSON types jsmql emits as live values: a
-`Date` and an `ObjectId` each carry a `toJSON`, so both collapse to plain
-strings — and a string does not match an `ObjectId` `_id`, so output copied off
-the page would silently return nothing. Both therefore render as the
-`new Date(…)` / `ObjectId(…)` calls the driver accepts, for the same reason the
-playground does it. Every other value keeps JSON's spelling.
+The script writes output with **`jsmql.stringify`**, the library's own printer,
+taken from the same bundle it compiles with — see
+[mql-stringify.md](mql-stringify.md). Neither page carries a printer of its own,
+so an example, its "Open in playground" link and the terminal all show one text.
 
-The printer is the playground's `pretty` / `compact` pair, at the playground's
-80-column budget: a node stays on one line while it fits, and expands only when
-it does not. One printer for both surfaces is what makes an example and its
-"Open in playground" link show the same text. It is also the shape a reader can
-read — one stage per line, rather than one brace per line — and the page has the
-strongest reason of the two to be legible at a glance. A pane is narrower than
-80 columns at the page's 1080px column, so the widest lines scroll inside their
-own `pre`; parity with the editor is worth that over a budget that would make
-the two surfaces disagree.
+Two consequences the page's layout depends on. The output is JavaScript, not
+JSON, so the MQL pane is highlighted with CodeMirror's JavaScript mode and not
+its JSON mode. And the printer breaks a line at 80 columns, which is where the
+panel width below comes from: a node stays on one line while it fits, so a
+reader sees one stage per line rather than one brace per line. A pane is
+narrower than 80 columns at the page's 1080px column, so the widest lines
+scroll inside their own `pre`.
 
 The module script also builds each "Open in playground" link. It encodes
 `{ v: 1, input, vars, mode }` as base64url into a `#s=` fragment — the share

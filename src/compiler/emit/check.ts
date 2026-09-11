@@ -9,6 +9,7 @@
 
 import type { Arity, ArgType, BodyRule, Expr } from "../../registry/vocabulary.ts";
 import { CodegenError } from "../../errors.ts";
+import { stringify } from "../../stringify.ts";
 import { didYouMean } from "../../levenshtein.ts";
 import { staticKey } from "../passes/naming.ts";
 import { bodyExampleOf, bodySlotAt } from "../rows.ts";
@@ -304,7 +305,7 @@ export function checkBody(
       lit.kind === "number" ? numberOf(v) : lit.kind === "string" && v.type === "StringLiteral" ? v.value : null;
     if (held === null || !allowed.includes(held)) {
       throw new CodegenError(
-        `'${name}' takes ${allowed.map((one) => JSON.stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : JSON.stringify(held)}.`,
+        `'${name}' takes ${allowed.map((one) => stringify(one)).join(" or ")} for every key, and '${k}' has ${held === null ? NOUN[lit.kind] : stringify(held)}.`,
         v.pos,
       );
     }
@@ -370,7 +371,7 @@ export function checkBody(
       const hit = walkBody(body, req.path).find((v) => v.type === "StringLiteral" && req.equals.includes(v.value));
       if (hit !== undefined) {
         throw new CodegenError(
-          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => JSON.stringify(e)).join(" or ")} — the server refuses it without one.`,
+          `'${name}' needs '${req.requires}' when ${req.path.join(".")} is ${req.equals.map((e) => stringify(e)).join(" or ")} — the server refuses it without one.`,
           hit.pos,
         );
       }
@@ -425,7 +426,7 @@ export function checkBody(
           : true;
       if (!ordered) {
         throw new CodegenError(
-          `'${name}' ${k} must be sorted ascending: ${JSON.stringify(a)} is not less than ${JSON.stringify(b)} — the server refuses it.`,
+          `'${name}' ${k} must be sorted ascending: ${stringify(a)} is not less than ${stringify(b)} — the server refuses it.`,
           v.elements[i].pos,
         );
       }

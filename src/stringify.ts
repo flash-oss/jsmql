@@ -48,55 +48,96 @@ function keySource(key: string): string {
 /** A string as a JavaScript string literal — `JSON.stringify` is exactly that grammar. */
 const str = (s: string): string => JSON.stringify(s);
 
+/** A number as JavaScript source. `-0` prints as `0` through String(), and the two are different BSON doubles. */
+const num = (n: number): string => (Object.is(n, -0) ? "-0" : String(n));
+
 /**
- * The BSON classes, each as the expression that rebuilds it.
+ * The BSON classes, each as the expression that rebuilds it — or null when the value
+ * wears the tag but does not carry the data behind it.
  *
  * Keyed by `_bsontype`, which every class sets and which is what the compiler itself
  * tests. A duck check does not work here: a driver `UUID` reports `_bsontype: "Binary"`
  * AND carries `toHexString`, so testing for that method calls a UUID an ObjectId and
  * prints text that throws in both runtimes.
+ *
+ * Every case reads its data defensively. A PLAIN OBJECT may wear the tag — the
+ * compiler passes `{ _bsontype: "ObjectId", id: "xyz" }` through as the value it is —
+ * and a printer that called the class's methods on it threw, and took the whole
+ * document's output down with it. Null here prints the object as what it is.
  */
 function bsonSource(tag: string, v: unknown, render: (x: unknown) => string): string | null {
   const o = v as Record<string, unknown>;
+  /** A method the value itself provides, never the one every object inherits. */
+  const own = (name: string): ((...args: unknown[]) => unknown) | null => {
+    const f = o[name];
+    const everyObject = (Object.prototype as unknown as Record<string, unknown>)[name];
+    return typeof f === "function" && f !== everyObject ? (f as (...args: unknown[]) => unknown) : null;
+  };
+  /** The value's own `toString()` — every BSON class writes its value there. */
+  const text = (): string | null => {
+    const f = own("toString");
+    return f === null ? null : String(f.call(v));
+  };
   switch (tag) {
-    case "ObjectId":
-      return `new ObjectId(${str((o.toHexString as () => string).call(v))})`;
-    case "Decimal128":
-      return `new Decimal128(${str(String(v))})`;
+    // bson 1.x spelled the tag with an uppercase D, and the compiler reads both.
+    case "ObjectID":
+    case "ObjectId": {
+      const hex = own("toHexString");
+      return hex === null ? null : `new ObjectId(${str(String(hex.call(v)))})`;
+    }
+    case "Decimal128": {
+      const s = text();
+      return s === null ? null : `new Decimal128(${str(s)})`;
+    }
     // `Long.fromString` rather than `new Long(low, high)`: the string is the value a
     // reader can check, and the two-word constructor is not.
-    case "Long":
-      return `Long.fromString(${str(String(v))})`;
+    case "Long": {
+      const s = text();
+      return s === null ? null : `Long.fromString(${str(s)})`;
+    }
     case "Int32":
-      return `new Int32(${String(o.value ?? v)})`;
+      return typeof o.value === "number" ? `new Int32(${num(o.value)})` : null;
     // A whole-number Double must keep its type: `42` would come back as an int.
     case "Double":
-      return `new Double(${String(o.value ?? v)})`;
+      return typeof o.value === "number" ? `new Double(${num(o.value)})` : null;
     case "Binary": {
+      const bytes = own("toString");
+      if (bytes === null) return null;
       const sub = Number(o.sub_type ?? 0);
-      const base64 = (o.toString as (e: string) => string).call(v, "base64");
       // subtype 4 IS a UUID, and its own spelling reads as one.
-      if (sub === 4 && typeof o.toUUID === "function") return `new UUID(${str(String((o.toUUID as () => unknown)()))})`;
-      return `Binary.createFromBase64(${str(base64)}, ${sub})`;
+      const uuid = own("toUUID");
+      if (sub === 4 && uuid !== null) return `new UUID(${str(String(uuid.call(v)))})`;
+      // MEASURED: a Binary filled a byte at a time over-allocates its buffer (260 bytes
+      // held for 5 written), and only its own `toString` knows where the value ends.
+      return `Binary.createFromBase64(${str(String(bytes.call(v, "base64")))}, ${sub})`;
     }
-    case "Timestamp":
-      return `new Timestamp({ t: ${Number(o.t ?? o.high ?? 0)}, i: ${Number(o.i ?? o.low ?? 0)} })`;
+    case "Timestamp": {
+      const t = Number(o.t ?? o.high ?? 0);
+      const i = Number(o.i ?? o.low ?? 0);
+      return Number.isFinite(t) && Number.isFinite(i) ? `new Timestamp({ t: ${t}, i: ${i} })` : null;
+    }
     case "MinKey":
       return "new MinKey()";
     case "MaxKey":
       return "new MaxKey()";
     case "Code":
+      if (typeof o.code !== "string") return null;
       return o.scope === undefined || o.scope === null
-        ? `new Code(${str(String(o.code))})`
-        : `new Code(${str(String(o.code))}, ${render(o.scope)})`;
+        ? `new Code(${str(o.code)})`
+        : `new Code(${str(o.code)}, ${render(o.scope)})`;
     case "DBRef":
+      if (typeof o.collection !== "string") return null;
       return o.db === undefined || o.db === null || o.db === ""
-        ? `new DBRef(${str(String(o.collection))}, ${render(o.oid)})`
-        : `new DBRef(${str(String(o.collection))}, ${render(o.oid)}, ${str(String(o.db))})`;
-    case "BSONSymbol":
-      return `new BSONSymbol(${str(String(v))})`;
+        ? `new DBRef(${str(o.collection)}, ${render(o.oid)})`
+        : `new DBRef(${str(o.collection)}, ${render(o.oid)}, ${str(String(o.db))})`;
+    case "BSONSymbol": {
+      const s = text();
+      return s === null ? null : `new BSONSymbol(${str(s)})`;
+    }
     case "BSONRegExp":
-      return `new BSONRegExp(${str(String(o.pattern))}, ${str(String(o.options ?? ""))})`;
+      return typeof o.pattern === "string"
+        ? `new BSONRegExp(${str(o.pattern)}, ${str(String(o.options ?? ""))})`
+        : null;
     default:
       return null;
   }
@@ -125,6 +166,14 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
       return `new Date(${str(v.toISOString())})`;
     }
     if (v instanceof RegExp) return String(v);
+    // A Uint8Array — a Node Buffer is one — carries bytes, and both runtimes store
+    // it as BSON Binary subtype 0. MEASURED: mongosh and the driver each store
+    // `new Uint8Array([1, 2, 3])` as Binary/0 and each match that document again with
+    // the same text, so the bytes are written as themselves rather than translated to
+    // a `Binary.createFromBase64(…)` call: what comes back is the value the document
+    // holds, down to its JavaScript class. Without this the object branch below walks
+    // the byte indices and prints `{ "0": 1, "1": 2 }`, which matches nothing.
+    if (v instanceof Uint8Array) return `new Uint8Array([${Array.from(v).join(", ")}])`;
     const tag = tagOf(v);
     if (tag !== undefined) {
       const spelled = bsonSource(tag, v, (x) => render(x, 0));
@@ -134,12 +183,7 @@ export function stringify(value: unknown, options?: StringifyOptions): string {
     if (t === "string") return str(v as string);
     if (t === "boolean") return String(v);
     if (t === "bigint") return `${String(v)}n`;
-    if (t === "number") {
-      // `-0` prints as `0` through String(), and the two are different BSON doubles.
-      if (Object.is(v, -0)) return "-0";
-      if (!Number.isFinite(v as number)) return String(v);
-      return String(v);
-    }
+    if (t === "number") return num(v as number);
     if (t === "undefined") {
       // The language declares `undefined` an existence TEST, never a value, so it is
       // refused at every entry point and cannot reach a compiled document. Reaching

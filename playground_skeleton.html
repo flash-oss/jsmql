@@ -1488,8 +1488,11 @@
         indentUnit: 2,
       });
 
+      // JavaScript, not JSON: the panel holds the source that rebuilds the document
+      // — `new Date(…)`, `new ObjectId(…)`, bare keys — which the JSON tokeniser
+      // cannot read.
       const outputCm = CodeMirror(outputEl, {
-        mode: { name: "javascript", json: true },
+        mode: { name: "javascript" },
         theme: "neo",
         lineNumbers: true,
         lineWrapping: true,
@@ -1971,73 +1974,14 @@
         errorMarker = inputCm.markText(from, to, { className: "cm-error-marker" });
       }
 
-      // Encode one scalar as pasteable JavaScript source — not JSON. A BSON
-      // Date must round-trip as `new Date(...)` so output copied from this
-      // panel runs as-is in a Node.js mongodb call. Plain JSON.stringify turns
-      // a Date into an ISO *string* (minified) or `{}` (the pretty-printer
-      // walks its empty own-keys) — neither reads back as a BSON date.
-      function encodeScalar(x) {
-        if (x instanceof Date) return "new Date(" + JSON.stringify(x.toISOString()) + ")";
-        if (isObjectId(x)) return "ObjectId(" + JSON.stringify(x.toHexString()) + ")";
-        return JSON.stringify(x);
-      }
-
-      // A BSON ObjectId (jsmql's own or a driver's) — duck-typed, like the
-      // compiler does, so output renders as pasteable `ObjectId("…")` source
-      // instead of being walked as a plain object (its keys are bytes/_bsontype).
-      function isObjectId(x) {
-        return !!x && typeof x === "object" && x._bsontype === "ObjectId" && typeof x.toHexString === "function";
-      }
-
-      // Single-line JS-source form of any value. Shared by both output modes
-      // (prettify off renders this directly; prettify on uses it for nodes
-      // that fit on one line) so dates serialise identically in both.
-      function compact(x) {
-        if (x instanceof Date || isObjectId(x)) return encodeScalar(x);
-        if (Array.isArray(x)) return "[" + x.map(compact).join(", ") + "]";
-        if (x && typeof x === "object")
-          return Object.keys(x).length
-            ? "{ " +
-              Object.keys(x)
-                .map((k) => JSON.stringify(k) + ": " + compact(x[k]))
-                .join(", ") +
-              " }"
-            : "{}";
-        return encodeScalar(x);
-      }
-
-      // Fit-or-break JS pretty-printer: keep nodes on one line up to 80
-      // cols, only expanding when the compact form would overflow.
-      function pretty(root) {
-        const go = (v, i, c) => {
-          // A Date / ObjectId never expands — keep it on one line regardless of
-          // column budget, else the object branch below would walk its keys.
-          if (v instanceof Date || isObjectId(v)) return compact(v);
-          const s = compact(v);
-          if (c + s.length <= 80) return s;
-          // A scalar (string / number / boolean / null) can't be broken across
-          // lines — its compact form IS its only form. Without this guard a
-          // long string falls into the object branch below and `Object.keys`
-          // walks its character indices, rendering "abc" as { "0": "a", … }.
-          if (v === null || typeof v !== "object") return s;
-          const pad = " ".repeat(i + 2);
-          const close = "\n" + " ".repeat(i);
-          if (Array.isArray(v))
-            return "[\n" + v.map((x) => pad + go(x, i + 2, i + 2)).join(",\n") + close + "]";
-          return (
-            "{\n" +
-            Object.keys(v)
-              .map((k) => {
-                const p = JSON.stringify(k) + ": ";
-                return pad + p + go(v[k], i + 2, i + 2 + p.length);
-              })
-              .join(",\n") +
-            close +
-            "}"
-          );
-        };
-        return go(root, 0, 0);
-      }
+      // The MQL panel shows the document as the JavaScript that rebuilds it —
+      // `jsmql.stringify`, the library's own printer, imported above. One printer
+      // serves the panel, the CLI and the landing page, so what the visitor copies
+      // out of here is the text the terminal writes and runs in mongosh and in a
+      // driver script alike. "Prettify" chooses the line width: 80 columns breaks a
+      // document across lines, an unlimited width keeps it on one.
+      const pretty = (v) => jsmql.stringify(v);
+      const compact = (v) => jsmql.stringify(v, { width: Infinity });
 
       // A variable name must be a plain JS identifier — the destructure
       // `({ name }) => …` we build for `jsmql.compile` only binds those. A
@@ -2284,7 +2228,7 @@
         if (src.trim() === "") {
           clearErrorMarker();
           outputCm.setValue("");
-          outputCm.setOption("mode", { name: "javascript", json: true });
+          outputCm.setOption("mode", { name: "javascript" });
           outputPanel.classList.remove("error");
           // Empty editor is a fresh start — drop any sticky strict-shape
           // mode back to AUTO so the next thing the user types compiles
@@ -2356,7 +2300,7 @@
             updateUsageBar();
             return;
           }
-          outputCm.setOption("mode", { name: "javascript", json: true });
+          outputCm.setOption("mode", { name: "javascript" });
           const rendered = prettify.checked ? pretty(out) : compact(out);
           outputCm.setValue(rendered);
           outputStatsEl.textContent = statsOf(rendered);

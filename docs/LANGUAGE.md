@@ -63,15 +63,16 @@ The same rule applies to the [function form](#function-form): an **expression-bo
 19. [Partial expressions (`jsmql.expr`)](#partial-expressions-jsmqlexpr)
 20. [Strict-shape entry points (`jsmql.filter`, `jsmql.pipeline`, `jsmql.update`)](#strict-shape-entry-points-jsmqlfilter-jsmqlpipeline-jsmqlupdate)
 21. [Command Line (`jsmql`)](#command-line-jsmql)
-22. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
-23. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form--jsmql-)
-24. [Validation](#validation)
-25. [Error Messages](#error-messages)
-26. [Examples](#examples)
-27. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
-28. [Language Grammar (EBNF, simplified)](#language-grammar-ebnf-simplified)
-29. [Operator Precedence (High to Low)](#operator-precedence-high-to-low)
-30. [FAQ](#faq)
+22. [Printing MQL (`jsmql.stringify`)](#printing-mql-jsmqlstringify)
+23. [Parameterised Queries (`jsmql.compile`)](#parameterised-queries-jsmqlcompile)
+24. [Template-Tag Form (`` jsmql`…` ``)](#template-tag-form--jsmql-)
+25. [Validation](#validation)
+26. [Error Messages](#error-messages)
+27. [Examples](#examples)
+28. [Replacing Server-Side JavaScript](#replacing-server-side-javascript)
+29. [Language Grammar (EBNF, simplified)](#language-grammar-ebnf-simplified)
+30. [Operator Precedence (High to Low)](#operator-precedence-high-to-low)
+31. [FAQ](#faq)
 
 ---
 
@@ -98,7 +99,7 @@ The expression is interpreted as a Filter. Field-vs-literal predicates the Mongo
 ```js
 // Pure query-document — indexable on `age` and `status`
 jsmql("$.age > 18 && $.status === 'active'");
-// → {"age":{"$gt":18},"status":"active"}
+// → {age:{$gt:18},status:"active"}
 
 // `new Date(...)` with literal args folds to a JS Date — index-friendly on `createdAt`
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
@@ -106,7 +107,7 @@ jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`);
 
 // Mixed: indexable conjunct + `$expr` residual for the untranslatable part
 jsmql("$.status === 'active' && $.name.trim() === 'alice'");
-// → {"status":"active","$expr":{"$eq":[{"$trim":{"input":"$name"}},"alice"]}}
+// → {status:"active",$expr:{$eq:[{$trim:{input:"$name"}},"alice"]}}
 
 // A value that is not a predicate — the JavaScript truthiness test rides in $expr
 jsmql("$.a + $.b");
@@ -1384,7 +1385,7 @@ $.score <= 100                      // { $lte: ["$score", 100] }
 $.status in ["active", "pending"]   // { $in: ["$status", ["active", "pending"]] }
 // in a filter (no ';'), a constant list is the native query operator — the '$not' keeps JavaScript's
 // meaning, a test of the scalar, where MongoDB's '$in' alone would also match an array field holding the value:
-//   {"status":{"$in":["active","pending"]}}
+//   {status:{$in:["active","pending"]}}
 $.key in { foo: 1, bar: 2 }         // { $in: ["$key", ["foo", "bar"]] }    (property existence)
 ```
 
@@ -2341,10 +2342,10 @@ Write a constant `_id` three ways — they all produce the same live BSON Object
 $._id === 0x507f1f77bcf86cd799439011        // leanest: type `0x`, paste the 24-char id
 $._id === ObjectId("507f1f77bcf86cd799439011")
 $._id === new ObjectId("507f1f77bcf86cd799439011")
-// all → { _id: ObjectId("507f1f77bcf86cd799439011") }
+// all → { _id: new ObjectId("507f1f77bcf86cd799439011") }
 
 [0x507f1f77bcf86cd799439011, 0x698a76556c10b90d8bd0497e].includes($._id)
-// { _id: { $in: [ObjectId("507f…"), ObjectId("698a…")] } }
+// { _id: { $in: [new ObjectId("507f…"), new ObjectId("698a…")] } }
 ```
 
 The **`0x` hex form** is the most ergonomic — no quotes, no wrapper, just paste a 24-character hex `_id` after `0x` (numeric separators like `0x507f_1f77_…` are allowed). A `0x` literal with **exactly 24 hex digits** is an ObjectId; a shorter one is an ordinary integer (`0xff` → `255`); a longer-than-safe-integer, non-24-digit hex is rejected.
@@ -3850,7 +3851,7 @@ When a `const`/`let` right-hand side is a **compile-time constant** — a value 
 
 ```js
 jsmql("const userId = 0x507f1f77bcf86cd799439011; $.userId === userId");
-// → { userId: ObjectId("507f1f77bcf86cd799439011") }
+// → { userId: new ObjectId("507f1f77bcf86cd799439011") }
 
 jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
@@ -4113,12 +4114,10 @@ Installing the package puts a `jsmql` command on your `PATH`: **JSMQL source on 
 
 ```sh
 echo '$.age > 18' | jsmql
-# {
-#   "age": { "$gt": 18 }
-# }
+# { age: { $gt: 18 } }
 
 jsmql --pipeline -c '$match($.age > 18); $sort({ age: -1 })'
-# [{"$match":{"age":{"$gt":18}}},{"$sort":{"age":-1}}]
+# [{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]
 ```
 
 With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level `;` makes it a Pipeline). The mode flags lock the shape to one of the entry points above:
@@ -4132,20 +4131,61 @@ With no flag, the output shape is dispatched exactly like `jsmql()` (a top-level
 | `--update` | update document | `jsmql.update()` |
 | `--validate` (or `--check`) | `{ valid, errors }`; exits 1 if invalid | `jsmql.validate()` |
 
-Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. Parameterise a query with `--arg` / `--argjson` — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
+Output is pretty-printed (2-space) by default; `-c` / `--compact` emits one line, `--tab` indents with tabs, `--indent N` with N spaces. The printer is `jsmql.stringify` below. Parameterise a query with `--arg` / `--argjson` — the source must then be a parameterised arrow (see [Parameterised Queries](#parameterised-queries-jsmqlcompile)):
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
-# { "age": { "$gt": 18 } }
+# { age: { $gt: 18 } }
 
 # Params combine with any shape flag — routed through the matching *.compile():
 echo '({ minAge }, { $ }) => { $match($.age > minAge) }' | jsmql --pipeline --argjson minAge 18
-# [{ "$match": { "age": { "$gt": 18 } } }]
+# [{ $match: { age: { $gt: 18 } } }]
 ```
 
 `--arg name value` binds a string; `--argjson name value` binds a JSON value; both repeat. Params work with any output-shape flag (each routes through the matching `*.compile()` builder and enforces that shape) and with `--validate` (which validates the parameterised arrow's shape). Compile errors print with a caret at the offending position. Exit codes: `0` success, `1` compile error (or `--validate` invalid), `2` usage error. Run `jsmql --help` for the full list.
 
 ---
+
+## Printing MQL (`jsmql.stringify`)
+
+`jsmql.stringify(document)` writes a compiled document as **the JavaScript that rebuilds it** — the text the CLI prints and the playground shows. Paste it into mongosh or into a driver script and it means what your source meant.
+
+```js
+const filter = jsmql('$.status === "active" && $._id === 0x507f1f77bcf86cd799439011 && $.at > new Date("2026-01-01")');
+
+jsmql.stringify(filter);
+// {
+//   status: "active",
+//   _id: new ObjectId("507f1f77bcf86cd799439011"),
+//   at: { $gt: new Date("2026-01-01T00:00:00.000Z") }
+// }
+```
+
+`JSON.stringify` cannot write that document. A Date and an ObjectId each carry a `toJSON`, so both collapse to plain strings the server then compares as strings; a live `RegExp` becomes `{}`, which matches everything; every other BSON value becomes its internal byte fields. The document still runs, and matches nothing.
+
+Every BSON class is written as `new X(…)`, the form the Node driver requires — and the same text runs in mongosh, which exposes the driver's classes as globals. Pasting into a driver script needs them in scope:
+
+```js
+const { ObjectId, Decimal128, Long, Int32, Double, Binary, UUID, Timestamp,
+        MinKey, MaxKey, Code, DBRef, BSONSymbol, BSONRegExp } = require("mongodb");
+```
+
+A document stays on ONE line while it fits, and breaks one entry per line once it does not, so a pipeline reads one stage per line:
+
+```js
+jsmql.stringify(jsmql("$match($.age > 18); $set({ t: $.a * 2 }); $sort({ t: -1 })"));
+// [
+//   { $match: { age: { $gt: 18 } } },
+//   { $set: { t: { $multiply: ["$a", 2] } } },
+//   { $sort: { t: -1 } }
+// ]
+```
+
+Two options control that: `indent` (spaces per level, or the string to indent with — default `2`) and `width` (the column at which a document breaks — default `80`). `jsmql.stringify(doc, { width: Infinity })` puts the whole document on one line; that is what the CLI's `-c` does.
+
+Three values are refused with a `TypeError`, because writing anything in their place would hide the fault: an Invalid Date, `undefined` (the language declares it an existence test, never a value), and a circular structure.
+
+Full detail — every BSON spelling and why, the `__proto__` key, the layout rules — is in [docs/specs/mql-stringify.md](specs/mql-stringify.md).
 
 ## Parameterised Queries (`jsmql.compile`)
 

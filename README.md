@@ -62,7 +62,8 @@ import { jsmql } from "@koresar/jsmql";
 // Arrow form — your prettier/oxfmt handles formatting.
 // No `;` at top level → query Filter (the doc db.coll.find(filter) takes).
 jsmql(({ $ }) => $.email.trim().toLowerCase().endsWith("@flash-payments.com"))
-// → {"$expr":{"$let":{"vars":{"jsmqlStr":{"$ifNull":[{"$toLower":{"$trim":{"input":"$email"}}},""]}},"in":{"$eq":[{"$substrCP":["$$jsmqlStr",{"$max":[0,{"$subtract":[{"$strLenCP":"$$jsmqlStr"},19]}]},19]},"@flash-payments.com"]}}}}
+// → { $expr: { $let: { vars: { jsmqlStr: { $ifNull: [{ $toLower: { $trim: { input: "$email" } } }, ""] } },
+//                in: { $eq: [{ $substrCP: ["$$jsmqlStr", { $max: [0, { $subtract: [{ $strLenCP: "$$jsmqlStr" }, 19] }] }, 19] }, "@flash-payments.com"] } } } }
 
 // Pipelines — any `;` flips to stage mode (the array db.coll.aggregate(pipeline) takes).
 jsmql(({ $ }) => {
@@ -70,12 +71,12 @@ jsmql(({ $ }) => {
   $group({ _id: $.shopId, total: { $sum: $.amount } });
   $sort({ total: -1 });
 });
-// → [{ "$match": { "age": { "$gte": 18 }, "region": "AU" } },
-//    { "$group": { "_id": "$shopId", "total": { "$sum": "$amount" } } }, { "$sort": { "total": -1 } }]
+// → [{ $match: { age: { $gte: 18 }, region: "AU" } },
+//    { $group: { _id: "$shopId", total: { $sum: "$amount" } } }, { $sort: { total: -1 } }]
 
 // Use `?.` where a field might be null — you get `$ifNull` guards exactly there:
 jsmql('[...$.mods, ...$.room?.mods, "root"].includes($.userId)')
-// → { "$expr": { "$in": ["$userId", { "$ifNull": [{ "$concatArrays": ["$mods", { "$ifNull": ["$room.mods", []] }, ["root"]] }, []] }] } }
+// → { $expr: { $in: ["$userId", { $ifNull: [{ $concatArrays: ["$mods", { $ifNull: ["$room.mods", []] }, ["root"]] }, []] }] } }
 
 // `new Date(...)` with literal args folds to a real JS Date — index-friendly query doc:
 jsmql(`$.method === "postalDelivery" && $.createdAt >= new Date("2026-01-01")`)
@@ -89,7 +90,7 @@ jsmql(`$._id === ObjectId("507f1f77bcf86cd799439011")`)
 // Template-tag — interpolate runtime literals from outer scope
 const ids = [1, 2, 3];
 jsmql`$.status === "open" && $.id in ${ids}`
-// → { "status": "open", "id": { "$in": [1, 2, 3] } }
+// → { status: "open", id: { $in: [1, 2, 3] } }
 
 // jsmql.compile — parse once, bind many. Output stays index-friendly.
 const eligible = jsmql.compile(({ minAge, region }, { $ }) => {
@@ -97,8 +98,8 @@ const eligible = jsmql.compile(({ minAge, region }, { $ }) => {
   $project({ age: 1, email: 1, address: 1 });
 });
 eligible({ minAge: 21, region: "AU" });
-// → [{ "$match": { "age": { "$gte": 21 }, "region": "AU" } },
-//    { "$project": { "age": 1, "email": 1, "address": 1 } }]
+// → [{ $match: { age: { $gte: 21 }, region: "AU" } },
+//    { $project: { age: 1, email: 1, address: 1 } }]
 
 // JS-natural `=`, `+=`, `delete` compile to `$set` / `$unset` stages
 jsmql(({ $ }) => {
@@ -106,14 +107,14 @@ jsmql(({ $ }) => {
   delete $.tempToken;
   $.status = "done";
 });
-// → [{ "$set": { "score": { "$add": ["$score", 1] } } }, { "$unset": "tempToken" }, { "$set": { "status": "done" } }]
+// → [{ $set: { score: { $add: ["$score", 1] } } }, { $unset: "tempToken" }, { $set: { status: "done" } }]
 
 // Assigning to bare `$` replaces the whole document — lowers to $replaceWith
 jsmql(`$match($.profile != null); $ = $.profile; $ = { ...$, score: $.points * 1.1 }`);
 // → [
-//     { "$match": { "profile": { "$ne": null } } },
-//     { "$replaceWith": "$profile" },
-//     { "$replaceWith": { "$mergeObjects": ["$$ROOT", { "score": { "$multiply": ["$points", 1.1] } }] } }
+//     { $match: { profile: { $ne: null } } },
+//     { $replaceWith: "$profile" },
+//     { $replaceWith: { $mergeObjects: ["$$ROOT", { score: { $multiply: ["$points", 1.1] } }] } }
 //   ]
 
 // Multi-facet aggregation — every value a `$$` chain lowers to one $facet stage
@@ -122,10 +123,10 @@ jsmql(`$ = {
   recent:     $$.filter(o => o.createdAt >= new Date("2026-01-01")),
   byStatus:   $$.$group({ _id: $.status, n: $sum(1) })
 }`);
-// → [{ "$facet": {
-//       "topByScore": [{ "$sort": { "score": -1 } }, { "$limit": 10 }],
-//       "recent":     [{ "$match": { "createdAt": { "$gte": new Date("2026-01-01T00:00:00.000Z") } } }],
-//       "byStatus":   [{ "$group": { "_id": "$status", "n": { "$sum": 1 } } }]
+// → [{ $facet: {
+//       topByScore: [{ $sort: { score: -1 } }, { $limit: 10 }],
+//       recent:     [{ $match: { createdAt: { $gte: new Date("2026-01-01T00:00:00.000Z") } } }],
+//       byStatus:   [{ $group: { _id: "$status", n: { $sum: 1 } } }]
 //   } }]
 
 // Top 10 users by revenue: $group the orders, then sort descending and take the first 10.
@@ -135,18 +136,18 @@ $group({ _id: $.userId, revenue: $sum($.total), orders: $sum(1) });
 $$.toSorted({ revenue: -1 }).take(10);
 `);
 // → [
-//     { "$group": { "_id": "$userId", "revenue": { "$sum": "$total" }, "orders": { "$sum": 1 } } },
-//     { "$sort": { "revenue": -1 } },
-//     { "$limit": 10 }
+//     { $group: { _id: "$userId", revenue: { $sum: "$total" }, orders: { $sum: 1 } } },
+//     { $sort: { revenue: -1 } },
+//     { $limit: 10 }
 // ]
 
 // A write compiles to the PIPELINE form of an update — the form that can compute from the document.
 db.users.updateMany({}, jsmql(({ $ }) => $.name = $.name.toUpperCase()))
-// → [{ "$set": { "name": { "$toUpper": "$name" } } }]
+// → [{ $set: { name: { $toUpper: "$name" } } }]
 
 // `jsmql.update()` is the update DOCUMENT — constants only, every write its own operator.
 db.users.updateMany({}, jsmql.update(({ $ }) => { $.score += 1; $.tags.push("seen"); delete $.tmp; }))
-// → { "$inc": { "score": 1 }, "$push": { "tags": "seen" }, "$unset": { "tmp": "" } }
+// → { $inc: { score: 1 }, $push: { tags: "seen" }, $unset: { tmp: "" } }
 // A value computed from the document ("$.name.toUpperCase()") is refused there, naming the pipeline form:
 // in a document-form update the server would store the literal object, not the result.
 
@@ -163,12 +164,12 @@ const stage = { $addFields: { discount: jsmql.expr(({ $ }) => $.price * (1 - $.l
 
 // Escape hatch — call any MongoDB operator as a function - $dateTrunc in this case
 jsmql(({ $ }) => { $set({ createdAtWeek: $dateTrunc({ date: $.createdAt, unit: "week" }) }); })
-// → [{ $set: { "createdAtWeek": { "$dateTrunc": { "date": "$createdAt", "unit": "week" } } } }]
+// → [{ $set: { createdAtWeek: { $dateTrunc: { date: "$createdAt", unit: "week" } } } }]
 
 jsmql(({ $ }) => $.age = 18); // a pipeline — the form updateOne(), updateMany() take when the value may be computed
-// → [{ "$set": { "age": 18 } }]
+// → [{ $set: { age: 18 } }]
 jsmql.update(({ $ }) => $.age = 18); // the update document — constants only
-// → { "$set": { "age": 18 } }
+// → { $set: { age: 18 } }
 
 // Validate without throwing — every error carries { message, pos, code }
 jsmql.validate(({ $ }) => $.age > 18)
@@ -190,7 +191,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 ## Highlights
 
 - **JS you already know** — operators, ternaries, template literals, optional chaining, spread, computed keys, numeric separators, trailing commas, `Math.*`, `Date`, `typeof`, comments, the `function` keyword, and block-body arrows with local `const`s (`x => { const y = …; return … }` → nested `$let`). Everything JSMQL accepts is valid JavaScript — paste any expression into a `.js` file and `node --check` passes.
-- **Compile-time constants** — a `const`/`let` whose right-hand side is a constant (`const userId = 0x507f…`, `const msInDay = 24 * 60 * 60 * 1000`, `new Date("2020-01-01")`, a literal array/object) is evaluated once at compile time and inlined at every use — no `$set`, no cleanup stage. Because the declaration emits nothing, a constant plus a predicate compiles to a clean, indexable **Filter** (`const userId = 0x507f…; $.userId === userId` → `{ userId: ObjectId("507f…") }`). A binding that reads the document or the clock keeps the runtime `$set` form. See [docs/LANGUAGE.md → Compile-time constants](docs/LANGUAGE.md#compile-time-constants-folding).
+- **Compile-time constants** — a `const`/`let` whose right-hand side is a constant (`const userId = 0x507f…`, `const msInDay = 24 * 60 * 60 * 1000`, `new Date("2020-01-01")`, a literal array/object) is evaluated once at compile time and inlined at every use — no `$set`, no cleanup stage. Because the declaration emits nothing, a constant plus a predicate compiles to a clean, indexable **Filter** (`const userId = 0x507f…; $.userId === userId` → `{ userId: new ObjectId("507f…") }`). A binding that reads the document or the clock keeps the runtime `$set` form. See [docs/LANGUAGE.md → Compile-time constants](docs/LANGUAGE.md#compile-time-constants-folding).
 - **Reusable functions** — name a function once and call it across fields, in either spelling: `function money(n) { return Math.round(n * 100) / 100 } $ = { subtotal: money(...), tax: money(...) }` (or the arrow `const money = (n) => …`). The `function` keyword works everywhere arrows do — declarations, inline callbacks, and the `jsmql(fn)` input. Each call expands inline as its own `$let` (a named IIFE); the declaration stores nothing in the document and an uncalled one adds nothing to the output. Bodies can close over `$.fields` and compose with each other. See [docs/LANGUAGE.md → Reusable functions](docs/LANGUAGE.md#reusable-functions).
 - **Dates the way your date library spells them** — `.plus` / `.minus` / `.diff` / `.startOf` / `.endOf` / `.format` / `.set` / `.isSame` / `.isBefore` / `.isAfter`, plus the parts JavaScript's `Date` can't report (`.week`, `.isoWeek`, `.isoWeekday`, `.dayOfYear`, `.quarter`). `$group({ _id: $.createdAt.startOf("month"), revenue: $sum($.total) })` is the whole time-series rollup. The names come from Moment / Luxon / Temporal; the *semantics* stay MongoDB's, so `.diff` counts calendar boundaries and `.format` takes `%Y-%m-%d` — a Moment token string like `"YYYY-MM-DD"` is refused at compile time with the translation, because MQL would silently render it as its own literal text. Every method takes one trailing `timezone` (or an options object) argument. See [docs/LANGUAGE.md → Date operations](docs/LANGUAGE.md#date-operations).
 - **Every operator in the spec** — every aggregation expression, accumulator and query operator of the official MongoDB MQL spec, each stated in one registry row (`src/registry/names.ts`). Unknown operators pass through, so new MongoDB releases work day one.
@@ -210,6 +211,7 @@ The arrow function is **never executed** — jsmql() calls `Function.prototype.t
 - **Stream count as `$$.length`** — `$$.length` is the current stream's document count, usable as a value anywhere (`$.n = $$.length`, `assert($$.length <= 1, …)`, arithmetic). It materialises a `$setWindowFields` `$count` once, reuses it, and recomputes after a count-changing stage (`$match`/`$group`/`$unwind`/…). Pipeline-only. See [docs/LANGUAGE.md → `$$.length`](docs/LANGUAGE.md#length-count-the-current-stream).
 - **Three call shapes** — arrow `jsmql(({ $ }) => …)`, string `jsmql("…")`, and template tag `` jsmql`…${val}…` `` for embedding outer-scope values.
 - **Polymorphic by default, strict on demand** — `jsmql()` picks Filter or Pipeline from the input; `jsmql.filter()` and `jsmql.pipeline()` lock it to one shape and throw an actionable error otherwise, and `jsmql.update()` is the update DOCUMENT (`{ $set, $inc, $push, … }`, constants only) that `updateOne(filter, update)` takes. `jsmql.compile(fn)` parses once for parameterised parse-once-bind-many — and each strict entry has a shape-locked `.compile` (`jsmql.filter.compile`, `jsmql.pipeline.compile`, `jsmql.update.compile`). `jsmql.expr()` returns the raw aggregation expression that drops into a stage body. The three call shapes (string / arrow / template tag) apply to all of them.
+- **The MQL prints as JavaScript** — `jsmql.stringify(document)` writes what the compiler produced as the source that rebuilds it, which is what the CLI, the playground and the landing page all show. A `Date`, an `ObjectId`, a `Decimal128`, a `Binary`, a regular expression: each is the `new X(…)` call the Node driver requires, and mongosh takes the same text. `JSON.stringify` writes a date as a string the server then compares as a string, and a regular expression as `{}` — the query still runs and matches nothing. See [docs/LANGUAGE.md → Printing MQL](docs/LANGUAGE.md#printing-mql-jsmqlstringify).
 - **lodash value methods** — the aggregation-shaped ops native JS lacks a spelling for, as per-doc field methods, covering the lodash Array + Collection vocabulary that maps cleanly to MQL: `$.items.groupBy("type")`, `$.items.take(3)` / `.drop(3)` / `.chunk(3)`, `$.a.without(0)` / `.xor($.b)` / `.differenceBy($.b, "id")`, `$.a.sortBy("age")` / `.orderBy(["age"], ["desc"])`, `$.a.zip($.b)`, `$.a.takeWhile(x => x > 0)`, `$.a.sample()`, `$.nums.sum()`, `$.user.pick(["name", "age"])`, `$.o.mapValues(v => v * 2)`, `$.n.clamp(0, 100)`, `$.name.capitalize()`, … (iteratee-taking ones accept a `"field"` string or an arrow). String methods are ASCII-only. See [docs/LANGUAGE.md](docs/LANGUAGE.md).
 - **`@koresar/jsmql/globals`** — a pure-types side-effect import that adds the ambient `$match` / `$dateAdd` / … globals, types the `$$` / `$$$` pipeline chains, and augments `Array` / `String` / `Number` / `Date` with JSMQL's value methods. Zero runtime cost; bundlers tree-shake it to nothing.
 - **Pre-flight validation** — jsmql rejects the pipeline mistakes the MongoDB server would otherwise reject, at compile time: stage placement (`$out`/`$merge` must be last, `$collStats`/`$geoNear`/`$changeStream` and friends must be first, stages forbidden inside `$facet`/`$lookup`/`$unionWith`), stage-body shape (literal type/range/enum/required-key/mutual-exclusivity rules — `$limit(-5)`, `$count('')`, `$group("externalId")`, `$project` mixing include/exclude, `$bucket` boundaries out of order, a `$merge` `whenMatched` typo), `$match` query placement (`$text` must be in the first stage, at any depth of the body; `$near` isn't allowed; nor is the `$where(…)` call form), operator arguments (operand count — `$divide(6, 2, 1)`; required & unknown object keys — `$dateAdd({ startdate })` → "Did you mean 'startDate'?"; enum slots — `unit`/`$convert.to`/regex flags; literal types — `$year("2020")`, `$abs("x")`), and **method chains that can't type-check** (`.every(p).map(f)` — a boolean has no methods; `s.toUpperCase().map(f)` — a string isn't an array; `a.countBy("t").take(3)` — an object isn't an array; `$$$.orders.find(p).take(5)` — `.find` returns one document). Only 100%-certain violations throw — a value jsmql can't evaluate (`$limit($.n)`, `$year($.d)`), a receiver whose type is uncertain (`arr.find(p).map(f)` — the element could be an array), or a deployment-dependent rule (sharding, memory limits, Atlas availability) still emits MQL. See [docs/LANGUAGE.md → Mistakes caught at compile time](docs/LANGUAGE.md#mistakes-caught-at-compile-time).
@@ -257,17 +259,13 @@ Installing the package puts a `jsmql` command on your `PATH`: **JSMQL source on 
 
 ```sh
 echo '$.age > 18' | jsmql
-# {
-#   "age": {
-#     "$gt": 18
-#   }
-# }
+# { age: { $gt: 18 } }
 
 echo '$match($.age > 18); $sort({ age: -1 })' | jsmql --pipeline -c
-# [{"$match":{"age":{"$gt":18}}},{"$sort":{"age":-1}}]
+# [{ $match: { age: { $gt: 18 } } }, { $sort: { age: -1 } }]
 
 jsmql --expr '$.price * (1 - $.discount)'
-# { "$multiply": ["$price", { "$subtract": [1, "$discount"] }] }
+# { $multiply: ["$price", { $subtract: [1, "$discount"] }] }
 ```
 
 With no flag the output shape is picked the same way `jsmql()` picks it (a top-level `;` makes it a Pipeline). The strict flags lock the shape and inherit the library's actionable errors:
@@ -281,18 +279,20 @@ With no flag the output shape is picked the same way `jsmql()` picks it (a top-l
 | `--update` | update document | `jsmql.update()` |
 | `--validate` (`--check`) | `{ valid, errors }`; exit 1 if invalid | `jsmql.validate()` |
 
-Formatting is pretty 2-space by default; use `-c`/`--compact`, `--tab`, or `--indent N`. The output is JavaScript, not JSON: every **live BSON value** — a `Date`, an `ObjectId`, a `Decimal128`, a regular expression — prints as the expression that rebuilds it, because JSON has no spelling for one and a stringified date is a string the server compares as a string:
+A document stays on one line while it fits in 80 columns and breaks one entry per line once it does not; `-c`/`--compact` keeps it on one line whatever its length, `--tab` indents with tabs and `--indent N` with N spaces. The output is JavaScript, not JSON: every **live BSON value** — a `Date`, an `ObjectId`, a `Decimal128`, a regular expression — prints as the expression that rebuilds it, because JSON has no spelling for one and a stringified date is a string the server compares as a string:
 
 ```sh
 echo '$.name.match(/^a/i) && $.d >= new Date("2026-01-01")' | jsmql -c
-# {"name":{"$regex":/^a/i},"d":{"$gte":new Date("2026-01-01T00:00:00.000Z")}}
+# { name: { $regex: /^a/i }, d: { $gte: new Date("2026-01-01T00:00:00.000Z") } }
 ```
+
+The printer is public as `jsmql.stringify(document[, { indent, width }])`, so a program prints MQL the way the terminal does.
 
 Parameterise a query with `--arg` / `--argjson` — the source must then be a parameterised arrow:
 
 ```sh
 echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
-# { "age": { "$gt": 18 } }
+# { age: { $gt: 18 } }
 ```
 
 `--arg name value` binds a string; `--argjson name value` binds a JSON value. Params combine with any shape flag (`--pipeline --argjson minAge 18` binds and enforces the Pipeline shape) and with `--validate`. Errors print compiler-style with a caret at the offending position; exit codes are `0` success, `1` compile error / invalid, `2` usage error. `jsmql --help` lists everything. Full reference: [docs/specs/cli.md](docs/specs/cli.md).
@@ -301,7 +301,7 @@ echo '({ minAge }, { $ }) => $.age > minAge' | jsmql --argjson minAge 18
 
 - **[jsmql.js.org](https://jsmql.js.org)** — the project site: what JSMQL is, how it compiles, and where to go next. Every MQL document on it is compiled in your browser by the same bundle npm ships.
 - **[Live playground](https://jsmql.js.org/playground.html)** — write JSMQL, see the MQL JSON update live. Pre-loaded with real-world recipes: tiered discounts, slug generation, audit logs, pivot tables, parameterised reports, and more.
-- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the strict-shape entry points (`jsmql.filter` / `jsmql.pipeline` / `jsmql.update`), the `@koresar/jsmql/globals` import, error catalogue, server-side-JS migration guide.
+- **[docs/LANGUAGE.md](docs/LANGUAGE.md)** — the full language reference: every operator, every method, update-filter rules, `$match` query translation, `jsmql.compile` parameter semantics, `jsmql.expr` for raw aggregation expressions, the strict-shape entry points (`jsmql.filter` / `jsmql.pipeline` / `jsmql.update`), `jsmql.stringify` for printing a document, the `@koresar/jsmql/globals` import, error catalogue, server-side-JS migration guide.
 - **[docs/DEVLOG.md](docs/DEVLOG.md)** — the running record of language decisions and the reasoning behind them.
 
 ## License

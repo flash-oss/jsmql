@@ -8,12 +8,13 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 The primary syntax is JS: `$.age > 18`, `$.name.trim().toLowerCase()`, `$.items.map(x => x * 1.1)`. The `$op(args...)` escape hatch (direct operator form) reaches MongoDB operators that have no JavaScript equivalent (e.g. `$sampleRate(0.1)`, `$stdDevPop($.measurements)`, `$dateTrunc({ date: $.t, unit: "week" })`).
 
-The public API is the `jsmql` callable from `src/index.ts`, carrying six properties (`jsmql.compile`, `jsmql.validate`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`). The callable/properties shape is built with `Object.assign`, not a `namespace` — the `jsmql` assembly at the foot of [src/index.ts](src/index.ts); see [src/CLAUDE.md](src/CLAUDE.md) for why. All entry points are polymorphic over the same three call shapes: **string** (`jsmql("…")`), **arrow** (`jsmql(({ $ }) => …)`), and **template tag** (`` jsmql`… ${value} …` ``). One line per entry; the linked doc owns the detail:
+The public API is the `jsmql` callable from `src/index.ts`, carrying its other entry points as properties (`jsmql.compile`, `jsmql.validate`, `jsmql.expr`, `jsmql.filter`, `jsmql.pipeline`, `jsmql.update`, `jsmql.stringify`). The callable/properties shape is built with `Object.assign`, not a `namespace` — the `jsmql` assembly at the foot of [src/index.ts](src/index.ts); see [src/CLAUDE.md](src/CLAUDE.md) for why. All entry points are polymorphic over the same three call shapes: **string** (`jsmql("…")`), **arrow** (`jsmql(({ $ }) => …)`), and **template tag** (`` jsmql`… ${value} …` ``). One line per entry; the linked doc owns the detail:
 
 - `jsmql(input)` — parse + transpile, throws on error. → [LANGUAGE.md](docs/LANGUAGE.md)
 - `jsmql.compile(fn)` — pre-compile a parameterised arrow `(params, { $, … })` → `(params) → MQL`. → [LANGUAGE.md](docs/LANGUAGE.md#parameterised-queries-jsmqlcompile), [docs/specs/function-form-params.md](docs/specs/function-form-params.md)
 - `jsmql.validate(input)` — returns `{ valid, errors: ValidationError[] }` (each with a `.pos`) instead of throwing. → the `.validate()` rule in the DX section below
 - `jsmql.expr(input)` — raw aggregation-expression form (no `$expr` wrap, no query translation) for a stage body or `updateOne` update doc. → [LANGUAGE.md](docs/LANGUAGE.md)
+- `jsmql.stringify(value[, { indent, width }])` — a compiled document as the JavaScript that rebuilds it, so the text pastes into mongosh or a driver script. → [docs/specs/mql-stringify.md](docs/specs/mql-stringify.md)
 - `jsmql.filter` / `jsmql.pipeline` — strict-shape variants that throw if the input would lower to the *other* shape; `jsmql.update` — the update DOCUMENT (`{ $set, $inc, … }`, constants only) that `updateOne(filter, update)` takes; each carries a `.compile` parameterised builder (`jsmql.filter.compile`, …) narrowed to its shape. → [docs/specs/strict-shape-entries.md](docs/specs/strict-shape-entries.md)
 - `require("@koresar/jsmql/mongoose")(mongoose)` — mongoose plugin: patches `find` / `updateOne` / `aggregate` / … to accept jsmql source at the filter/update/pipeline slots. → [docs/specs/mongoose-plugin.md](docs/specs/mongoose-plugin.md)
 - `jsmql` **CLI** — source in (positional / `--file` / stdin), MQL out as pasteable JavaScript; shape flags route to the matching entry. → [docs/specs/cli.md](docs/specs/cli.md)
@@ -100,6 +101,7 @@ src/
   errors.ts       CodegenError / UnknownIdentifierError / internalError — a leaf, so rejecting needs no compiler.
   namespace.ts    The three compiler namespaces (`__jsmql` document fields, `jsmql_` correlation vars, `jsmqlXxx` expression vars).
   objectid.ts     jsmql's own ObjectId (no `bson` dependency).
+  stringify.ts    `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it. The one MQL printer. See docs/specs/mql-stringify.md.
   levenshtein.ts  `didYouMean` for every closed-set refusal.
   globals.ts      GENERATED ambient `declare global` types (`@koresar/jsmql/globals`). See docs/specs/globals-generation.md.
   registry/       THE SINGLE SOURCE OF TRUTH the compiler reads: one row per name (names.ts), per construct (productions.ts), per lexeme (tokens.ts, keywords.ts), in one vocabulary (vocabulary.ts); pure MQL builders (mql.ts); the AST node shapes (ast.ts). See src/registry/CLAUDE.md.

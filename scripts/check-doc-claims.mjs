@@ -97,7 +97,10 @@ for (const f of FILES) {
       checked++;
       const answers = entries.map((e) => {
         try {
-          return JSON.stringify(e(source));
+          // The library's own printer, so a claim that spells a Date or an ObjectId
+          // the way the CLI writes it compares as written. `norm` below drops the
+          // quotes and the spacing, so a claim in either style still matches.
+          return jsmql.stringify(e(source), { width: Infinity });
         } catch (err) {
           return `ERROR ${err.message}`;
         }

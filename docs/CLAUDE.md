@@ -51,6 +51,7 @@ A new operator or syntax feature lands as a registry row, and the LANGUAGE.md ta
 | `specs/stream-methods.md` | The chainable array-shaped methods a stream chain (`$$.<method>(…)`) accepts, plus the `.reduce` wrap forms |
 | `specs/assert.md` | `assert(condition[, message])` → conditional-error `$match` guard (`$convert` "Unknown type name") |
 | `specs/stream-length.md` | `$$.length` → stream-cardinality value via lazily-materialised `$setWindowFields` `$count` (`__jsmql.length`) |
+| `specs/mql-stringify.md` | `jsmql.stringify` — a compiled document as the JavaScript that rebuilds it: the BSON spellings, the keys, the fit-or-break layout |
 | `specs/cli.md` | The `jsmql` command-line bin (`src/cli.ts` → `dist/cjs/cli.cjs`) |
 | `specs/site.md` | The published site at jsmql.js.org: what GitHub Pages serves, the Jekyll passthrough rule, and the JS.ORG subdomain binding |
 

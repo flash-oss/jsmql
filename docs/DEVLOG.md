@@ -10,6 +10,66 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-11 — feat!: MQL prints as the JavaScript that rebuilds it, from one printer
+
+`JSON.stringify` cannot write an MQL document, and what it writes instead is wrong
+rather than lossy: the document still runs, and matches nothing. A Date and an
+ObjectId each carry a `toJSON`, so both collapsed to strings the server then compares
+as strings; a live RegExp became `{}`, which matches everything; every other BSON
+class became its internal byte fields. Measured before the change:
+
+    $.name.match(/^a/i) && $.at > new Date("2026-01-01")
+    →  {"name":{"$regex":{}},"at":{"$gte":"2026-01-01T00:00:00.000Z"}}
+
+`jsmql.stringify(value, { indent, width })` in [src/stringify.ts](../src/stringify.ts)
+writes every value as the expression that MAKES it. Fourteen BSON classes, each as
+`new X(…)` — the form the Node driver requires. MEASURED in mongosh 2.9.2: the same
+text runs there and yields the identical value, because mongosh exposes the driver's
+classes as globals on top of its own `ISODate` / `NumberDecimal` helpers. So there is
+ONE spelling per type rather than one per runtime, and the bare-call forms
+(`ObjectId("…")`, `MinKey()`) are not written, since only mongosh takes them. The
+whole printed document was rebuilt in both runtimes and inserted: the two are
+byte-identical, and every field's `$type` on the server matches.
+
+    $.status === "active" && $._id === 0x507f1f77bcf86cd799439011
+    →  { status: "active", _id: new ObjectId("507f1f77bcf86cd799439011") }
+
+A document stays on one line while it fits 80 columns and breaks one entry per line
+once it does not — MQL nests deeply and narrowly, so a brace per line buries the
+shape. `-c` / `--compact` now means an unlimited width rather than a zero indent. A
+key that is a plain identifier is written bare. `__proto__` is written as the
+computed key `["__proto__"]`, the only spelling that survives a paste: a quoted
+`"__proto__"` sets the prototype and creates no own property, MEASURED in both
+runtimes.
+
+There were SIX places that turned a document into text for a person, each with its
+own rules and its own bugs: the CLI, `index.html`, `playground_skeleton.html`, an
+identical `spell()` in the two expectation rewriters, and one compiler refusal that
+printed a Date as a JSON string. All six now read the one printer, and hold no copy.
+The two site pages also stop tokenising their output as JSON, which it no longer is.
+The rewriters share the rest of their machinery too, in the new
+[scripts/expectations.mjs](../scripts/expectations.mjs) — and hand the rewritten file
+to `oxfmt`, so the formatter owns the layout and a regenerated suite comes back
+byte-identical when nothing changed.
+
+Deduplicating found three printer bugs no single surface had shown. A Uint8Array —
+which the compiler passes through, and which both runtimes store as BSON Binary
+subtype 0 — printed as `{ "0": 1, "1": 2 }`, an object that matches nothing; it now
+prints as itself. A value carrying `_bsontype: "ObjectId"` without the matching
+method crashed the printer and took the whole document's output with it; every class
+now reads its data defensively and falls back to printing the plain object it is. And
+the legacy `_bsontype: "ObjectID"` tag, which the compiler accepts, printed as a plain
+object rather than an ObjectId.
+
+The old output claimed to be byte-identical JSON for a BSON-free document. That claim
+is gone, and it only held until the first Date in any case. `--validate` still reports
+`{ valid, errors }` as JSON: that is a machine-readable report, not a document, and
+`--compact` now puts it on one line as it does everything else.
+
+See [docs/specs/mql-stringify.md](specs/mql-stringify.md).
+
+---
+
 ## 2026-09-10 — fix: a field name JavaScript refuses to store the ordinary way
 
 MongoDB reserves no field names, so `__proto__` is ordinary data. It is also the one

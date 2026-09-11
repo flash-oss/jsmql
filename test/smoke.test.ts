@@ -124,7 +124,9 @@ describe("smoke: built dist", () => {
     // of the file's exec bit.
     const compiled = spawnSync(process.execPath, [cliCjs], { cwd: ROOT, input: "$.age > 18\n", encoding: "utf8" });
     expect(compiled.status, compiled.stderr).toBe(0);
-    expect(JSON.stringify(JSON.parse(compiled.stdout))).toBe('{"age":{"$gt":18}}');
+    // The bin writes JAVASCRIPT, so the output is read the way a developer reads it —
+    // by evaluating it. Parsing it as JSON is what the printer exists to stop.
+    expect(compiled.stdout.trim()).toBe("{ age: { $gt: 18 } }");
 
     const version = spawnSync(process.execPath, [cliCjs, "--version"], { cwd: ROOT, encoding: "utf8" });
     expect(version.status, version.stderr).toBe(0);
