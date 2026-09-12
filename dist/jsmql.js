@@ -2688,6 +2688,7 @@ var NAMES = {
     doc: "Outputs an array containing a sequence of integers according to user-defined inputs.",
     category: "array",
     returns: "array",
+    neverNull: true,
     elementKind: "number",
     where: ["value"],
     shape: "array",
@@ -6164,6 +6165,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $trim: { input: recv } }) },
@@ -6245,6 +6247,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toLower: recv }) },
@@ -6262,6 +6265,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $toUpper: recv }) },
@@ -6349,6 +6353,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    neverNull: true,
     elementKind: "string",
     where: ["value"],
     filter: viaFallback,
@@ -6717,7 +6722,7 @@ var NAMES = {
               0: "'.includes()' searches for a VALUE, not by a function. To test elements against a predicate write '.some(x => \u2026)'."
             }
           },
-          emit: ({ recv, args, value }) => ({ $in: [value(args[0]), arrayOrEmpty(recv)] })
+          emit: ({ recv, args, value, present }) => ({ $in: [value(args[0]), present ? recv : arrayOrEmpty(recv)] })
         },
         string: {
           args: {
@@ -6775,6 +6780,7 @@ var NAMES = {
     call: true,
     on: ["string", "array", "stream"],
     returns: { string: "string", array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -6826,6 +6832,7 @@ var NAMES = {
     call: true,
     on: ["array", "string", "stream"],
     returns: { array: "array", string: "string", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -6907,6 +6914,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => reverseArrayOf(recv) },
@@ -6935,6 +6943,7 @@ var NAMES = {
       }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -6986,6 +6995,7 @@ var NAMES = {
       }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7036,6 +7046,7 @@ var NAMES = {
       }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7075,6 +7086,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7138,6 +7150,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7179,6 +7192,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7207,6 +7221,7 @@ var NAMES = {
       stream: { 0: ["propertyPath"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7253,6 +7268,7 @@ var NAMES = {
       stream: { 0: ["propertyPath"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7285,6 +7301,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -7511,9 +7528,9 @@ var NAMES = {
     },
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback: callback2 }) => {
+      emit: ({ args, callback: callback2, present }) => {
         const cb = callback2(args[0], "truth");
-        const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
+        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
         return { $anyElementTrue: { $map: { input, as: cb.as, in: cb.in } } };
       }
     },
@@ -7535,9 +7552,9 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       args: { sig: "predicate", exact: 1 },
-      emit: ({ args, callback: callback2 }) => {
+      emit: ({ args, callback: callback2, present }) => {
         const cb = callback2(args[0], "truth");
-        const input = cb.paired ? cb.input : { $ifNull: [cb.input, []] };
+        const input = cb.paired || present ? cb.input : { $ifNull: [cb.input, []] };
         return { $allElementsTrue: { $map: { input, as: cb.as, in: cb.in } } };
       }
     },
@@ -7610,6 +7627,7 @@ var NAMES = {
     on: "array",
     elements: "scalar",
     returns: "string",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -7858,6 +7876,7 @@ var NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -7900,6 +7919,7 @@ var NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    neverNull: true,
     elementKind: "string",
     where: ["value"],
     filter: viaFallback,
@@ -7940,6 +7960,7 @@ var NAMES = {
     call: true,
     on: ["array", "object", "Object"],
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9158,6 +9179,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
@@ -9187,6 +9209,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -9213,6 +9236,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
@@ -9243,6 +9267,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -9269,6 +9294,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9291,6 +9317,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9314,6 +9341,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9346,6 +9374,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9378,6 +9407,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9398,6 +9428,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9436,6 +9467,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9459,6 +9491,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9485,6 +9518,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -9510,6 +9544,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -9541,6 +9576,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -9576,6 +9612,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9598,6 +9635,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9623,6 +9661,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -9644,6 +9683,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9750,8 +9790,15 @@ var NAMES = {
     filter: viaFallback,
     expr: {
       perFamily: {
-        array: { args: { sig: "", none: true }, emit: ({ recv }) => sizeOf(recv) },
-        object: { args: { sig: "", none: true }, emit: ({ recv }) => sizeOf({ $objectToArray: recv }) }
+        // lodash's `_.size(undefined)` is 0: a receiver that may be missing is guarded, as `.length`'s is.
+        array: {
+          args: { sig: "", none: true },
+          emit: ({ recv, present }) => sizeOf(present ? recv : arrayOrEmpty(recv))
+        },
+        object: {
+          args: { sig: "", none: true },
+          emit: ({ recv, present }) => sizeOf(present ? { $objectToArray: recv } : { $objectToArray: { $ifNull: [recv, {}] } })
+        }
       },
       uncertain: () => "$$REMOVE"
     },
@@ -9773,6 +9820,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
     // order until a sort gives it one. An array in a value slot is already ordered.
@@ -9825,6 +9873,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     // As a chain link it keeps a RUN of the stream, and a MongoDB stream has no
     // order until a sort gives it one. An array in a value slot is already ordered.
@@ -9873,6 +9922,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9898,6 +9948,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -9962,6 +10013,7 @@ var NAMES = {
     call: true,
     on: ["array", "stream"],
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10040,6 +10092,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10063,6 +10116,7 @@ var NAMES = {
     call: true,
     on: "array",
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10102,6 +10156,7 @@ var NAMES = {
       array: { arrowOnly: "the callback takes one parameter per zipped array and a shorthand cannot stand in for it" }
     },
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10157,6 +10212,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10190,6 +10246,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream", Object: "object" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10230,6 +10287,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10262,6 +10320,7 @@ var NAMES = {
     params: ["value"],
     iterateeSlots: { array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10295,6 +10354,7 @@ var NAMES = {
       stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
     },
     returns: { array: "array", stream: "stream" },
+    neverNull: true,
     where: ["value", "stream"],
     filter: viaFallback,
     expr: {
@@ -10549,6 +10609,7 @@ var NAMES = {
     call: true,
     on: "object",
     returns: "array",
+    neverNull: true,
     elementKind: "array",
     where: ["value"],
     filter: viaFallback,
@@ -10639,6 +10700,7 @@ var NAMES = {
     call: true,
     on: "string",
     returns: "array",
+    neverNull: true,
     elementKind: "string",
     where: ["value"],
     filter: viaFallback,
@@ -10928,6 +10990,7 @@ var NAMES = {
     call: true,
     on: ["array", "set"],
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10948,6 +11011,7 @@ var NAMES = {
     call: true,
     on: ["array", "set"],
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -10966,6 +11030,7 @@ var NAMES = {
     call: true,
     on: ["array", "set"],
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: viaFallback,
     expr: {
@@ -12312,6 +12377,7 @@ var NAMES = {
     call: true,
     on: ["array", "set"],
     returns: "array",
+    neverNull: true,
     where: ["value"],
     filter: unsupported(
       "Set.symmetricDifference() has no MongoDB equivalent \u2014 compose via $setDifference / $setIntersection / $setUnion as needed"
@@ -13135,7 +13201,9 @@ var NAMES = {
         // → { $size: [["$a", 2]] }. A path or an expression is handed over as it is.
         array: {
           args: { sig: "", none: true },
-          emit: ({ recv }) => ({ $size: Array.isArray(recv) ? [recv] : arrayOrEmpty(recv) })
+          // `$size` aborts on null, so a receiver that may be missing is guarded; one
+          // that is there (`present`) is counted as it is.
+          emit: ({ recv, present }) => ({ $size: Array.isArray(recv) ? [recv] : present ? recv : arrayOrEmpty(recv) })
         },
         // The emit answers 0 for a missing string, so the runtime test admits one too.
         string: {
@@ -14684,6 +14752,9 @@ function unionsOf(name2) {
 }
 function mergesIntoOf(name2) {
   return row(name2)?.mergesInto === true;
+}
+function neverNullOf(name2) {
+  return row(name2)?.neverNull === true;
 }
 function restoresDocumentsOf(name2) {
   return row(name2)?.restoresDocuments === true;
@@ -18919,7 +18990,7 @@ var Scope = class _Scope {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", present: false, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);
@@ -20509,6 +20580,41 @@ function checkDateFormat(name2, fmt, pos) {
 
 // src/compiler/emit/types.ts
 var NAMESPACES2 = namespaceNames();
+function isPresent(node, env) {
+  switch (node.type) {
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "TemplateLiteral":
+    case "BooleanLiteral":
+    case "ObjectIdLiteral":
+    case "ArrayLiteral":
+      return true;
+    case "ObjectLiteral":
+      return namedRow(node) === null;
+    case "Injected":
+      return node.value !== null && node.value !== void 0 && !isMqlShaped(node.value);
+    case "FieldRef":
+      return node.path === "";
+    case "Ident":
+      return env.scope.has(node.name) && env.lookup(node.name, node.pos).present;
+    case "MethodCall": {
+      const name2 = namedRow(node) ?? node.name;
+      if (!neverNullOf(name2)) return false;
+      const receiver = node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES2.has(node.object.name) ? true : node.optional && soleFieldFamilyOf(name2) !== null || isPresent(node.object, env);
+      return receiver && node.args.every((a) => argPresent(a, env));
+    }
+    case "OperatorCall":
+      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+    default:
+      return false;
+  }
+}
+function argPresent(a, env) {
+  if (a.type === "SpreadElement") return isPresent(a.argument, env);
+  if (a.type === "Lambda") return true;
+  return isPresent(a, env);
+}
 function familyOfKind(k) {
   switch (k) {
     case "string":
@@ -20819,6 +20925,8 @@ function joinValue(node, env, S) {
     ref: { kind: "field", slot },
     type: l.yields,
     elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
+    // The server always writes the `as` array; a `.find` may find nothing.
+    present: l.one !== "find",
     mutable: false,
     pos: l.pos
   });
@@ -21709,6 +21817,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
       elements: "unknown",
+      present: false,
       mutable: false,
       pos: cb.pos
     });
@@ -21723,6 +21832,7 @@ function reducerCallback(cb, seed, recv, env, read, name2) {
         ref: { kind: "var", ref: reduceVar("this") },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -21755,7 +21865,7 @@ function elementsCallback(cb, count, env, read, name2) {
   });
   return { as: pair.as, ref: pair.ref, in: { $let: { vars, in: read(cb.body, childEnv(bodyEnv, cb, "body")) } } };
 }
-function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode) {
+function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__PURE__ */ new Map(), recvNode, present = false) {
   const argEnv = childEnv(env, node, "args");
   const value = (e) => overrides.has(e) ? overrides.get(e) : read.value(e, argEnv);
   return {
@@ -21764,6 +21874,7 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     args,
     keys,
     value,
+    present,
     kind: (e) => kindOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
@@ -21842,6 +21953,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
         ref: { kind: "document", path: "" },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -21868,6 +21980,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
         ref: { kind: "document", path: "" },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -21888,6 +22001,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
         ref: { kind: "document", path: env.chain.element },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -21901,6 +22015,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
         },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -21915,6 +22030,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
         },
         type: "stream",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos
       });
@@ -22408,8 +22524,9 @@ function dispatchOn(node, name2, recvNode, args, env, optional) {
     }
     checkSlots(name2, sel.rule.args, exprArgs);
     const recv = receiver.kind === "value" || receiver.kind === "opaque" ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name2) : null;
+    const present = (receiver.kind === "value" || receiver.kind === "opaque") && (isPresent(recvNode, recvEnv) || recv !== receiver.lowered);
     return sel.rule.emit(
-      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode)
+      exprInputs(name2, recv, exprArgs, positionalKeysOf(name2), env, node, READ, void 0, recvNode, present)
     );
   }
   if (sel.kind === "dispatch") {
@@ -22442,7 +22559,10 @@ function runDispatch(sel, name2, lowered, args, env, node, spelled3, container) 
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule) => {
     checkSlots(name2, rule.args, args);
-    return rule.emit(exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ));
+    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    return rule.emit(
+      exprInputs(name2, ref, args, positionalKeysOf(name2), bodyEnv, node, READ, void 0, void 0, present)
+    );
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
   const otherwise = sel.otherwise;
@@ -22513,6 +22633,7 @@ function applyLambda2(lambda, args, env, pos, label, fnName) {
       ref: { kind: "dropped", message: recursiveFunction(fnName, pos).message, replaced: false },
       type: "unknown",
       elements: "unknown",
+      present: false,
       mutable: false,
       pos
     });
@@ -23165,6 +23286,7 @@ function statementStages(stmt, env, first) {
         ref: { kind: "function", lambda, expanding: lambda.body === void 0 },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: decl.pos
       })
@@ -23181,10 +23303,11 @@ function letStages(decl, env) {
     throw shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type) => env.bind(decl.name, {
+  const bind = (type, present) => env.bind(decl.name, {
     ref: { kind: "field", slot },
     type,
     elements: "unknown",
+    present,
     mutable: decl.kind === "let",
     pos: decl.pos
   });
@@ -23195,6 +23318,7 @@ function letStages(decl, env) {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === void 0 },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: decl.pos
       })
@@ -23204,12 +23328,15 @@ function letStages(decl, env) {
     const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
     if (w !== null) {
       env.chain.dirty = true;
-      return { stages: w.stages, env: bind(w.yields) };
+      return { stages: w.stages, env: bind(w.yields, w.yields === "array") };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
   env.chain.dirty = true;
-  return { stages: [{ $set: { [slot.path]: value } }], env: bind(kindOf(decl.value, env)) };
+  return {
+    stages: [{ $set: { [slot.path]: value } }],
+    env: bind(kindOf(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value")))
+  };
 }
 function afterStages(stages, env) {
   env.chain.advance(stages);
@@ -23531,6 +23658,7 @@ function writeStages(uf, env, first) {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
         type: kindOf(op.value, inner),
         elements: "unknown",
+        present: false,
         mutable: true,
         pos: op.target.pos
       };
