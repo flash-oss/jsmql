@@ -38,6 +38,20 @@ describe("compiler/passes/shape — a statement makes a pipeline", () => {
   it("reads a mutator as a pipeline, because it is a write", () => {
     expect(shape("$.items.sort()")).toBe("pipeline");
     expect(shape("$.items.push(9)")).toBe("pipeline");
+    // The destination is still a path here, one phase before the fold makes it one.
+    expect(shape("$.a.b.sort()")).toBe("pipeline");
+    expect(shape('$.a["b"].push(9)')).toBe("pipeline");
+    expect(shape("x.sort()")).toBe("pipeline");
+  });
+
+  it("reads a mutator with NOTHING to write as a value, so the value road answers it", () => {
+    // A call in the middle makes a fresh array, and a fresh array is a value however
+    // the row reads. Calling these a Pipeline sent `jsmql.expr` to `jsmql.pipeline()`,
+    // which refuses them just as hard.
+    expect(shape("$.items.filter(d => d.x).sort()")).toBe("filter");
+    expect(shape("$.items.filter(d => d.x).map(d => d.sku).uniq().sort()")).toBe("filter");
+    expect(shape("[3, 1, 2].sort()")).toBe("filter");
+    expect(shape('$.s.split(",").push(9)')).toBe("filter");
   });
 
   it("reads a lone declaration as a pipeline, since nothing would read it", () => {

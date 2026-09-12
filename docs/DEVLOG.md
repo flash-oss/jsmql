@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix: a mutator with nothing to write is a value, not a Pipeline
+
+`jsmql.expr("$.items.filter(p).map(f).uniq().sort()")` answered "received a top-level
+'sort' stage call. Use jsmql.pipeline()" — and `jsmql.pipeline()` refuses it just as
+hard, so the reader was sent to a second dead end. The shape pass
+([shape.ts](src/compiler/passes/shape.ts)) asked the row alone: `.sort()` states no
+value form, so it read as a statement, so the whole program read as a Pipeline. But a
+statement WRITES, and a chain with a call in the middle makes a fresh array, which is
+nothing to write to. The receiver decides this, and only desugar was asking it.
+
+So the shape pass asks it too, through `couldWriteItsReceiver`
+([naming.ts](src/compiler/passes/naming.ts)), and such a chain is now the value it is.
+Every mutator then reaches its own row's value-position refusal, each of which already
+named the exact alternative — `.toSorted()`, `.toReversed()`, `.concat(x)`, `.at(-1)`.
+The shape pass runs one phase before the field-path fold, where `$.a.b` is still a
+chain of accesses, so the question it asks is the deliberately wider one: it admits any
+receiver the fold MIGHT reach a path from. That direction is the safe one — a receiver
+admitted there and declined in desugar is refused by name on the statement road, while
+the reverse reads a whole program as the wrong document.
+
+Removing the misrouting exposed a second ordering, which a test had pinned in its
+accidental form: a mutator's refusal is advice ABOUT arrays, so on `$.s.trim()` it told
+a string to use `.toSorted()`, which a string also lacks. A row's own refusal still
+wins over the generic receiver gate — it is the more specific sentence, and
+`$$.takeRight(3)` should hear why a stream cannot count from the end — but a mutator is
+the exception, and there the receiver's proof answers first
+([select.ts](src/compiler/emit/select.ts)). `docs/LANGUAGE.md` now flags the JavaScript
+surprise behind all of this: `[...].filter(p).sort()` reads fine in JS because the
+throw-away array makes the mutation invisible, and jsmql has no throw-away array.
+
+---
+
 ## 2026-09-12 — fix: a live suite can no longer report green while its server half never ran
 
 Every suite that runs jsmql's MQL on a real server wraps its setup so an unreachable

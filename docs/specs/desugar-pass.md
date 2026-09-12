@@ -99,6 +99,14 @@ The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)` an
 Declining a non-path receiver is also what keeps `$$.push(…)` (`$unionWith`) and
 `$$.sort(…)` (`$sort`) out of a rule meant for fields.
 
+The shape pass asks the same question one phase earlier, where `$.a.b` is still a
+chain of accesses and not yet the path it folds to (`couldWriteItsReceiver` in
+[naming.ts](../../src/compiler/passes/naming.ts)). So it walks the chain to its
+base and admits any receiver the fold MIGHT reach a path from — wider than the
+set this pass really rewrites, and deliberately so: a receiver admitted there and
+declined here is refused by name on the statement road, while the reverse would
+read a whole program as the wrong document ([filter-mode.md](filter-mode.md)).
+
 **A mutator with neither a twin nor a literal shape states its WRITE FORM** —
 JSMQL source by argument count, `_r` the receiver and `_0`, `_1`, … the
 arguments as written (`mutatorForm` on the row). The pass parses the form with
@@ -321,6 +329,14 @@ The receiver must be a field PATH. MQL writes a path, so `$.items[0].push(1)` an
 `$.items.filter(p).sort()` have no destination and are not statements at all.
 Declining a non-path receiver is also what keeps `$$.push(…)` (`$unionWith`) and
 `$$.sort(…)` (`$sort`) out of a rule meant for fields.
+
+The shape pass asks the same question one phase earlier, where `$.a.b` is still a
+chain of accesses and not yet the path it folds to (`couldWriteItsReceiver` in
+[naming.ts](../../src/compiler/passes/naming.ts)). So it walks the chain to its
+base and admits any receiver the fold MIGHT reach a path from — wider than the
+set this pass really rewrites, and deliberately so: a receiver admitted there and
+declined here is refused by name on the statement road, while the reverse would
+read a whole program as the wrong document ([filter-mode.md](filter-mode.md)).
 
 ## The iteratee shorthands
 

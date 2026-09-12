@@ -53,6 +53,14 @@ guard is `$type` against the family's BSON types widened by the rule's
 `alsoTypes`; the default is the row's required `uncertain`. A receiver that is
 not a path or a variable is bound once with `$let`.
 
+When a row states a REFUSAL for the position, that refusal is the answer even on
+a receiver the row's `on` does not admit: it is the more specific sentence, and
+it was written for the receiver that reaches it (`$$.takeRight(3)` hears why a
+stream cannot count from the end, not that the row lists `array`). A mutator is
+the exception, because its refusal is advice ABOUT arrays — `.sort()` says to
+write `.toSorted()`, which is right for an array and wrong for `$.s.trim()`,
+a string that has neither method. There the proof answers first.
+
 ## Operand shapes and the checks
 
 A MongoDB operator's `shape` is applied at the call, not in the renderer:

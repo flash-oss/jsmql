@@ -1835,6 +1835,19 @@ jsmql`
 
 `.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
 
+**A mutator at the END of a chain is expression position too**, which surprises JavaScript developers: `[...].filter(p).sort()` reads fine in JS, because the `.filter` makes a throw-away array and sorting it in place is invisible. jsmql has no throw-away array to mutate, so it asks for the immutable spelling:
+
+```js
+jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().sort()");
+// ✗ .sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or
+//   call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.
+
+jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
+// → { $sortArray: { input: { $setUnion: { $map: {
+//       input: { $filter: { input: "$items", as: "i", cond: { $gt: ["$$i.qty", 0] } } },
+//       as: "i", in: "$$i.sku" } } }, sortBy: 1 } }
+```
+
 #### `Object.assign(target, ...sources)` mutates `target`
 
 `Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position jsmql honours that — the target may be a document field **or** an in-scope `let`/`const` binding:

@@ -19,6 +19,7 @@ import { FIELD_FAMILY_TYPES } from "../../registry/vocabulary.ts";
 import type { Expr } from "../../registry/vocabulary.ts";
 import type { Verdict } from "./consult.ts";
 import { familiesFor } from "./consult.ts";
+import { isMutator } from "../rows.ts";
 import { evaluate, type Constants } from "../passes/evaluate.ts";
 import { staticKey } from "../passes/naming.ts";
 import { internalError } from "../../errors.ts";
@@ -274,8 +275,14 @@ export function select(verdict: Verdict, receiver: Receiver, shaped: Shaped, cou
   switch (verdict.kind) {
     case "unknown":
       return { kind: "unknown", name };
-    case "refused":
-      return { kind: "refused", name, message: verdict.message, needsSubject: verdict.needsSubject };
+    case "refused": {
+      // A row's own refusal is the better answer and wins — EXCEPT for a mutator,
+      // whose refusal is advice about arrays: `.sort()` says to write `.toSorted()`,
+      // which is sound for an array and wrong for `$.s.trim()`, a string that has
+      // neither. There the receiver answers first, as it does for `inCode` below.
+      const gate = isMutator(name) ? receiverGate(name, receiver) : null;
+      return gate ?? { kind: "refused", name, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
     case "fallback":
       return { kind: "fallback", name };
     case "composedOnly":

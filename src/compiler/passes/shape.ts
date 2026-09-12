@@ -9,8 +9,8 @@
 // position.ts: no single parent-to-property step can see it.
 
 import type { Program } from "../../registry/ast.ts";
-import { lists } from "../rows.ts";
-import { namedRow, readsAContextRef } from "./naming.ts";
+import { isMutator, lists } from "../rows.ts";
+import { couldWriteItsReceiver, namedRow, readsAContextRef } from "./naming.ts";
 
 /** The two documents a program can be. */
 export type Shape = "filter" | "pipeline";
@@ -25,6 +25,12 @@ type Any = { type: string } & Record<string, unknown>;
  * STREAM, and a stream is a pipeline wherever it stands. Everything else asks its
  * row, and the test is that the row has NO value form: `$match` is a stage and
  * has none, while `.filter()` lists one and is an expression standing alone.
+ *
+ * A mutator is the one row the name alone cannot answer for. `.sort()` has no
+ * value form, so the row reads as a statement — but a statement WRITES, and
+ * `$.items.filter(p).sort()` has nothing to write to. Asked for its destination,
+ * such a call is an expression that the value road then refuses by name, instead
+ * of a Pipeline the pipeline road refuses just as hard.
  */
 function statementShaped(node: Any): boolean {
   if (node.type === "Pipeline" || node.type === "UpdateFilter") return true;
@@ -38,6 +44,7 @@ function statementShaped(node: Any): boolean {
   // A row with a VALUE form is decided by the `;` and not by this: `.filter()`
   // lists one, and `$.items.filter(p)` standing alone is an expression.
   if (lists(name, "value")) return false;
+  if (node.type === "MethodCall" && isMutator(name) && !couldWriteItsReceiver(node)) return false;
   return lists(name, "statement") || lists(name, "stream");
 }
 
