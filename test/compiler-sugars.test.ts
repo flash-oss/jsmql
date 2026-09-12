@@ -14,8 +14,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 const MAIN = [
   { _id: 1, a: 1, tag: "t1", xs: [3, 1, 2] },

@@ -1,7 +1,11 @@
 #!/usr/bin/env node
-// test/probe — run MQL against the local mongod and print the server's JSON result.
+// test/probe — run MQL against the project's mongod and print what the server returned.
 // One reusable runner instead of a fresh tmp/*.mjs per check.
 // See test/CLAUDE.md "Verify MQL against a running MongoDB".
+//
+// The server is the project's own instance on :27018, started by `npm run fixture:up`.
+// The developer's own mongod on the default port is NEVER used — it holds their real
+// work. That rule has no exception; `test/no-default-port.test.ts` holds the line.
 //
 // Input: MQL JSON as a positional arg, or on stdin if no positional is given.
 //   echo '[{"$match":{"age":{"$gt":18}}}]' | ./test/probe
@@ -18,7 +22,7 @@
 //
 // Other options:
 //   --doc <json>   seed doc(s) before running — object or JSON array, repeatable. Default: {}
-//   --uri <uri>    mongod connection string. Default mongodb://127.0.0.1:27017
+//   --uri <uri>    mongod connection string. Default: the project's :27018 instance
 //   -o <file>      write output to <file> instead of stdout
 //   -h, --help     show this help
 //
@@ -37,6 +41,7 @@ import { readFileSync, writeFileSync } from "node:fs";
 import * as mongodb from "mongodb";
 const { MongoClient, BSON } = mongodb;
 import { stringify } from "../src/stringify.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
 // The classes a pasted document may name — the same list the CLI's output depends on.
 const BSON_GLOBALS = {
@@ -79,7 +84,7 @@ function fail(msg) {
 
 // --- arg parsing -----------------------------------------------------------
 const argv = process.argv.slice(2);
-const opts = { docs: [], uri: "mongodb://127.0.0.1:27017", out: null, mode: null };
+const opts = { docs: [], uri: SCRATCH_URI, out: null, mode: null };
 const positionals = [];
 for (let i = 0; i < argv.length; i++) {
   const a = argv[i];
@@ -155,8 +160,9 @@ try {
   await client.connect();
 } catch (e) {
   fail(
-    `Could not connect to mongod at ${opts.uri}: ${e.message}\n` +
-      "Start a local server first — see https://www.mongodb.com/docs/manual/administration/install-community/",
+    `Could not connect to the project's mongod at ${opts.uri}: ${e.message}\n` +
+      "Start it with `npm run fixture:up`. If mongod itself is missing, install it first:\n" +
+      "https://www.mongodb.com/docs/manual/administration/install-community/",
   );
 }
 try {

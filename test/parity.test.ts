@@ -21,8 +21,9 @@ import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { valueMethodNames } from "../src/compiler/rows.ts";
 import { streamMethodNames } from "../src/compiler/rows.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = process.env.JSMQL_PARITY_MONGO_URI ?? "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1500";
+const URI = SCRATCH_URI;
 
 async function tryConnect(): Promise<MongoClient | null> {
   try {

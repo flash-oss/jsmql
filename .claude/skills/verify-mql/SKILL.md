@@ -8,7 +8,8 @@ description: >-
   slightest doubt that an emitted document would run. This enforces language rule
   HR3 (jsmql never knowingly emits invalid MQL): a green `toEqual` proves only
   what jsmql *emits*, never that mongod *accepts* it. Runs the MQL through
-  `test/probe` (or the MongoDB MCP) against a local `mongod`. Trigger even when the
+  `test/probe` (or the MongoDB MCP) against the project's own mongod on :27018 —
+  never MongoDB's default port, which is the developer's own instance. Trigger even when the
   user only says "does this run?", "is this valid MQL?", or "check this against Mongo".
 ---
 
@@ -62,8 +63,11 @@ echo '$.qty = $.qty + 1' | node src/cli.ts --update | ./test/probe --update --do
   `0`, and `true` values as projection flags and produces false-positive
   "successes". If you hand-drive the driver instead of probe, do the same.
 - **`--doc <json>`** seeds an object or JSON array; repeatable. Default `{}`.
-- **`--uri <uri>`** overrides the connection string (default
-  `mongodb://127.0.0.1:27017`).
+- **`--uri <uri>`** overrides the connection string. The default is the project's
+  own instance on `:27018`, which is the ONLY server this project may connect to —
+  see [test/no-default-port.test.ts](../../../test/no-default-port.test.ts). Never
+  point it at MongoDB's default port: that instance is the developer's own and
+  holds their real work.
 
 ## Preconditions — check before running, don't guess around them
 
@@ -71,12 +75,14 @@ echo '$.qty = $.qty + 1' | node src/cli.ts --update | ./test/probe --update --do
    `mongodb` driver, a devDependency). If missing, run `npm install` first. Do
    **not** symlink `node_modules` from another checkout — it breaks the byte-equal
    `globals.ts` drift test.
-2. **Is a local `mongod` running?** Probe defaults to `127.0.0.1:27017`. If mongod
-   is **not installed or not running, stop and ask the developer to install and
-   start it** — point them at the official
+2. **Is the project's mongod running?** It listens on `:27018` and `npm run
+   fixture:up` starts it. That instance is the ONLY server this project may
+   connect to — MongoDB's default port belongs to the developer's own instance and
+   their real work. If mongod is **not installed, stop and ask the developer to
+   install it** — point them at the official
    [MongoDB Community installation guide](https://www.mongodb.com/docs/manual/administration/install-community/).
-   Do not fall back to guessing whether a shape is valid; guessing is the exact
-   failure mode HR3 forbids.
+   Do not fall back to their own instance, and do not fall back to guessing whether
+   a shape is valid; guessing is the exact failure mode HR3 forbids.
 
 ## Alternative runner: the MongoDB MCP plugin
 
@@ -86,9 +92,10 @@ server — a faster path than probe when the MCP is already connected. Same cave
 
 - Use `$addFields` (not `$project`) to wrap a bare `jsmql.expr` fragment.
 - The MCP data tools need a connection string and are **not** connected by default.
-  Call `connect` with one the developer provides (the local `mongod`, or the
-  read-only fixture on `:27018` after `npm run fixture:up`). **Never invent a
-  connection string.**
+  Call `connect` with the project's `:27018` instance (after `npm run fixture:up`) —
+  the read-only identity to read the fixture dataset, the scratch identity to write,
+  both in [test/fixtures/config.ts](../../../test/fixtures/config.ts). **Never invent
+  a connection string, and never connect to any other server.**
 - `search-knowledge` (no connection required) is a *reference* cross-check for
   operator field tables / valid enums / version differences — it is secondary to
   the vendored spec YAML and never a substitute for actually running the shape.
@@ -96,16 +103,19 @@ server — a faster path than probe when the MCP is already connected. Same cave
 The MCP is a convenience layer, not a dependency: `test/probe` is always the
 fallback, so nothing breaks when the MCP is absent.
 
-## `test/probe` vs. the `:27018` integration fixture
+## `test/probe` vs. the integration fixture — one server, two identities
 
-- **`test/probe`** — ad-hoc checks against the developer's *primary* mongod
-  (`:27017`) with throwaway docs. This is what you reach for during development.
-- **`npm run fixture:up` + `test/integration.test.ts`** — a dedicated,
-  server-enforced **read-only** mongod on `:27018` with a stable, deterministic
-  dataset (see [test/fixtures/CLAUDE.md](test/fixtures/CLAUDE.md)). When a
-  feature's realistic test benefits from *live data and asserted results*, add a
-  case there instead of trusting a green `toEqual`. Derive expected values from a
-  real run — never hand-guess them (HR3).
+Both run on the project's `:27018` instance, which `npm run fixture:up` starts.
+There is no second server, and MongoDB's default port is never used.
+
+- **`test/probe`** — ad-hoc checks with throwaway documents, in a scratch database
+  the scratch identity may write. This is what you reach for during development.
+- **`test/integration.test.ts`** — the stable, deterministic dataset, read through a
+  **server-enforced read-only** identity that cannot mutate it (see
+  [test/fixtures/CLAUDE.md](test/fixtures/CLAUDE.md)). When a feature's realistic
+  test benefits from *live data and asserted results*, add a case there instead of
+  trusting a green `toEqual`. Derive expected values from a real run — never
+  hand-guess them (HR3).
 
 ## Known server-rejection traps
 

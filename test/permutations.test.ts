@@ -12,7 +12,7 @@
 // `takeWhile`/`*RightWhile` and in `drop`/`dropRight`/`tail`/`initial` on an empty
 // array or `n ≥ size`).
 //
-// Point the mongod half elsewhere:  JSMQL_PERM_MONGO=mongodb://host:port npm test
+// The mongod half runs on :27018 (see test/fixtures/config.ts); `npm run fixture:up` starts it.
 //
 // The server half MUST default to on. Gating it behind an unset environment variable
 // made every one of these chains compile-only in a normal `npm test`, so the half that
@@ -20,6 +20,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
 // ── the method vocabulary, by input→output shape ─────────────────────────────
 
@@ -201,7 +202,7 @@ for (const r of STREAM_LOOKUP_RESHAPERS) {
 }
 
 // ── optional mongod runtime check ────────────────────────────────────────────
-const MONGO = process.env.JSMQL_PERM_MONGO ?? "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1500";
+const MONGO = SCRATCH_URI;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types aren't imported unless MONGO is set
 let mainColl: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any

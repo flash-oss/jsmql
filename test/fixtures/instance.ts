@@ -30,6 +30,10 @@ import {
   READONLY_PASS,
   READONLY_URI,
   READONLY_USER,
+  SCRATCH_DBS,
+  SCRATCH_PASS,
+  SCRATCH_ROLE,
+  SCRATCH_USER,
 } from "./config.ts";
 import { DATASET, DATASET_HASH, EXPECTED_COUNTS, validateDataset } from "./dataset.ts";
 
@@ -111,6 +115,44 @@ async function ensureReadonlyUser(admin: MongoClient): Promise<void> {
   }
 }
 
+/**
+ * The read-write identity every suite that seeds its own documents connects as.
+ * Its roles are `readWrite` on the scratch databases and nothing else, so the
+ * integration dataset stays unwritable through it.
+ *
+ * An existing user is UPDATED rather than left alone: the roles follow SCRATCH_DBS,
+ * so adding a database to that list and re-running `fixture:up` grants it.
+ */
+async function ensureScratchUser(admin: MongoClient): Promise<void> {
+  // What a suite actually does to its own database, and nothing more:
+  //  - readWrite  insert the documents it asserts against, and read them back.
+  //  - dbAdmin    DROP the database first. `readWrite` alone cannot, and without it
+  //               the drop throws, each suite's own try/catch reads that as "no
+  //               server", and the suite degrades to compile-only while still
+  //               reporting GREEN — the silent pass this instance exists to prevent.
+  //  - indexStats the `$indexStats` stage, which `compiler-sugars` runs. No built-in
+  //               role carries it per-database, so it is named as a privilege.
+  const roles = SCRATCH_DBS.flatMap((db) => [
+    { role: "readWrite", db },
+    { role: "dbAdmin", db },
+  ]);
+  const privileges = SCRATCH_DBS.map((db) => ({ resource: { db, collection: "" }, actions: ["indexStats"] }));
+  const role = { roles, privileges };
+  try {
+    await admin.db("admin").command({ createRole: SCRATCH_ROLE, ...role });
+  } catch (e) {
+    if (!String((e as Error).message).includes("already exists")) throw e;
+    await admin.db("admin").command({ updateRole: SCRATCH_ROLE, ...role });
+  }
+  const grant = [{ role: SCRATCH_ROLE, db: "admin" }];
+  try {
+    await admin.db("admin").command({ createUser: SCRATCH_USER, pwd: SCRATCH_PASS, roles: grant });
+  } catch (e) {
+    if (!String((e as Error).message).includes("already exists")) throw e;
+    await admin.db("admin").command({ updateUser: SCRATCH_USER, pwd: SCRATCH_PASS, roles: grant });
+  }
+}
+
 // Bootstrap the admin (root) + read-only users. On a fresh instance the
 // localhost exception lets us create the first user without credentials; once
 // users exist we just connect as admin and top up the read-only user.
@@ -120,6 +162,7 @@ async function bootstrapUsers(): Promise<void> {
     await admin.connect();
     try {
       await ensureReadonlyUser(admin);
+      await ensureScratchUser(admin);
     } finally {
       await admin.close();
     }
@@ -139,6 +182,7 @@ async function bootstrapUsers(): Promise<void> {
   await admin.connect();
   try {
     await ensureReadonlyUser(admin);
+    await ensureScratchUser(admin);
   } finally {
     await admin.close();
   }

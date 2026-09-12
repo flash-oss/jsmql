@@ -12,6 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -587,7 +588,7 @@ let coll: Collection | null = null;
 
 beforeAll(async () => {
   try {
-    const c = new MongoClient("mongodb://127.0.0.1:27017", { serverSelectionTimeoutMS: 800 });
+    const c = new MongoClient(SCRATCH_URI, { serverSelectionTimeoutMS: 800 });
     await c.connect();
     await c.db("admin").command({ ping: 1 });
     client = c;

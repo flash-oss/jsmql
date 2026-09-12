@@ -11,8 +11,9 @@ import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { SYSTEM_VARS, Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
 import { UnknownIdentifierError } from "../src/errors.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 async function reachable(): Promise<boolean> {
   const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });

@@ -13,8 +13,9 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { expr, filter } from "../src/compiler/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 const DOCS = [
   { _id: 1, a: "hello", s: "Abc", tags: ["red", "blue"], n: 7, o: { k: 1 }, d: new Date("2024-06-01"), b: 2 },

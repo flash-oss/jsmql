@@ -7,21 +7,30 @@ asserts on the documents that come back — the only way to *prove* a query that
 looks valid actually runs and returns what the user meant (HR3, see
 [docs/LANG_RULES.md](../../docs/LANG_RULES.md)).
 
-## The dedicated instance (why it's separate from the probe)
+## The instance — the only one this project talks to
 
-[`test/probe`](../probe) runs ad-hoc MQL against the developer's **primary**
-mongod (`mongodb://127.0.0.1:27017`) with throwaway docs. The integration suite
-is different: it needs a **stable, never-mutated** dataset and a **server-enforced
-read-only** guarantee. A real read-only role requires `authorization: enabled`,
-which is instance-wide — turning it on for the primary mongod would force
-credentials onto every other local service. So instead we run a **second,
-dedicated mongod**:
+**HARD RULE: every MongoDB connection this project makes goes to port `27018`.**
+MongoDB's default port carries the developer's own instance and their real work,
+so this project never touches it — not to read, not to probe, not to measure.
+[`test/no-default-port.test.ts`](../no-default-port.test.ts) fails the build when a
+file names that port, so the rule cannot rot back into the code.
 
-- **Port `27018`** (primary stays on `27017`, untouched and auth-free).
-- **`--auth` enabled**, with two users created on first start:
+That is why the instance is ours and not theirs: `--auth` is instance-wide, and a
+server-enforced read-only role for the integration dataset needs it. Turning auth
+on for the developer's own mongod would force credentials onto every other service
+on their machine.
+
+- **Port `27018`**, dbpath outside the repo.
+- **`--auth` enabled**, with three users created on first start:
   - `jsmql_admin` (root) — used **only** by the seeder in [instance.ts](instance.ts).
-  - `jsmql_ro` (`read` on `jsmql_fixture`) — used by the tests. The server
-    rejects any write it attempts, so a test run **cannot** mutate the dataset.
+  - `jsmql_ro` (`read` on `jsmql_fixture`) — used by `integration.test.ts`. The
+    server rejects any write it attempts, so a test run **cannot** mutate the dataset.
+  - `jsmql_scratch` (`readWrite` on the `SCRATCH_DBS` of [config.ts](config.ts), and
+    on nothing else) — used by `test/probe` and by every suite that seeds its own
+    documents. Each such suite owns one database in that list, because two of them
+    name a collection `orders` and vitest runs suites in parallel. The list IS the
+    grant, so a new live suite adds its database name there and re-runs
+    `npm run fixture:up`; the guard test above says so when it is forgotten.
 - **dbpath `~/.jsmql-fixture/`** — outside the repo/worktree, so it survives
   worktree cleanup and is shared across branches. Throwaway; safe to delete.
 

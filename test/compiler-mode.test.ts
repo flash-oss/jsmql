@@ -9,8 +9,9 @@ import { MongoClient } from "mongodb";
 import { and, asValue, jsTruthy, not, or, truthOf } from "../src/compiler/emit/mode.ts";
 import { cond, filter, letOne, matchExpr, switchOn } from "../src/compiler/emit/mql.ts";
 import type { MongoVar } from "../src/compiler/emit/names.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 async function reachable(): Promise<boolean> {
   const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
   try {

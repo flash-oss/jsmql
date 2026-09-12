@@ -19,8 +19,9 @@ import yaml from "js-yaml";
 import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, ObjectId, Timestamp } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
 import type { Position } from "../src/registry/vocabulary.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 async function reachable(): Promise<boolean> {
   const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });

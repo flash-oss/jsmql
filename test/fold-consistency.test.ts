@@ -9,15 +9,16 @@
 // that can't be proven equal must be removed from fold-methods.ts (→ runtime
 // fallback), never shipped.
 //
-// It connects to a local mongod (mongodb://127.0.0.1:27017, like test/probe) and
-// SKIPS ITSELF (green) when none is reachable, so `npm test` stays green without
-// one. Start any local mongod to exercise it.
+// It connects to the project's mongod on :27018 (see test/fixtures/config.ts) and
+// SKIPS ITSELF (green) when it is not reachable, so `npm test` stays green without
+// it. Run `npm run fixture:up` to exercise it.
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = process.env.JSMQL_FOLD_MONGO_URI ?? "mongodb://127.0.0.1:27017/?serverSelectionTimeoutMS=1500";
+const URI = SCRATCH_URI;
 
 async function tryConnect(): Promise<MongoClient | null> {
   try {

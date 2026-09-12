@@ -27,8 +27,9 @@
 import { MongoClient, type Collection } from "mongodb";
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = process.env.JSMQL_MONGO_URI ?? "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 /**
  * Deliberately mixed: a missing field, an empty string, a false, an explicit null, a

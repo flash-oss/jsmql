@@ -17,8 +17,9 @@ import { MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { evaluate } from "../src/compiler/passes/evaluate.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 
 async function reachable(): Promise<boolean> {
   const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });

@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix!: the project connects to one mongod, on :27018, and to nothing else
+
+The developer's own mongod holds their real work — payment services, monitoring,
+client databases. This project used to connect to it. `test/probe` defaulted to it,
+eighteen live suites opened it by a hard-coded string, and both `CLAUDE.md` files and
+the `verify-mql` skill told contributors to. So `npm test` read and wrote the
+developer's personal instance on every run, in every worktree.
+
+**The rule now: every MongoDB connection this project makes goes to `:27018`,
+the instance `npm run fixture:up` starts. MongoDB's default port is prohibited —
+completely, with no fallback and no exception.**
+
+The instance was already there, holding the read-only integration dataset. It now
+carries a third identity beside the seeder and the read-only user: `jsmql_scratch`,
+which holds `readWrite`, `dbAdmin` and `indexStats` on the `SCRATCH_DBS` list of
+`test/fixtures/config.ts` and on nothing else. Each live suite owns one database in
+that list — two of them name a collection `orders`, and vitest runs suites in
+parallel — and the integration dataset stays unwritable through that identity, so the
+server still enforces the read-only guarantee it was built for.
+
+Every per-suite `const URI = "mongodb://…"` is gone, and so are the
+`JSMQL_PARITY_MONGO_URI` / `JSMQL_FOLD_MONGO_URI` / `JSMQL_PERM_MONGO` /
+`JSMQL_MONGO_URI` overrides that let a connection point anywhere. One port, one home,
+imported from one file.
+
+`test/no-default-port.test.ts` keeps it that way. It fails the build when any file
+names the default port (`docs/DEVLOG.md` alone is exempt, being the historical
+record), when a suite writes to a database outside `SCRATCH_DBS`, and when the
+scratch identity is missing a grant. Both halves were confirmed to fail before they
+were trusted.
+
+That last check earned itself immediately. Every live suite wraps its setup in
+try/catch and reads ANY error as "no server", then runs compile-only and STILL
+REPORTS GREEN. `readWrite` alone cannot drop a database, and four suites drop theirs
+first; `$indexStats` needs a privilege no built-in per-database role carries. Before
+the grants were widened, those suites reported green while their server half never
+ran. A green `npm test` is not evidence the server half ran — the scratch databases
+existing on `:27018` is.
+
+---
+
 ## 2026-09-11 — feat!: MQL prints as the JavaScript that rebuilds it, from one printer
 
 `JSON.stringify` cannot write an MQL document, and what it writes instead is wrong

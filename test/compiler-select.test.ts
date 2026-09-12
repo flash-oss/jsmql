@@ -12,8 +12,9 @@ import { guardFor, select, shapeOf, type Receiver } from "../src/compiler/emit/s
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import type { FieldFamily } from "../src/registry/vocabulary.ts";
+import { SCRATCH_URI } from "./fixtures/config.ts";
 
-const URI = "mongodb://127.0.0.1:27017";
+const URI = SCRATCH_URI;
 async function reachable(): Promise<boolean> {
   const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
   try {
