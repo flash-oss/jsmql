@@ -880,6 +880,7 @@ const candidateProductIdCounts = $$$.orders
   .countBy("productId")
   .entries()
   .sortBy(([id, count]) => -count)
+  .take(10) // top 10
   .fromEntries();
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
