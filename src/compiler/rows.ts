@@ -494,6 +494,11 @@ export function mergesIntoOf(name: string): boolean {
   return (row(name) as { mergesInto?: true } | undefined)?.mergesInto === true;
 }
 
+/** Does the stream cell read the ELEMENT — an unwound field — and refuse a stream of whole documents? Always, or only for the bare call. */
+export function elementOnlyOf(name: string): { when: "always" | "bare"; why: string } | null {
+  return (row(name) as { elementOnly?: { when: "always" | "bare"; why: string } } | undefined)?.elementOnly ?? null;
+}
+
 /** Does the value cell answer null only for a null or missing input — never for an input that is there? */
 export function neverNullOf(name: string): boolean {
   return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;

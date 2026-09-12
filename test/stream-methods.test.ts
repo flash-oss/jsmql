@@ -505,8 +505,9 @@ describe(".sort(<sort>) / .toSorted(<sort>) → $sort — flexible sort args", (
       '.sort({ a: … }) takes a direction: 1, -1, "asc" or "desc".',
     );
     expect(() => jsmql('$$ = $$.sort("$x");')).toThrow(/no leading '\$'/);
+    // no key on a stream of whole documents: nothing to order by (after .flatMap the bare call sorts by the values)
     expect(() => jsmql("$$ = $$.sort();")).toThrow(
-      "'.sort(\"field\" | [fields] | { field: dir } | comparator)' requires exactly 1 argument, got 0",
+      "'.sort()' isn't available on '$$' — a stream of documents has no natural order, so a key is required: '.sort(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
     );
   });
 });
@@ -1108,9 +1109,9 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
     ]);
   });
 
-  it("zero-arg .toSorted() is rejected with a 'no natural ordering' hint", () => {
+  it("zero-arg .toSorted() on whole documents is rejected with a 'no natural order' hint", () => {
     expect(() => jsmql("$$ = $$.toSorted();")).toThrow(
-      "'.toSorted(\"field\" | [fields] | { field: dir } | comparator)' requires exactly 1 argument, got 0",
+      "'.toSorted()' isn't available on '$$' — a stream of documents has no natural order, so a key is required: '.toSorted(\"<field>\")'. After '.flatMap(\"<field>\")' the bare call sorts by the unwound values.",
     );
   });
 
@@ -1152,6 +1153,143 @@ describe(".toSorted((a, b) => …) — comparator → $sort", () => {
     expect(jsmql("$$.toSorted(d => d.age);")).toEqual([{ $sort: { age: 1 } }]);
     expect(jsmql("$$.sort((a, b) => b.age - a.age);")).toEqual([{ $sort: { age: -1 } }]);
     expect(jsmql("$$.sort(d => -d.age);")).toEqual([{ $sort: { age: -1 } }]);
+  });
+});
+
+describe("the lodash set methods, .compact, .flat and the bare sorts work on an unwound ELEMENT", () => {
+  // MEASURED on the project's mongod over ids: [3, 1, 2, null, 0, 2] — lodash's answers:
+  // .difference([1, 2]) keeps 3, null, 0; .intersection([1, 2, 9]) keeps one 1 and one 2;
+  // .compact().sortBy() answers 1, 2, 2, 3.
+  const UNIQ_IDS = [{ $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } }, { $replaceWith: "$__jsmqlTmp" }];
+
+  it(".difference(list) / .without(...values) drop the values, through the filter road — the same MQL as the .filter spelling", () => {
+    const dropped = [{ $unwind: "$ids" }, { $match: { $nor: [{ ids: { $in: [1, 2] } }] } }];
+    expect(jsmql('$$.flatMap("ids").difference([1, 2]);')).toEqual(dropped);
+    expect(jsmql('$$.flatMap("ids").without(1, 2);')).toEqual(dropped);
+    expect(jsmql('$$.flatMap("ids").filter(p => ![1, 2].includes(p));')).toEqual(dropped);
+    // a variable list is an ARRAY that is there: a missing one is empty, as lodash reads it
+    expect(jsmql('$$.flatMap("ids").difference($.mine);')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { $expr: { $not: { $in: ["$ids", { $ifNull: ["$mine", []] }] } } } },
+    ]);
+    expect(jsmql('const m = [1, 2]; $$.flatMap("ids").difference(m);')).toEqual(dropped);
+  });
+
+  it(".intersection(list) keeps the values, one document per distinct value", () => {
+    expect(jsmql('$$.flatMap("ids").intersection([1, 2]);')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { ids: { $in: [1, 2] } } },
+      ...UNIQ_IDS,
+    ]);
+  });
+
+  it(".differenceBy / .intersectionBy compare the element's key with the list's keys", () => {
+    expect(jsmql('$$.flatMap("items").differenceBy([{ sku: "a" }], "sku");')).toEqual([
+      { $unwind: "$items" },
+      { $match: { $expr: { $not: { $in: ["$items.sku", ["a"]] } } } },
+    ]);
+    expect(jsmql('$$.flatMap("items").intersectionBy([{ sku: "a" }], i => i.sku);')).toEqual([
+      { $unwind: "$items" },
+      { $match: { $expr: { $in: ["$items.sku", ["a"]] } } },
+      { $group: { _id: "$items.sku", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+    ]);
+    expect(jsmql('$$.flatMap("items").differenceBy($.other, "sku");')).toEqual([
+      { $unwind: "$items" },
+      {
+        $match: {
+          $expr: {
+            $not: { $in: ["$items.sku", { $map: { input: { $ifNull: ["$other", []] }, as: "x", in: "$$x.sku" } }] },
+          },
+        },
+      },
+    ]);
+  });
+
+  it(".compact() drops the falsy values; .flat() unwinds an element that is itself an array", () => {
+    expect(jsmql('$$.flatMap("ids").compact();')).toEqual([
+      { $unwind: "$ids" },
+      { $match: { ids: { $nin: [null, 0, false, ""] } } },
+    ]);
+    expect(jsmql('$$.flatMap("matrix").flat();')).toEqual([{ $unwind: "$matrix" }, { $unwind: "$matrix" }]);
+    expect(jsmql('$$.flatMap("matrix").flat().filter(v => v > 1);')).toEqual([
+      { $unwind: "$matrix" },
+      { $unwind: "$matrix" },
+      { $match: { matrix: { $gt: 1 } } },
+    ]);
+  });
+
+  it("the bare .sortBy() / .sort() / .toSorted() sort by the values", () => {
+    for (const m of ["sortBy", "sort", "toSorted"]) {
+      expect(jsmql(`$$.flatMap("ids").${m}();`)).toEqual([{ $unwind: "$ids" }, { $sort: { ids: 1 } }]);
+      // the keyed call works on any stream
+      expect(jsmql(`$$.${m}("k");`)).toEqual([{ $sort: { k: 1 } }]);
+    }
+  });
+
+  it("on a stream of whole documents each is refused, and the refusal names .flatMap first", () => {
+    expect(() => jsmql("$$.difference([1, 2]);")).toThrow(
+      "'.difference()' isn't available on '$$' — compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first — '.flatMap(\"<field>\").difference(<list>)' — or drop documents with '.reject(<pred>)'.",
+    );
+    expect(() => jsmql("$$.without(1);")).toThrow("Unwind the field first — '.flatMap(\"<field>\").without(<values>)'");
+    expect(() => jsmql("$$.intersection([1]);")).toThrow("or keep documents with '.filter(<pred>)'");
+    expect(() => jsmql('$$.differenceBy([{ a: 1 }], "a");')).toThrow(
+      "'.flatMap(\"<field>\").differenceBy(<list>, <key>)'",
+    );
+    expect(() => jsmql("$$.compact();")).toThrow(
+      "'.compact()' isn't available on '$$' — drops falsy elements, and a whole document is never falsy. Unwind the field first — '.flatMap(\"<field>\").compact()' — or drop documents with '.reject(<pred>)'.",
+    );
+    expect(() => jsmql("$$.flat();")).toThrow("after it, '.flat()' unwinds the element once more.");
+    for (const m of ["sortBy", "sort", "toSorted"]) {
+      expect(() => jsmql(`$$.${m}();`)).toThrow(
+        `'.${m}()' isn't available on '$$' — a stream of documents has no natural order, so a key is required: '.${m}("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`,
+      );
+    }
+    // a document-replacing stage makes the document the element again
+    expect(() => jsmql('$$.flatMap("ids").map(x => ({ x })).compact();')).toThrow(
+      "'.compact()' isn't available on '$$'",
+    );
+  });
+
+  it("in a join, the same link on whole documents reads the joined array as a value — as before", () => {
+    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).difference([{ a: 1 }]).length;")).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+      {
+        $set: {
+          n: {
+            $size: {
+              $filter: {
+                input: "$__jsmql.tmp.0",
+                as: "jsmqlItem",
+                cond: { $not: [{ $in: ["$$jsmqlItem", [{ a: 1 }]] }] },
+              },
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    // after .flatMap inside the body the link is a stage of the body
+    expect(
+      jsmql('$.ids = $$$.orders.filter({ userId: $._id }).flatMap("productIds").difference($.owned).sortBy();'),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_f0_owned: "$owned" },
+          pipeline: [
+            { $unwind: "$productIds" },
+            { $match: { $expr: { $not: { $in: ["$productIds", { $ifNull: ["$$jsmql_f0_owned", []] }] } } } },
+            { $sort: { productIds: 1 } },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { ids: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.productIds" } } } },
+      { $unset: "__jsmql" },
+    ]);
   });
 });
 

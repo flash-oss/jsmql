@@ -3374,7 +3374,13 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.countBy(<key>)` / `.countBy()` | One field key, or none — the element itself is the key (lodash's identity default; the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
 | `.keyBy(<key>)` / `.keyBy()` | One field key, or none — the element itself | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
 | `.uniqBy(<key>)` | One field key | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
-| `.uniq()` | None | `$group` keyed on the WHOLE document + `$replaceWith` — one document per distinct document |
+| `.uniq()` | None | `$group` keyed on the element (the whole document, or the unwound field after `.flatMap`) + `$replaceWith` — one document per distinct element |
+| `.difference(list)` / `.without(...values)` | **After `.flatMap`** — the values to drop. A missing `list` is empty, as lodash reads it | `$match` on the element: `{ $nor: [{ <el>: { $in: [...] } }] }` for a constant list, `{ $expr: { $not: { $in: ["$<el>", { $ifNull: [<list>, []] }] } } }` for a variable one. On a stream of whole documents it is refused — unwind the field first |
+| `.intersection(list)` | **After `.flatMap`** — the values to keep | `$match: { <el>: { $in: [...] } }` + the `.uniq()` group: lodash keeps each value once |
+| `.differenceBy(list, key)` / `.intersectionBy(list, key)` | **After `.flatMap`** — a list and an iteratee (`"sku"`, `i => i.sku`, a matcher) | `$match: { $expr: { $not: { $in: [<key of the element>, <the list's keys>] } } }` (`$in` for intersection, then the `.uniq()` group on the key) |
+| `.compact()` | **After `.flatMap`**, no args — drop the falsy values | `$match: { <el>: { $nin: [null, 0, false, ""] } }` (`null` in the list drops a missing value too) |
+| `.flat()` | **After `.flatMap`**, when the element is itself an array | one more `$unwind: "$<el>"` |
+| `.sortBy()` / `.sort()` / `.toSorted()` with no argument | **After `.flatMap`** — the natural order of the values | `$sort: { <el>: 1 }`. On a stream of whole documents a key is required |
 | `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
 
 `.filter(<pred>)` can appear **anywhere** in the chain — not only as the head, so `.flatMap("items").filter(o => o.qty > 0)` composes.
@@ -3439,6 +3445,40 @@ $$.flatMap("items").filter(i => i.qty > 1).sortBy("price").uniq().pick(["sku"]);
 $$.flatMap("productIds").filter(p => !$.owned.includes(p)).countBy();   // { <productId>: count }
 // → [ { $unwind: "$productIds" }, { $match: … }, { $group: { _id: "$productIds", … } }, … ]
 ```
+
+The lodash set methods, `.compact()`, `.flat()` and the key-less sorts work on the element too — and only there, because a whole document is never falsy, never nested, and has no natural order:
+
+```js
+$$.flatMap("ids").difference([1, 2]);
+// → [{ $unwind: "$ids" }, { $match: { $nor: [{ ids: { $in: [1, 2] } }] } }]
+```
+
+```js
+$$.flatMap("ids").intersection([1, 2]);
+// → [{ $unwind: "$ids" }, { $match: { ids: { $in: [1, 2] } } }, { $group: { _id: "$ids", __jsmqlTmp: { $first: "$$ROOT" } } }, { $replaceWith: "$__jsmqlTmp" }]
+```
+
+```js
+$$.flatMap("ids").compact().sortBy();
+// → [{ $unwind: "$ids" }, { $match: { ids: { $nin: [null, 0, false, ""] } } }, { $sort: { ids: 1 } }]
+```
+
+```js
+$$.flatMap("matrix").flat();
+// → [{ $unwind: "$matrix" }, { $unwind: "$matrix" }]
+```
+
+```js
+$$.flatMap("items").differenceBy([{ sku: "a" }], "sku");
+// → [{ $unwind: "$items" }, { $match: { $expr: { $not: { $in: ["$items.sku", ["a"]] } } } }]
+```
+
+```js
+$$.difference([1, 2]);
+// → error: '.difference()' isn't available on '$$' — compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first — '.flatMap("<field>").difference(<list>)' — or drop documents with '.reject(<pred>)'.
+```
+
+In a join, the same link on a stream of whole documents is not a stream link: it reads the joined array as a value (`$$$.orders.filter(p).difference(docs)` is lodash's `$filter` over the array), like any method without a stream form.
 
 The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line with `items` holding that line. To make the elements the documents, say so — `.map(item => item)` is `{ $replaceWith: "$items" }` — and from that stage on the document is the element again, as after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and moves nothing: a callback after it still receives the whole document.
 

@@ -25,6 +25,7 @@ import {
   isMutator,
   isStageName,
   onlyOf,
+  elementOnlyOf,
   replacesDocumentOf,
   restoresDocumentsOf,
   stageBodyRuleOf,
@@ -965,6 +966,18 @@ function streamLink(
   if (unionsOf(name)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  // A cell that reads the ELEMENT has nothing to read on a stream of whole documents.
+  const only = elementOnlyOf(name);
+  if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
+    throw E.refusalFor(
+      { kind: "refused", name, message: only.why, needsSubject: true },
+      `'.${link.name}()'`,
+      "'$$'",
+      "stream",
+      link.pos,
+      [],
+    );
+  }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stream link '${name}' selected a receiver dispatch`);
@@ -985,10 +998,17 @@ function streamLink(
   return out;
 }
 
-/** Does the row behind this link have a stream RULE — is it a chain link at all? */
-function peels(link: Extract<Expr, { type: "MethodCall" }>): boolean {
-  const verdict = consult(namedRow(link) ?? link.name, "stream", "stream");
-  return verdict.kind !== "unknown" && verdict.kind !== "noCell" && verdict.kind !== "refused";
+/**
+ * Does the row behind this link have a stream RULE — is it a chain link at all? Given
+ * the chain's Env, a cell that reads the ELEMENT is no link on a stream of whole
+ * documents: the join road then reads the joined array as a value instead.
+ */
+function peels(link: Extract<Expr, { type: "MethodCall" }>, env?: Env): boolean {
+  const name = namedRow(link) ?? link.name;
+  const verdict = consult(name, "stream", "stream");
+  if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
+  const only = env === undefined ? null : elementOnlyOf(name);
+  return only === null || env!.chain.element !== "" || (only.when === "bare" && link.args.length > 0);
 }
 
 /** What the join road borrows from this file. */

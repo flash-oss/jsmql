@@ -481,7 +481,9 @@ $.n = $$$.orders.filter(o => o.userId === $._id).length;
 `aggregate`, a stage link, a `.map` whose body is a provable document (the row
 states `streamBody: "document"`). The first link that is not such a link ends the
 body; it and everything after it — `.length`, `.total`, `[0]`, a value `.map` —
-read the materialised array as a VALUE. `.find` is the one special head (the row
+read the materialised array as a VALUE. A row that states `elementOnly` (`.difference`,
+`.compact`, the bare `.sortBy()`, …) is such a link only while the body's element is
+an unwound field; on a stream of whole documents it ends the body the same way. `.find` is the one special head (the row
 states `picksOne`): `filter` plus `{ $limit: 1 }`, the slot unwrapped with `$first`.
 A link that folds the stream into one document (`collapses` on the row: `countBy`,
 `keyBy`, `groupBy` with a field name) is unwrapped too, to `{}` when nothing

@@ -234,6 +234,28 @@ const STREAM_METHOD_SIGNATURES = {
   uniq: { doc: "One document per distinct WHOLE document → `$group` + `$replaceWith`.", params: "()" },
   sortedUniq: { doc: "Alias of `.uniq()` — MongoDB's `$group` needs no sorted input.", params: "()" },
   sortedUniqBy: { doc: "Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input.", params: "(field: string)" },
+  difference: {
+    doc: "After `.flatMap`: drop the unwound values that are in the list → `$match` (lodash `_.difference`).",
+    params: "(list: unknown[])",
+  },
+  without: {
+    doc: "After `.flatMap`: drop the given values → `$match` (lodash `_.without`).",
+    params: "(...values: unknown[])",
+  },
+  intersection: {
+    doc: "After `.flatMap`: keep the unwound values that are in the list, one document per distinct value → `$match` + `$group` (lodash `_.intersection`).",
+    params: "(list: unknown[])",
+  },
+  differenceBy: {
+    doc: "After `.flatMap`: drop the elements whose key is among the list's keys → `$match` (lodash `_.differenceBy`).",
+    params: "(list: unknown[], key: string)",
+  },
+  intersectionBy: {
+    doc: "After `.flatMap`: keep the elements whose key is among the list's keys, one per distinct key → `$match` + `$group` (lodash `_.intersectionBy`).",
+    params: "(list: unknown[], key: string)",
+  },
+  compact: { doc: 'After `.flatMap`: drop the falsy values (null, missing, 0, false, "") → `$match`.', params: "()" },
+  flat: { doc: "After `.flatMap` of an array of arrays: unwind the element once more → `$unwind`.", params: "()" },
   pick: {
     doc: "Keep only the named fields on each document → inclusion `$project` (lodash `_.pick`; drops `_id` unless named).",
     params: "(fields: string[])",

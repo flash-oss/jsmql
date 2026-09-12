@@ -9,6 +9,7 @@
 
 import { describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
+import { elementOnlyOf } from "../src/compiler/rows.ts";
 import { NAMES } from "../src/registry/names.ts";
 import type { Family, IterateeSlots, SlotForm } from "../src/registry/vocabulary.ts";
 import { isSlotLayout } from "../src/registry/vocabulary.ts";
@@ -42,8 +43,14 @@ const familiesOf = (r: Row): readonly Family[] =>
 function source(name: string, family: Family, slot: number, arg: string): { src: string; expr: boolean } {
   const withLead = (a: string): string => (slot === 0 ? a : `$.other${a === "" ? "" : ", " + a}`);
   if (family === "stream") {
-    // Two names keep only a leading or trailing run, so they need an order first.
-    const head = name === "takeWhile" || name === "dropWhile" ? '$$.toSorted("n")' : "$$";
+    // Two names keep only a leading or trailing run, so they need an order first; a
+    // row that reads the ELEMENT needs an unwound field to read.
+    const head =
+      name === "takeWhile" || name === "dropWhile"
+        ? '$$.toSorted("n")'
+        : elementOnlyOf(name) !== null
+          ? '$$.flatMap("items")'
+          : "$$";
     return { src: `$$ = ${head}.${name}(${withLead(arg)});`, expr: false };
   }
   if (family === "Object") return { src: `Object.${name}($.items${arg === "" ? "" : ", " + arg})`, expr: true };

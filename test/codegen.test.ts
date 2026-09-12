@@ -5884,7 +5884,7 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     );
     // .difference / .intersection / .union also have a plain-array form.
     expect(() => jsmql.expr("$.a.size().difference($.b)")).toThrow(
-      "'.difference()' is not available on a 'number' — it is defined on 'array', 'set'.",
+      "'.difference()' is not available on a 'number' — it is defined on 'array', 'set', 'stream'.",
     );
     expect(() => jsmql.expr("$.s.trim().union($.b)")).toThrow(
       "'.union()' is not available on a 'string' — it is defined on 'array', 'set'.",

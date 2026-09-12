@@ -55,6 +55,9 @@ const CASES: Case[] = [
   { method: "sortBy", call: 'sortBy("n")' },
   { method: "orderBy", call: 'orderBy(["n"],["desc"])' },
   { method: "uniqBy", call: 'uniqBy("t")', note: "order differs by design — $group is unordered" },
+  { method: "uniq", call: "uniq()", note: "order differs by design — $group is unordered" },
+  { method: "reject", call: "reject(r => r.n > 2)" },
+  { method: "filter", call: "filter(r => r.n > 2)" },
 ];
 
 describe("value and stream lowerings agree on membership", () => {

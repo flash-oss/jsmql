@@ -10,6 +10,33 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(stream): the lodash set methods, `.compact()`, `.flat()` and the bare sorts work on an unwound element
+
+`.difference(list)`, `.without(...values)`, `.intersection(list)`, `.differenceBy`,
+`.intersectionBy`, `.compact()`, `.flat()` and the zero-argument `.sortBy()` /
+`.sort()` / `.toSorted()` were refused on every stream, with messages that assumed
+"every stream element is a document" — no longer true after `.flatMap`. Each now has
+a stream cell over the ELEMENT: the set methods build the predicate the equivalent
+`.filter` spelling means (`x => ![...(list ?? [])].includes(x)`, the list pinned as
+an array that is there, a missing one empty as lodash reads it) and hand it to the
+filter road, so `$$.flatMap("ids").difference([1, 2])` is
+`{ $match: { $nor: [{ ids: { $in: [1, 2] } }] } }` and a variable list is
+`{ $expr: { $not: { $in: ["$ids", { $ifNull: [<list>, []] }] } } }`;
+`.intersection` adds the `.uniq()` group (lodash keeps each value once); the `By`
+forms compare `reshape(iteratee)` with the mapped list's keys under `$expr`;
+`.compact()` is `{ $match: { <el>: { $nin: [null, 0, false, ""] } } }`; `.flat()` is
+one more `$unwind` of the element; the bare sorts are `{ $sort: { <el>: 1 } }`.
+Measured on the project's mongod over `ids: [3, 1, 2, null, 0, 2]`: `.difference([1, 2])`
+keeps `3, null, 0`, `.intersection([1, 2, 9])` keeps one `1` and one `2`,
+`.compact().sortBy()` answers `1, 2, 2, 3` — lodash's answers.
+
+On a stream of whole documents these cells have nothing to read, and the new row
+fact `elementOnly` says so (`when: "bare"` for the sorts, whose keyed call works on
+any stream). `streamLink` refuses such a link at the top of a pipeline with the row's
+`why`, which now names `.flatMap("<field>")` first; `peels` answers false for it in a
+join, so the link reads the joined array as a value — `$$$.orders.filter(p).difference(docs)`
+lowers exactly as before.
+
 ## 2026-09-12 — feat(emit): `$size`, `$in` and a callback's input are guarded only where the array may be missing
 
 `.length` wrapped every array receiver in `$ifNull: [..., []]`, `$lookup` results

@@ -44,7 +44,7 @@ export type JoinServices = {
   /** `row` runs another row's cell under the link's own name — `.find` is `filter` plus a limit. */
   link: (link: Link, env: Env, first: boolean, row?: string) => Stage[] | null;
   /** Has the link's row a stream rule? A refused or absent cell ends the body: the link reads the value. */
-  peels: (link: Link) => boolean;
+  peels: (link: Link, env: Env) => boolean;
 };
 
 /** Does this chain read another collection — is it rooted in `$$$` (or `$$$$`)? */
@@ -155,7 +155,7 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
       i++;
       break;
     }
-    if (!S.peels(link)) break;
+    if (!S.peels(link, body)) break;
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
     const stages = S.link(link, body, first);
     if (stages === null) break;

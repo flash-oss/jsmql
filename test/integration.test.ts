@@ -838,6 +838,31 @@ $ = { n: $.noSuchField.map(x => x).length, s: $.noSuchField.map(x => x).size(),
     expect(rows).toEqual([{ n: 0, s: 0, has: false, any: false, keys: true }]);
   });
 
+  // The set methods on an unwound element inside a real pipeline: `.differenceBy`
+  // drops the lines for one product and answers exactly what the `.filter` spelling
+  // does; `.intersectionBy` keeps one line per matching key.
+  it("pipeline: .differenceBy / .intersectionBy after .flatMap agree with the .filter spelling", async () => {
+    const a1 = "0x6500000000000000000000a1";
+    const p1 = `0x${ID.product(1).toHexString()}`;
+    const shape = `$ = { p: $.items.productId, q: $.items.qty };`;
+    const byKey = await aggregate(
+      "orders",
+      `$$.filter({ userId: ${a1} }).flatMap("items").differenceBy([{ productId: ${p1} }], "productId").sortBy("qty");\n${shape}`,
+    );
+    const byFilter = await aggregate(
+      "orders",
+      `$$.filter({ userId: ${a1} }).flatMap("items").filter(i => i.productId !== ${p1}).sortBy("qty");\n${shape}`,
+    );
+    expect(byKey).toEqual(byFilter);
+    expect(byKey.map((r) => r.q)).toEqual([1, 1, 1, 2]);
+    expect(byKey.some((r) => String(r.p) === ID.product(1).toHexString())).toBe(false);
+    const kept = await aggregate(
+      "orders",
+      `$$.filter({ userId: ${a1} }).flatMap("items").intersectionBy([{ productId: ${p1} }], "productId");\n$ = { p: $.items.productId };`,
+    );
+    expect(kept.map((r) => String(r.p))).toEqual([ID.product(1).toHexString()]);
+  });
+
   it("pipeline: .length after .flatMap counts one joined document per line", async () => {
     const rows = await aggregate(
       "users",

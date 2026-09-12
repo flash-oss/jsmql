@@ -2297,6 +2297,8 @@ declare global {
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlForeignRef;
+    /** After `.flatMap` of an array of arrays: unwind the element once more → `$unwind`. */
+    flat(): JsmqlForeignRef;
     /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
     flatMap(transform: ((doc: any) => any) | string): JsmqlForeignRef;
     /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
@@ -2315,6 +2317,14 @@ declare global {
     sortedUniq(): JsmqlForeignRef;
     /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
     sortedUniqBy(field: string): JsmqlForeignRef;
+    /** After `.flatMap`: drop the given values → `$match` (lodash `_.without`). */
+    without(...values: unknown[]): JsmqlForeignRef;
+    /** After `.flatMap`: drop the elements whose key is among the list's keys → `$match` (lodash `_.differenceBy`). */
+    differenceBy(list: unknown[], key: string): JsmqlForeignRef;
+    /** After `.flatMap`: keep the elements whose key is among the list's keys, one per distinct key → `$match` + `$group` (lodash `_.intersectionBy`). */
+    intersectionBy(list: unknown[], key: string): JsmqlForeignRef;
+    /** After `.flatMap`: drop the falsy values (null, missing, 0, false, "") → `$match`. */
+    compact(): JsmqlForeignRef;
     /** First `n` documents → `$limit`. */
     take(n: number): JsmqlForeignRef;
     /** Skip the first `n` documents → `$skip`. */
@@ -2341,6 +2351,10 @@ declare global {
     pick(fields: string[]): JsmqlForeignRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
     omit(fields: string[]): JsmqlForeignRef;
+    /** After `.flatMap`: keep the unwound values that are in the list, one document per distinct value → `$match` + `$group` (lodash `_.intersection`). */
+    intersection(list: unknown[]): JsmqlForeignRef;
+    /** After `.flatMap`: drop the unwound values that are in the list → `$match` (lodash `_.difference`). */
+    difference(list: unknown[]): JsmqlForeignRef;
     /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
     shuffle(): JsmqlForeignRef;
     /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
@@ -2572,13 +2586,7 @@ declare global {
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     chunk(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    compact(): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     concat(...args: any[]): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    difference(...args: any[]): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    differenceBy(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     dropRight(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
@@ -2598,8 +2606,6 @@ declare global {
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     first(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    flat(...args: any[]): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     flatten(): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     fromEntries(): any;
@@ -2613,10 +2619,6 @@ declare global {
     indexOf(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     initial(): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    intersection(...args: any[]): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    intersectionBy(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     isDisjointFrom(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
@@ -2679,8 +2681,6 @@ declare global {
     values(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     with(...args: any[]): any;
-    /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
-    without(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
     xor(...args: any[]): any;
     /** Ends the chain with a value — valid in value position (`$.f = …`, `const x = …`). */
@@ -2745,6 +2745,8 @@ declare global {
       keys: string | string[] | Record<string, 1 | -1 | "asc" | "desc">,
       orders?: (1 | -1 | "asc" | "desc") | (1 | -1 | "asc" | "desc")[],
     ): JsmqlCollectionRef;
+    /** After `.flatMap` of an array of arrays: unwind the element once more → `$unwind`. */
+    flat(): JsmqlCollectionRef;
     /** Unwind an array field → `$unwind`. Pass an arrow (`d => d.items`) or a field name (`"items"`). */
     flatMap(transform: ((doc: any) => any) | string): JsmqlCollectionRef;
     /** Reshape each document → `$replaceWith`. Pass an arrow or a field name (`"userId"`). */
@@ -2763,6 +2765,14 @@ declare global {
     sortedUniq(): JsmqlCollectionRef;
     /** Alias of `.uniqBy()` — MongoDB's `$group` needs no sorted input. */
     sortedUniqBy(field: string): JsmqlCollectionRef;
+    /** After `.flatMap`: drop the given values → `$match` (lodash `_.without`). */
+    without(...values: unknown[]): JsmqlCollectionRef;
+    /** After `.flatMap`: drop the elements whose key is among the list's keys → `$match` (lodash `_.differenceBy`). */
+    differenceBy(list: unknown[], key: string): JsmqlCollectionRef;
+    /** After `.flatMap`: keep the elements whose key is among the list's keys, one per distinct key → `$match` + `$group` (lodash `_.intersectionBy`). */
+    intersectionBy(list: unknown[], key: string): JsmqlCollectionRef;
+    /** After `.flatMap`: drop the falsy values (null, missing, 0, false, "") → `$match`. */
+    compact(): JsmqlCollectionRef;
     /** First `n` documents → `$limit`. */
     take(n: number): JsmqlCollectionRef;
     /** Skip the first `n` documents → `$skip`. */
@@ -2789,6 +2799,10 @@ declare global {
     pick(fields: string[]): JsmqlCollectionRef;
     /** Drop the named fields from each document → exclusion `$project` (lodash `_.omit`). */
     omit(fields: string[]): JsmqlCollectionRef;
+    /** After `.flatMap`: keep the unwound values that are in the list, one document per distinct value → `$match` + `$group` (lodash `_.intersection`). */
+    intersection(list: unknown[]): JsmqlCollectionRef;
+    /** After `.flatMap`: drop the unwound values that are in the list → `$match` (lodash `_.difference`). */
+    difference(list: unknown[]): JsmqlCollectionRef;
     /** Random document order → `$rand` sort (non-deterministic, lodash `_.shuffle`). */
     shuffle(): JsmqlCollectionRef;
     /** Run a sub-pipeline block against the stream. On a foreign collection it becomes the `$lookup` sub-pipeline; on the current stream its statements are simply the chain's stages. */
