@@ -25,10 +25,10 @@ describe(".validate() carries a meaningful .pos on every error class", () => {
   it("parser errors point at the offending token", () => {
     expect(firstError("$. + 1").code).toBe("SYNTAX_ERROR");
     expect(firstError("$.a >").at).toBe("");
-    const e = firstError("$.items.map(({ a }) => a)");
+    const e = firstError("$.items.map(({ a = 1 }) => a)");
     expect(e.code).toBe("SYNTAX_ERROR");
-    expect(e.message).toMatch(/Destructuring a parameter/);
-    expect(e.at.startsWith("{ a }")).toBe(true);
+    expect(e.message).toMatch(/A destructured parameter lists plain names only/);
+    expect(e.at.startsWith("a = 1")).toBe(true);
   });
 
   it("codegen errors point at the node that failed", () => {

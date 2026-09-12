@@ -447,6 +447,79 @@ describe("compiler/parse — one statement loop", () => {
   });
 });
 
+describe("compiler/parse — a destructured parameter is one parameter, its names the parts of it", () => {
+  /** The tree without its positions: a substituted part sits where its NAME was written, the spelled-out form where it is read. */
+  const noPos = (n: unknown): unknown => {
+    if (Array.isArray(n)) return n.map(noPos);
+    if (n === null || typeof n !== "object") return n;
+    return Object.fromEntries(
+      Object.entries(n as Record<string, unknown>)
+        .filter(([k]) => k !== "pos")
+        .map(([k, v]) => [k, noPos(v)]),
+    );
+  };
+  const body = (src: string): unknown => {
+    const e = parseExpression(src) as { type: string; args?: readonly unknown[] };
+    return noPos((e.args as readonly { params: readonly string[]; body?: unknown }[])[0]);
+  };
+
+  it("an array pattern reads each name as an index of one fresh parameter", () => {
+    expect(body("a.sortBy(([id, count]) => -count)")).toEqual(body("a.sortBy(x => -x[1])"));
+    expect(body("a.map(([, second]) => second)")).toEqual(body("a.map(x => x[1])"));
+  });
+
+  it("an object pattern reads each name as a field, `key: alias` under the alias", () => {
+    expect(body("a.map(({ sku, qty: n }) => sku + n)")).toEqual(body("a.map(x => x.sku + x.qty)"));
+  });
+
+  it("the fresh parameter steps aside from every name the body mentions", () => {
+    expect(body("a.map(([x]) => x + y)")).toEqual(body("a.map(x2 => x2[0] + y)"));
+    expect(body("a.map(([p], x) => p + x)")).toEqual(body("a.map((x2, x) => x2[0] + x)"));
+  });
+
+  it("a parameter of an inner arrow shadows a destructured name, as in JavaScript", () => {
+    expect(body("a.map(([n]) => b.map(n => n * 2).concat([n]))")).toEqual(
+      body("a.map(x => b.map(n => n * 2).concat([x[0]]))"),
+    );
+  });
+
+  it("the `function` form takes the same patterns, and the block body keeps its `return`", () => {
+    expect(jsmql.expr("$.arr.map(function ([a, b]) { return a + b; })")).toEqual(
+      jsmql.expr("$.arr.map(function (x) { return x[0] + x[1]; })"),
+    );
+    expect(jsmql("function f([a, b]) { return a + b; } $.r = f([1, 2]);")).toEqual([{ $set: { r: 3 } }]);
+  });
+
+  it("the substitution keeps the body's shape: a sort key still sees its minus", () => {
+    expect(jsmql.expr("$.tally.entries().sortBy(([id, count]) => -count)")).toEqual(
+      jsmql.expr("$.tally.entries().sortBy(x => -x[1])"),
+    );
+    expect(jsmql("$$.filter(({ status, qty }) => status === 'paid' && qty > 1);")).toEqual([
+      { $match: { status: "paid", qty: { $gt: 1 } } },
+    ]);
+  });
+
+  it("only plain names: a default, a rest element, a nested pattern or a computed key is refused with the spelling to write", () => {
+    const message =
+      "A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key";
+    expect(() => parseExpression("a.map(([a = 1]) => a)")).toThrow(message);
+    expect(() => parseExpression("a.map(([a, ...rest]) => a)")).toThrow(message);
+    expect(() => parseExpression("a.map(([[a]]) => a)")).toThrow(message);
+    expect(() => parseExpression("a.map(({ a: { b } }) => b)")).toThrow(message);
+    expect(() => parseExpression("a.map(({ [k]: v }) => v)")).toThrow(message);
+    expect(() => parseExpression("a.map(({ a = 1 }) => a)")).toThrow(message);
+    expect(() => parseExpression("a.map(([1, a]) => a)")).toThrow(message);
+    // the refusal names what it saw, and points at it
+    expect(() => parseExpression("a.map(([a, ...rest]) => a)")).toThrow("('...') is not one of them at position 11");
+  });
+
+  it("a parenthesised list or object that is not followed by an arrow is the expression it looks like", () => {
+    expect(jsmql.expr("([1, 2])")).toEqual([1, 2]);
+    expect(jsmql.expr("([...$.a, 1])")).toEqual({ $concatArrays: ["$a", [1]] });
+    expect(jsmql.expr("({ a: 1 })")).toEqual({ a: 1 });
+  });
+});
+
 describe("compiler/parse — a write target is a place, and an optional chain is one expression", () => {
   it("refuses an optional chain anywhere in the target, not only at its end", () => {
     // `a?.b.c = 1` is as much a SyntaxError as `a?.b = 1` (node --check); the

@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(parse): a parameter may be destructured into plain names
+
+`([id, count]) => -count` and `({ sku, qty: n }) => sku + n` parse, in arrows and
+in the `function` form, with elisions (`([, second]) => second`). The parser
+rewrites the pattern at parse time into ONE fresh parameter whose parts replace the
+names in the body (`replaceIdents`, shadowed by an inner arrow's own parameter, the
+fresh name stepping aside from every name the body mentions), so no later phase
+sees a pattern and the body keeps its shape — a sort key still sees its minus as the
+direction, a filter its comparison. A default value, a rest element, a nested
+pattern or a computed key is refused with the plain-name spelling to write
+(`x => x.a ?? 1`, `x => x.slice(1)`); a parenthesised list or object with no arrow
+after it is still the expression it looks like (`([...$.a, 1])`).
+
 ## 2026-09-12 — fix(sort): a computed key under a minus sorts by the key, descending
 
 `.sortBy(x => -x)` and `.sortBy(([id, count]) => -count)` emitted the NEGATED key

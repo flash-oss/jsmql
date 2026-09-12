@@ -42,7 +42,7 @@ export function inject<T extends Program | Expr>(root: T, values: ReadonlyMap<st
 }
 
 /** The tree with every reference to a name replaced by the node given for it — at the reference's own position. */
-export function replaceIdents<T extends Program | Expr>(root: T, nodes: ReadonlyMap<string, Expr>): T {
+export function replaceIdents<T extends object>(root: T, nodes: ReadonlyMap<string, Expr>): T {
   if (nodes.size === 0) return root;
   const spell = (name: string, pos: number): Expr => {
     const n = nodes.get(name) as Expr;

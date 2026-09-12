@@ -207,7 +207,7 @@ An jsmql expression is a **subset of JavaScript** that compiles to MongoDB aggre
 - Control flow: `if`, `for`, `while`, `break`, etc.
 - Statement-level features other than update ops: function definitions, declarations
 - Object/array in-place update ops: `.push()`, `.splice()`
-- Destructuring: `{ a, b } = obj`
+- Destructuring assignment: `{ a, b } = obj` (a destructured *parameter* — `([a, b]) => …` — is fine)
 
 ---
 
@@ -2099,6 +2099,24 @@ item => item.price > 0
 (total, item) => total + item.price
 ```
 
+### Destructured parameters
+
+A parameter may be an array or object pattern of plain names, as in JavaScript. The pattern is one parameter, and each name is that parameter's part wherever the body reads it — `([id, count]) => -count` **is** `x => -x[1]`, so the MQL is the same and a sort key still sees its minus as the direction:
+
+```js
+$.tally.entries().sortBy(([id, count]) => -count)       // ≡ .sortBy(e => -e[1]) — count descending
+// → { $map: { input: { $sortArray: { input: { $map: { input: { $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] } },
+//                                                       as: "x", in: { k: { $arrayElemAt: ["$$x", 1] }, v: "$$x" } } }, sortBy: { k: -1 } } },
+//             as: "jsmqlP", in: "$$jsmqlP.v" } }
+
+$.items.map(({ sku, qty: n }) => sku + n)                // ≡ .map(x => x.sku + x.qty)
+// → { $map: { input: "$items", as: "x", in: { $add: ["$$x.sku", "$$x.qty"] } } }
+
+$.pairs.map(([, second]) => second)                     // an elision skips an element
+```
+
+The names are the pattern's whole vocabulary: a default value (`[a = 1]`), a rest element (`[a, ...rest]`), a nested pattern (`[[a]]`, `{ a: { b } }`) or a computed key (`{ [k]: v }`) is refused with the plain-name spelling to write instead (`x => x.a ?? 1`, `x => x.slice(1)`, `x => x[0][0]`). The `function` form takes the same patterns.
+
 Lambda parameters shadow outer field references within their scope:
 
 ```js
@@ -2153,7 +2171,7 @@ A call expression whose callee is an arrow-function literal compiles to MongoDB'
 // → { $let: { vars: { d: { $multiply: ["$price", 0.1] } }, in: { $subtract: ["$price", "$$d"] } } }
 ```
 
-Either single-param paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. Param destructuring, default values, and rest parameters are not supported — drop into `$let({ vars }, (x) => body)` for those cases.
+Either single-param paren style works: `(x => body)(arg)` and `((x) => body)(arg)` produce identical MQL. A parameter may be destructured into plain names (see [Destructured parameters](#destructured-parameters)); default values and rest parameters are refused — write the default with `??` in the body, and slice the parameter for the rest.
 
 The body of the IIFE can reference outer `$.fields` freely; only the lambda parameters are rebound.
 

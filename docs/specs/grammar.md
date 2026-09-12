@@ -453,7 +453,7 @@ Array literals, field refs, operator calls, and any other expression are accepte
 - Assignment expressions (`$.a = $.b + 1`)
 - Control flow (`if`, `for`, `while`)
 - `class` or prototype methods
-- Destructuring (in lambda params or anywhere)
+- Destructuring assignment (`{ a } = obj`). A destructured *parameter* of plain names — `([a, b]) => …`, `({ a, b: c }) => …`, with elisions — is read by `param()` in `src/compiler/parse/parser.ts` and rewritten at parse time to one fresh parameter whose parts replace the names in the body (`replaceIdents`), so no later phase sees a pattern; a default, a rest element, a nested pattern or a computed key is refused
 - `JSON.stringify`/`JSON.parse` — no MQL primitive
 - `<<`, `>>`, `>>>` (bitwise shifts) — no MQL primitive
 - `Number.isFinite()` — MQL has no Infinity literal that can be referenced cleanly

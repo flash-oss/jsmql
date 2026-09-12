@@ -30,6 +30,7 @@ import type {
   ObjectKey,
   Program,
   UnaryOp,
+  Pipeline,
   PipelineStmt,
   UpdateFilter,
   UpdateOp,
@@ -40,6 +41,8 @@ import type { Token } from "../lex/token.ts";
 import type { ProductionKey } from "../../registry/productions.ts";
 import { blockBodyOf, isKnownName } from "../rows.ts";
 import { Cursor, found, ParseError, spell } from "./cursor.ts";
+import { freshParam } from "../passes/fresh.ts";
+import { replaceIdents } from "../passes/inject.ts";
 import { objectIdTypo } from "../objectid-guard.ts";
 import {
   ASSIGN_TRIGGERS,
@@ -180,6 +183,30 @@ function targetSpelling(target: Expr): string {
 
 /** What one `{ … }` block held: statements, an optional `return`, and whether a `;` ended a statement. */
 type Block = { stmts: PipelineStmt[]; ret: Expr | null; retPos: number; sawSemi: boolean; endPos: number };
+
+/** One name a destructuring pattern binds: the element's part it reads (`key` — an index or a field), and where it was written. */
+type PatternPart = { readonly key: string; readonly name: string; readonly pos: number };
+
+/**
+ * A parameter as written. A plain name, or a pattern of plain names — an array
+ * pattern's elisions are null. `refused` is a pattern jsmql does not take,
+ * with the error to throw once an arrow follows; null is not a parameter at all.
+ */
+type ParamRead =
+  | { readonly kind: "name"; readonly name: string }
+  | { readonly kind: "array"; readonly parts: readonly (PatternPart | null)[]; readonly pos: number }
+  | { readonly kind: "object"; readonly parts: readonly PatternPart[]; readonly pos: number }
+  | { readonly kind: "refused"; readonly error: ParseError }
+  | null;
+
+/** A destructured parameter that is not a pattern of plain names — a default, a rest element, a nested pattern, a computed key. */
+function notAPlainPattern(pos: number, wrote?: string): ParseError {
+  const got = wrote === undefined ? "" : ` ('${wrote}')`;
+  return new ParseError(
+    `A destructured parameter lists plain names only — '([id, count]) => …', '({ sku, qty: n }) => …'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them at position ${pos}. Name the parameter and read its parts: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
+    pos,
+  );
+}
 
 class Parser {
   private readonly c: Cursor;
@@ -469,18 +496,20 @@ class Parser {
     this.refuseGenerator();
     const name = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaBody(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos);
     return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", pos: kw.pos };
   }
 
-  /** `(a, b,)` — a parenthesised parameter list, trailing comma allowed. */
-  private paramList(): string[] {
+  /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
+  private paramList(): ParamRead[] {
     this.c.expect("LParen");
-    const out: string[] = [];
+    const out: ParamRead[] = [];
     if (!this.c.eat("RParen")) {
       do {
         if (this.c.is("RParen")) break;
-        out.push(this.c.expect("Ident").text);
+        const p = this.param();
+        if (p === null) this.c.expect("Ident");
+        out.push(p);
       } while (this.c.eat("Comma"));
       this.c.expect("RParen");
     }
@@ -496,7 +525,7 @@ class Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaBody(params, kw.pos);
+    return this.lambdaOf(params, kw.pos);
   }
 
   /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
@@ -1041,21 +1070,22 @@ class Parser {
   private parenthesised(): Expr {
     const save = this.c.mark();
     this.c.next();
-    const params: string[] = [];
+    const params: ParamRead[] = [];
     let looksLikeParams = true;
     if (!this.c.is("RParen")) {
       do {
         if (this.c.is("RParen")) break;
-        if (!this.c.is("Ident")) {
+        const p = this.param();
+        if (p === null) {
           looksLikeParams = false;
           break;
         }
-        params.push(this.c.next().text);
+        params.push(p);
       } while (this.c.eat("Comma"));
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos);
     }
     this.c.reset(save);
     this.c.expect("LParen");
@@ -1063,14 +1093,169 @@ class Parser {
     this.c.expect("RParen");
     // Parenthesising is what makes an otherwise-refused combination legal, so the
     // group deliberately forgets which rule produced it.
-    // `({ a }) => …` / `([a]) => …`: a pattern where a parameter name belongs
+    // `([1, a]) => …`: a pattern that is not one of plain names, read as an expression.
     if (this.c.is("Arrow") && (inner.type === "ObjectLiteral" || inner.type === "ArrayLiteral")) {
-      throw new ParseError(
-        `Destructuring a parameter is not supported — name it and read its fields: 'x => x.a' at position ${inner.pos}`,
-        inner.pos,
-      );
+      throw notAPlainPattern(inner.pos);
     }
     return inner;
+  }
+
+  /**
+   * One parameter as written: a plain name, or a destructuring pattern of plain
+   * names — `[id, count]`, `{ sku, qty: n }`. Null when the tokens are not a
+   * parameter at all (a number, a call), so the caller can rewind and read a
+   * parenthesised expression. A pattern with a default, a rest element, a nested
+   * pattern or a computed key is `refused`: the caller throws it once it knows an
+   * arrow follows, and rewinds otherwise — `([...a, b])` is a legal expression.
+   */
+  private param(): ParamRead {
+    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("LBracket")) {
+      const open = this.c.next();
+      const parts: (PatternPart | null)[] = [];
+      let refused: ParseError | null = null;
+      if (!this.c.eat("RBracket")) {
+        do {
+          if (this.c.is("RBracket")) break;
+          // `[, b]` — an elision skips an element.
+          if (this.c.is("Comma")) {
+            parts.push(null);
+            continue;
+          }
+          const t = this.c.peek();
+          if (t.type !== "Ident") {
+            if (t.type !== "LBracket" && t.type !== "LBrace" && t.type !== "Spread") return null;
+            refused ??= notAPlainPattern(t.pos, t.text);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          this.c.next();
+          if (this.c.is("Eq")) {
+            refused ??= notAPlainPattern(t.pos, `${t.text} = …`);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          parts.push({ key: String(parts.length), name: t.text, pos: t.pos });
+        } while (this.c.eat("Comma"));
+        if (!this.c.eat("RBracket")) return null;
+      }
+      if (refused !== null) return { kind: "refused", error: refused };
+      return { kind: "array", parts, pos: open.pos };
+    }
+    if (this.c.is("LBrace")) {
+      const open = this.c.next();
+      const parts: PatternPart[] = [];
+      let refused: ParseError | null = null;
+      if (!this.c.eat("RBrace")) {
+        do {
+          if (this.c.is("RBrace")) break;
+          const t = this.c.peek();
+          if (t.type !== "Ident") {
+            if (t.type !== "LBracket" && t.type !== "Spread") return null;
+            refused ??= notAPlainPattern(t.pos, t.text);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          this.c.next();
+          let name = t.text;
+          if (this.c.eat("Colon")) {
+            if (!this.c.is("Ident")) {
+              const bad = this.c.peek();
+              if (bad.type !== "LBracket" && bad.type !== "LBrace") return null;
+              refused ??= notAPlainPattern(bad.pos, bad.text);
+              if (!this.skipPatternPart()) return null;
+              continue;
+            }
+            name = this.c.next().text;
+          }
+          if (this.c.is("Eq")) {
+            refused ??= notAPlainPattern(t.pos, `${t.text} = …`);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          parts.push({ key: t.text, name, pos: t.pos });
+        } while (this.c.eat("Comma"));
+        if (!this.c.eat("RBrace")) return null;
+      }
+      if (refused !== null) return { kind: "refused", error: refused };
+      return { kind: "object", parts, pos: open.pos };
+    }
+    return null;
+  }
+
+  /**
+   * Skip to the end of one refused pattern part — past a default's expression, a
+   * rest element, a nested pattern — so the reader can tell whether an arrow
+   * follows the whole list. False when the tokens run out first.
+   */
+  private skipPatternPart(): boolean {
+    let depth = 0;
+    for (;;) {
+      const t = this.c.peek();
+      if (t.type === "EOF") return false;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
+      if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
+      this.c.next();
+    }
+  }
+
+  /**
+   * The lambda a parameter list and its body make. A destructured parameter is
+   * one parameter under a fresh name, and each name it binds is that parameter's
+   * part wherever the body reads it — `([id, count]) => -count` IS `x => -x[1]`.
+   * The parts are substituted, never declared, so the body keeps its shape for
+   * every reader (a sort key sees the minus, a filter sees the comparison).
+   */
+  private lambdaOf(params: readonly ParamRead[], pos: number): Lambda {
+    for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
+    const named = params as readonly Exclude<ParamRead, null | { kind: "refused" }>[];
+    if (named.every((p) => p.kind === "name")) {
+      return this.lambdaBody(
+        named.map((p) => (p as { name: string }).name),
+        pos,
+      );
+    }
+    const plain = named.map((p) => (p.kind === "name" ? p.name : ""));
+    const parsed = this.lambdaBody(plain, pos);
+    // The fresh names step aside from every name the body mentions AND every
+    // other parameter, so no part can capture a name the developer wrote.
+    const taken: object[] = [parsed, ...plain.filter((n) => n !== "").map((n) => ({ type: "Ident", name: n }))];
+    const names = [...plain];
+    const parts = new Map<string, Expr>();
+    named.forEach((p, i) => {
+      if (p.kind === "name") return;
+      const fresh = freshParam("x", ...taken);
+      taken.push({ type: "Ident", name: fresh });
+      names[i] = fresh;
+      for (const part of p.parts) {
+        if (part === null) continue;
+        const object: Expr = { type: "Ident", name: fresh, pos: part.pos };
+        parts.set(
+          part.name,
+          p.kind === "array"
+            ? {
+                type: "IndexAccess",
+                object,
+                index: { type: "NumberLiteral", value: Number(part.key), pos: part.pos },
+                optional: false,
+                pos: part.pos,
+              }
+            : { type: "MemberAccess", object, name: part.key, optional: false, pos: part.pos },
+        );
+      }
+    });
+    const lambda: Lambda =
+      parsed.body !== undefined
+        ? { type: "Lambda", params: names, body: replaceIdents(parsed.body, parts), pos }
+        : { type: "Lambda", params: names, stages: replaceIdents(parsed.stages as Pipeline, parts), pos };
+    // A stages body is claimed by its callee under the node's identity.
+    const end = this.unclaimedStages.get(parsed);
+    if (end !== undefined) {
+      this.unclaimedStages.delete(parsed);
+      this.unclaimedStages.set(lambda, end);
+    }
+    return lambda;
   }
 
   /**
