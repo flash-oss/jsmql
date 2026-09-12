@@ -5286,6 +5286,38 @@ describe("toSorted / sort key function", () => {
       $sortArray: { input: "$events", sortBy: { distance: -1 } },
     });
   });
+  it("a computed key under a minus is the key with the direction flipped — never the negated key sorted descending", () => {
+    // MEASURED on mongod: [3, 1, 2].sortBy(x => -x) answers [3, 2, 1], as lodash does.
+    expect(jsmql.expr("$.nums.sortBy(x => -x)")).toEqual({
+      $map: {
+        input: {
+          $sortArray: { input: { $map: { input: "$nums", as: "x", in: { k: "$$x", v: "$$x" } } }, sortBy: { k: -1 } },
+        },
+        as: "jsmqlP",
+        in: "$$jsmqlP.v",
+      },
+    });
+    expect(jsmql.expr("$.tally.entries().sortBy(e => -e[1])")).toEqual({
+      $map: {
+        input: {
+          $sortArray: {
+            input: {
+              $map: {
+                input: {
+                  $map: { input: { $objectToArray: "$tally" }, as: "jsmqlKv", in: ["$$jsmqlKv.k", "$$jsmqlKv.v"] },
+                },
+                as: "e",
+                in: { k: { $arrayElemAt: ["$$e", 1] }, v: "$$e" },
+              },
+            },
+            sortBy: { k: -1 },
+          },
+        },
+        as: "jsmqlP",
+        in: "$$jsmqlP.v",
+      },
+    });
+  });
   it(".toSorted with nested key path", () => {
     expect(jsmql.expr("$.events.toSorted(e => e.user.name)")).toEqual({
       $sortArray: { input: "$events", sortBy: { "user.name": 1 } },

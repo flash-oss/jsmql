@@ -10,6 +10,19 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(sort): a computed key under a minus sorts by the key, descending
+
+`.sortBy(x => -x)` and `.sortBy(([id, count]) => -count)` emitted the NEGATED key
+(`k: { $multiply: [key, -1] }`) AND `sortBy: { k: -1 }`: two negations, so
+`[3, 1, 2].sortBy(x => -x)` answered `[1, 2, 3]` on the server where lodash answers
+`[3, 2, 1]`. The key reader (`keyFunctionSpec` in
+[sort-spec.ts](src/compiler/emit/sort-spec.ts)) peeled the minus into the direction
+but handed the caller the original lambda; it now hands the body under the minus.
+Only the computed-key road was affected — a bare path (`x => -x.age`) already
+became `{ age: -1 }`.
+
+---
+
 ## 2026-09-12 — docs(examples): the recommended-products joins are one equality each, and the products join loads two fields
 
 The "recommended products" example in [realistic.test.ts](test/realistic.test.ts)

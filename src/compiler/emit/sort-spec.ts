@@ -126,7 +126,9 @@ function keyFunctionSpec(arg: Extract<Expr, { type: "Lambda" }>, method: string)
     body = body.argument;
   }
   const path = paramPath(body, arg.params[0]);
-  if (path === null) return { kind: "computed", key: arg, dir };
+  // The minus is the DIRECTION and nothing else: the key the caller lowers is the
+  // body under it, or `x => -x.k` would negate the key AND sort it descending.
+  if (path === null) return { kind: "computed", key: { ...arg, body }, dir };
   return { kind: "keys", spec: { [path]: dir } };
 }
 
@@ -261,13 +263,22 @@ export function orderBySpec(keys: Expr, orders: Expr | undefined, method: string
 }
 
 /**
- * A sort ask narrowed to what a `$sort` STAGE can carry. MongoDB sorts a stream by
- * field NAME — measured, `{ $sort: 1 }` is "the $sort key specification must be an
- * object" and `{ $sort: { $literal: 1 } }` is "FieldPath field names may not start
- * with '$'" — so an element that IS the key has nowhere to go.
+ * A sort ask narrowed to what a `$sort` STAGE can carry, on a stream whose element
+ * lives at `element` (`""` when the element IS the document). MongoDB sorts a stream
+ * by field NAME — measured, `{ $sort: 1 }` is "the $sort key specification must be
+ * an object" and `{ $sort: { $literal: 1 } }` is "FieldPath field names may not
+ * start with '$'" — so an element that IS the document has nowhere to go as a key.
+ * An unwound element has a name — `.flatMap("tags").sort((a, b) => a - b)` sorts
+ * by `tags` — and its fields sit under it: `.flatMap("items").sortBy("qty")` sorts
+ * by `items.qty`.
  */
-export function streamSortAsk(ask: SortAsk, method: string): StageSortAsk {
+export function streamSortAsk(ask: SortAsk, method: string, element = ""): StageSortAsk {
+  if (ask.kind === "keys") {
+    if (element === "") return ask;
+    return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element}.${k}`, d])) };
+  }
   if (ask.kind !== "whole") return ask;
+  if (element !== "") return { kind: "keys", spec: { [element]: ask.dir } };
   const [a, b] = ask.params;
   const body = ask.dir === 1 ? `${a} - ${b}` : `${b} - ${a}`;
   const named = ask.dir === 1 ? `${a}.age - ${b}.age` : `${b}.age - ${a}.age`;
