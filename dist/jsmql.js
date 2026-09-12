@@ -854,6 +854,31 @@ var sortStages = (ask, slot, reshape) => {
   return [{ $addFields: { [key]: reshape(ask.key) } }, { $sort: { [key]: ask.dir } }];
 };
 var n = (e) => e.type === "NumberLiteral" ? e.value : 1;
+var notOf = (e) => ({ type: "UnaryExpr", op: "!", argument: e, pos: e.pos });
+var callOf = (recv, name2, args) => ({
+  type: "MethodCall",
+  object: recv,
+  name: name2,
+  args,
+  optional: false,
+  pos: recv.pos
+});
+var identOf = (name2, pos) => ({ type: "Ident", name: name2, pos });
+var listOf = (list) => {
+  if (list.type === "ArrayLiteral") return list;
+  const empty = { type: "ArrayLiteral", elements: [], pos: list.pos };
+  const orEmpty = { type: "BinaryExpr", op: "??", left: list, right: empty, pos: list.pos };
+  return {
+    type: "ArrayLiteral",
+    elements: [{ type: "SpreadElement", argument: orEmpty, pos: list.pos }],
+    pos: list.pos
+  };
+};
+var arrowOf = (param, body, pos) => ({ type: "Lambda", params: [param], body, pos });
+var keepFirstPer = (key) => [
+  { $group: { _id: key, [GROUP_SLOT]: { $first: "$$ROOT" } } },
+  { $replaceWith: `$${GROUP_SLOT}` }
+];
 var collapse = (key, acc) => [
   { $group: { _id: key, [GROUP_SLOT]: acc } },
   {
@@ -6932,6 +6957,10 @@ var NAMES = {
   toSorted: name({
     doc: "'.toSorted()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    elementOnly: {
+      when: "bare",
+      why: `a stream of documents has no natural order, so a key is required: '.toSorted("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`
+    },
     on: ["array", "stream"],
     params: { value: ["value"], stream: ["value", "value"] },
     iterateeSlots: {
@@ -6970,8 +6999,9 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
-      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape)
+      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      // No key: the natural order of the unwound values.
+      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
     statement: unsupported(
       "'.toSorted()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.toSorted();'"
@@ -6984,6 +7014,10 @@ var NAMES = {
   sortBy: name({
     doc: "'.sortBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
+    elementOnly: {
+      when: "bare",
+      why: `a stream of documents has no natural order, so a key is required: '.sortBy("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`
+    },
     on: ["array", "stream"],
     params: ["value"],
     iterateeSlots: {
@@ -7022,9 +7056,10 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: '"field" | [fields] | keyFn', exact: 1 },
+      args: { sig: '["field" | [fields] | keyFn]', allowed: [0, 1] },
       // An object here is a lodash matcher, not directions — the reader refuses it.
-      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0], false), slot, reshape)
+      // No key: the natural order of the unwound values.
+      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0], false), slot, reshape)
     },
     statement: unsupported(
       "'.sortBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.sortBy();'"
@@ -7190,10 +7225,14 @@ var NAMES = {
   flat: name({
     doc: "'.flat()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
-    returns: "array",
+    on: ["array", "stream"],
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `flattens nested ARRAYS, and every element of this stream is a whole document. To split one document's array field into many documents, use '.flatMap("<field>")' \u2014 that is '$unwind'; after it, '.flat()' unwinds the element once more.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "depth", allowed: [0, 1], constant: [0], slotType: { 0: "int" }, slotRange: { 0: [1, 1] } },
@@ -7201,9 +7240,11 @@ var NAMES = {
         $reduce: { input: recv, initialValue: [], in: { $concatArrays: ["$$value", "$$this"] } }
       })
     },
-    stream: because(
-      "flattens nested ARRAYS, but a stream holds documents, not arrays. To split one document's array field into many documents, use '.flatMap(d => d.<field>)' \u2014 that is '$unwind'."
-    ),
+    stream: {
+      args: { sig: "", none: true },
+      // The element is an array: unwind it once more, in place.
+      emit: ({ element: element2 }) => [{ $unwind: element2().ref }]
+    },
     statement: unsupported(
       "'.flat()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flat();'"
     ),
@@ -7673,6 +7714,10 @@ var NAMES = {
   sort: name({
     doc: "'.sort()' mutates in JavaScript, so only statement position can express it. See docs/LANGUAGE.md.",
     call: true,
+    elementOnly: {
+      when: "bare",
+      why: `a stream of documents has no natural order, so a key is required: '.sort("<field>")'. After '.flatMap("<field>")' the bare call sorts by the unwound values.`
+    },
     // The stream too: nothing to mutate, `.sort` and `.toSorted` both reorder the flow.
     on: ["array", "stream"],
     immutableTwin: "toSorted",
@@ -7694,8 +7739,9 @@ var NAMES = {
       ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()' \u2014 or call it at statement position (top-level on a '$.<field>' receiver) to mutate the field."
     ),
     stream: {
-      args: { sig: '"field" | [fields] | { field: dir } | comparator', exact: 1 },
-      emit: ({ args, sortSpec, slot, reshape }) => sortStages(sortSpec(args[0]), slot, reshape)
+      args: { sig: '["field" | [fields] | { field: dir } | comparator]', allowed: [0, 1] },
+      // No key: the natural order of the unwound values.
+      emit: ({ args, sortSpec, slot, reshape, element: element2 }) => args.length === 0 ? [{ $sort: { [element2().path]: 1 } }] : sortStages(sortSpec(args[0]), slot, reshape)
     },
     statement: inCode("src/compiler/passes/desugar.ts"),
     group: unsupported("'.sort()' is not an accumulator. Inside '$group' write the MongoDB operator."),
@@ -9292,10 +9338,14 @@ var NAMES = {
   without: name({
     doc: "'.without()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
-    returns: "array",
+    on: ["array", "stream"],
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `excludes given VALUES, and every element of this stream is a whole document. Unwind the field first \u2014 '.flatMap("<field>").without(<values>)' \u2014 or drop documents with '.reject(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "...values", atLeast: 1 },
@@ -9305,7 +9355,16 @@ var NAMES = {
         return { $filter: { input: recv, as: item.as, cond: { $not: [{ $in: [item.ref, values] }] } } };
       }
     },
-    stream: because("excludes given VALUES, but stream elements are documents. Exclude with '.reject(<pred>)'."),
+    stream: {
+      args: { sig: "...values", atLeast: 1 },
+      // `.difference([...values])`: the same predicate over the values as a list.
+      emit: ({ args, predicate, bind }) => {
+        const x = bind("x").as;
+        const pos = args[0].pos;
+        const values = { type: "ArrayLiteral", elements: args, pos };
+        return [{ $match: predicate(arrowOf(x, notOf(callOf(values, "includes", [identOf(x, pos)])), pos)) }];
+      }
+    },
     statement: unsupported(
       "'.without()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.without();'"
     ),
@@ -9337,12 +9396,20 @@ var NAMES = {
   differenceBy: name({
     doc: "'.differenceBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "stream"],
     params: ["value"],
-    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "array",
+    iterateeSlots: {
+      array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element may be a document.
+      stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+    },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `compares each ELEMENT's key against a second array's, and every element of this stream is a whole document. Unwind the field first \u2014 '.flatMap("<field>").differenceBy(<list>, <key>)' \u2014 or drop documents with '.reject(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
@@ -9358,7 +9425,15 @@ var NAMES = {
         };
       }
     },
-    stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: {
+      args: { sig: "other, iteratee", exact: 2 },
+      // The element's key against the keys of `other`.
+      emit: ({ args, reshape, value }) => {
+        const key = reshape(args[1]);
+        const keys = value(callOf(listOf(args[0]), "map", [args[1]]));
+        return [{ $match: { $expr: { $not: { $in: [key, keys] } } } }];
+      }
+    },
     statement: unsupported(
       "'.differenceBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.differenceBy();'"
     ),
@@ -9370,12 +9445,20 @@ var NAMES = {
   intersectionBy: name({
     doc: "'.intersectionBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
+    on: ["array", "stream"],
     params: ["value"],
-    iterateeSlots: { array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] } },
-    returns: "array",
+    iterateeSlots: {
+      array: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable"] },
+      // A bare callable takes a VALUE; a stream element may be a document.
+      stream: { 1: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+    },
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `compares each ELEMENT's key against a second array's, and every element of this stream is a whole document. Unwind the field first \u2014 '.flatMap("<field>").intersectionBy(<list>, <key>)' \u2014 or keep documents with '.filter(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "other, iteratee", exact: 2 },
@@ -9391,7 +9474,15 @@ var NAMES = {
         };
       }
     },
-    stream: because("compares against a second array. Use '$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: {
+      args: { sig: "other, iteratee", exact: 2 },
+      // The element's key against the keys of `other`, one document per distinct key kept.
+      emit: ({ args, reshape, value }) => {
+        const key = reshape(args[1]);
+        const keys = value(callOf(listOf(args[0]), "map", [args[1]]));
+        return [{ $match: { $expr: { $in: [key, keys] } } }, ...keepFirstPer(key)];
+      }
+    },
     statement: unsupported(
       "'.intersectionBy()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.intersectionBy();'"
     ),
@@ -9465,10 +9556,14 @@ var NAMES = {
   compact: name({
     doc: "'.compact()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "array",
-    returns: "array",
+    on: ["array", "stream"],
+    returns: { array: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `drops falsy elements, and a whole document is never falsy. Unwind the field first \u2014 '.flatMap("<field>").compact()' \u2014 or drop documents with '.reject(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "", none: true },
@@ -9477,9 +9572,11 @@ var NAMES = {
         return { $filter: { input: recv, as: item.as, cond: jsTruth(item.ref) } };
       }
     },
-    stream: because(
-      "drops falsy elements. Every stream element is a document, which is never falsy \u2014 use '.reject(<pred>)' for the condition you mean."
-    ),
+    stream: {
+      args: { sig: "", none: true },
+      // JavaScript's falsy values (NaN aside — jsmql has none). MEASURED: `null` in a `$nin` list drops a missing field too.
+      emit: ({ element: element2 }) => [{ $match: { [element2().path]: { $nin: [null, 0, false, ""] } } }]
+    },
     statement: unsupported(
       "'.compact()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.compact();'"
     ),
@@ -10988,16 +11085,31 @@ var NAMES = {
   intersection: name({
     doc: "'.intersection()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
-    returns: "array",
+    on: ["array", "set", "stream"],
+    returns: { array: "array", set: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first \u2014 '.flatMap("<field>").intersection(<list>)' \u2014 or keep documents with '.filter(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       args: { sig: "other", exact: 1 },
       emit: ({ recv, args, value }) => ({ $setIntersection: [recv, value(args[0])] })
     },
-    stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and keep the matches."),
+    stream: {
+      args: { sig: "other", exact: 1 },
+      // The elements in `other`, one document per distinct element — lodash keeps each value once.
+      emit: ({ args, predicate, bind, element: element2 }) => {
+        const x = bind("x").as;
+        const other = listOf(args[0]);
+        return [
+          { $match: predicate(arrowOf(x, callOf(other, "includes", [identOf(x, other.pos)]), other.pos)) },
+          ...keepFirstPer(element2().ref)
+        ];
+      }
+    },
     statement: unsupported(
       "'.intersection()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.intersection();'"
     ),
@@ -11028,10 +11140,14 @@ var NAMES = {
   difference: name({
     doc: "'.difference()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: ["array", "set"],
-    returns: "array",
+    on: ["array", "set", "stream"],
+    returns: { array: "array", set: "array", stream: "stream" },
     neverNull: true,
-    where: ["value"],
+    where: ["value", "stream"],
+    elementOnly: {
+      when: "always",
+      why: `compares each ELEMENT against a second array, and every element of this stream is a whole document. Unwind the field first \u2014 '.flatMap("<field>").difference(<list>)' \u2014 or drop documents with '.reject(<pred>)'.`
+    },
     filter: viaFallback,
     expr: {
       perFamily: {
@@ -11041,14 +11157,25 @@ var NAMES = {
         set: {
           args: { sig: "other", exact: 1 },
           emit: ({ recv, args, value }) => ({ $setDifference: [recv, value(args[0])] })
-        }
+        },
+        stream: unsupported("'.difference()' on a stream is a stage, not a value \u2014 see its 'stream' cell.")
       },
       // Both families test `$type: "array"`, so no runtime test tells them apart. It
       // needs none: `new Set(…)` is proven at the source, so an unproven receiver is
       // an array and takes lodash's reading.
       uncertain: lodashDifference
     },
-    stream: because("compares against a second array. Use '$$$.<coll>.find(<pred>)' and reject the matches."),
+    stream: {
+      args: { sig: "other", exact: 1 },
+      // The elements not in `other`: the predicate `x => !other.includes(x)`, through the filter road.
+      emit: ({ args, predicate, bind }) => {
+        const x = bind("x").as;
+        const other = listOf(args[0]);
+        return [
+          { $match: predicate(arrowOf(x, notOf(callOf(other, "includes", [identOf(x, other.pos)])), other.pos)) }
+        ];
+      }
+    },
     statement: unsupported(
       "'.difference()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.difference();'"
     ),
@@ -14752,6 +14879,9 @@ function unionsOf(name2) {
 }
 function mergesIntoOf(name2) {
   return row(name2)?.mergesInto === true;
+}
+function elementOnlyOf(name2) {
+  return row(name2)?.elementOnly ?? null;
 }
 function neverNullOf(name2) {
   return row(name2)?.neverNull === true;
@@ -20828,7 +20958,7 @@ function lookupOf(node, env, S, over = "$lookup") {
       i++;
       break;
     }
-    if (!S.peels(link)) break;
+    if (!S.peels(link, body)) break;
     if (streamBodyOf(link.name) === "document" && !documentBody(link, body)) break;
     const stages = S.link(link, body, first);
     if (stages === null) break;
@@ -23727,6 +23857,17 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   if (unionsOf(name2)) return unionStages(link.args, env, link, JOIN);
   const verdict = consult(name2, "stream", "stream");
   if (verdict.kind === "unknown" || verdict.kind === "noCell") return null;
+  const only = elementOnlyOf(name2);
+  if (only !== null && env.chain.element === "" && (only.when === "always" || link.args.length === 0)) {
+    throw refusalFor(
+      { kind: "refused", name: name2, message: only.why, needsSubject: true },
+      `'.${link.name}()'`,
+      "'$$'",
+      "stream",
+      link.pos,
+      []
+    );
+  }
   const sel = select(verdict, { kind: "stream" }, { kind: "multiple" }, link.args.length);
   if (sel.kind !== "rule") {
     if (sel.kind === "dispatch") internalError(`stream link '${name2}' selected a receiver dispatch`);
@@ -23742,9 +23883,12 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   if (!restoresDocumentsOf(name2) && out.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.placed(true);
   return out;
 }
-function peels(link) {
-  const verdict = consult(namedRow(link) ?? link.name, "stream", "stream");
-  return verdict.kind !== "unknown" && verdict.kind !== "noCell" && verdict.kind !== "refused";
+function peels(link, env) {
+  const name2 = namedRow(link) ?? link.name;
+  const verdict = consult(name2, "stream", "stream");
+  if (verdict.kind === "unknown" || verdict.kind === "noCell" || verdict.kind === "refused") return false;
+  const only = env === void 0 ? null : elementOnlyOf(name2);
+  return only === null || env.chain.element !== "" || only.when === "bare" && link.args.length > 0;
 }
 var JOIN = { link: streamLink, peels };
 provideJoin((node, env) => joinValue(node, env, JOIN));
