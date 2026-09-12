@@ -416,10 +416,11 @@ the pair it emits and why; the empty list is a stream of nothing.
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
-(`emit/join.ts`). **A body that opens with one correlated equality** — its first
-stage is a `$match` that says nothing but `<foreign field> === <outer field>`,
-where the outer side is a document field (`$.x`, or a binding the compiler
-stores as `__jsmql.var.<name>`) — is the `localField` / `foreignField` pair: the
+(`emit/join.ts`). **A body that opens with a correlated equality** — its first
+stage is a `$match` whose predicate says `<foreign field> === <outer field>`,
+alone or as one `&&` conjunct among others, where the outer side is a document
+field (`$.x`, or a binding the compiler stores as `__jsmql.var.<name>`) — is
+the `localField` / `foreignField` pair: the
 join every MongoDB developer reads and writes, and the one the planner reads
 straight off the foreign index (a multikey index when either side is an array).
 The server's own rules then apply to it: a missing field counts as null, and an
@@ -441,9 +442,14 @@ document examined per outer document), where the pair alone would materialise
 every match first — 110 matching documents of 1 MB each answer Location4568.
 The pair's read leaves `let` unless a later stage reads it.
 
-Everything else keeps `let` + `pipeline` + `$expr`: a second condition in the
-same predicate, a comparison that is not an equality, a side that is not a plain
-field path. The pipeline form compares the two fields' OWN values as JavaScript
+**The other conjuncts of that first `$match` stay in it**, as the pipeline's
+first stage over the pair's matches: a constant clause as the query document it
+already is, an expression clause under `$expr` (the `$and` is dropped when one
+clause is left). The FIRST conjunct that is a correlated equality is the pair,
+and a second one keeps its `let` var and its `$expr` beside it. Everything else
+keeps `let` + `pipeline` + `$expr`: a predicate whose comparisons are not
+equalities, an equality under `||` (the `$match` is an `$or`, not a conjunction), a side
+that is not a plain field path. The pipeline form compares the two fields' OWN values as JavaScript
 does (`undefined === null` is false), and uses the foreign index too (measured on
 mongod 8.3.7: `indexesUsed`, keys examined = rows matched). `$expr: { $eq:
 [array, array] }` compares whole arrays, which is why an array-to-array join is
@@ -466,9 +472,14 @@ const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).take(100);
 //       pipeline: [{ $limit: 100 }], as: "o" } },
 //    { $unset: "__jsmql" }]   — two arrays: joined on a shared element, from the multikey index
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
-// → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//       pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-//       as: "paid" } }]
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]   — the other conjunct, beside the pair
+let cutoff = $.minTotal; $.big = $$$.orders.filter(o => o.userId === $._id && o.total > cutoff);
+// → [{ $set: { "__jsmql.var.cutoff": "$minTotal" } },
+//    { $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       let: { jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
+//       pipeline: [{ $match: { $expr: { $gt: ["$total", "$$jsmql_v0_cutoff"] } } }], as: "big" } },
+//    { $unset: "__jsmql" }]
 $.first = $$$.orders.find(o => o.userId === $._id);
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "first" } },
 //    { $set: { first: { $first: "$first" } } }]   — absent when nothing matched

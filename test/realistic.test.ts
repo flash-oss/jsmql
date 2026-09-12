@@ -2283,16 +2283,9 @@ $project({ name: 1, recentOrders: 1 });
               {
                 $lookup: {
                   from: "shipments",
-                  let: { jsmql_f1__id: "$_id" },
-                  pipeline: [
-                    {
-                      $match: {
-                        $expr: {
-                          $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$userId", "$$jsmql_f0__id"] }],
-                        },
-                      },
-                    },
-                  ],
+                  localField: "_id",
+                  foreignField: "orderId",
+                  pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
                   as: "shipments",
                 },
               },
@@ -3081,15 +3074,11 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id", jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
+              localField: "_id",
+              foreignField: "userId",
+              let: { jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
               pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_minSpend"] }],
-                    },
-                  },
-                },
+                { $match: { $expr: { $gt: ["$total", "$$jsmql_v0_minSpend"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],

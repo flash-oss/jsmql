@@ -165,7 +165,9 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
     expect(some[0].$lookup.let).toEqual({ jsmql_f0_wants: "$wants" });
   });
 
-  it("keeps a constant clause native beside the correlation", () => {
+  it("takes the pair out of a `&&` predicate; the other conjuncts are a $match beside it", () => {
+    // The equality is one conjunct among others: it is still the pair, and the
+    // constant clause stays native in the pipeline's `$match`, over the pair's matches.
     expect(
       compiled('$.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");', [
         { _id: 1, paid: [101] },
@@ -173,13 +175,33 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
         { _id: 3, paid: [] },
         { _id: 4, paid: [] },
       ]),
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]);
+    // the equality may stand anywhere among the conjuncts
+    expect(
+      compiled('$.paid = $$$.orders.filter(o => o.status === "paid" && o.userId === $._id);', [
+        { _id: 1, paid: [101] },
+        { _id: 2, paid: [103] },
+        { _id: 3, paid: [] },
+        { _id: 4, paid: [] },
+      ]),
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]);
+  });
+
+  it("an equality under `||` is no pair — the whole predicate runs as one $match", () => {
+    expect(
+      compiled("$.any = $$$.orders.filter(o => o.userId === $._id || o.total > 15);", [
+        { _id: 1, any: [101, 102] },
+        { _id: 2, any: [102, 103] },
+        { _id: 3, any: [102] },
+        { _id: 4, any: [102] },
+      ]),
     ).toEqual([
       {
         $lookup: {
           from: "orders",
           let: LET,
-          pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-          as: "paid",
+          pipeline: [{ $match: { $or: [{ $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } }, { total: { $gt: 15 } }] } }],
+          as: "any",
         },
       },
     ]);
@@ -212,14 +234,9 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_cutoff"] }] },
-              },
-            },
-          ],
+          ...COMPACT,
+          let: { jsmql_v0_cutoff: "$__jsmql.var.cutoff" },
+          pipeline: [{ $match: { $expr: { $gt: ["$total", "$$jsmql_v0_cutoff"] } } }],
           as: "big",
         },
       },
@@ -449,14 +466,9 @@ describe("compiler/emit/join — inside the body", () => {
             {
               $lookup: {
                 from: "items",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [
-                  {
-                    $match: {
-                      $expr: { $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$tag", "$$jsmql_f0_tag"] }] },
-                    },
-                  },
-                ],
+                localField: "_id",
+                foreignField: "orderId",
+                pipeline: [{ $match: { $expr: { $eq: ["$tag", "$$jsmql_f0_tag"] } } }],
                 as: "items",
               },
             },

@@ -663,11 +663,11 @@ The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documente
 
 **Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**A chain that opens with one correlated equality is the pair.** A predicate that says exactly one thing — this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
+**A chain that opens with a correlated equality is the pair.** A predicate that says this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — alone, or as one `&&` condition among others — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
 
 **The links that follow it run in `pipeline` beside the pair.** MongoDB 5.0+ runs a `$lookup.pipeline` over the documents the pair matched, so a trailing `.toSorted(…)`, `.take(n)`, `.$group(…)` changes what the join *returns* and never what it *matches*: the same predicate is the same join with or without a `.take()`. `.find` is the pair with `{ $limit: 1 }` in that pipeline. The equality has to come first — after a sort or a cut it is a `$match` in place.
 
-Anything more in the predicate itself — a second condition, a comparison that is not an equality — is `let` + `pipeline` + `$expr`: every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
+**The other `&&` conditions run beside the pair too.** `o.userId === $._id && o.status === "paid"` is the pair plus a `$match` in the pipeline, over the pair's matches: a constant condition stays a query document there, and a condition that reads a date, a computed value or a second outer field is `$expr`, with every read of the outer document (`$.tier`, a `let` binding) carried into the stage's `let` clause under a correlation variable. When the predicate has no such equality — every condition is a comparison that is not one, or the equality sits under `||` — the whole predicate is `let` + `pipeline` + `$expr`. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
 
 ```js
 // One equality — the compact join, in either spelling
@@ -688,11 +688,23 @@ $.coPurchases = $$$.orders.filter({ productIds: mine }).take(100);
 //                 pipeline: [{ $limit: 100 }], as: "coPurchases" } },
 //    { $unset: "__jsmql" }]
 
-// A second condition needs the sub-pipeline
+// A second condition runs beside the pair, over its matches
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//                 pipeline: [{ $match: { status: "paid" } }], as: "paid" } }]
+
+// A date bound is an expression, so it is `$expr` in that $match
+$.recent = $$$.orders.filter(o => o.userId === $._id && o.createdAt > new Date().minus(1, "year"));
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//                 pipeline: [{ $match: { $expr: { $gt: ["$createdAt",
+//                   { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }],
+//                 as: "recent" } }]
+
+// An equality under || is no pair: the whole predicate runs as one $match
+$.any = $$$.orders.filter(o => o.userId === $._id || o.total > 15);
 // → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
-//                 pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
-//                 as: "paid" } }]
+//                 pipeline: [{ $match: { $or: [{ $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } }, { total: { $gt: 15 } }] } }],
+//                 as: "any" } }]
 
 // .find stops at the first match ($limit 1) and unwraps it, so the slot holds one document or nothing
 $.user = $$$.users.find(u => u._id === $.userId);
@@ -701,13 +713,14 @@ $.user = $$$.users.find(u => u._id === $.userId);
 //     { $set: { user: { $first: "$user" } } }
 //   ]
 
-// A compound predicate — the same route; `u.active` is the JavaScript truthiness test
+// A compound predicate — the pair, and `u.active` (the JavaScript truthiness test) beside it
 $.user = $$$.users.find(u => u._id === $.userId && u.active);
 // → [
 //     { $lookup: {
 //         from: "users",
-//         let: { jsmql_f0_userId: "$userId" },
-//         pipeline: [{ $match: { $expr: { $and: [{ $eq: ["$_id", "$$jsmql_f0_userId"] }, /* u.active is truthy */] } } }, { $limit: 1 }],
+//         localField: "userId",
+//         foreignField: "_id",
+//         pipeline: [{ $match: { $expr: /* u.active is truthy */ } }, { $limit: 1 }],
 //         as: "user"
 //       } },
 //     { $set: { user: { $first: "$user" } } }
