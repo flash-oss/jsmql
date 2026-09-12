@@ -884,8 +884,8 @@ var fieldClause = ({ name: name2, args, pathOf: pathOf3, literalOf }) => {
   const value = literalOf(args[1]);
   return path === null || value === null ? null : { [path]: { [name2]: value.value } };
 };
-var queryOnlyClause = ({ name: name2, args, fieldPath: fieldPath2, literal: literal2 }) => ({
-  [fieldPath2(args[0])]: { [name2]: literal2(args[1]) }
+var queryOnlyClause = ({ name: name2, args, fieldPath: fieldPath3, literal: literal2 }) => ({
+  [fieldPath3(args[0])]: { [name2]: literal2(args[1]) }
 });
 var logicalList = ({ name: name2, args, query }) => {
   const list = args.length === 1 && args[0].type === "ArrayLiteral" ? args[0].elements.filter(isExprNode) : args;
@@ -7225,7 +7225,7 @@ var NAMES = {
     stream: {
       args: { sig: "callback", exact: 1 },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
-      emit: ({ args, fieldPath: fieldPath2 }) => [{ $unwind: fieldPath2(args[0]) }]
+      emit: ({ args, fieldPath: fieldPath3 }) => [{ $unwind: fieldPath3(args[0]) }]
     },
     statement: unsupported(
       "'.flatMap()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flatMap();'"
@@ -11642,8 +11642,8 @@ var NAMES = {
     filter: {
       args: { sig: "field, query", exact: 2 },
       // a query document over the element as written, or an arrow whose body is that test
-      emit: ({ args, fieldPath: fieldPath2, query, element: element2 }) => ({
-        [fieldPath2(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element2(args[1]) : query(args[1]) }
+      emit: ({ args, fieldPath: fieldPath3, query, element: element2 }) => ({
+        [fieldPath3(args[0])]: { $elemMatch: args[1].type === "Lambda" ? element2(args[1]) : query(args[1]) }
       })
     },
     expr: unsupported(
@@ -11661,8 +11661,8 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field[, exists]", allowed: [1, 2], constant: [1], slotType: { 1: "bool" } },
-      emit: ({ args, fieldPath: fieldPath2, literal: literal2 }) => ({
-        [fieldPath2(args[0])]: { $exists: args[1] === void 0 ? true : literal2(args[1]) }
+      emit: ({ args, fieldPath: fieldPath3, literal: literal2 }) => ({
+        [fieldPath3(args[0])]: { $exists: args[1] === void 0 ? true : literal2(args[1]) }
       })
     },
     expr: unsupported(
@@ -11695,7 +11695,7 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
-      emit: ({ name: name2, args, fieldPath: fieldPath2, query }) => ({ [fieldPath2(args[0])]: { [name2]: query(args[1]) } })
+      emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
     },
     expr: unsupported(
       "'$geoIntersects' is a query operator with no aggregation-expression form. '$geoIntersects' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoIntersects(\u2026) }'."
@@ -11712,7 +11712,7 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
-      emit: ({ name: name2, args, fieldPath: fieldPath2, query }) => ({ [fieldPath2(args[0])]: { [name2]: query(args[1]) } })
+      emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
     },
     expr: unsupported(
       "'$geoWithin' is a query operator with no aggregation-expression form. '$geoWithin' is a field-level query operator: write it under a field, e.g. '{ <field>: $geoWithin(\u2026) }'."
@@ -11746,7 +11746,7 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
-      emit: ({ name: name2, args, fieldPath: fieldPath2, query }) => ({ [fieldPath2(args[0])]: { [name2]: query(args[1]) } })
+      emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
     },
     expr: unsupported(
       "'$near' is a query operator with no aggregation-expression form. '$near' is a field-level query operator: write it under a field, e.g. '{ <field>: $near(\u2026) }'."
@@ -11763,7 +11763,7 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field, geometry", exact: 2 },
-      emit: ({ name: name2, args, fieldPath: fieldPath2, query }) => ({ [fieldPath2(args[0])]: { [name2]: query(args[1]) } })
+      emit: ({ name: name2, args, fieldPath: fieldPath3, query }) => ({ [fieldPath3(args[0])]: { [name2]: query(args[1]) } })
     },
     expr: unsupported(
       "'$nearSphere' is a query operator with no aggregation-expression form. '$nearSphere' is a field-level query operator: write it under a field, e.g. '{ <field>: $nearSphere(\u2026) }'."
@@ -11824,8 +11824,8 @@ var NAMES = {
     where: ["filter"],
     filter: {
       args: { sig: "field, pattern[, options]", allowed: [2, 3] },
-      emit: ({ args, fieldPath: fieldPath2, literal: literal2 }) => {
-        const path = fieldPath2(args[0]);
+      emit: ({ args, fieldPath: fieldPath3, literal: literal2 }) => {
+        const path = fieldPath3(args[0]);
         if (args[1].type === "RegexLiteral") return { [path]: { $regex: literal2(args[1]) } };
         const clause = { $regex: literal2(args[1]) };
         if (args[2] !== void 0) clause.$options = literal2(args[2]);
@@ -19524,13 +19524,13 @@ var Chain = class {
     this.stamped = new Set(m.stamped);
   }
   /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
-  hoist(stages, reads) {
-    if (!this.stamped.has(reads)) {
+  hoist(stages, reads2) {
+    if (!this.stamped.has(reads2)) {
       this.hoisted.push(...stages);
-      this.stamped.add(reads);
+      this.stamped.add(reads2);
       this.dirty = true;
     }
-    return "$" + reads;
+    return "$" + reads2;
   }
   /**
    * A statement's stages have landed. A stage that does not state `preservesCount`
@@ -20543,44 +20543,46 @@ function lookupOf(node, env, S, over = "$lookup") {
   }
   const rest = links.slice(i);
   const complete = rest.length === 0 && head === node;
-  return {
-    complete,
-    let: capture !== null && capture.any ? capture.vars : null,
-    from,
-    pipeline: body.chain.close(),
-    one,
-    yields,
-    rest,
-    peeledTo,
-    pos
-  };
+  const vars = capture !== null && capture.any ? capture.vars : null;
+  const shape = takePair(vars, body.chain.close());
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, pos };
 }
-function compactPair(l) {
-  if (l.let === null || l.pipeline.length !== 1) return null;
-  const vars = Object.entries(l.let);
-  if (vars.length !== 1) return null;
-  const [name2, read] = vars[0];
-  if (typeof read !== "string" || !read.startsWith("$") || read.startsWith("$$")) return null;
-  const match = l.pipeline[0].$match;
-  if (match === void 0 || Object.keys(match).length !== 1) return null;
+function fieldPath2(v) {
+  return typeof v === "string" && v.startsWith("$") && !v.startsWith("$$") ? v.slice(1) : null;
+}
+function reads(v, name2) {
+  if (typeof v === "string") return v === `$$${name2}` || v.startsWith(`$$${name2}.`);
+  if (Array.isArray(v)) return v.some((x) => reads(x, name2));
+  if (v !== null && typeof v === "object") return Object.values(v).some((x) => reads(x, name2));
+  return false;
+}
+function takePair(vars, pipeline) {
+  const whole = { pair: null, let: vars, pipeline };
+  if (vars === null || pipeline.length === 0) return whole;
+  const match = pipeline[0].$match;
+  if (match === void 0 || Object.keys(match).length !== 1) return whole;
   const eq = match.$expr?.$eq;
-  if (!Array.isArray(eq) || eq.length !== 2) return null;
-  const variable = `$$${name2}`;
-  const foreign = eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null;
-  if (typeof foreign !== "string" || !foreign.startsWith("$") || foreign.startsWith("$$")) return null;
-  return { localField: read.slice(1), foreignField: foreign.slice(1) };
+  if (!Array.isArray(eq) || eq.length !== 2) return whole;
+  for (const [name2, read] of Object.entries(vars)) {
+    const localField = fieldPath2(read);
+    if (localField === null) continue;
+    const variable = `$$${name2}`;
+    const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+    if (foreignField === null) continue;
+    const rest = pipeline.slice(1);
+    const kept = Object.fromEntries(Object.entries(vars).filter(([n2]) => n2 !== name2 || reads(rest, n2)));
+    return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+  }
+  return whole;
 }
 function lookupStage(l, as) {
   const body = { from: l.from };
-  const pair = l.one === "find" ? null : compactPair(l);
-  if (pair !== null) {
-    body.localField = pair.localField;
-    body.foreignField = pair.foreignField;
-    body.as = as;
-    return { $lookup: body };
+  if (l.pair !== null) {
+    body.localField = l.pair.localField;
+    body.foreignField = l.pair.foreignField;
   }
   if (l.let !== null) body.let = l.let;
-  body.pipeline = l.pipeline;
+  if (l.pair === null || l.pipeline.length > 0) body.pipeline = l.pipeline;
   body.as = as;
   return { $lookup: body };
 }
@@ -20637,7 +20639,7 @@ function joinStream(node, env, first, S) {
     throw valueInStream(after.name ?? "length", after.pos);
   }
   if (l.one === "find") throw oneDocumentInStream(l.pos);
-  if (l.let !== null) {
+  if (l.correlated) {
     const slot = env.chain.slot();
     const stages = [lookupStage(l, slot.path)];
     if (l.one !== false) stages.push(unwrap(slot.path, l.one));
@@ -21571,15 +21573,15 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
       const b = env.fresh(hint2);
       return { as: b.as, ref: b.ref };
     },
-    hoist: (stages, reads) => {
+    hoist: (stages, reads2) => {
       const source = node.object ?? null;
       const own = onOwnStream(source, env);
       const chain = own ? env.chain : env.rootChain;
       if (!chain.isPipeline) throw needsPipeline(name2, node.pos);
-      chain.hoist(stages, reads);
+      chain.hoist(stages, reads2);
       const level = own ? env.level : 0;
       return env.render(
-        { kind: "s", level, path: reads, hint: reads.slice(reads.lastIndexOf(".") + 1) },
+        { kind: "s", level, path: reads2, hint: reads2.slice(reads2.lastIndexOf(".") + 1) },
         node.pos
       );
     },
@@ -23255,8 +23257,8 @@ function writeStages(uf, env, first) {
       continue;
     }
     if (unsets !== null) flush();
-    const reads = pathsRead(op.value, /* @__PURE__ */ new Set());
-    if (sets !== null && (sets.paths.some((w) => [...reads].some((r) => touches(r, w))) || sets.paths.some((w) => touches(path, w)))) {
+    const reads2 = pathsRead(op.value, /* @__PURE__ */ new Set());
+    if (sets !== null && (sets.paths.some((w) => [...reads2].some((r) => touches(r, w))) || sets.paths.some((w) => touches(path, w)))) {
       flush();
     }
     refuseUnbuiltSugar(op.value);
