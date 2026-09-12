@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs(examples): the recommended-products joins are one equality each, and the products join loads two fields
+
+The "recommended products" example in [realistic.test.ts](test/realistic.test.ts)
+(and its live copy in [integration.test.ts](test/integration.test.ts)) spelled its
+two joins in two ways: the co-purchase join as `.filter({ productIds: myProductIds })`
+and the products join as `.filter(pr => pr._id in candidateProductIds)`. The second
+lowered to `let` + `$match: { $expr: { $in: ["$_id", "$$var"] } }` — correct on a
+scalar `_id`, but a different shape from the first join for the same idea, and one
+the reader had to know MongoDB's `$in` to follow. It is now `.filter({ _id:
+candidateProductIds })`, which the join road lowers to the `localField` /
+`foreignField` pair on `_id` with the `$limit` in `pipeline` — measured on the
+project's mongod: same documents, `_id_` index used.
+
+The same join then ends in `.pick(["_id", "name"])`, which lowers to
+`{ $project: { _id: 1, name: 1 } }` inside the `$lookup`, so the joined array holds
+the two fields the example reads and not whole product documents. The example is
+the playground's default and the README's headline, so `playground.html` is
+regenerated with it.
+
+---
+
 ## 2026-09-12 — docs: the desugar spec describes the pass that exists
 
 `docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it

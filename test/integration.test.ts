@@ -792,8 +792,9 @@ const candidateProductIdCounts = $$$.orders
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
-  .filter(pr => pr._id in candidateProductIds)
-  .take(500);
+  .filter({ _id: candidateProductIds })
+  .take(500)
+  .pick(["_id", "name"]); // load only the fields we use
 
 $$ = candidateProductIds
   .map(id => ({

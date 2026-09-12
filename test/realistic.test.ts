@@ -71,8 +71,9 @@ const candidateProductIdCounts = $$$.orders
 const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
 
 const candidateProducts = $$$.products
-  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator
-  .$limit(500); // same as .take(500)
+  .filter({ _id: candidateProductIds })
+  .$limit(500) // same as .take(500)
+  .pick(["_id", "name"]); // load only the fields we use
 
 $$ = candidateProductIds
   .map(id => ({
@@ -224,8 +225,9 @@ $$ = candidateProductIds
         {
           $lookup: {
             from: "products",
-            let: { jsmql_v0_candidateProductIds: "$__jsmql.var.candidateProductIds" },
-            pipeline: [{ $match: { $expr: { $in: ["$_id", "$$jsmql_v0_candidateProductIds"] } } }, { $limit: 500 }],
+            localField: "__jsmql.var.candidateProductIds",
+            foreignField: "_id",
+            pipeline: [{ $limit: 500 }, { $project: { _id: 1, name: 1 } }],
             as: "__jsmql.var.candidateProducts",
           },
         },
