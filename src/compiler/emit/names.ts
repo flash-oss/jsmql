@@ -152,6 +152,12 @@ export type Binding = {
    * `$lookup.as` array holds the foreign collection's documents.
    */
   readonly elements: Kind | "unknown";
+  /**
+   * Is the value certainly THERE — never null, never missing? A `$lookup`'s array
+   * is (the server always writes one); a `let` bound to a present value is; a
+   * field, a parameter, a function are not. `isPresent` (types.ts) reads it.
+   */
+  readonly present: boolean;
   /** `let` is mutable, everything else is not. */
   readonly mutable: boolean;
   /** Where the binding was made, for the message that names it. */
@@ -316,7 +322,7 @@ export class Scope {
     const as = mongoVarName(js);
     const ref = refOf(as);
     const bound = new Map(this.bound);
-    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", mutable: false, pos, level });
+    bound.set(js, { ref: { kind: "var", ref }, type, elements: "unknown", present: false, mutable: false, pos, level });
     const taken = new Set(this.taken);
     taken.add(as);
     const own = new Set(this.own);

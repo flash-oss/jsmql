@@ -895,6 +895,16 @@ export type ExprIn = {
    * wrong type — before any `$switch` branch is chosen, so a guard cannot save it.
    */
   kind: (e: Expr) => Kind | "unknown";
+  /**
+   * Is the receiver certainly THERE — never null, never missing? True for a
+   * `$lookup`'s array, a literal, `$range(…)`, the root document's keys, a chain of
+   * `neverNull` rows over one of those, and inside a runtime family dispatch whose
+   * `$type` test already proved the branch. A cell whose operator aborts on null
+   * (`$size`, `$in`, `$map`'s input) guards its receiver with `$ifNull` unless this
+   * is true — MEASURED: `{ $size: null }` aborts the whole command, and every array
+   * operator answers null for a missing field.
+   */
+  present: boolean;
   /** Lower an expression as a CONDITION, JavaScript truthiness applied. See `Truth`. */
   truth: (e: Expr) => Truth;
   /** A callback whose body is a value: `{ as, ref, in }`, the parameter bound as `$$as` (`ref`). */

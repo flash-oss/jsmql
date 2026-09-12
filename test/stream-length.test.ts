@@ -227,7 +227,7 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {
-                totalShipments: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } },
+                totalShipments: { $size: "$__jsmql.tmp.0" },
                 totalOrders: "$__jsmql.length",
                 totalUsers: "$$jsmql_s0_length",
               },

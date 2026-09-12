@@ -42,7 +42,7 @@ import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
-import { elementKindOf, kindOf } from "./types.ts";
+import { elementKindOf, isPresent, kindOf } from "./types.ts";
 import { positionalKeysOf, positionsOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
@@ -223,6 +223,7 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
         ref: { kind: "function", lambda, expanding: lambda.body === undefined },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: decl.pos,
       }),
@@ -252,11 +253,12 @@ function letStages(decl: LetDecl, env: Env): Step {
     throw E.shadowsOuterBinding(decl.kind, decl.name, decl.pos);
   refuseUnbuiltSugar(decl.value);
   const slot = fieldSlot(bindingSlot(decl.name));
-  const bind = (type: Declared["type"]): Env =>
+  const bind = (type: Declared["type"], present: boolean): Env =>
     env.bind(decl.name, {
       ref: { kind: "field", slot },
       type,
       elements: "unknown",
+      present,
       mutable: decl.kind === "let",
       pos: decl.pos,
     });
@@ -269,6 +271,7 @@ function letStages(decl: LetDecl, env: Env): Step {
         ref: { kind: "function", lambda: decl.value, expanding: decl.value.body === undefined },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: decl.pos,
       }),
@@ -279,12 +282,16 @@ function letStages(decl: LetDecl, env: Env): Step {
     const w = joinWrite(decl.value, slot.path, childEnv(env, decl, "value"), JOIN);
     if (w !== null) {
       env.chain.dirty = true;
-      return { stages: w.stages, env: bind(w.yields) };
+      // the server always writes the `as` array; a `.find` may find nothing
+      return { stages: w.stages, env: bind(w.yields, w.yields === "array") };
     }
   }
   const value = readIn(decl.value, childEnv(env, decl, "value"));
   env.chain.dirty = true;
-  return { stages: [{ $set: { [slot.path]: value } }], env: bind(kindOf(decl.value, env)) };
+  return {
+    stages: [{ $set: { [slot.path]: value } }],
+    env: bind(kindOf(decl.value, env), isPresent(decl.value, childEnv(env, decl, "value"))),
+  };
 }
 
 /**
@@ -835,6 +842,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
         ref: { kind: "field", slot: fieldSlot(bindingSlot(op.target.name)) },
         type: kindOf(op.value, inner),
         elements: "unknown",
+        present: false,
         mutable: true,
         pos: op.target.pos,
       };

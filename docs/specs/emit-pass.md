@@ -43,10 +43,24 @@ row's claim. On a row with two or more it is dispatched at runtime:
 ```js
 $.x.length
 // → {$switch:{branches:[
-//      {case:{$in:[{$type:"$x"},["array"]]},then:{$size:{$ifNull:["$x",[]]}}},
+//      {case:{$in:[{$type:"$x"},["array"]]},then:{$size:"$x"}},
 //      {case:{$in:[{$type:"$x"},["string","null","missing"]]},then:{$strLenCP:{$ifNull:["$x",""]}}}],
 //    default:"$$REMOVE"}}
 ```
+
+**A guard only where the value may be missing.** Every array operator answers null
+for a missing input and `$size`, `$in` and a `$map` input abort on null (measured),
+so a cell that feeds one of them guards its receiver with `$ifNull` — unless the
+receiver is PRESENT (`ExprIn.present`): proven from the source by `isPresent`
+(`emit/types.ts` — a literal, the root document, a `$lookup`'s array or a `let` of a
+present value through the binding's `present`, a `neverNull` row over present
+operands, an optional chain that reads a missing receiver as the family's empty
+value), or proven at runtime by the `$type` test of the dispatch branch the cell runs
+under (a branch that admits `null`/`missing` through `alsoTypes` proves nothing).
+Above, the array branch counts `$x` bare and the string branch still guards. The
+`neverNull` fact is stated per row: `.map`, `.filter`, `.slice`, `Object.keys` answer
+null only for a null input; `.find` (a missing element), `.max` (of an empty array)
+and `.match` (`$regexFind` with no match) do not state it.
 
 The branches are the field families that hold a rule, in the row's order; the
 guard is `$type` against the family's BSON types widened by the rule's

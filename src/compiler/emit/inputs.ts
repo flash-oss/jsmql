@@ -35,7 +35,7 @@ import {
   streamHandleAfterReplace,
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
-import { elementKindOf, kindOf } from "./types.ts";
+import { elementKindOf, isPresent, kindOf } from "./types.ts";
 import type { Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
@@ -188,6 +188,7 @@ function reducerCallback(
       ref: { kind: "var", ref: reduceVar("value") },
       type: accType,
       elements: "unknown",
+      present: false,
       mutable: false,
       pos: cb.pos,
     });
@@ -202,6 +203,7 @@ function reducerCallback(
         ref: { kind: "var", ref: reduceVar("this") },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos,
       });
@@ -260,6 +262,8 @@ export function exprInputs(
   overrides: ReadonlyMap<Expr, unknown> = new Map(),
   /** The receiver as WRITTEN, where a callback needs the kind of one of its elements. */
   recvNode?: Expr,
+  /** Is the receiver certainly there — proven from the source, or by the `$type` test of a runtime dispatch? */
+  present = false,
 ): ExprIn {
   const argEnv = childEnv(env, node, "args");
   const value = (e: Expr): unknown => (overrides.has(e) ? overrides.get(e) : read.value(e, argEnv));
@@ -269,6 +273,7 @@ export function exprInputs(
     args,
     keys,
     value,
+    present,
     kind: (e) => kindOf(e, argEnv),
     truth: (e) => read.truth(e, argEnv),
     iteratee: (cb) => callback(cb, argEnv, read.value),
@@ -394,6 +399,7 @@ export function filterInputs(
           ref: { kind: "document", path: "" },
           type: "unknown",
           elements: "unknown",
+          present: false,
           mutable: false,
           pos: cb.pos,
         });
@@ -422,6 +428,7 @@ export function filterInputs(
           ref: { kind: "document", path: "" },
           type: "unknown",
           elements: "unknown",
+          present: false,
           mutable: false,
           pos: cb.pos,
         });
@@ -483,6 +490,7 @@ export function stageInputs(
         ref: { kind: "document", path: env.chain.element },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos,
       });
@@ -496,6 +504,7 @@ export function stageInputs(
         },
         type: "unknown",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos,
       });
@@ -518,6 +527,7 @@ export function stageInputs(
               },
         type: "stream",
         elements: "unknown",
+        present: false,
         mutable: false,
         pos: cb.pos,
       });

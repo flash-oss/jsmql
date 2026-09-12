@@ -12,6 +12,7 @@
 
 import type { Expr, Kind, Returns } from "../../registry/vocabulary.ts";
 import type { FieldFamily } from "../../registry/vocabulary.ts";
+import type { CallArg } from "../../registry/ast.ts";
 import type { Env } from "./env.ts";
 import { namedRow } from "../passes/naming.ts";
 import {
@@ -19,6 +20,7 @@ import {
   constructedFamilyOf,
   isCallable,
   namespaceNames,
+  neverNullOf,
   productionForOperator,
   returnsOf,
   soleFieldFamilyOf,
@@ -30,6 +32,62 @@ import { isMqlShaped } from "../passes/inject.ts";
 export type Known = Kind | "unknown";
 
 const NAMESPACES = namespaceNames();
+
+/**
+ * Is the value `node` reads certainly THERE — never null, never missing?
+ *
+ * A literal is; the root document is (`Object.keys($)`); a binding says whether
+ * it is (a `$lookup`'s array, a `let` of a present value); a call is when its row
+ * states `neverNull` and its receiver and every argument that is a value are —
+ * `$map` over an array that is there is an array that is there. A field path never
+ * is: the document may lack it, and every array operator answers null for a
+ * missing input. MEASURED: `{ $size: null }` and `{ $in: [x, null] }` abort the
+ * command, so a cell guards with `$ifNull` exactly where this answers false.
+ */
+export function isPresent(node: Expr, env: Env): boolean {
+  switch (node.type) {
+    case "NumberLiteral":
+    case "BigIntLiteral":
+    case "StringLiteral":
+    case "TemplateLiteral":
+    case "BooleanLiteral":
+    case "ObjectIdLiteral":
+    case "ArrayLiteral":
+      return true;
+    case "ObjectLiteral":
+      // a raw `{ $op: … }` is the operator's answer, which may be null
+      return namedRow(node) === null;
+    case "Injected":
+      return node.value !== null && node.value !== undefined && !isMqlShaped(node.value);
+    case "FieldRef":
+      return node.path === "";
+    case "Ident":
+      return env.scope.has(node.name) && env.lookup(node.name, node.pos).present;
+    case "MethodCall": {
+      const name = namedRow(node) ?? node.name;
+      if (!neverNullOf(name)) return false;
+      // A namespace (`Object.keys(o)`) is not a value; its arguments carry the answer.
+      // An optional chain (`$.a?.map(f)`) reads a missing receiver as the family's
+      // empty value, which is there — where the row names the one family that has one.
+      const receiver =
+        node.object.type === "Ident" && !env.scope.has(node.object.name) && NAMESPACES.has(node.object.name)
+          ? true
+          : (node.optional && soleFieldFamilyOf(name) !== null) || isPresent(node.object, env);
+      return receiver && node.args.every((a) => argPresent(a, env));
+    }
+    case "OperatorCall":
+      return neverNullOf(node.name) && node.args.every((a) => argPresent(a, env));
+    default:
+      return false;
+  }
+}
+
+/** An argument as written: a callback is not a value and says nothing; a spread is its list; a value must be present. */
+function argPresent(a: CallArg, env: Env): boolean {
+  if (a.type === "SpreadElement") return isPresent(a.argument, env);
+  if (a.type === "Lambda") return true;
+  return isPresent(a, env);
+}
 
 /** The field family a kind is, or null for a kind no field family covers (bool, objectId, …). */
 export function familyOfKind(k: Known): FieldFamily | null {

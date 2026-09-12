@@ -312,6 +312,8 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
     ref: { kind: "field", slot },
     type: l.yields,
     elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
+    // The server always writes the `as` array; a `.find` may find nothing.
+    present: l.one !== "find",
     mutable: false,
     pos: l.pos,
   });

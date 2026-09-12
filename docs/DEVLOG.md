@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(emit): `$size`, `$in` and a callback's input are guarded only where the array may be missing
+
+`.length` wrapped every array receiver in `$ifNull: [..., []]`, `$lookup` results
+and type-tested fields included, while `.size()` wrapped none — so
+`$.a.map(x => x).size()` aborted the command on a document without `a`
+(measured: "The argument to $size must be an array, but was of type: null") where
+`.length` answered 0. Both were wrong in one direction each. MongoDB's array
+operators answer null for a missing input, and `$size`, `$in` and a `$map` input
+abort on null, so the guard is load-bearing exactly when the receiver may be
+missing and noise otherwise.
+
+The emitter now knows when a value is PRESENT (`ExprIn.present`, decided by
+`isPresent` in [types.ts](src/compiler/emit/types.ts)): a literal, the root document
+(`Object.keys($)`), a `$lookup`'s array or a `let` of a present value (the binding's
+new `present` flag), `$range(…)` of numbers, an optional chain that read a missing
+receiver as `[]`, and any chain of rows that state the new `neverNull` fact (`.map`,
+`.filter`, `.slice`, `Object.keys`, … — a row that can answer null for an input that
+is there, such as `.find`, `.max` or `.match`, does not state it) over present
+operands. Inside a runtime family dispatch the branch's `$type` test proves the
+receiver too, unless the branch admits `null`/`missing` (`alsoTypes`). `.length`,
+`.size()`, `.includes()`, `.some()` and `.every()` read the flag: `$.a.length` in
+its array branch is `{ $size: "$a" }`, `$$$.orders.filter(…).map(o => o.total).length`
+is `$size` over the bare `$map`, and `$.a.map(x => x).size()` is guarded like
+`.length` always was. Measured live: the missing-field chains answer 0 / false, the
+joins answer the same documents as before.
+
 ## 2026-09-12 — feat(join): `.length` after `.flatMap` counts the joined documents directly
 
 `$.n = $$$.orders.flatMap("items").length` picked every line out of the joined

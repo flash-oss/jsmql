@@ -126,6 +126,7 @@ describe("compiler/emit/names — I2: a read resolves in scope or is the develop
       ref: { kind: "var", ref: "$$v__5fid" },
       type: "number",
       elements: "unknown",
+      present: false,
       mutable: false,
       pos: 4,
     });
@@ -136,6 +137,8 @@ describe("compiler/emit/names — I2: a read resolves in scope or is the develop
     const scope = Scope.root([]).declare("$", {
       ref: { kind: "document", path: "" },
       type: "object",
+      elements: "unknown",
+      present: true,
       mutable: false,
       pos: 0,
     });

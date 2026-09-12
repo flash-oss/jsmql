@@ -2221,7 +2221,7 @@ describe("string methods", () => {
     expect(jsmql.expr('$.email.includes("@")')).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $in: ["@", { $ifNull: ["$email", []] }] } },
+          { case: { $in: [{ $type: "$email" }, ["array"]] }, then: { $in: ["@", "$email"] } },
           { case: { $in: [{ $type: "$email" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$email", "@"] }, 0] } },
         ],
         default: "$$REMOVE",
@@ -2263,7 +2263,7 @@ describe("string methods", () => {
     expect(jsmql.expr("$.items.length")).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
+          { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
           {
             case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] },
             then: { $strLenCP: { $ifNull: ["$items", ""] } },
@@ -2901,7 +2901,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
       idx: { $indexOfArray: ["$__jsmql.var.a", "b"] },
       sl: { $slice: ["$__jsmql.var.a", 2] },
       cc: { $concatArrays: ["$__jsmql.var.a", ["z"]] },
-      sz: { $size: "$__jsmql.var.a" },
+      sz: { $size: { $ifNull: ["$__jsmql.var.a", []] } },
       len: { $size: { $ifNull: ["$__jsmql.var.a", []] } },
       str: {
         $let: {
@@ -2999,7 +2999,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const lk = "$$$.users.filter(u => u._id === $._id)";
     expect(setOfLast(`$.u = ${lk}.at(0);`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
     expect(setOfLast(`$.u = ${lk}[0];`)).toEqual({ u: { $arrayElemAt: ["$__jsmql.tmp.0", 0] } });
-    expect(setOfLast(`$.b = ${lk}.includes(1);`)).toEqual({ b: { $in: [1, { $ifNull: ["$__jsmql.tmp.0", []] }] } });
+    expect(setOfLast(`$.b = ${lk}.includes(1);`)).toEqual({ b: { $in: [1, "$__jsmql.tmp.0"] } });
     expect(setOfLast(`$.s = ${lk}.size();`)).toEqual({ s: { $size: "$__jsmql.tmp.0" } });
     expect(setOfLast(`$.i = ${lk}.indexOf(1);`)).toEqual({ i: { $indexOfArray: ["$__jsmql.tmp.0", 1] } });
     // A COLLAPSING terminal overwrites the slot with the single object it unwrapped,
@@ -3013,7 +3013,7 @@ describe("binding-typed receiver dispatch (a `const` of provable type)", () => {
     const p = jsmql.pipeline(
       `const orders = $$$.orders.filter(o => o.userId === $._id); $set({ any: orders.includes(1) });`,
     );
-    expect(setOf(p, 1)).toEqual({ any: { $in: [1, { $ifNull: ["$__jsmql.var.orders", []] }] } });
+    expect(setOf(p, 1)).toEqual({ any: { $in: [1, "$__jsmql.var.orders"] } });
   });
 
   it("the chain type-check reads binding types too", () => {
@@ -3082,10 +3082,7 @@ describe("$lookup.let correlation vars inherit the outer binding's type", () => 
           $expr: {
             $switch: {
               branches: [
-                {
-                  case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] },
-                  then: { $in: ["$pid", { $ifNull: ["$$jsmql_v0_ids", []] }] },
-                },
+                { case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["array"]] }, then: { $in: ["$pid", "$$jsmql_v0_ids"] } },
                 {
                   case: { $in: [{ $type: "$$jsmql_v0_ids" }, ["string"]] },
                   then: { $gte: [{ $indexOfCP: ["$$jsmql_v0_ids", "$pid"] }, 0] },
@@ -7388,7 +7385,7 @@ describe("array .includes()", () => {
     expect(jsmql.expr("$.field.includes($.x)")).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$field" }, ["array"]] }, then: { $in: ["$x", { $ifNull: ["$field", []] }] } },
+          { case: { $in: [{ $type: "$field" }, ["array"]] }, then: { $in: ["$x", "$field"] } },
           { case: { $in: [{ $type: "$field" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$field", "$x"] }, 0] } },
         ],
         default: "$$REMOVE",
@@ -7482,10 +7479,7 @@ describe("optional chaining (?.)", () => {
   });
   it("spread inside .includes() keeps every operand guarded", () => {
     expect(jsmql.expr("[...$.moderators, ...$.room?.mods, 'root'].includes($.userId)")).toEqual({
-      $in: [
-        "$userId",
-        { $ifNull: [{ $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }, []] },
-      ],
+      $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }],
     });
   });
   it("non-optional spread is unchanged", () => {
@@ -7548,7 +7542,7 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.tags?.includes('vip')")).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["vip", { $ifNull: ["$tags", []] }] } },
+          { case: { $in: [{ $type: "$tags" }, ["array"]] }, then: { $in: ["vip", "$tags"] } },
           { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "vip"] }, 0] } },
         ],
         default: "$$REMOVE",
@@ -7580,7 +7574,7 @@ describe("optional chaining (?.)", () => {
     expect(jsmql.expr("$.user?.tags.length")).toEqual({
       $switch: {
         branches: [
-          { case: { $in: [{ $type: "$user.tags" }, ["array"]] }, then: { $size: { $ifNull: ["$user.tags", []] } } },
+          { case: { $in: [{ $type: "$user.tags" }, ["array"]] }, then: { $size: "$user.tags" } },
           {
             case: { $in: [{ $type: "$user.tags" }, ["string", "null", "missing"]] },
             then: { $strLenCP: { $ifNull: ["$user.tags", ""] } },
@@ -7878,6 +7872,114 @@ describe(".join", () => {
         "",
       ],
     });
+  });
+});
+
+describe("a $size / $in / callback input is guarded only where the array may be missing", () => {
+  // MEASURED on mongod: every array operator answers null for a missing field, and
+  // `{ $size: null }`, `{ $in: [x, null] }` and a null `$map` input abort the command.
+  it("a field that may be missing is guarded, through any chain of array methods", () => {
+    expect(jsmql.expr("$.a.map(x => x + 1).length")).toEqual({
+      $size: { $ifNull: [{ $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } }, []] },
+    });
+    expect(jsmql.expr("$.a.map(x => x).size()")).toEqual({
+      $size: { $ifNull: [{ $map: { input: "$a", as: "x", in: "$$x" } }, []] },
+    });
+    expect(jsmql.expr("$.a.map(x => x).includes(3)")).toEqual({
+      $in: [3, { $ifNull: [{ $map: { input: "$a", as: "x", in: "$$x" } }, []] }],
+    });
+    expect(jsmql.expr("$.a.filter(x => x > 1).some(x => x > 2)")).toEqual({
+      $anyElementTrue: {
+        $map: {
+          input: { $ifNull: [{ $filter: { input: "$a", as: "x", cond: { $gt: ["$$x", 1] } } }, []] },
+          as: "x",
+          in: { $gt: ["$$x", 2] },
+        },
+      },
+    });
+    // an argument that may be missing makes the whole chain uncertain
+    expect(jsmql.expr("[1, 2].concat($.b).length")).toEqual({
+      $size: { $ifNull: [{ $concatArrays: [[1, 2], "$b"] }, []] },
+    });
+    expect(jsmql.expr("$range(0, $.n).length")).toEqual({ $size: { $ifNull: [{ $range: [0, "$n"] }, []] } });
+    expect(jsmql.expr("Object.keys($.o).length")).toEqual({
+      $size: { $ifNull: [{ $map: { input: { $objectToArray: "$o" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } }, []] },
+    });
+  });
+
+  it("a value that is certainly there is counted, searched and iterated as it is", () => {
+    expect(jsmql.expr("Object.keys($).length")).toEqual({
+      $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+    });
+    expect(jsmql.expr("Object.keys($).some(k => k === 'a')")).toEqual({
+      $anyElementTrue: {
+        $map: {
+          input: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } },
+          as: "k",
+          in: { $eq: ["$$k", "a"] },
+        },
+      },
+    });
+    expect(jsmql.expr("$range(0, 5).length")).toEqual({ $size: { $range: [0, 5] } });
+    expect(jsmql.expr("[$.a, $.b].length")).toEqual({ $size: [["$a", "$b"]] });
+    // an optional chain reads a missing receiver as [] — which is there
+    expect(jsmql.expr("$.a?.map(x => x + 1).length")).toEqual({
+      $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } },
+    });
+    // a `let` of a present value is present; of a field's chain it is not
+    expect(jsmql("const ks = Object.keys($); $.n = ks.length;")).toEqual([
+      {
+        $set: { "__jsmql.var.ks": { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } },
+      },
+      { $set: { n: { $size: "$__jsmql.var.ks" } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("const xs = $.a.map(x => x); $.n = xs.length;")).toEqual([
+      { $set: { "__jsmql.var.xs": { $map: { input: "$a", as: "x", in: "$$x" } } } },
+      { $set: { n: { $size: { $ifNull: ["$__jsmql.var.xs", []] } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("the $type test of a runtime dispatch proves the array branch, and the string branch still admits a missing value", () => {
+    expect(jsmql.expr("$.a.length")).toEqual({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $size: "$a" } },
+          {
+            case: { $in: [{ $type: "$a" }, ["string", "null", "missing"]] },
+            then: { $strLenCP: { $ifNull: ["$a", ""] } },
+          },
+        ],
+        default: "$$REMOVE",
+      },
+    });
+    expect(jsmql.expr("$.a.includes(3)")).toEqual({
+      $switch: {
+        branches: [
+          { case: { $in: [{ $type: "$a" }, ["array"]] }, then: { $in: [3, "$a"] } },
+          { case: { $in: [{ $type: "$a" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$a", 3] }, 0] } },
+        ],
+        default: "$$REMOVE",
+      },
+    });
+  });
+
+  it("a $lookup always writes its array, so a count or a search over it needs no guard", () => {
+    expect(jsmql("$.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).length;")).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+      { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("$.has = $$$.orders.filter({ userId: $._id }).some(o => o.total > 5);")).toEqual([
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+      {
+        $set: {
+          has: { $anyElementTrue: { $map: { input: "$__jsmql.tmp.0", as: "o", in: { $gt: ["$$o.total", 5] } } } },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
   });
 });
 

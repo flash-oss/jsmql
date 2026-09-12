@@ -1689,9 +1689,25 @@ $.docs.flatMap(d => d.tags)// $reduce over $map of the lambda
 ```js
 $.tags.includes("active")
 // → { $switch: { branches: [
-//       { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["active", { $ifNull: ["$tags", []] }] } },
+//       { case: { $in: [{ $type: "$tags" }, ["array"]] },  then: { $in: ["active", "$tags"] } },
 //       { case: { $in: [{ $type: "$tags" }, ["string"]] }, then: { $gte: [{ $indexOfCP: ["$tags", "active"] }, 0] } }
 //     ], default: "$$REMOVE" } }
+```
+
+**A missing array is guarded, an array that is there is not.** MongoDB's array operators answer `null` when their input field is missing, and `$size` / `$in` / a `$map` input then abort the whole query. So `.length`, `.size()`, `.includes()`, `.some()` and `.every()` wrap a receiver that *may* be missing in `$ifNull: [..., []]` — a missing array then reads as empty (`0`, `false`), as `_.size(undefined)` does — and leave alone a receiver that is certainly there: a literal, `$range(...)`, the keys of the root document, a `$lookup` result (`$$$.<coll>…`), a field the `$type` test above already proved, an optional chain, and any `.map` / `.filter` / `.slice` / … over one of those:
+
+```js
+$.a.map(x => x + 1).length        // `a` may be missing → $map answers null → guarded
+// → { $size: { $ifNull: [{ $map: { input: "$a", as: "x", in: { $add: ["$$x", 1] } } }, []] } }
+
+Object.keys($).length             // the root document is always there
+// → { $size: { $map: { input: { $objectToArray: "$$ROOT" }, as: "jsmqlKv", in: "$$jsmqlKv.k" } } }
+
+$.a?.map(x => x + 1).length       // `?.` reads a missing `a` as [] — there
+// → { $size: { $map: { input: { $ifNull: ["$a", []] }, as: "x", in: { $add: ["$$x", 1] } } } }
+
+$.n = $$$.orders.filter({ userId: $._id }).map(o => o.total).length;   // a $lookup always writes its array
+// → …, { $set: { n: { $size: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } } }, …
 ```
 
 If you know the type at design time and want compact output, bind the value to a `const` with a type-revealing initialiser, hint by chaining a type-fixing method first (`$.tags.toLowerCase().includes(...)` pins a string — `.slice()` does not pin an array, being an either-type method itself), or use the explicit `$in`/`$indexOfArray`/`$concatArrays` operator forms.

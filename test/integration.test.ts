@@ -823,6 +823,21 @@ $$ = candidateProductIds
   // `.length` after `.flatMap` in a join counts the joined documents themselves
   // (one per line) — no pick of the lines first. The long spelling that does pick
   // them agrees, and so does the sum of the per-order line counts.
+  // A missing array field reads as empty under `.length`, `.size()`, `.includes()`
+  // and `.some()`, through any chain of array methods — `_.size(undefined)` is 0 —
+  // where an unguarded `$size` / `$in` / `$map` input would abort the command. The
+  // guard goes only where the array is certainly there: here, the root's keys.
+  it("expr: a missing array field counts as empty through a chain; a present one is counted bare", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+$ = { n: $.noSuchField.map(x => x).length, s: $.noSuchField.map(x => x).size(),
+      has: $.noSuchField.map(x => x).includes(1), any: $.noSuchField.filter(x => x).some(x => x),
+      keys: Object.keys($).length > 3 };`,
+    );
+    expect(rows).toEqual([{ n: 0, s: 0, has: false, any: false, keys: true }]);
+  });
+
   it("pipeline: .length after .flatMap counts one joined document per line", async () => {
     const rows = await aggregate(
       "users",

@@ -47,7 +47,7 @@ import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
 import { cond, letOne, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
-import { familyOfKind, kindOf, sourceFamily } from "./types.ts";
+import { familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
 import { mongoVarName, type Located, type MongoVar } from "./names.ts";
 import { injectedNeedsLiteral } from "./env.ts";
 import { isMqlShaped } from "../passes/inject.ts";
@@ -596,8 +596,13 @@ function dispatchOn(
       receiver.kind === "value" || receiver.kind === "opaque"
         ? withOptional(receiver.lowered, receiver, optional || chainHasOptional(recvNode), name)
         : null;
+    // A receiver is there when the source says so — or when an optional chain read
+    // a missing one as the family's empty value, which is there too.
+    const present =
+      (receiver.kind === "value" || receiver.kind === "opaque") &&
+      (isPresent(recvNode, recvEnv) || recv !== receiver.lowered);
     return sel.rule.emit(
-      exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode),
+      exprInputs(name, recv, exprArgs, positionalKeysOf(name), env, node, READ, undefined, recvNode, present),
     );
   }
   if (sel.kind === "dispatch") {
@@ -657,7 +662,12 @@ function runDispatch(
   const bodyEnv = bound === null ? env : bound.env;
   const run = (rule: Extract<Selected, { kind: "dispatch" }>["branches"][number]["rule"]) => {
     checkSlots(name, rule.args, args);
-    return rule.emit(exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ));
+    // The branch's `$type` test proved the receiver's family — and that it is there,
+    // unless the branch admits a null or a missing value too (`alsoTypes`).
+    const present = !(rule.alsoTypes ?? []).some((t) => t === "null" || t === "missing");
+    return rule.emit(
+      exprInputs(name, ref, args, positionalKeysOf(name), bodyEnv, node, READ, undefined, undefined, present),
+    );
   };
   const branches = sel.branches.map((b) => ({ case: truthOf(b.guard(ref), true), then: run(b.rule) }));
   const otherwise = sel.otherwise;
@@ -745,6 +755,7 @@ function applyLambda(
       ref: { kind: "dropped", message: E.recursiveFunction(fnName, pos).message, replaced: false },
       type: "unknown",
       elements: "unknown",
+      present: false,
       mutable: false,
       pos,
     });

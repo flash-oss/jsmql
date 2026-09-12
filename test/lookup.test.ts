@@ -304,7 +304,7 @@ describe("$$$.coll.find/filter — chained terminals", () => {
     const out = jsmql("let n = $$$.orders.filter(o => o.userId === $._id).length;");
     expect(out).toEqual([
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-      { $set: { "__jsmql.var.n": { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { "__jsmql.var.n": { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -539,7 +539,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
           from: "a",
           pipeline: [
             { $lookup: { from: "b", localField: "x", foreignField: "x", as: "__jsmql.tmp.0" } },
-            { $match: { $expr: { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 0] } } },
+            { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
             { $unset: "__jsmql" },
           ],
           as: "x",
@@ -604,12 +604,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             { $lookup: { from: "tags", localField: "_id", foreignField: "postId", as: "__jsmql.tmp.0" } },
             {
               $match: {
-                $expr: {
-                  $and: [
-                    { $eq: ["$userId", "$$jsmql_f0__id"] },
-                    { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 0] },
-                  ],
-                },
+                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] }] },
               },
             },
             { $unset: "__jsmql" },
@@ -660,7 +655,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
                 as: "__jsmql.tmp.0",
               },
             },
-            { $match: { $expr: { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 0] } } },
+            { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
             { $unset: "__jsmql" },
           ],
           as: "x",
@@ -704,7 +699,7 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
           from: "users",
           pipeline: [
             { $lookup: { from: "orders", localField: "_id", foreignField: "uid", as: "__jsmql.tmp.0" } },
-            { $match: { $expr: { $gt: [{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }, 0] } } },
+            { $match: { $expr: { $gt: [{ $size: "$__jsmql.tmp.0" }, 0] } } },
             { $sort: { name: 1 } },
             { $unset: "__jsmql" },
           ],
@@ -932,8 +927,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           as: "__jsmql.tmp.0",
         },
       },
-      // one joined document per line, so the count of the lines is the count of the documents
-      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
     expect(jsmql('$.n = $$$.orders.flatMap("items").size();')).toEqual([
@@ -948,16 +942,11 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
         $set: {
           n: {
             $size: {
-              $ifNull: [
-                {
-                  $map: {
-                    input: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } },
-                    as: "i",
-                    in: "$$i.qty",
-                  },
-                },
-                [],
-              ],
+              $map: {
+                input: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } },
+                as: "i",
+                in: "$$i.qty",
+              },
             },
           },
         },
@@ -1034,7 +1023,7 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           as: "__jsmql.tmp.0",
         },
       },
-      { $set: { count: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { count: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1372,7 +1361,7 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
           as: "__jsmql.tmp.0",
         },
       },
-      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
   });
@@ -1607,7 +1596,7 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
           as: "__jsmql.tmp.0",
         },
       },
-      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
       { $unset: "__jsmql" },
     ]);
     expect(

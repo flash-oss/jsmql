@@ -1401,10 +1401,7 @@ $.customer.region.trim().toLowerCase() === "us"
               {
                 $switch: {
                   branches: [
-                    {
-                      case: { $in: [{ $type: "$cart.items" }, ["array"]] },
-                      then: { $size: { $ifNull: ["$cart.items", []] } },
-                    },
+                    { case: { $in: [{ $type: "$cart.items" }, ["array"]] }, then: { $size: "$cart.items" } },
                     {
                       case: { $in: [{ $type: "$cart.items" }, ["string", "null", "missing"]] },
                       then: { $strLenCP: { $ifNull: ["$cart.items", ""] } },
@@ -2077,12 +2074,7 @@ $.file.size <= 25_000_000
 describe("chat moderation with ?. inside an array spread", { features: ["Optional chaining"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.chatRooms.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room?.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: {
-        $in: [
-          "$userId",
-          { $ifNull: [{ $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }, []] },
-        ],
-      },
+      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", { $ifNull: ["$room.mods", []] }, ["root"]] }] },
     });
   });
 });
@@ -2160,7 +2152,7 @@ $dateToString({ date: $.createdAt, format: "%Y-%m-%d" }) ??
 describe("moderator membership check via [...a, ...b]", { features: ["Array spread"] }, () => {
   it("compiles to the expected MQL", { kind: "filter", usage: "db.threads.find(jsmql(...))" }, () => {
     expect(jsmql(`[...$.moderators, ...$.room.mods, "root"].includes($.userId)`)).toEqual({
-      $expr: { $in: ["$userId", { $ifNull: [{ $concatArrays: ["$moderators", "$room.mods", ["root"]] }, []] }] },
+      $expr: { $in: ["$userId", { $concatArrays: ["$moderators", "$room.mods", ["root"]] }] },
     });
   });
 });
@@ -2490,7 +2482,7 @@ $project({ name: 1, recentOrders: 1, nOrders });
         },
       },
       { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
-      { $set: { "__jsmql.var.nOrders": { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $set: { "__jsmql.var.nOrders": { $size: "$__jsmql.tmp.0" } } },
       { $project: { name: 1, recentOrders: 1, nOrders: "$__jsmql.var.nOrders" } },
       { $unset: "__jsmql" },
     ]);
@@ -3480,7 +3472,7 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {
-                totalShipments: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } },
+                totalShipments: { $size: "$__jsmql.tmp.0" },
                 totalOrders: "$__jsmql.length",
                 totalUsers: "$$jsmql_s0_length",
               },
@@ -3525,7 +3517,7 @@ $.recentCoPurchaseOrders = $$$.orders
                     branches: [
                       {
                         case: { $in: [{ $type: "$productIds" }, ["array"]] },
-                        then: { $in: ["$$jsmql_f0__id", { $ifNull: ["$productIds", []] }] },
+                        then: { $in: ["$$jsmql_f0__id", "$productIds"] },
                       },
                       {
                         case: { $in: [{ $type: "$productIds" }, ["string"]] },

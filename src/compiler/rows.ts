@@ -494,6 +494,11 @@ export function mergesIntoOf(name: string): boolean {
   return (row(name) as { mergesInto?: true } | undefined)?.mergesInto === true;
 }
 
+/** Does the value cell answer null only for a null or missing input — never for an input that is there? */
+export function neverNullOf(name: string): boolean {
+  return (row(name) as { neverNull?: true } | undefined)?.neverNull === true;
+}
+
 /** Do the stream cell's stages give every document back as it arrived — `.uniq()`'s `$group` + `$replaceWith`? */
 export function restoresDocumentsOf(name: string): boolean {
   return (row(name) as { restoresDocuments?: true } | undefined)?.restoresDocuments === true;
