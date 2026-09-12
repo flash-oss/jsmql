@@ -20,7 +20,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { jsmql } from "../src/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClient } from "./fixtures/live.ts";
 
 // ── the method vocabulary, by input→output shape ─────────────────────────────
 
@@ -202,17 +202,16 @@ for (const r of STREAM_LOOKUP_RESHAPERS) {
 }
 
 // ── optional mongod runtime check ────────────────────────────────────────────
-const MONGO = SCRATCH_URI;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any -- the driver types aren't imported unless MONGO is set
 let mainColl: any = null;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 let client: any = null;
 
 beforeAll(async () => {
-  const { MongoClient } = await import("mongodb");
-  client = new MongoClient(MONGO, { serverSelectionTimeoutMS: 2500 });
-  try {
-    await client.connect();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  client = await liveClient(2500);
+  if (client !== null) {
     const db = client.db("jsmql_permutations");
     await db.dropDatabase();
     const t = db.collection("t");
@@ -282,8 +281,6 @@ beforeAll(async () => {
       { _id: 13, userId: 2, total: 5, placedAt: 3 },
     ]);
     mainColl = t;
-  } catch {
-    mainColl = null; // mongod unreachable → compile-only
   }
 });
 afterAll(async () => {

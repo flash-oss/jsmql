@@ -12,7 +12,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClient } from "./fixtures/live.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -587,23 +587,19 @@ let client: MongoClient | null = null;
 let coll: Collection | null = null;
 
 beforeAll(async () => {
-  try {
-    const c = new MongoClient(SCRATCH_URI, { serverSelectionTimeoutMS: 800 });
-    await c.connect();
-    await c.db("admin").command({ ping: 1 });
-    client = c;
-    coll = c.db("jsmql_compiler_statement").collection("t");
-    await coll.deleteMany({});
-    await coll.insertMany([
-      // `a.b` and `k` hold documents: a reshape to a field that is not one is
-      // refused by the server, and two asserted reshapes read them.
-      { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1, deep: { v: 1 } }, items: [1, 2] },
-      { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2, deep: { v: 2 } }, items: [] },
-    ]);
-  } catch {
-    client = null;
-    coll = null;
-  }
+  client = await liveClient();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  if (client === null) return;
+  const c = client;
+  coll = c.db("jsmql_compiler_statement").collection("t");
+  await coll.deleteMany({});
+  await coll.insertMany([
+    // `a.b` and `k` hold documents: a reshape to a field that is not one is
+    // refused by the server, and two asserted reshapes read them.
+    { _id: 1, a: 2, b: 4, qty: 3, price: 5, sub: { k: 1, deep: { v: 1 } }, items: [1, 2] },
+    { _id: 2, a: 9, b: 1, qty: 1, price: 2, sub: { k: 2, deep: { v: 2 } }, items: [] },
+  ]);
 });
 
 afterAll(async () => {

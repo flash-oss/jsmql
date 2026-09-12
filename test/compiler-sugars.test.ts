@@ -14,9 +14,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
-
-const URI = SCRATCH_URI;
+import { liveClient } from "./fixtures/live.ts";
 
 const MAIN = [
   { _id: 1, a: 1, tag: "t1", xs: [3, 1, 2] },
@@ -281,19 +279,15 @@ let client: MongoClient | null = null;
 let db: Db | null = null;
 
 beforeAll(async () => {
-  try {
-    const c = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
-    await c.connect();
-    await c.db("admin").command({ ping: 1 });
-    client = c;
-    db = c.db("jsmql_compiler_sugars");
-    await db.dropDatabase();
-    await db.collection("main").insertMany(MAIN.map((d) => ({ ...d })));
-    await db.collection("archive").insertMany(ARCHIVE.map((d) => ({ ...d })));
-  } catch {
-    client = null;
-    db = null;
-  }
+  client = await liveClient();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  if (client === null) return;
+  const c = client;
+  db = c.db("jsmql_compiler_sugars");
+  await db.dropDatabase();
+  await db.collection("main").insertMany(MAIN.map((d) => ({ ...d })));
+  await db.collection("archive").insertMany(ARCHIVE.map((d) => ({ ...d })));
 });
 
 afterAll(async () => {

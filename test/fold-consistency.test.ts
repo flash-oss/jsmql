@@ -16,25 +16,11 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { announceSkip, liveClient } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
-
-async function tryConnect(): Promise<MongoClient | null> {
-  try {
-    const { MongoClient } = await import("mongodb");
-    const client = new MongoClient(URI, { serverSelectionTimeoutMS: 1500 });
-    await client.connect();
-    await client.db("jsmql_fold_check").command({ ping: 1 });
-    return client;
-  } catch {
-    return null;
-  }
-}
-
-const client = await tryConnect();
+const client = await liveClient();
 if (!client) {
-  console.warn("\n[fold-consistency] no local mongod reachable — skipping. Start one to exercise the HR3 fold gate.\n");
+  announceSkip("fold-consistency");
 }
 
 // Each case: a receiver LITERAL (as jsmql source), the same value as a seed doc

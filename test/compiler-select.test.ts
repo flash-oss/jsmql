@@ -12,22 +12,9 @@ import { guardFor, select, shapeOf, type Receiver } from "../src/compiler/emit/s
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { NAMES } from "../src/registry/names.ts";
 import type { FieldFamily } from "../src/registry/vocabulary.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-const up = await reachable();
+const up = await liveUp();
 
 /** The arguments of a parsed call `f(…)`. */
 const argsOf = (src: string): readonly never[] => (parseExpression(src) as { args: readonly never[] }).args;
@@ -171,8 +158,7 @@ describe("compiler/emit/select — the table audits", () => {
 
 describe.skipIf(!up)("compiler/emit/select — the guards, measured on mongod", () => {
   it("is true exactly for the types each family covers, missing included", async () => {
-    const client = new MongoClient(URI);
-    await client.connect();
+    const client = await liveClientNow();
     try {
       const coll = client.db("jsmql_select").collection("t");
       await coll.deleteMany({});

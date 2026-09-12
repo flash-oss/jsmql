@@ -21,25 +21,11 @@ import type { Db, MongoClient } from "mongodb";
 import { jsmql } from "../src/index.ts";
 import { valueMethodNames } from "../src/compiler/rows.ts";
 import { streamMethodNames } from "../src/compiler/rows.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { announceSkip, liveClient } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
-
-async function tryConnect(): Promise<MongoClient | null> {
-  try {
-    const { MongoClient } = await import("mongodb");
-    const client = new MongoClient(URI, { serverSelectionTimeoutMS: 1500 });
-    await client.connect();
-    await client.db("jsmql_parity").command({ ping: 1 });
-    return client;
-  } catch {
-    return null;
-  }
-}
-
-const client = await tryConnect();
+const client = await liveClient();
 if (!client) {
-  console.warn("\n[parity] no local mongod reachable — skipping. Start one to exercise the value/stream gate.\n");
+  announceSkip("parity");
 }
 const db: Db | null = client ? client.db("jsmql_parity") : null;
 

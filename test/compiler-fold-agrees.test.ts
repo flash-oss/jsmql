@@ -18,23 +18,11 @@ import { jsmql } from "../src/index.ts";
 import { parseExpression } from "../src/compiler/parse/parser.ts";
 import { evaluate } from "../src/compiler/passes/evaluate.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const URI = SCRATCH_URI;
 
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-
-const up = await reachable();
+const up = await liveUp();
 if (!up) {
   console.warn(
     `\n[fold] no mongod on ${URI} — skipping the fold-agrees-with-the-server suite.` +
@@ -271,8 +259,7 @@ describe.skipIf(!up)("compiler/passes/fold — the value it computes is the valu
   let run: (src: string) => Promise<unknown>;
 
   beforeAll(async () => {
-    client = new MongoClient(URI);
-    await client.connect();
+    client = await liveClientNow();
     const coll = client.db("jsmql_fold_agrees").collection("probe");
     await coll.deleteMany({});
     await coll.insertOne({ _id: 1 });

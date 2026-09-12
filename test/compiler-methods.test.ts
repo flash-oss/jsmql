@@ -13,9 +13,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { expr } from "../src/compiler/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
-
-const URI = SCRATCH_URI;
+import { liveClient } from "./fixtures/live.ts";
 
 /** One document, every field a method below reads. */
 const DOC = {
@@ -668,18 +666,14 @@ let client: MongoClient | null = null;
 let coll: Collection | null = null;
 
 beforeAll(async () => {
-  try {
-    const c = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
-    await c.connect();
-    await c.db("admin").command({ ping: 1 });
-    client = c;
-    coll = c.db("jsmql_compiler_methods").collection("t");
-    await coll.deleteMany({});
-    await coll.insertOne({ ...DOC });
-  } catch {
-    client = null;
-    coll = null;
-  }
+  client = await liveClient();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  if (client === null) return;
+  const c = client;
+  coll = c.db("jsmql_compiler_methods").collection("t");
+  await coll.deleteMany({});
+  await coll.insertOne({ ...DOC });
 });
 
 afterAll(async () => {

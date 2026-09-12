@@ -16,9 +16,7 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection, type Db } from "mongodb";
 import { expr, pipeline } from "../src/compiler/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
-
-const URI = SCRATCH_URI;
+import { liveClient } from "./fixtures/live.ts";
 
 const USERS = [
   { _id: 1, tag: "x", ids: [101, 103], minTotal: 6 },
@@ -522,23 +520,18 @@ let db: Db | null = null;
 let coll: Collection | null = null;
 
 beforeAll(async () => {
-  try {
-    const c = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
-    await c.connect();
-    await c.db("admin").command({ ping: 1 });
-    client = c;
-    db = c.db("jsmql_compiler_join");
-    await db.dropDatabase();
-    await db.collection("users").insertMany(USERS.map((d) => ({ ...d })));
-    await db.collection("orders").insertMany(ORDERS.map((d) => ({ ...d })));
-    await db.collection("items").insertMany(ITEMS.map((d) => ({ ...d })));
-    await db.collection("order-log").insertMany([{ _id: 9, userId: 1 }]);
-    coll = db.collection("users");
-  } catch {
-    client = null;
-    db = null;
-    coll = null;
-  }
+  client = await liveClient();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  if (client === null) return;
+  const c = client;
+  db = c.db("jsmql_compiler_join");
+  await db.dropDatabase();
+  await db.collection("users").insertMany(USERS.map((d) => ({ ...d })));
+  await db.collection("orders").insertMany(ORDERS.map((d) => ({ ...d })));
+  await db.collection("items").insertMany(ITEMS.map((d) => ({ ...d })));
+  await db.collection("order-log").insertMany([{ _id: 9, userId: 1 }]);
+  coll = db.collection("users");
 });
 
 afterAll(async () => {

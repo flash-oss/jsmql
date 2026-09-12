@@ -11,23 +11,9 @@ import { describe, expect, it } from "vitest";
 import { MongoClient } from "mongodb";
 import { SYSTEM_VARS, Scope, fieldSlot, mongoVarName, scratchSlot, systemRef } from "../src/compiler/emit/names.ts";
 import { UnknownIdentifierError } from "../src/errors.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
-
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-const up = await reachable();
+const up = await liveUp();
 
 /** MEASURED on mongod: a lowercase ASCII lead, then `[A-Za-z0-9_]`. See names.ts. */
 const SERVER_GRAMMAR = /^[a-z][A-Za-z0-9_]*$/;
@@ -71,8 +57,7 @@ describe("compiler/emit/names — I3: every name written is one the server accep
   });
 
   it.skipIf(!up)("is accepted by mongod as a `$let` variable, for the hostile spellings", async () => {
-    const client = new MongoClient(URI);
-    await client.connect();
+    const client = await liveClientNow();
     try {
       const coll = client.db("jsmql_names").collection("t");
       await coll.deleteMany({});

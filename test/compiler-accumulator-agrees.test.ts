@@ -17,23 +17,11 @@ import { MongoClient } from "mongodb";
 import { NAMES } from "../src/registry/names.ts";
 import { accumulated } from "../src/registry/vocabulary.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const URI = SCRATCH_URI;
 
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-
-const up = await reachable();
+const up = await liveUp();
 if (!up) {
   console.warn(
     `\n[accumulator] no mongod on ${URI} — skipping the accumulator-slot suite.` +
@@ -91,8 +79,7 @@ describe.skipIf(!up)("registry — every accumulator cell renders a shape mongod
   let client: MongoClient;
 
   beforeAll(async () => {
-    client = new MongoClient(URI);
-    await client.connect();
+    client = await liveClientNow();
     coll = client.db("jsmql_accumulator_agrees").collection("t");
     await coll.deleteMany({});
     await coll.insertMany([

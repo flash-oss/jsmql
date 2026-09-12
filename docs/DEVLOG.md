@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix: a live suite can no longer report green while its server half never ran
+
+Every suite that runs jsmql's MQL on a real server wraps its setup so an unreachable
+instance SKIPS rather than fails — `npm test` has to stay green for a contributor who
+has not run `npm run fixture:up`. The wrapper was a bare `catch`, and it swallowed far
+more than that: a wrong password, a missing grant, a refused command all landed in the
+same place, the suite ran its compile-only half, and the run reported GREEN.
+
+This is not a hypothetical. Four suites sat in that state — `readWrite` alone cannot
+drop a database, and four of them drop theirs first — each reporting green while the
+half that catches what a `toEqual` cannot had stopped running.
+
+One question now decides it, in one place. `test/fixtures/live.ts` returns null when
+the driver could not reach a server AT ALL, and throws on everything else. MEASURED
+against the instance: a dead port answers `MongoServerSelectionError`
+(`connect ECONNREFUSED`), a wrong password answers `MongoServerError` code 18, and a
+missing grant answers `MongoServerError` "not authorized" — only the first is a reason
+to skip. Every live suite now connects through `liveClient()` / `liveUp()` /
+`liveClientNow()` and does its own setup outside any try/catch, so a failed drop or
+insert fails the suite. The per-suite `reachable()` and `tryConnect()` copies are gone.
+
+Proven both ways before it was trusted. With one grant revoked, `compiler-join` fails
+with `not authorized … dropDatabase` and names the line; with the instance stopped, it
+and its neighbours skip green as they should.
+
+`test/live-suites.test.ts` keeps the shape: it fails when a suite builds its own
+`MongoClient`, keeps its own reachability probe, or nulls a client inside a `catch` —
+the three ways the hole reopens.
+
+---
+
 ## 2026-09-12 — fix!: the project connects to one mongod, on :27018, and to nothing else
 
 The developer's own mongod holds their real work — payment services, monitoring,

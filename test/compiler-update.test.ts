@@ -7,9 +7,8 @@
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { update } from "../src/compiler/index.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClient } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
 const DOC = {
   _id: 1,
   a: 1,
@@ -115,14 +114,11 @@ describe("compiler/emit/update — writes become their operators", () => {
 let client: MongoClient | null = null;
 let coll: Collection | null = null;
 beforeAll(async () => {
-  try {
-    client = new MongoClient(URI, { serverSelectionTimeoutMS: 800 });
-    await client.connect();
-    coll = client.db("jsmql_compiler_update").collection("docs");
-  } catch {
-    client = null;
-    coll = null;
-  }
+  client = await liveClient();
+  // Null means the instance is not running, and only that: liveClient throws on any
+  // other refusal rather than letting this suite skip itself green.
+  if (client === null) return;
+  coll = client.db("jsmql_compiler_update").collection("docs");
 });
 afterAll(async () => {
   await client?.close();

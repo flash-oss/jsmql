@@ -20,23 +20,11 @@ import { Binary, BSONRegExp, Decimal128, Double, Int32, Long, MongoClient, Objec
 import { NAMES } from "../src/registry/names.ts";
 import type { Position } from "../src/registry/vocabulary.ts";
 import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
 const URI = SCRATCH_URI;
 
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-
-const up = await reachable();
+const up = await liveUp();
 if (!up) {
   console.warn(
     `\n[returns] no mongod on ${URI} — skipping the returns-agree-with-the-server suite.` +
@@ -352,8 +340,7 @@ describe.skipIf(!up)("registry — every `returns` agrees with mongod", () => {
   const specs = loadSpecs();
 
   beforeAll(async () => {
-    const client = new MongoClient(URI);
-    await client.connect();
+    const client = await liveClientNow();
     coll = client.db("jsmql_returns_agrees").collection("t");
     await coll.deleteMany({});
     // Two documents with DISTINCT sort keys: a window function refuses a

@@ -40,11 +40,25 @@ Spawns `node src/cli.ts` directly (native type-stripping, no build step) and ass
 
 ### Suites that talk to a server must say whether they did
 
-Every suite that constructs a `MongoClient` self-skips (green) when no mongod is reachable, so `npm test` stays green without one — `grep -a -l MongoClient test/*.test.ts` is the live list. That design has a failure mode: a suite that silently degrades to compile-only looks exactly like a suite that passed.
+A live suite may report green for exactly ONE reason: the instance is not running, so `npm test` stays green for a contributor who has not run `npm run fixture:up`. Anything else — a wrong password, a missing grant, a refused command — must turn it RED.
 
-Each therefore carries a **coverage guard** that states which happened. `permutations.test.ts` asserts every generated chain reached the server, or that none did. `fold-consistency.test.ts` asserts that at least 90% of its cases actually compared a fold against a server value, because a case that early-returns asserts nothing. When you add a suite that self-skips, add the matching guard — and check it has teeth by tightening it until it fails.
+That distinction lives in **[`test/fixtures/live.ts`](fixtures/live.ts)** and nowhere else. `liveClient()` returns null when the driver could not reach a server at all, and THROWS on every other failure; `liveUp()` answers the same question for a `describe.skipIf(!up)`; `liveClientNow()` is the non-null form for code already inside such a block. Connect through them, then do the suite's own setup OUTSIDE any try/catch:
 
-**Never gate a server half behind an unset environment variable.** A suite that reaches the server only when someone remembers to export a variable is compile-only in every normal run, and the half that catches server rejections is the half that finds real bugs. Default to a local URI and self-skip instead.
+```ts
+beforeAll(async () => {
+  client = await liveClient();
+  if (client === null) return;
+  const db = client.db("jsmql_my_suite");   // a name listed in SCRATCH_DBS
+  await db.dropDatabase();                  // a failure here FAILS the suite
+  await db.collection("t").insertMany(DOCS);
+});
+```
+
+Why it matters, measured: four suites reported green for weeks while their server half never ran, because `readWrite` alone cannot drop a database and each one swallowed the refusal as "no server". [`test/live-suites.test.ts`](live-suites.test.ts) keeps that shut — it fails when a suite builds its own `MongoClient`, keeps its own reachability probe, or nulls a client inside a `catch`.
+
+On top of that, state how much of the server half ran. `permutations.test.ts` asserts every generated chain reached the server, or that none did. `fold-consistency.test.ts` asserts at least 90% of its cases compared a fold against a server value, because a case that early-returns asserts nothing. Several `compiler-*` suites carry a `ran each one, or none` case. Add the matching guard with a new suite — and check it has teeth by tightening it until it fails.
+
+**Never gate a server half behind an environment variable.** A suite that reaches the server only when someone remembers to export one is compile-only in every normal run, and the half that catches server rejections is the half that finds real bugs. There is one URI, in `test/fixtures/config.ts`, and no override.
 
 
 

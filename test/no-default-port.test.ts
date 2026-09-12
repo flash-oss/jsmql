@@ -97,19 +97,15 @@ describe("the default mongod port is never used", () => {
  */
 describe("the scratch identity holds what a live suite needs", () => {
   it("has readWrite, dbAdmin and indexStats on every scratch database", async () => {
-    const { MongoClient } = await import("mongodb");
-    const { SCRATCH_URI, SCRATCH_DBS } = await import("./fixtures/config.ts");
-    let client: InstanceType<typeof MongoClient> | null = null;
+    const { SCRATCH_DBS } = await import("./fixtures/config.ts");
+    const { liveClient } = await import("./fixtures/live.ts");
+    const client = await liveClient();
+    if (client === null) return; // the instance is down — `npm run fixture:up` starts it
     let status: Record<string, unknown>;
     try {
-      client = new MongoClient(SCRATCH_URI, { serverSelectionTimeoutMS: 1500 });
-      await client.connect();
       status = await client.db("admin").command({ connectionStatus: 1, showPrivileges: true });
-    } catch {
-      await client?.close().catch(() => {});
-      return; // the instance is down — `npm run fixture:up` starts it
     } finally {
-      await client?.close().catch(() => {});
+      await client.close().catch(() => {});
     }
     const info = (status.authInfo ?? {}) as {
       authenticatedUserRoles?: { role: string; db: string }[];

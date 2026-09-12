@@ -9,22 +9,9 @@ import { MongoClient } from "mongodb";
 import { and, asValue, jsTruthy, not, or, truthOf } from "../src/compiler/emit/mode.ts";
 import { cond, filter, letOne, matchExpr, switchOn } from "../src/compiler/emit/mql.ts";
 import type { MongoVar } from "../src/compiler/emit/names.ts";
-import { SCRATCH_URI } from "./fixtures/config.ts";
+import { liveClientNow, liveUp } from "./fixtures/live.ts";
 
-const URI = SCRATCH_URI;
-async function reachable(): Promise<boolean> {
-  const probe = new MongoClient(URI, { serverSelectionTimeoutMS: 700 });
-  try {
-    await probe.connect();
-    await probe.db("admin").command({ ping: 1 });
-    return true;
-  } catch {
-    return false;
-  } finally {
-    await probe.close().catch(() => {});
-  }
-}
-const up = await reachable();
+const up = await liveUp();
 
 const JS_TRUTHY = {
   $and: [{ $ne: [{ $ifNull: ["$a", null] }, null] }, { $ne: ["$a", false] }, { $ne: ["$a", ""] }, { $ne: ["$a", 0] }],
@@ -68,8 +55,7 @@ describe("compiler/emit/mql — the slots that read a condition", () => {
 
 describe.skipIf(!up)("compiler/emit/mode — the truth table, measured", () => {
   it("agrees with JavaScript's Boolean(v) for every value class but NaN", async () => {
-    const client = new MongoClient(URI);
-    await client.connect();
+    const client = await liveClientNow();
     try {
       const coll = client.db("jsmql_mode").collection("t");
       await coll.deleteMany({});
