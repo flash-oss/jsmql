@@ -21006,19 +21006,27 @@ function reads(v, name2) {
 function takePair(vars, pipeline) {
   const whole = { pair: null, let: vars, pipeline };
   if (vars === null || pipeline.length === 0) return whole;
-  const match = pipeline[0].$match;
-  if (match === void 0 || Object.keys(match).length !== 1) return whole;
-  const eq = match.$expr?.$eq;
-  if (!Array.isArray(eq) || eq.length !== 2) return whole;
-  for (const [name2, read] of Object.entries(vars)) {
-    const localField = fieldPath2(read);
-    if (localField === null) continue;
-    const variable = `$$${name2}`;
-    const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
-    if (foreignField === null) continue;
-    const rest = pipeline.slice(1);
-    const kept = Object.fromEntries(Object.entries(vars).filter(([n2]) => n2 !== name2 || reads(rest, n2)));
-    return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+  const { $expr, ...query } = pipeline[0].$match ?? {};
+  if ($expr === void 0) return whole;
+  const and2 = $expr.$and;
+  const conjuncts = Array.isArray(and2) ? and2 : [$expr];
+  for (const [i, conjunct] of conjuncts.entries()) {
+    const eq = conjunct.$eq;
+    if (!Array.isArray(eq) || eq.length !== 2) continue;
+    for (const [name2, read] of Object.entries(vars)) {
+      const localField = fieldPath2(read);
+      if (localField === null) continue;
+      const variable = `$$${name2}`;
+      const foreignField = fieldPath2(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+      if (foreignField === null) continue;
+      const others = conjuncts.filter((_, j) => j !== i);
+      const match = { ...query };
+      if (others.length === 1) match.$expr = others[0];
+      else if (others.length > 1) match.$expr = { $and: others };
+      const rest = [...Object.keys(match).length > 0 ? [{ $match: match }] : [], ...pipeline.slice(1)];
+      const kept = Object.fromEntries(Object.entries(vars).filter(([n2]) => n2 !== name2 || reads(rest, n2)));
+      return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+    }
   }
   return whole;
 }
