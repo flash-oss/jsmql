@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs: the desugar spec describes the pass that exists
+
+`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
+mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
+`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
+whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
+and the sentence that explains why the spread pack skips a stream receiver was
+split across the seam, half of it stranded 200 lines below the other.
+
+Repairing the seam exposed the larger drift it had been hiding. The pass now
+carries eleven rules, and the spec described a table of twenty-four forms and five
+order constraints, of which one rule pair and one constraint were still real: the
+destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
+`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
+hand, and the prose describing them as desugar rules outlived them. The stranded
+tail was older still — it argued for a "lowering grid" whose spec was deleted with
+the compiler that had one.
+
+So the overview, the form table and the order constraints are rebuilt from `RULES`
+in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
+input→output pair in them is the compiler's own answer rather than a remembered
+one. The four accurate sections — position, the statement mutators, the iteratee
+shorthands, the driver — stand as they were. Two sections went: the exclusion-list
+constraint, which described a set the registry replaced, and "why a pass and not a
+hub", whose argument the overview already makes.
+
+---
+
 ## 2026-09-12 — docs(examples): the recommended-products join is spelled as one equality
 
 The flagship example (`test/realistic.test.ts`, "recommended products", and its
@@ -62,50 +90,6 @@ with JavaScript's answer, and asserts `explain("executionStats")` reports the
 index in `indexesUsed` with no collection scan. Specs: `docs/specs/emit-pass.md`
 § The join road, `docs/specs/lookup-stage.md`; user-facing: `docs/LANGUAGE.md`
 § Cross-collection lookups; the README headline example.
-
----
-
-## 2026-09-12 — fix(playground): the MQL panel keeps its scroll offset across edits
-
-Every keystroke in the query editor re-rendered the output panel with
-CodeMirror's `setValue`, which scrolls the panel back to the top. A reader who
-inspects a stage near the end of a long pipeline lost their place on each
-character they typed and had to scroll down again.
-
-The panel now writes through a small `setOutput` helper in
-`playground_skeleton.html`: it reads the scroll offset, sets the value, and
-restores the offset with `scrollTo`. `scrollTo` clamps, so when the new document
-is shorter the panel lands at its end rather than at a stale offset. Error text
-goes through the same helper, so an edit that passes through a transient syntax
-error and back to valid MQL returns the reader to the same region.
-
----
-
-## 2026-09-12 — docs: the desugar spec describes the pass that exists
-
-`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
-mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
-`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
-whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
-and the sentence that explains why the spread pack skips a stream receiver was
-split across the seam, half of it stranded 200 lines below the other.
-
-Repairing the seam exposed the larger drift it had been hiding. The pass now
-carries eleven rules, and the spec described a table of twenty-four forms and five
-order constraints, of which one rule pair and one constraint were still real: the
-destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
-`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
-hand, and the prose describing them as desugar rules outlived them. The stranded
-tail was older still — it argued for a "lowering grid" whose spec was deleted with
-the compiler that had one.
-
-So the overview, the form table and the order constraints are rebuilt from `RULES`
-in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
-input→output pair in them is the compiler's own answer rather than a remembered
-one. The four accurate sections — position, the statement mutators, the iteratee
-shorthands, the driver — stand as they were. Two sections went: the exclusion-list
-constraint, which described a set the registry replaced, and "why a pass and not a
-hub", whose argument the overview already makes.
 
 ---
 
@@ -298,6 +282,38 @@ first; `$indexStats` needs a privilege no built-in per-database role carries. Be
 the grants were widened, those suites reported green while their server half never
 ran. A green `npm test` is not evidence the server half ran — the scratch databases
 existing on `:27018` is.
+
+---
+
+## 2026-09-12 — fix(playground): an error render does not reset the MQL panel's scroll offset
+
+The scroll-offset restore read the offset of whatever the output panel held at
+write time. An error message is three lines long, so its offset is zero, and the
+next valid render restored that zero: a typo in a long pipeline sent the reader
+back to the top as soon as they fixed it.
+
+`setOutput` in `playground_skeleton.html` now keeps the offset of the last
+real MQL render. Message renders (an error, a variables error, an empty panel)
+pass `{ message: true }`: they neither record their own offset nor restore one,
+so the typo → error → fix round trip lands where the reader was. This
+supersedes the "error text goes through the same helper" note in the entry
+below.
+
+---
+
+## 2026-09-12 — fix(playground): the MQL panel keeps its scroll offset across edits
+
+Every keystroke in the query editor re-rendered the output panel with
+CodeMirror's `setValue`, which scrolls the panel back to the top. A reader who
+inspects a stage near the end of a long pipeline lost their place on each
+character they typed and had to scroll down again.
+
+The panel now writes through a small `setOutput` helper in
+`playground_skeleton.html`: it reads the scroll offset, sets the value, and
+restores the offset with `scrollTo`. `scrollTo` clamps, so when the new document
+is shorter the panel lands at its end rather than at a stale offset. Error text
+goes through the same helper, so an edit that passes through a transient syntax
+error and back to valid MQL returns the reader to the same region.
 
 ---
 

@@ -2207,11 +2207,21 @@
       // Write the output panel without losing its scroll offset. CodeMirror's
       // `setValue` jumps back to the top, which throws the reader off the
       // region they were inspecting on every keystroke in the query editor.
-      // `scrollTo` clamps, so a shorter document simply lands at its end.
-      function setOutput(text) {
-        const { left, top } = outputCm.getScrollInfo();
+      // The offset is the one of the last real MQL render: a message render
+      // (an error, an empty panel) is short, so its own offset clamps to zero
+      // and must not replace the remembered one. The typo → red error → fix
+      // round trip therefore lands back where the reader was. `scrollTo`
+      // clamps, so a shorter document simply lands at its end.
+      let mqlScroll = { left: 0, top: 0 };
+      let outputIsMql = false;
+      function setOutput(text, { message = false } = {}) {
+        if (outputIsMql) {
+          const { left, top } = outputCm.getScrollInfo();
+          mqlScroll = { left, top };
+        }
         outputCm.setValue(text);
-        outputCm.scrollTo(left, top);
+        outputIsMql = !message;
+        if (outputIsMql) outputCm.scrollTo(mqlScroll.left, mqlScroll.top);
       }
 
       function render() {
@@ -2237,7 +2247,7 @@
 
         if (src.trim() === "") {
           clearErrorMarker();
-          setOutput("");
+          setOutput("", { message: true });
           outputCm.setOption("mode", { name: "javascript" });
           outputPanel.classList.remove("error");
           // Empty editor is a fresh start — drop any sticky strict-shape
@@ -2258,7 +2268,7 @@
         if (vars.error) {
           clearErrorMarker();
           outputCm.setOption("mode", null);
-          setOutput("Variables error\n\n" + vars.error);
+          setOutput("Variables error\n\n" + vars.error, { message: true });
           outputPanel.classList.add("error");
           updateUsageBar();
           return;
@@ -2305,7 +2315,7 @@
               clearErrorMarker();
             }
             outputCm.setOption("mode", null);
-            setOutput(`${err.name || "Error"} at position ${Math.max(0, pos)}\n\n${err.message}`);
+            setOutput(`${err.name || "Error"} at position ${Math.max(0, pos)}\n\n${err.message}`, { message: true });
             outputPanel.classList.add("error");
             updateUsageBar();
             return;
@@ -2329,7 +2339,7 @@
           if (e.code === "SYNTAX_ERROR" && pos >= 0) highlightErrorAt(pos);
           else clearErrorMarker();
           outputCm.setOption("mode", null);
-          setOutput(`${e.code} at position ${Math.max(0, pos)}\n\n${e.message}`);
+          setOutput(`${e.code} at position ${Math.max(0, pos)}\n\n${e.message}`, { message: true });
           outputPanel.classList.add("error");
           updateUsageBar();
         }
