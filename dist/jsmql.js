@@ -7225,7 +7225,13 @@ var NAMES = {
     stream: {
       args: { sig: "callback", exact: 1 },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
-      emit: ({ args, fieldPath: fieldPath3 }) => [{ $unwind: fieldPath3(args[0]) }]
+      // Its elements are what the links after it work on — a later callback's
+      // parameter is the unwound field, and the documents keep their other fields.
+      emit: ({ args, fieldPath: fieldPath3, unwound }) => {
+        const path = fieldPath3(args[0]);
+        unwound(path.slice(1));
+        return [{ $unwind: path }];
+      }
     },
     statement: unsupported(
       "'.flatMap()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flatMap();'"
@@ -9147,6 +9153,7 @@ var NAMES = {
     window: unsupported("'.maxBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   uniq: name({
+    restoresDocuments: true,
     doc: "'.uniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9156,8 +9163,9 @@ var NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
-      emit: () => [
-        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+      // One document per distinct ELEMENT: the whole document, or the unwound field after `.flatMap`.
+      emit: ({ element: element2 }) => [
+        { $group: { _id: element2().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
         { $replaceWith: `$${GROUP_SLOT}` }
       ]
     },
@@ -9168,6 +9176,7 @@ var NAMES = {
     window: unsupported("'.uniq()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   uniqBy: name({
+    restoresDocuments: true,
     doc: "'.uniqBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9199,6 +9208,7 @@ var NAMES = {
     window: unsupported("'.uniqBy()' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
   sortedUniq: name({
+    restoresDocuments: true,
     doc: "'.sortedUniq()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9208,8 +9218,8 @@ var NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
-      emit: () => [
-        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+      emit: ({ element: element2 }) => [
+        { $group: { _id: element2().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
         { $replaceWith: `$${GROUP_SLOT}` }
       ]
     },
@@ -9222,6 +9232,7 @@ var NAMES = {
     )
   }),
   sortedUniqBy: name({
+    restoresDocuments: true,
     doc: "'.sortedUniqBy()' \u2014 see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -10143,7 +10154,7 @@ var NAMES = {
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
@@ -10156,7 +10167,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       // Last wins, as lodash's does; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" })
     },
@@ -10176,7 +10187,7 @@ var NAMES = {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
       // '_id' is the group key. The other two spellings are iteratees as usual.
-      stream: { 0: ["propertyPath", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
@@ -10197,7 +10208,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" })
     },
@@ -10216,7 +10227,7 @@ var NAMES = {
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] }
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] }
     },
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
@@ -10235,7 +10246,7 @@ var NAMES = {
       }
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 })
     },
     statement: unsupported(
@@ -10390,15 +10401,19 @@ var NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      // Keeps ONLY the named fields: `_id` goes too unless named, as lodash's does.
-      emit: ({ args, value }) => [
-        {
-          $project: Object.fromEntries([
-            ...value(args[0]).map((k) => [k, 1]),
-            ...value(args[0]).includes("_id") ? [] : [["_id", 0]]
-          ])
-        }
-      ]
+      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
+      emit: ({ args, value, element: element2 }) => {
+        const at2 = element2().path;
+        const keys = value(args[0]);
+        return [
+          {
+            $project: Object.fromEntries([
+              ...keys.map((k) => [at2 === "" ? k : `${at2}.${k}`, 1]),
+              ...keys.includes("_id") ? [] : [["_id", 0]]
+            ])
+          }
+        ];
+      }
     },
     statement: unsupported(
       "'.pick()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pick();'"
@@ -10430,7 +10445,13 @@ var NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      emit: ({ args, value }) => [{ $project: Object.fromEntries(value(args[0]).map((k) => [k, 0])) }]
+      // Drops the named fields of the ELEMENT.
+      emit: ({ args, value, element: element2 }) => {
+        const at2 = element2().path;
+        return [
+          { $project: Object.fromEntries(value(args[0]).map((k) => [at2 === "" ? k : `${at2}.${k}`, 0])) }
+        ];
+      }
     },
     statement: unsupported(
       "'.omit()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.omit();'"
@@ -14664,6 +14685,9 @@ function unionsOf(name2) {
 function mergesIntoOf(name2) {
   return row(name2)?.mergesInto === true;
 }
+function restoresDocumentsOf(name2) {
+  return row(name2)?.restoresDocuments === true;
+}
 function collapsesOf(name2) {
   return row(name2)?.collapses ?? null;
 }
@@ -14817,6 +14841,306 @@ var Cursor = class {
     this.at = to;
   }
 };
+
+// src/compiler/passes/naming.ts
+function staticKey(entry) {
+  const key = entry.key;
+  return key?.kind === "static" && typeof key.name === "string" ? key.name : null;
+}
+function namedRow(node) {
+  const n2 = node;
+  if (n2.type === "MethodCall" || n2.type === "OperatorCall") {
+    return typeof n2.name === "string" ? n2.name : null;
+  }
+  if (n2.type === "CallExpression") {
+    const callee = n2.callee;
+    return callee?.type === "Ident" && typeof callee.name === "string" ? callee.name : null;
+  }
+  if (n2.type === "ObjectLiteral") {
+    const entries = n2.entries;
+    if (entries?.length !== 1) return null;
+    const key = staticKey(entries[0]);
+    return key !== null && key.startsWith("$") ? key : null;
+  }
+  return null;
+}
+function chainBase(node) {
+  let cursor = node;
+  while ((cursor.type === "MethodCall" || cursor.type === "MemberAccess" || cursor.type === "IndexAccess") && typeof cursor.object === "object" && cursor.object !== null) {
+    cursor = cursor.object;
+  }
+  return cursor;
+}
+function isContextRef(node) {
+  const t = node.type;
+  return t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
+}
+function readsAContextRef(node) {
+  return isContextRef(chainBase(node));
+}
+function bindsFor(node, key) {
+  const n2 = node;
+  if (n2.type === "Lambda") return n2.params ?? [];
+  if (n2.type === "ExprBlock") return (n2.decls ?? []).map((d) => d.name);
+  if (n2.type === "Pipeline" && key === "stmts") return declaredIn(n2.stmts);
+  if (n2.type === "ArrayLiteral" && key === "elements") return declaredIn(n2.elements);
+  return [];
+}
+var declaredIn = (list) => (list ?? []).filter((s) => s?.type === "LetDecl" || s?.type === "FuncDecl").map((s) => s.name);
+function introducedNames(node) {
+  const n2 = node;
+  if (n2.type === "Lambda") return n2.params ?? [];
+  if ((n2.type === "LetDecl" || n2.type === "FuncDecl") && typeof n2.name === "string") return [n2.name];
+  return [];
+}
+function namesSomething(node, key) {
+  const n2 = node;
+  return (n2.type === "AssignExpr" || n2.type === "DeleteStmt") && key === "target" || (n2.type === "CallExpression" || n2.type === "NewExpression") && key === "callee";
+}
+function writtenField(node) {
+  const recv = node.object;
+  if (!isNode(recv)) return null;
+  if (recv.type === "Ident") return recv;
+  if (recv.type !== "FieldRef" || recv.path === "") return null;
+  return recv;
+}
+function couldWriteItsReceiver(node) {
+  const start = node.object;
+  if (!isNode(start)) return false;
+  let recv = start;
+  while ((recv.type === "MemberAccess" || recv.type === "IndexAccess") && isNode(recv.object)) {
+    recv = recv.object;
+  }
+  return writtenField({ object: recv }) !== null;
+}
+function isNode(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+}
+
+// src/compiler/passes/fresh.ts
+var isObj = (v) => typeof v === "object" && v !== null;
+function namesIn(node, out = /* @__PURE__ */ new Set()) {
+  if (Array.isArray(node)) {
+    for (const el of node) namesIn(el, out);
+    return out;
+  }
+  if (!isObj(node)) return out;
+  if (node.type === "Ident" && typeof node.name === "string") out.add(node.name);
+  for (const name2 of introducedNames(node)) out.add(name2);
+  for (const v of Object.values(node)) namesIn(v, out);
+  return out;
+}
+function freshParam(base, ...mentions) {
+  const taken = /* @__PURE__ */ new Set();
+  for (const m of mentions) namesIn(m, taken);
+  if (!taken.has(base)) return base;
+  for (let n2 = 2; ; n2++) {
+    const candidate = base + String(n2);
+    if (!taken.has(candidate)) return candidate;
+  }
+}
+
+// src/objectid.ts
+var BSON_MAJOR_VERSION = 7;
+var BSON_VERSION_SYMBOL = /* @__PURE__ */ Symbol.for("@@mdb.bson.version");
+var HEX24 = /^[0-9a-fA-F]{24}$/;
+var ObjectId = class {
+  constructor(hex) {
+    this._bsontype = "ObjectId";
+    if (!HEX24.test(hex)) {
+      throw new TypeError(`Invalid ObjectId hex string: ${JSON.stringify(hex)} (expected 24 hex characters)`);
+    }
+    const bytes = new Uint8Array(12);
+    for (let i = 0; i < 12; i++) {
+      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
+    }
+    this.buffer = bytes;
+  }
+  // bson 7.x rejects any value whose version symbol !== its BSON_MAJOR_VERSION.
+  get [BSON_VERSION_SYMBOL]() {
+    return BSON_MAJOR_VERSION;
+  }
+  // bson exposes `.id` as the raw 12-byte buffer; mirror it for any driver code
+  // that reads bytes directly rather than through `serializeInto`.
+  get id() {
+    return this.buffer;
+  }
+  toHexString() {
+    let out = "";
+    for (let i = 0; i < 12; i++) {
+      out += this.buffer[i].toString(16).padStart(2, "0");
+    }
+    return out;
+  }
+  toString() {
+    return this.toHexString();
+  }
+  // Extended JSON renders an ObjectId as its hex string; matching that keeps
+  // `JSON.stringify` output (e.g. from the CLI) readable, even though a JSON
+  // string can never round-trip back into a live BSON value.
+  toJSON() {
+    return this.toHexString();
+  }
+  equals(other) {
+    if (other === null || other === void 0) return false;
+    const o = other;
+    const hex = typeof o.toHexString === "function" ? o.toHexString() : typeof o.toString === "function" ? o.toString() : null;
+    return hex !== null && hex.toLowerCase() === this.toHexString();
+  }
+  getTimestamp() {
+    const seconds = this.buffer[0] * 2 ** 24 + this.buffer[1] * 2 ** 16 + this.buffer[2] * 2 ** 8 + this.buffer[3];
+    return new Date(seconds * 1e3);
+  }
+  serializeInto(uint8array, index) {
+    for (let i = 0; i < 12; i++) {
+      uint8array[index + i] = this.buffer[i];
+    }
+    return 12;
+  }
+};
+
+// src/compiler/passes/literal.ts
+var NOT_CONSTANT = { ok: false };
+var isBson = (v, tag) => typeof v === "object" && v !== null && v._bsontype === tag;
+function readLiteral(node) {
+  switch (node.type) {
+    case "NumberLiteral":
+      return { ok: true, value: node.value };
+    case "StringLiteral":
+      return { ok: true, value: node.value };
+    case "BooleanLiteral":
+      return { ok: true, value: node.value };
+    case "NullLiteral":
+      return { ok: true, value: null };
+    case "UndefinedLiteral":
+      return { ok: true, value: void 0 };
+    case "BigIntLiteral":
+      return { ok: true, value: BigInt(node.value) };
+    case "RegexLiteral":
+      return { ok: true, value: new RegExp(node.pattern, node.flags) };
+    case "ObjectIdLiteral":
+      return { ok: true, value: new ObjectId(node.hex) };
+    default:
+      return NOT_CONSTANT;
+  }
+}
+function isPlainObject(v) {
+  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
+  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
+  if (v._bsontype !== void 0) return false;
+  const proto = Object.getPrototypeOf(v);
+  return proto === Object.prototype || proto === null;
+}
+function asLiteral(value, pos) {
+  if (value === null) return { type: "NullLiteral", pos };
+  if (value === void 0) return null;
+  switch (typeof value) {
+    case "number":
+      return Number.isFinite(value) ? { type: "NumberLiteral", value, pos } : null;
+    case "string":
+      return { type: "StringLiteral", value, pos };
+    case "boolean":
+      return { type: "BooleanLiteral", value, pos };
+    case "bigint":
+      return { type: "BigIntLiteral", value: value.toString(), pos };
+  }
+  if (value instanceof RegExp) {
+    return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
+  }
+  if (isBson(value, "ObjectId")) {
+    const hex = objectIdHex(value);
+    if (hex === null) return null;
+    return { type: "ObjectIdLiteral", hex, pos };
+  }
+  if (Array.isArray(value)) {
+    const elements = [];
+    for (const element2 of value) {
+      const spelled3 = leafOf(element2, pos);
+      if (spelled3 === null) return null;
+      elements.push(spelled3);
+    }
+    return { type: "ArrayLiteral", elements, pos };
+  }
+  if (isPlainObject(value)) {
+    const entries = [];
+    for (const [name2, held] of Object.entries(value)) {
+      const spelled3 = leafOf(held, pos);
+      if (spelled3 === null) return null;
+      entries.push({ type: "KeyValueEntry", key: { kind: "static", name: name2 }, value: spelled3, pos });
+    }
+    return { type: "ObjectLiteral", entries, pos };
+  }
+  if (value instanceof Date) return { type: "Injected", value, pos };
+  return null;
+}
+function leafOf(value, pos) {
+  if (value === void 0) return null;
+  if (value instanceof RegExp) return { type: "Injected", value, pos };
+  const spelled3 = asLiteral(value, pos);
+  if (spelled3 !== null) return spelled3;
+  return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
+}
+function objectIdHex(value) {
+  const v = value;
+  if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
+  if (v.id instanceof Uint8Array && v.id.length === 12)
+    return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
+  if (typeof v.toString === "function") {
+    const s = v.toString();
+    if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
+  }
+  return null;
+}
+
+// src/compiler/passes/inject.ts
+function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
+  if (typeof value === "string") return value.length > 0 && value.charCodeAt(0) === 36;
+  if (value === null || typeof value !== "object") return false;
+  if (seen.has(value)) return false;
+  seen.add(value);
+  if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
+  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
+  for (const [k, v] of Object.entries(value)) {
+    if (k.startsWith("$") || isMqlShaped(v, seen)) return true;
+  }
+  return false;
+}
+function spellValue(value, pos) {
+  const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
+  if (literal2 !== null && literal2.type === "RegexLiteral" && value instanceof RegExp)
+    return { ...literal2, injected: value };
+  return literal2 ?? { type: "Injected", value, pos };
+}
+function inject(root2, values) {
+  if (values.size === 0) return root2;
+  const nodes = /* @__PURE__ */ new Map();
+  for (const [name2, value] of values) nodes.set(name2, spellValue(value, 0));
+  return replaceIdents(root2, nodes);
+}
+function replaceIdents(root2, nodes) {
+  if (nodes.size === 0) return root2;
+  const spell4 = (name2, pos) => {
+    const n2 = nodes.get(name2);
+    return n2.type === "Injected" ? { ...n2, pos } : n2;
+  };
+  const values = nodes;
+  const walk = (node, shadow) => {
+    if (Array.isArray(node)) return node.map((n3) => walk(n3, shadow));
+    if (node === null || typeof node !== "object") return node;
+    const n2 = node;
+    if (n2.type === "Ident" && typeof n2.name === "string" && values.has(n2.name) && !shadow.has(n2.name)) {
+      return spell4(n2.name, n2.pos ?? 0);
+    }
+    let inner = shadow;
+    if (n2.type === "Lambda" && Array.isArray(n2.params)) {
+      inner = /* @__PURE__ */ new Set([...shadow, ...n2.params]);
+    }
+    const out = {};
+    for (const [k, v] of Object.entries(n2)) out[k] = k === "type" || k === "params" ? v : walk(v, inner);
+    return out;
+  };
+  return walk(root2, /* @__PURE__ */ new Set());
+}
 
 // src/compiler/objectid-guard.ts
 var OBJECTID_MIN_HEX = "4a0000000000000000000000";
@@ -14979,6 +15303,13 @@ function targetSpelling(target) {
   if (target.type === "Ident") return target.name;
   if (target.type === "MemberAccess") return `${targetSpelling(target.object)}.${target.name}`;
   return "\u2026";
+}
+function notAPlainPattern(pos, wrote) {
+  const got = wrote === void 0 ? "" : ` ('${wrote}')`;
+  return new ParseError(
+    `A destructured parameter lists plain names only \u2014 '([id, count]) => \u2026', '({ sku, qty: n }) => \u2026'. A default value, a rest element, a nested pattern or a computed key${got} is not one of them at position ${pos}. Name the parameter and read its parts: 'x => x[0]', 'x => x.sku ?? 1', 'x => x.slice(1)'.`,
+    pos
+  );
 }
 var Parser = class _Parser {
   constructor(toks) {
@@ -15232,17 +15563,19 @@ var Parser = class _Parser {
     this.refuseGenerator();
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
-    const lambda = this.lambdaBody(params, kw.pos);
+    const lambda = this.lambdaOf(params, kw.pos);
     return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", pos: kw.pos };
   }
-  /** `(a, b,)` — a parenthesised parameter list, trailing comma allowed. */
+  /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
   paramList() {
     this.c.expect("LParen");
     const out = [];
     if (!this.c.eat("RParen")) {
       do {
         if (this.c.is("RParen")) break;
-        out.push(this.c.expect("Ident").text);
+        const p = this.param();
+        if (p === null) this.c.expect("Ident");
+        out.push(p);
       } while (this.c.eat("Comma"));
       this.c.expect("RParen");
     }
@@ -15257,7 +15590,7 @@ var Parser = class _Parser {
     this.refuseGenerator();
     if (this.c.is("Ident")) this.c.next();
     const params = this.paramList();
-    return this.lambdaBody(params, kw.pos);
+    return this.lambdaOf(params, kw.pos);
   }
   /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
   binding() {
@@ -15735,28 +16068,172 @@ var Parser = class _Parser {
     if (!this.c.is("RParen")) {
       do {
         if (this.c.is("RParen")) break;
-        if (!this.c.is("Ident")) {
+        const p = this.param();
+        if (p === null) {
           looksLikeParams = false;
           break;
         }
-        params.push(this.c.next().text);
+        params.push(p);
       } while (this.c.eat("Comma"));
     }
     if (looksLikeParams && this.c.eat("RParen") && this.c.is("Arrow")) {
       const arrow = this.c.next();
-      return this.lambdaBody(params, arrow.pos);
+      return this.lambdaOf(params, arrow.pos);
     }
     this.c.reset(save);
     this.c.expect("LParen");
     const inner = this.expression();
     this.c.expect("RParen");
     if (this.c.is("Arrow") && (inner.type === "ObjectLiteral" || inner.type === "ArrayLiteral")) {
-      throw new ParseError(
-        `Destructuring a parameter is not supported \u2014 name it and read its fields: 'x => x.a' at position ${inner.pos}`,
-        inner.pos
-      );
+      throw notAPlainPattern(inner.pos);
     }
     return inner;
+  }
+  /**
+   * One parameter as written: a plain name, or a destructuring pattern of plain
+   * names — `[id, count]`, `{ sku, qty: n }`. Null when the tokens are not a
+   * parameter at all (a number, a call), so the caller can rewind and read a
+   * parenthesised expression. A pattern with a default, a rest element, a nested
+   * pattern or a computed key is `refused`: the caller throws it once it knows an
+   * arrow follows, and rewinds otherwise — `([...a, b])` is a legal expression.
+   */
+  param() {
+    if (this.c.is("Ident")) return { kind: "name", name: this.c.next().text };
+    if (this.c.is("LBracket")) {
+      const open = this.c.next();
+      const parts = [];
+      let refused = null;
+      if (!this.c.eat("RBracket")) {
+        do {
+          if (this.c.is("RBracket")) break;
+          if (this.c.is("Comma")) {
+            parts.push(null);
+            continue;
+          }
+          const t = this.c.peek();
+          if (t.type !== "Ident") {
+            if (t.type !== "LBracket" && t.type !== "LBrace" && t.type !== "Spread") return null;
+            refused ??= notAPlainPattern(t.pos, t.text);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          this.c.next();
+          if (this.c.is("Eq")) {
+            refused ??= notAPlainPattern(t.pos, `${t.text} = \u2026`);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          parts.push({ key: String(parts.length), name: t.text, pos: t.pos });
+        } while (this.c.eat("Comma"));
+        if (!this.c.eat("RBracket")) return null;
+      }
+      if (refused !== null) return { kind: "refused", error: refused };
+      return { kind: "array", parts, pos: open.pos };
+    }
+    if (this.c.is("LBrace")) {
+      const open = this.c.next();
+      const parts = [];
+      let refused = null;
+      if (!this.c.eat("RBrace")) {
+        do {
+          if (this.c.is("RBrace")) break;
+          const t = this.c.peek();
+          if (t.type !== "Ident") {
+            if (t.type !== "LBracket" && t.type !== "Spread") return null;
+            refused ??= notAPlainPattern(t.pos, t.text);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          this.c.next();
+          let name2 = t.text;
+          if (this.c.eat("Colon")) {
+            if (!this.c.is("Ident")) {
+              const bad = this.c.peek();
+              if (bad.type !== "LBracket" && bad.type !== "LBrace") return null;
+              refused ??= notAPlainPattern(bad.pos, bad.text);
+              if (!this.skipPatternPart()) return null;
+              continue;
+            }
+            name2 = this.c.next().text;
+          }
+          if (this.c.is("Eq")) {
+            refused ??= notAPlainPattern(t.pos, `${t.text} = \u2026`);
+            if (!this.skipPatternPart()) return null;
+            continue;
+          }
+          parts.push({ key: t.text, name: name2, pos: t.pos });
+        } while (this.c.eat("Comma"));
+        if (!this.c.eat("RBrace")) return null;
+      }
+      if (refused !== null) return { kind: "refused", error: refused };
+      return { kind: "object", parts, pos: open.pos };
+    }
+    return null;
+  }
+  /**
+   * Skip to the end of one refused pattern part — past a default's expression, a
+   * rest element, a nested pattern — so the reader can tell whether an arrow
+   * follows the whole list. False when the tokens run out first.
+   */
+  skipPatternPart() {
+    let depth = 0;
+    for (; ; ) {
+      const t = this.c.peek();
+      if (t.type === "EOF") return false;
+      if (depth === 0 && (t.type === "Comma" || t.type === "RBracket" || t.type === "RBrace")) return true;
+      if (t.type === "LParen" || t.type === "LBracket" || t.type === "LBrace") depth++;
+      if (t.type === "RParen" || t.type === "RBracket" || t.type === "RBrace") depth--;
+      this.c.next();
+    }
+  }
+  /**
+   * The lambda a parameter list and its body make. A destructured parameter is
+   * one parameter under a fresh name, and each name it binds is that parameter's
+   * part wherever the body reads it — `([id, count]) => -count` IS `x => -x[1]`.
+   * The parts are substituted, never declared, so the body keeps its shape for
+   * every reader (a sort key sees the minus, a filter sees the comparison).
+   */
+  lambdaOf(params, pos) {
+    for (const p of params) if (p !== null && p.kind === "refused") throw p.error;
+    const named = params;
+    if (named.every((p) => p.kind === "name")) {
+      return this.lambdaBody(
+        named.map((p) => p.name),
+        pos
+      );
+    }
+    const plain = named.map((p) => p.kind === "name" ? p.name : "");
+    const parsed = this.lambdaBody(plain, pos);
+    const taken = [parsed, ...plain.filter((n2) => n2 !== "").map((n2) => ({ type: "Ident", name: n2 }))];
+    const names = [...plain];
+    const parts = /* @__PURE__ */ new Map();
+    named.forEach((p, i) => {
+      if (p.kind === "name") return;
+      const fresh = freshParam("x", ...taken);
+      taken.push({ type: "Ident", name: fresh });
+      names[i] = fresh;
+      for (const part of p.parts) {
+        if (part === null) continue;
+        const object = { type: "Ident", name: fresh, pos: part.pos };
+        parts.set(
+          part.name,
+          p.kind === "array" ? {
+            type: "IndexAccess",
+            object,
+            index: { type: "NumberLiteral", value: Number(part.key), pos: part.pos },
+            optional: false,
+            pos: part.pos
+          } : { type: "MemberAccess", object, name: part.key, optional: false, pos: part.pos }
+        );
+      }
+    });
+    const lambda = parsed.body !== void 0 ? { type: "Lambda", params: names, body: replaceIdents(parsed.body, parts), pos } : { type: "Lambda", params: names, stages: replaceIdents(parsed.stages, parts), pos };
+    const end = this.unclaimedStages.get(parsed);
+    if (end !== void 0) {
+      this.unclaimedStages.delete(parsed);
+      this.unclaimedStages.set(lambda, end);
+    }
+    return lambda;
   }
   /**
    * A lambda's body. A `{ … }` body is JavaScript — declarations then a `return`.
@@ -15888,158 +16365,6 @@ var Parser = class _Parser {
 };
 function bin(op, left, right) {
   return { type: "BinaryExpr", op: op.text, left, right, pos: op.pos };
-}
-
-// src/objectid.ts
-var BSON_MAJOR_VERSION = 7;
-var BSON_VERSION_SYMBOL = /* @__PURE__ */ Symbol.for("@@mdb.bson.version");
-var HEX24 = /^[0-9a-fA-F]{24}$/;
-var ObjectId = class {
-  constructor(hex) {
-    this._bsontype = "ObjectId";
-    if (!HEX24.test(hex)) {
-      throw new TypeError(`Invalid ObjectId hex string: ${JSON.stringify(hex)} (expected 24 hex characters)`);
-    }
-    const bytes = new Uint8Array(12);
-    for (let i = 0; i < 12; i++) {
-      bytes[i] = parseInt(hex.slice(i * 2, i * 2 + 2), 16);
-    }
-    this.buffer = bytes;
-  }
-  // bson 7.x rejects any value whose version symbol !== its BSON_MAJOR_VERSION.
-  get [BSON_VERSION_SYMBOL]() {
-    return BSON_MAJOR_VERSION;
-  }
-  // bson exposes `.id` as the raw 12-byte buffer; mirror it for any driver code
-  // that reads bytes directly rather than through `serializeInto`.
-  get id() {
-    return this.buffer;
-  }
-  toHexString() {
-    let out = "";
-    for (let i = 0; i < 12; i++) {
-      out += this.buffer[i].toString(16).padStart(2, "0");
-    }
-    return out;
-  }
-  toString() {
-    return this.toHexString();
-  }
-  // Extended JSON renders an ObjectId as its hex string; matching that keeps
-  // `JSON.stringify` output (e.g. from the CLI) readable, even though a JSON
-  // string can never round-trip back into a live BSON value.
-  toJSON() {
-    return this.toHexString();
-  }
-  equals(other) {
-    if (other === null || other === void 0) return false;
-    const o = other;
-    const hex = typeof o.toHexString === "function" ? o.toHexString() : typeof o.toString === "function" ? o.toString() : null;
-    return hex !== null && hex.toLowerCase() === this.toHexString();
-  }
-  getTimestamp() {
-    const seconds = this.buffer[0] * 2 ** 24 + this.buffer[1] * 2 ** 16 + this.buffer[2] * 2 ** 8 + this.buffer[3];
-    return new Date(seconds * 1e3);
-  }
-  serializeInto(uint8array, index) {
-    for (let i = 0; i < 12; i++) {
-      uint8array[index + i] = this.buffer[i];
-    }
-    return 12;
-  }
-};
-
-// src/compiler/passes/literal.ts
-var NOT_CONSTANT = { ok: false };
-var isBson = (v, tag) => typeof v === "object" && v !== null && v._bsontype === tag;
-function readLiteral(node) {
-  switch (node.type) {
-    case "NumberLiteral":
-      return { ok: true, value: node.value };
-    case "StringLiteral":
-      return { ok: true, value: node.value };
-    case "BooleanLiteral":
-      return { ok: true, value: node.value };
-    case "NullLiteral":
-      return { ok: true, value: null };
-    case "UndefinedLiteral":
-      return { ok: true, value: void 0 };
-    case "BigIntLiteral":
-      return { ok: true, value: BigInt(node.value) };
-    case "RegexLiteral":
-      return { ok: true, value: new RegExp(node.pattern, node.flags) };
-    case "ObjectIdLiteral":
-      return { ok: true, value: new ObjectId(node.hex) };
-    default:
-      return NOT_CONSTANT;
-  }
-}
-function isPlainObject(v) {
-  if (v === null || typeof v !== "object" || Array.isArray(v)) return false;
-  if (v instanceof Date || v instanceof RegExp || v instanceof Uint8Array) return false;
-  if (v._bsontype !== void 0) return false;
-  const proto = Object.getPrototypeOf(v);
-  return proto === Object.prototype || proto === null;
-}
-function asLiteral(value, pos) {
-  if (value === null) return { type: "NullLiteral", pos };
-  if (value === void 0) return null;
-  switch (typeof value) {
-    case "number":
-      return Number.isFinite(value) ? { type: "NumberLiteral", value, pos } : null;
-    case "string":
-      return { type: "StringLiteral", value, pos };
-    case "boolean":
-      return { type: "BooleanLiteral", value, pos };
-    case "bigint":
-      return { type: "BigIntLiteral", value: value.toString(), pos };
-  }
-  if (value instanceof RegExp) {
-    return { type: "RegexLiteral", pattern: value.source, flags: value.flags, pos };
-  }
-  if (isBson(value, "ObjectId")) {
-    const hex = objectIdHex(value);
-    if (hex === null) return null;
-    return { type: "ObjectIdLiteral", hex, pos };
-  }
-  if (Array.isArray(value)) {
-    const elements = [];
-    for (const element2 of value) {
-      const spelled3 = leafOf(element2, pos);
-      if (spelled3 === null) return null;
-      elements.push(spelled3);
-    }
-    return { type: "ArrayLiteral", elements, pos };
-  }
-  if (isPlainObject(value)) {
-    const entries = [];
-    for (const [name2, held] of Object.entries(value)) {
-      const spelled3 = leafOf(held, pos);
-      if (spelled3 === null) return null;
-      entries.push({ type: "KeyValueEntry", key: { kind: "static", name: name2 }, value: spelled3, pos });
-    }
-    return { type: "ObjectLiteral", entries, pos };
-  }
-  if (value instanceof Date) return { type: "Injected", value, pos };
-  return null;
-}
-function leafOf(value, pos) {
-  if (value === void 0) return null;
-  if (value instanceof RegExp) return { type: "Injected", value, pos };
-  const spelled3 = asLiteral(value, pos);
-  if (spelled3 !== null) return spelled3;
-  return Array.isArray(value) || isPlainObject(value) ? null : { type: "Injected", value, pos };
-}
-function objectIdHex(value) {
-  const v = value;
-  if (typeof v.toHexString === "function") return v.toHexString().toLowerCase();
-  if (v.id instanceof Uint8Array && v.id.length === 12)
-    return [...v.id].map((b) => b.toString(16).padStart(2, "0")).join("");
-  if (typeof v.toString === "function") {
-    const s = v.toString();
-    if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
-  }
-  return null;
 }
 
 // src/compiler/passes/fold-dates.ts
@@ -17098,56 +17423,6 @@ function arrayMethod(xs, name2, args) {
 }
 var NOT_A_KEY = /* @__PURE__ */ Symbol("value cannot be an object key");
 
-// src/compiler/passes/inject.ts
-function isMqlShaped(value, seen = /* @__PURE__ */ new WeakSet()) {
-  if (typeof value === "string") return value.length > 0 && value.charCodeAt(0) === 36;
-  if (value === null || typeof value !== "object") return false;
-  if (seen.has(value)) return false;
-  seen.add(value);
-  if (Array.isArray(value)) return value.some((v) => isMqlShaped(v, seen));
-  if (Object.getPrototypeOf(value) !== Object.prototype && Object.getPrototypeOf(value) !== null) return false;
-  for (const [k, v] of Object.entries(value)) {
-    if (k.startsWith("$") || isMqlShaped(v, seen)) return true;
-  }
-  return false;
-}
-function spellValue(value, pos) {
-  const literal2 = isMqlShaped(value) ? null : asLiteral(value, pos);
-  if (literal2 !== null && literal2.type === "RegexLiteral" && value instanceof RegExp)
-    return { ...literal2, injected: value };
-  return literal2 ?? { type: "Injected", value, pos };
-}
-function inject(root2, values) {
-  if (values.size === 0) return root2;
-  const nodes = /* @__PURE__ */ new Map();
-  for (const [name2, value] of values) nodes.set(name2, spellValue(value, 0));
-  return replaceIdents(root2, nodes);
-}
-function replaceIdents(root2, nodes) {
-  if (nodes.size === 0) return root2;
-  const spell4 = (name2, pos) => {
-    const n2 = nodes.get(name2);
-    return n2.type === "Injected" ? { ...n2, pos } : n2;
-  };
-  const values = nodes;
-  const walk = (node, shadow) => {
-    if (Array.isArray(node)) return node.map((n3) => walk(n3, shadow));
-    if (node === null || typeof node !== "object") return node;
-    const n2 = node;
-    if (n2.type === "Ident" && typeof n2.name === "string" && values.has(n2.name) && !shadow.has(n2.name)) {
-      return spell4(n2.name, n2.pos ?? 0);
-    }
-    let inner = shadow;
-    if (n2.type === "Lambda" && Array.isArray(n2.params)) {
-      inner = /* @__PURE__ */ new Set([...shadow, ...n2.params]);
-    }
-    const out = {};
-    for (const [k, v] of Object.entries(n2)) out[k] = k === "type" || k === "params" ? v : walk(v, inner);
-    return out;
-  };
-  return walk(root2, /* @__PURE__ */ new Set());
-}
-
 // src/compiler/passes/evaluate.ts
 var asDeclaredFunction = (lambda) => ({ lambda });
 var isDeclaredFunction = (v) => typeof v === "object" && v !== null && "lambda" in v && Object.keys(v).length === 1;
@@ -17624,81 +17899,6 @@ function at(node, env, depth) {
   }
 }
 
-// src/compiler/passes/naming.ts
-function staticKey(entry) {
-  const key = entry.key;
-  return key?.kind === "static" && typeof key.name === "string" ? key.name : null;
-}
-function namedRow(node) {
-  const n2 = node;
-  if (n2.type === "MethodCall" || n2.type === "OperatorCall") {
-    return typeof n2.name === "string" ? n2.name : null;
-  }
-  if (n2.type === "CallExpression") {
-    const callee = n2.callee;
-    return callee?.type === "Ident" && typeof callee.name === "string" ? callee.name : null;
-  }
-  if (n2.type === "ObjectLiteral") {
-    const entries = n2.entries;
-    if (entries?.length !== 1) return null;
-    const key = staticKey(entries[0]);
-    return key !== null && key.startsWith("$") ? key : null;
-  }
-  return null;
-}
-function chainBase(node) {
-  let cursor = node;
-  while ((cursor.type === "MethodCall" || cursor.type === "MemberAccess" || cursor.type === "IndexAccess") && typeof cursor.object === "object" && cursor.object !== null) {
-    cursor = cursor.object;
-  }
-  return cursor;
-}
-function isContextRef(node) {
-  const t = node.type;
-  return t === "CollectionRef" || t === "DatabaseRef" || t === "ClusterRef";
-}
-function readsAContextRef(node) {
-  return isContextRef(chainBase(node));
-}
-function bindsFor(node, key) {
-  const n2 = node;
-  if (n2.type === "Lambda") return n2.params ?? [];
-  if (n2.type === "ExprBlock") return (n2.decls ?? []).map((d) => d.name);
-  if (n2.type === "Pipeline" && key === "stmts") return declaredIn(n2.stmts);
-  if (n2.type === "ArrayLiteral" && key === "elements") return declaredIn(n2.elements);
-  return [];
-}
-var declaredIn = (list) => (list ?? []).filter((s) => s?.type === "LetDecl" || s?.type === "FuncDecl").map((s) => s.name);
-function introducedNames(node) {
-  const n2 = node;
-  if (n2.type === "Lambda") return n2.params ?? [];
-  if ((n2.type === "LetDecl" || n2.type === "FuncDecl") && typeof n2.name === "string") return [n2.name];
-  return [];
-}
-function namesSomething(node, key) {
-  const n2 = node;
-  return (n2.type === "AssignExpr" || n2.type === "DeleteStmt") && key === "target" || (n2.type === "CallExpression" || n2.type === "NewExpression") && key === "callee";
-}
-function writtenField(node) {
-  const recv = node.object;
-  if (!isNode(recv)) return null;
-  if (recv.type === "Ident") return recv;
-  if (recv.type !== "FieldRef" || recv.path === "") return null;
-  return recv;
-}
-function couldWriteItsReceiver(node) {
-  const start = node.object;
-  if (!isNode(start)) return false;
-  let recv = start;
-  while ((recv.type === "MemberAccess" || recv.type === "IndexAccess") && isNode(recv.object)) {
-    recv = recv.object;
-  }
-  return writtenField({ object: recv }) !== null;
-}
-function isNode(v) {
-  return typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-}
-
 // src/compiler/passes/position.ts
 var STATEMENT = { at: "statement" };
 var VALUE = { at: "value" };
@@ -18130,29 +18330,6 @@ var UnknownIdentifierError = class extends CodegenError {
 };
 function internalError(detail, pos = 0) {
   throw new CodegenError(`jsmql internal error (please report to the jsmql maintainers): ${detail}`, pos);
-}
-
-// src/compiler/passes/fresh.ts
-var isObj = (v) => typeof v === "object" && v !== null;
-function namesIn(node, out = /* @__PURE__ */ new Set()) {
-  if (Array.isArray(node)) {
-    for (const el of node) namesIn(el, out);
-    return out;
-  }
-  if (!isObj(node)) return out;
-  if (node.type === "Ident" && typeof node.name === "string") out.add(node.name);
-  for (const name2 of introducedNames(node)) out.add(name2);
-  for (const v of Object.values(node)) namesIn(v, out);
-  return out;
-}
-function freshParam(base, ...mentions) {
-  const taken = /* @__PURE__ */ new Set();
-  for (const m of mentions) namesIn(m, taken);
-  if (!taken.has(base)) return base;
-  for (let n2 = 2; ; n2++) {
-    const candidate = base + String(n2);
-    if (!taken.has(candidate)) return candidate;
-  }
 }
 
 // src/compiler/passes/desugar.ts
@@ -19496,6 +19673,15 @@ var Chain = class {
      */
     this.terminal = null;
     /**
+     * Where the stream's ELEMENT lives on its documents: `""` when the element IS the
+     * document, the unwound field's path after `.flatMap("items")` — a callback's
+     * parameter then stands for that field, and its fields for `items.<field>`. The
+     * documents themselves keep carrying their other fields (`$unwind` preserves
+     * them); a stage that replaces the document makes the document the element
+     * again. See docs/specs/stream-methods.md § The element after `.flatMap`.
+     */
+    this.element = "";
+    /**
      * The field paths a materialiser has already stamped and that are still FRESH —
      * see docs/specs/stream-length.md § Compute-once / reuse / recompute. A second read
      * of a stamped path costs no stage; a stage whose row does not state
@@ -19503,6 +19689,13 @@ var Chain = class {
      */
     this.stamped = /* @__PURE__ */ new Set();
     this.isPipeline = isPipeline;
+  }
+  /**
+   * A stage has been placed: one that replaces the document leaves no unwound
+   * field to point at. `replaces` is the row's own fact, judged by the caller.
+   */
+  placed(replaces) {
+    if (replaces) this.element = "";
   }
   /** A fresh `__jsmql.tmp.<n>` scratch slot. */
   slot() {
@@ -20544,8 +20737,20 @@ function lookupOf(node, env, S, over = "$lookup") {
   const rest = links.slice(i);
   const complete = rest.length === 0 && head === node;
   const vars = capture !== null && capture.any ? capture.vars : null;
+  const element2 = body.chain.element;
   const shape = takePair(vars, body.chain.close());
-  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, pos };
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element: element2, pos };
+}
+function pathOn2(base, path, pos) {
+  return path.split(".").reduce((object, name2) => ({ type: "MemberAccess", object, name: name2, optional: false, pos }), base);
+}
+function elementsOf2(slot, l, env) {
+  if (l.element === "") return slot;
+  if (l.one === "find") return pathOn2(slot, l.element, l.pos);
+  const x = env.fresh("el").as;
+  const body = pathOn2({ type: "Ident", name: x, pos: l.pos }, l.element, l.pos);
+  const map = { type: "Lambda", params: [x], body, pos: l.pos };
+  return { type: "MethodCall", object: slot, name: "map", args: [map], optional: false, pos: l.pos };
 }
 function fieldPath2(v) {
   return typeof v === "string" && v.startsWith("$") && !v.startsWith("$$") ? v.slice(1) : null;
@@ -20607,17 +20812,17 @@ function joinValue(node, env, S) {
   const bound = env.bind(name2, {
     ref: { kind: "field", slot },
     type: l.yields,
-    elements: l.yields === "array" ? "object" : "unknown",
+    elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
     mutable: false,
     pos: l.pos
   });
-  const rebased = rebase(node, l.peeledTo, { type: "Ident", name: name2, pos: l.pos });
+  const rebased = rebase(node, l.peeledTo, elementsOf2({ type: "Ident", name: name2, pos: l.pos }, l, env));
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
 function joinWrite(node, path, env, S) {
   const marks = [env.chain, env.rootChain].map((c) => [c, c.mark()]);
   const l = lookupOf(node, env, S);
-  if (!l.complete) {
+  if (!l.complete || l.element !== "") {
     for (const [c, m] of marks) c.rewind(m);
     return null;
   }
@@ -20629,7 +20834,8 @@ function joinRoot(node, env, S) {
   const l = lookupOf(node, env, S);
   if (!l.complete || l.one !== "find") throw rootNeedsOneDocument(l.pos);
   const slot = env.chain.slot();
-  return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: "$" + slot.path }];
+  const found2 = l.element === "" ? "$" + slot.path : `$${slot.path}.${l.element}`;
+  return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: found2 }];
 }
 function joinStream(node, env, first, S) {
   void first;
@@ -20731,7 +20937,7 @@ function keyFunctionSpec(arg, method) {
     body = body.argument;
   }
   const path = paramPath(body, arg.params[0]);
-  if (path === null) return { kind: "computed", key: arg, dir };
+  if (path === null) return { kind: "computed", key: { ...arg, body }, dir };
   return { kind: "keys", spec: { [path]: dir } };
 }
 var wholeElementDir = (body, a, b) => {
@@ -20838,8 +21044,13 @@ function orderBySpec(keys, orders, method) {
   });
   return { kind: "keys", spec };
 }
-function streamSortAsk(ask, method) {
+function streamSortAsk(ask, method, element2 = "") {
+  if (ask.kind === "keys") {
+    if (element2 === "") return ask;
+    return { kind: "keys", spec: Object.fromEntries(Object.entries(ask.spec).map(([k, d]) => [`${element2}.${k}`, d])) };
+  }
   if (ask.kind !== "whole") return ask;
+  if (element2 !== "") return { kind: "keys", spec: { [element2]: ask.dir } };
   const [a, b] = ask.params;
   const body = ask.dir === 1 ? `${a} - ${b}` : `${b} - ${a}`;
   const named = ask.dir === 1 ? `${a}.age - ${b}.age` : `${b}.age - ${a}.age`;
@@ -21264,11 +21475,19 @@ function pathOfIn(e, env) {
   const elements = env.site.boundaries.filter((b) => b.stage === "$elemMatch");
   const innermost = elements.length === 0 ? null : elements[elements.length - 1];
   if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
+  if (e.type === "Ident" && env.scope.has(e.name)) {
+    const b = env.lookup(e.name, e.pos);
+    if (b.ref.kind !== "document" || b.ref.path === "" || b.level !== env.level) return null;
+    return innermost === null || innermost.element === e.name ? b.ref.path : null;
+  }
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;
-    if (e.object.type === "Ident" && env.scope.has(e.object.name) && env.lookup(e.object.name, e.object.pos).ref.kind === "document" && // a parameter of a SHALLOWER level has no path here either — the `$expr` road captures it
-    env.lookup(e.object.name, e.object.pos).level === env.level) {
-      return innermost === null || innermost.element === e.object.name ? e.name : null;
+    if (e.object.type === "Ident" && env.scope.has(e.object.name)) {
+      const b = env.lookup(e.object.name, e.object.pos);
+      if (b.ref.kind === "document" && b.level === env.level) {
+        if (innermost !== null && innermost.element !== e.object.name) return null;
+        return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
+      }
     }
     const base = pathOfIn(e.object, env);
     return base === null ? null : `${base}.${e.name}`;
@@ -21614,7 +21833,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
     elementQuery: (cb) => {
       if (cb.type !== "Lambda" || cb.body === void 0 || cb.params.length !== 1) return null;
       const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
-        ref: { kind: "document" },
+        ref: { kind: "document", path: "" },
         type: "unknown",
         elements: "unknown",
         mutable: false,
@@ -21640,7 +21859,7 @@ function filterInputs(name2, recv, args, keys, env, node, read) {
         throw elementNeedsQuery(name2, cb.pos);
       }
       const bodyEnv = argEnv.element(cb.params[0]).bind(cb.params[0], {
-        ref: { kind: "document" },
+        ref: { kind: "document", path: "" },
         type: "unknown",
         elements: "unknown",
         mutable: false,
@@ -21660,7 +21879,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     let e = argEnv.block();
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
-        ref: { kind: "document" },
+        ref: { kind: "document", path: env.chain.element },
         type: "unknown",
         elements: "unknown",
         mutable: false,
@@ -21761,12 +21980,19 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
       if (stages === void 0) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2),
-    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name2, objects), name2, env.chain.element),
+    orderBy: (keys2, orders) => streamSortAsk(orderBySpec(keys2, orders, name2), name2, env.chain.element),
     slot: () => env.chain.slot().path,
     bind: (hint2) => {
       const b = env.fresh(hint2);
       return { as: b.as, ref: b.ref };
+    },
+    element: () => {
+      const path = env.chain.element;
+      return { path, ref: path === "" ? "$$ROOT" : "$" + path };
+    },
+    unwound: (path) => {
+      env.chain.element = path;
     }
   };
 }
@@ -22056,7 +22282,7 @@ function locate(node, env) {
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
     if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
-    if (b.ref.kind === "document") return { kind: "f", level: b.level, path: "", hint: node.name };
+    if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
   }
@@ -22984,13 +23210,16 @@ function afterStages(stages, env) {
   let out = env;
   for (const stage of stages) {
     const name2 = Object.keys(stage)[0];
-    const fact = replacesDocumentOf(name2);
-    const drops = fact === true || fact === "inclusion" && isInclusion(stage[name2]);
-    if (!drops) continue;
+    if (!replacesDocument(name2, stage)) continue;
     out = out.dropFields(name2, afterReplace(name2));
+    env.chain.placed(true);
     env.chain.dirty = false;
   }
   return out;
+}
+function replacesDocument(name2, stage) {
+  const fact = replacesDocumentOf(name2);
+  return fact === true || fact === "inclusion" && isInclusion(stage[name2]);
 }
 function isInclusion(body) {
   if (typeof body !== "object" || body === null) return false;
@@ -23376,6 +23605,7 @@ function streamLink(link, env, first, row2 = namedRow(link) ?? link.name, soFar 
   );
   const out = [];
   for (const stage of stages) out.push(...place(name2, stage, env, first && out.length === 0, link.pos));
+  if (!restoresDocumentsOf(name2) && out.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.placed(true);
   return out;
 }
 function peels(link) {
