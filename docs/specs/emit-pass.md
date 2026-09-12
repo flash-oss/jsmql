@@ -399,30 +399,62 @@ the pair it emits and why; the empty list is a stream of nothing.
 ### The join road
 
 `$$$.<coll>.<chain>` is a `$lookup`, in every position the chain may stand
-(`emit/join.ts`). **One correlated equality and nothing else** is the
-`localField` / `foreignField` pair — the join every MongoDB developer reads and
-writes, and the one the planner reads straight off the foreign index. The server's
-own rules then apply to it: a missing field counts as null, and an array matches
-element-wise. That is the same boundary a query document has (see
-docs/LANG_RULES.md), so the two say one thing.
+(`emit/join.ts`). **A body that opens with one correlated equality** — its first
+stage is a `$match` that says nothing but `<foreign field> === <outer field>`,
+where the outer side is a document field (`$.x`, or a binding the compiler
+stores as `__jsmql.var.<name>`) — is the `localField` / `foreignField` pair: the
+join every MongoDB developer reads and writes, and the one the planner reads
+straight off the foreign index (a multikey index when either side is an array).
+The server's own rules then apply to it: a missing field counts as null, and an
+array matches element-wise, so two arrays join when they share one element. That
+is the same boundary a query document has (see docs/LANG_RULES.md), so the two say
+one thing.
 
-Everything else keeps `let` + `pipeline` + `$expr`: a second condition, a
-comparison that is not an equality, a correlated read the pair cannot name, and
-`.find` — whose `{ $limit: 1 }` needs a pipeline of its own (measured on mongod
-8.3.7 the pipeline form uses the foreign index too: `indexesUsed`, keys examined =
-rows matched, `$limit: 1` examines one key per document).
+**The links that follow the equality go into `pipeline` beside the pair.** MongoDB
+5.0+ runs a `$lookup.pipeline` over the documents `localField` / `foreignField`
+matched (the concise correlated subquery), so a trailing sort, cut, group or
+document `.map` changes what the join RETURNS and never what it MATCHES: the same
+predicate is the same join with or without a `.take(n)`. The pair is taken from
+the body's FIRST stage — an equality that follows a sort or a cut is a `$match`
+in place. A later stage that still reads the outer document keeps its `let`
+beside the pair (the server accepts all four keys together; measured on 8.3.7).
+`.find` is the pair with `pipeline: [{ $limit: 1 }]`: the server takes one
+matched document per outer document and stops (measured: one key and one
+document examined per outer document), where the pair alone would materialise
+every match first — 110 matching documents of 1 MB each answer Location4568.
+The pair's read leaves `let` unless a later stage reads it.
+
+Everything else keeps `let` + `pipeline` + `$expr`: a second condition in the
+same predicate, a comparison that is not an equality, a side that is not a plain
+field path. The pipeline form compares the two fields' OWN values as JavaScript
+does (`undefined === null` is false), and uses the foreign index too (measured on
+mongod 8.3.7: `indexesUsed`, keys examined = rows matched). `$expr: { $eq:
+[array, array] }` compares whole arrays, which is why an array-to-array join is
+never emitted in this form: the developer wrote one equality, and the pair is the
+join that reads it (measured on 5000 orders with a multikey index: the pair
+examines one key per matched row; the `$expr` form scans the collection and
+matches nothing).
 
 ```js
 $.orders = $$$.orders.filter(o => o.userId === $._id);
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
 $.orders = $$$.orders.filter({ userId: $._id });
 // → the same stage: the query spelling of one equality is the same join
+$.recent = $$$.orders.filter({ userId: $._id }).toSorted({ placedAt: -1 }).take(5);
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }], as: "recent" } }]
+const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).take(100);
+// → [{ $set: { "__jsmql.var.ids": "$wants" } },
+//    { $lookup: { from: "orders", localField: "__jsmql.var.ids", foreignField: "productIds",
+//       pipeline: [{ $limit: 100 }], as: "o" } },
+//    { $unset: "__jsmql" }]   — two arrays: joined on a shared element, from the multikey index
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 // → [{ $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" },
 //       pipeline: [{ $match: { status: "paid", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
 //       as: "paid" } }]
 $.first = $$$.orders.find(o => o.userId === $._id);
-// → the same with `{ $limit: 1 }`, then { $set: { first: { $first: "$first" } } } — absent when nothing matched
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "first" } },
+//    { $set: { first: { $first: "$first" } } }]   — absent when nothing matched
 $.n = $$$.orders.filter(o => o.userId === $._id).length;
 // → the $lookup HOISTED into "__jsmql.tmp.0", { $set: { n: { $size: "$__jsmql.tmp.0" } } }, { $unset: "__jsmql" }
 ```

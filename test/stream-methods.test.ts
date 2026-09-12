@@ -548,11 +548,9 @@ describe(".pick([fields]) / .omit([fields]) → $project (per-document field sel
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $project: { total: 1, placedAt: 1, _id: 0 } },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $project: { total: 1, placedAt: 1, _id: 0 } }],
           as: "slim",
         },
       },
@@ -841,9 +839,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
+            localField: "_id",
+            foreignField: "userId",
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
               { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
               { $replaceWith: { id: "$_id", n: "$__jsmql.length" } },
               { $unset: "__jsmql" },
@@ -969,8 +967,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       {
         $lookup: {
           from: "archive",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0__id"] } } }, { $limit: 1 }],
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -988,8 +987,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
       {
         $lookup: {
           from: "archive",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0__id"] } } }, { $limit: 1 }],
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -1019,8 +1019,9 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
             {
               $lookup: {
                 from: "archive",
-                let: { jsmql_f1__id: "$_id" },
-                pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f1__id"] } } }, { $limit: 1 }],
+                localField: "_id",
+                foreignField: "_id",
+                pipeline: [{ $limit: 1 }],
                 as: "__jsmql.tmp.0",
               },
             },

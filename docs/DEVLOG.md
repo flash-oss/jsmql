@@ -10,6 +10,44 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(compiler): a join that opens with one equality is the pair, whatever links follow
+
+A `$$$.<coll>` chain whose body opened with one correlated equality lowered to
+the `localField` / `foreignField` pair only when that equality was the WHOLE body.
+One trailing link — `.take(100)`, a sort — pushed the same predicate back into
+`let` + `pipeline` + `$expr: { $eq: [foreign, "$$var"] }`. For a scalar the two
+forms select the same documents. For an array on either side they do not: the
+pair matches when the two arrays share one element (the server's rule), while
+aggregation `$eq` compares the whole arrays. Measured on the project's mongod
+with 5000 orders and a multikey index on `productIds`: the flagship
+`.filter({ productIds: myProductIds }).toSorted(…).take(100)` returned 0
+documents after scanning the collection; the pair returned the 100 correct rows
+from 803 index keys. The same input meant two different joins depending on
+whether a `.take()` followed.
+
+The join road (`src/compiler/emit/join.ts`) now takes the pair from the body's
+FIRST stage and puts the stages after it in `pipeline` beside the pair. MongoDB
+5.0+ runs that pipeline over the pair's matches (the concise correlated
+subquery); a later stage that still reads the outer document keeps its `let`
+next to the pair, which the server accepts (measured on 8.3.7). `.find` follows
+the same rule — the pair with `pipeline: [{ $limit: 1 }]` — and the server
+examines one key and one document per outer document for it, so the Location4568
+materialisation the earlier exclusion guarded against does not arise. An
+equality that follows a sort or a cut is not first and stays a `$match` in
+place; a compound predicate (`a === $.x && b`) keeps the `$expr` body as before.
+The `.some(p => X.includes(p))` spelling compiles as it did: it is a predicate
+over the foreign array, not an equality.
+
+The expectations of the suites that assert a join with trailing links were
+regenerated (`scripts/regen-expectations.mjs`) and reviewed. `test/compiler-join.test.ts`
+runs the new shape on the live mongod with a multikey index, compares the rows
+with JavaScript's answer, and asserts `explain("executionStats")` reports the
+index in `indexesUsed` with no collection scan. Specs: `docs/specs/emit-pass.md`
+§ The join road, `docs/specs/lookup-stage.md`; user-facing: `docs/LANGUAGE.md`
+§ Cross-collection lookups; the README headline example.
+
+---
+
 ## 2026-09-12 — fix(playground): the MQL panel keeps its scroll offset across edits
 
 Every keystroke in the query editor re-rendered the output panel with

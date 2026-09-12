@@ -27,11 +27,8 @@ let pipeline = jsmql`
 //   { $match: { $expr: { $convert: { input: true, to: { $cond: [
 //       { $eq: ["$__jsmql.length", 1] }, "bool",
 //       "jsmql assertion failed: More than one user with such email found" ] } } } } },
-//   { $lookup: { from: "orders", let: { jsmql_f0__id: "$_id" }, pipeline: [
-//       { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-//       { $sort: { placedAt: -1 } },
-//       { $limit: 5 },
-//   ], as: "__jsmql.tmp.0" } },
+//   { $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//       pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }], as: "__jsmql.tmp.0" } },
 //   { $unwind: "$__jsmql.tmp.0" },
 //   { $replaceWith: "$__jsmql.tmp.0" },
 // ]

@@ -347,12 +347,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
-              pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-                { $sort: { placedAt: -1 } },
-                { $limit: 5 },
-              ],
+              localField: "_id",
+              foreignField: "userId",
+              pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }],
               as: "__jsmql.tmp.0",
             },
           },
@@ -703,9 +700,9 @@ describe(
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
+            localField: "_id",
+            foreignField: "userId",
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
               { $group: { _id: "$status", __jsmqlTmp: { $sum: 1 } } },
               {
                 $group: {
@@ -2259,12 +2256,9 @@ $project({ name: 1, recentOrders: 1, nOrders });
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 5 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 5 }],
           as: "recentOrders",
         },
       },
@@ -2308,9 +2302,10 @@ $project({ name: 1, recentOrders: 1 });
         {
           $lookup: {
             from: "orders",
+            localField: "_id",
+            foreignField: "userId",
             let: { jsmql_f0__id: "$_id" },
             pipeline: [
-              { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
               { $sort: { createdAt: -1 } },
               { $limit: 5 },
               {
@@ -2946,8 +2941,9 @@ $$ = $$$.users.filter({ active: true }).map(u => ({
                 {
                   $lookup: {
                     from: "orders",
-                    let: { jsmql_f1__id: "$_id" },
-                    pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f1__id"] } } }, { $limit: 1 }],
+                    localField: "_id",
+                    foreignField: "userId",
+                    pipeline: [{ $limit: 1 }],
                     as: "__jsmql.tmp.0",
                   },
                 },
@@ -3018,9 +3014,9 @@ $.recentOrders = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
+              localField: "_id",
+              foreignField: "userId",
               pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 5 },
                 { $replaceWith: { id: "$_id", total: "$total", placedAt: "$placedAt" } },
@@ -3072,12 +3068,9 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id" },
-              pipeline: [
-                { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-                { $sort: { placedAt: -1 } },
-                { $limit: 5 },
-              ],
+              localField: "_id",
+              foreignField: "userId",
+              pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }],
               as: "__jsmql.tmp.0",
             },
           },
@@ -3252,9 +3245,10 @@ $$ = $$$.orders.filter({ userId: $._id }).map((o, i, ordersColl) => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_s0_length: "$__jsmql.length" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
             { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
@@ -3351,15 +3345,17 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
       {
         $lookup: {
           from: "orders",
+          localField: "_id",
+          foreignField: "userId",
           let: { jsmql_f0__id: "$_id" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
             {
               $lookup: {
                 from: "shipments",
+                localField: "_id",
+                foreignField: "orderId",
                 let: { jsmql_f1__id: "$_id" },
                 pipeline: [
-                  { $match: { $expr: { $eq: ["$orderId", "$$jsmql_f1__id"] } } },
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
@@ -3464,12 +3460,9 @@ $.topProducts = $$$.products.aggregate([{ $sort: { sales: -1 } }, { $limit: 5 },
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_f0__id: "$_id" },
-            pipeline: [
-              { $match: { $expr: { $eq: ["$customerId", "$$jsmql_f0__id"] } } },
-              { $group: { _id: { $month: "$placedAt" }, spent: { $sum: "$total" } } },
-              { $sort: { _id: 1 } },
-            ],
+            localField: "_id",
+            foreignField: "customerId",
+            pipeline: [{ $group: { _id: { $month: "$placedAt" }, spent: { $sum: "$total" } } }, { $sort: { _id: 1 } }],
             as: "monthlySpend",
           },
         },

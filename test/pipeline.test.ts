@@ -320,8 +320,9 @@ describe("pipeline — replace root (`$ = <expr>`)", () => {
       {
         $lookup: {
           from: "users",
-          let: { jsmql_f0_userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }],
+          localField: "userId",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -935,8 +936,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "users",
-          let: { jsmql_f0_userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }],
+          localField: "userId",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -954,12 +956,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { placedAt: -1 } },
-            { $limit: 5 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -997,11 +996,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $replaceWith: { pid: "$productId" } },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $replaceWith: { pid: "$productId" } }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -1214,12 +1211,9 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_v0_uid: "$__jsmql.var.uid" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_v0_uid"] } } },
-            { $sort: { placedAt: -1 } },
-            { $limit: 5 },
-          ],
+          localField: "__jsmql.var.uid",
+          foreignField: "userId",
+          pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }],
           as: "__jsmql.tmp.0",
         },
       },

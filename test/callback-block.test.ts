@@ -113,14 +113,7 @@ describe("a stage-free callback block is the JavaScript value form", () => {
 
   it("`{ return <pred> }` on `.find` keeps the scalar-or-null unwrap", () => {
     expect(jsmql(`$.r = $$$.orders.find(o => { return o.userId === $._id; });`)).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $limit: 1 }],
-          as: "r",
-        },
-      },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "r" } },
       { $set: { r: { $first: "$r" } } },
     ]);
   });

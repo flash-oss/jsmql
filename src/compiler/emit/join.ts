@@ -1,13 +1,19 @@
 // Phase 5 — EMIT. The join road: a chain on another collection, `$$$.<coll>.<links>`,
 // as the `$lookup` it means, in every position it may stand.
 //
-// One route. The stage is always `let` + `pipeline` + `$expr` — never
-// `localField`/`foreignField` — because the pipeline form compares the two
-// fields' OWN values as JavaScript does (`1 === [1, 2]` is false, `undefined ===
-// undefined` is true, `undefined === null` is false), and the basic form does
-// not (missing ≡ null, an array matches element-wise). Measured on mongod 8.3.7:
-// the pipeline form uses the foreign index too (`indexesUsed`, keys examined =
-// rows matched), so nothing is paid for the meaning.
+// One road, two shapes. A body that OPENS with one correlated equality — a `$match`
+// that says nothing but `<foreign field> === <outer field>` — is the
+// `localField`/`foreignField` pair, whatever links follow it: they go into
+// `pipeline` beside the pair, which the server runs over the matched documents
+// only (MongoDB 5.0+). The pair is the join MongoDB's documentation is written in,
+// the planner answers it from the foreign index (a multikey one when either side
+// is an array), and the server's own rules apply to it: a missing field counts as
+// null, and an array matches element-wise — two arrays join when they share one
+// element. Everything else is `let` + `pipeline` + `$expr`, which compares the two
+// fields' OWN values as JavaScript does (`undefined === null` is false), and uses
+// the foreign index too (measured: `indexesUsed`, keys examined = rows matched).
+// The pair is taken from the body's FIRST stage and never from its only stage, so
+// a trailing `.take(n)` changes what the join returns and never what it matches.
 //
 // The chain peels: a link goes INTO `$lookup.pipeline` while its row has a
 // `stream` cell that accepts it (`filter`, the sorts, `take`, `aggregate`, a
@@ -68,11 +74,20 @@ function foreignChain(node: Expr): { from: string; links: Link[]; pos: number } 
   throw E.notAJoinChain(node.pos);
 }
 
+/** The `localField` / `foreignField` pair a body opens with. */
+export type Pair = { readonly localField: string; readonly foreignField: string };
+
 /** The `$lookup` a chain's peeled prefix means, and what is left over. */
 export type Lookup = {
   readonly from: string;
+  /** The one correlated equality the body opened with, as the pair; null when it opened with anything else. */
+  readonly pair: Pair | null;
+  /** What the pipeline still reads of the outer document — the pair's own read is not repeated here. */
   readonly let: Record<string, string> | null;
+  /** The body's stages after the pair's `$match` — the whole body when there is no pair. */
   readonly pipeline: Stage[];
+  /** Did the body read the outer document at all — through the pair or through `let`? */
+  readonly correlated: boolean;
   /**
    * The array holds ONE document that is the value: `.find` (unwrapped with
    * `$first`, absent when nothing matched) or a collapse (`countBy`; `{}` when
@@ -148,62 +163,75 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
   }
   const rest = links.slice(i);
   const complete = rest.length === 0 && head === node;
-  return {
-    complete,
-    let: capture !== null && capture.any ? capture.vars : null,
-    from,
-    pipeline: body.chain.close(),
-    one,
-    yields,
-    rest,
-    peeledTo,
-    pos,
-  };
+  const vars = capture !== null && capture.any ? capture.vars : null;
+  const shape = takePair(vars, body.chain.close());
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, pos };
+}
+
+/** A plain field path — `"$x"`, `"$a.b"` — and not a `$$` variable; its name without the `$`. */
+function fieldPath(v: unknown): string | null {
+  return typeof v === "string" && v.startsWith("$") && !v.startsWith("$$") ? v.slice(1) : null;
+}
+
+/** Does any string in `v` read the variable `$$name` — as itself or as the head of a path? */
+function reads(v: unknown, name: string): boolean {
+  if (typeof v === "string") return v === `$$${name}` || v.startsWith(`$$${name}.`);
+  if (Array.isArray(v)) return v.some((x) => reads(x, name));
+  if (v !== null && typeof v === "object") return Object.values(v).some((x) => reads(x, name));
+  return false;
 }
 
 /**
- * One correlated equality and nothing else IS the `localField`/`foreignField` pair.
+ * The body's first stage, when it is one correlated equality and nothing else,
+ * taken out as the `localField`/`foreignField` pair.
  *
- * `{ let: { v: "$_id" }, pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v"] } } }] }`
- * and `{ localField: "_id", foreignField: "uid" }` select the same documents, and the
- * second is the join MongoDB's own documentation is written in: it is the form the
- * planner answers straight from the foreign index, and the form a reader recognises.
- * Anything more than the one equality — a second clause, another link, a body that
- * reads more than one outer field — keeps the pipeline, because only the pipeline
- * can express it.
+ * `{ let: { v: "$_id" }, pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$v"] } } }, …rest] }`
+ * and `{ localField: "_id", foreignField: "uid", pipeline: […rest] }` run `rest` over
+ * the same documents (MongoDB 5.0+ runs the pipeline over the pair's matches). The
+ * pair's variable leaves `let` unless a later stage still reads it; a `let` beside
+ * the pair is the concise correlated form, and the server accepts it (measured on
+ * 8.3.7). A first stage that says more — a second clause, a comparison that is not
+ * an equality, a side that is not a plain field path — keeps the body whole,
+ * because only `$expr` can say it.
  */
-function compactPair(l: Lookup): { localField: string; foreignField: string } | null {
-  if (l.let === null || l.pipeline.length !== 1) return null;
-  const vars = Object.entries(l.let);
-  if (vars.length !== 1) return null;
-  const [name, read] = vars[0];
-  if (typeof read !== "string" || !read.startsWith("$") || read.startsWith("$$")) return null;
-  const match = (l.pipeline[0] as { $match?: Record<string, unknown> }).$match;
-  if (match === undefined || Object.keys(match).length !== 1) return null;
+function takePair(
+  vars: Record<string, string> | null,
+  pipeline: Stage[],
+): { pair: Pair | null; let: Record<string, string> | null; pipeline: Stage[] } {
+  const whole = { pair: null, let: vars, pipeline };
+  if (vars === null || pipeline.length === 0) return whole;
+  const match = (pipeline[0] as { $match?: Record<string, unknown> }).$match;
+  if (match === undefined || Object.keys(match).length !== 1) return whole;
   const eq = (match.$expr as { $eq?: unknown } | undefined)?.$eq;
-  if (!Array.isArray(eq) || eq.length !== 2) return null;
-  const variable = `$$${name}`;
-  const foreign = eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null;
-  if (typeof foreign !== "string" || !foreign.startsWith("$") || foreign.startsWith("$$")) return null;
-  return { localField: read.slice(1), foreignField: foreign.slice(1) };
+  if (!Array.isArray(eq) || eq.length !== 2) return whole;
+  for (const [name, read] of Object.entries(vars)) {
+    const localField = fieldPath(read);
+    if (localField === null) continue;
+    const variable = `$$${name}`;
+    const foreignField = fieldPath(eq[0] === variable ? eq[1] : eq[1] === variable ? eq[0] : null);
+    if (foreignField === null) continue;
+    const rest = pipeline.slice(1);
+    const kept = Object.fromEntries(Object.entries(vars).filter(([n]) => n !== name || reads(rest, n)));
+    return { pair: { localField, foreignField }, let: Object.keys(kept).length > 0 ? kept : null, pipeline: rest };
+  }
+  return whole;
 }
 
-/** The stage, keys in reading order: from, localField/foreignField or let/pipeline, as. */
+/** The stage, keys in reading order: from, localField/foreignField, let, pipeline, as. */
 export function lookupStage(l: Lookup, as: string): Stage {
   const body: Record<string, unknown> = { from: l.from };
-  // A `.find` keeps the pipeline for its `{ $limit: 1 }`: the compact form has nowhere
-  // to put it, and without it the server materialises EVERY match before the first is
-  // taken — MEASURED, 110 matching documents of 1 MB each answer Location4568,
-  // "Total size of documents in <coll> matching pipeline's $lookup exceeds 104857600 bytes".
-  const pair = l.one === "find" ? null : compactPair(l);
-  if (pair !== null) {
-    body.localField = pair.localField;
-    body.foreignField = pair.foreignField;
-    body.as = as;
-    return { $lookup: body };
+  if (l.pair !== null) {
+    body.localField = l.pair.localField;
+    body.foreignField = l.pair.foreignField;
   }
   if (l.let !== null) body.let = l.let;
-  body.pipeline = l.pipeline;
+  // The pair alone needs no pipeline. A `.find` keeps its `{ $limit: 1 }` there: the
+  // server takes ONE matched document per outer document and stops (measured: one key,
+  // one document examined per outer document), where the pair alone would materialise
+  // every match first — MEASURED, 110 matching documents of 1 MB each answer
+  // Location4568, "Total size of documents in <coll> matching pipeline's $lookup
+  // exceeds 104857600 bytes".
+  if (l.pair === null || l.pipeline.length > 0) body.pipeline = l.pipeline;
   body.as = as;
   return { $lookup: body };
 }
@@ -303,7 +331,7 @@ export function joinStream(node: Expr, env: Env, first: boolean, S: JoinServices
   }
   // `.find` gives ONE document, and a stream is many: JavaScript would not assign it to an array either.
   if (l.one === "find") throw E.oneDocumentInStream(l.pos);
-  if (l.let !== null) {
+  if (l.correlated) {
     const slot = env.chain.slot();
     const stages: Stage[] = [lookupStage(l, slot.path)];
     if (l.one !== false) stages.push(unwrap(slot.path, l.one));

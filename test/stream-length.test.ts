@@ -219,9 +219,10 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_s0_length: "$__jsmql.length" },
           pipeline: [
-            { $match: { $expr: { $eq: ["$$jsmql_f0__id", "$userId"] } } },
             { $lookup: { from: "shipments", localField: "_id", foreignField: "orderId", as: "__jsmql.tmp.0" } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
@@ -272,14 +273,14 @@ describe("nested length usage — sub-stream handles + `$$.length` (root) at eve
       {
         $lookup: {
           from: "orders",
+          localField: "_id",
+          foreignField: "userId",
           let: {
-            jsmql_f0__id: "$_id",
             jsmql_s0_length: "$__jsmql.length",
             jsmql_f0_length: "$length",
             jsmql_v0_length: "$__jsmql.var.length",
           },
           pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
             { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $replaceWith: {

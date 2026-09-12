@@ -175,14 +175,7 @@ describe("system stages — error messages", () => {
 describe("system stages — no regression in adjacent ref sugars", () => {
   it("$$$.<coll>.find(...) still lowers to a $lookup (not mistaken for a diagnostic)", () => {
     expect(jsmql("$.o = $$$.orders.find(o => o.uid === $.id)")).toEqual([
-      {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0_id: "$id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$uid", "$$jsmql_f0_id"] } } }, { $limit: 1 }],
-          as: "o",
-        },
-      },
+      { $lookup: { from: "orders", localField: "id", foreignField: "uid", pipeline: [{ $limit: 1 }], as: "o" } },
       { $set: { o: { $first: "$o" } } },
     ]);
   });

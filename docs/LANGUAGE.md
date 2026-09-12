@@ -663,15 +663,30 @@ The full `$$$.<coll>.find/filter(...)` and `$$.push(...)` syntaxes are documente
 
 **Pipeline-mode only.** Lookups produce stages, not expressions — they're only valid where a Pipeline output makes sense (assigned to a field with `$.x = …`, used as the RHS of `let`, or read inline as part of a chained terminal). `jsmql.filter()`, `jsmql.update()`, and `jsmql.expr()` reject lookup syntax with an actionable message naming `jsmql.pipeline()` / `jsmql()` as the right entry point.
 
-**One correlated equality is the pair.** A predicate that says exactly one thing — this field equals that one — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has).
+**A chain that opens with one correlated equality is the pair.** A predicate that says exactly one thing — this foreign field equals that field of the outer document (`$.x`, or a `const` bound to one) — is the `localField` / `foreignField` join every MongoDB developer reads and writes, and the planner reads it straight off the foreign index. MongoDB's own rules apply to it: a missing field counts as null, and an array matches element-wise (the same boundary a query document has) — so `{ productIds: myProductIds }` with an array on both sides joins the orders that share **one** element with the list, from the multikey index.
 
-Anything more is `let` + `pipeline` + `$expr`: every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. The pipeline form uses the foreign collection's index too (measured).
+**The links that follow it run in `pipeline` beside the pair.** MongoDB 5.0+ runs a `$lookup.pipeline` over the documents the pair matched, so a trailing `.toSorted(…)`, `.take(n)`, `.$group(…)` changes what the join *returns* and never what it *matches*: the same predicate is the same join with or without a `.take()`. `.find` is the pair with `{ $limit: 1 }` in that pipeline. The equality has to come first — after a sort or a cut it is a `$match` in place.
+
+Anything more in the predicate itself — a second condition, a comparison that is not an equality — is `let` + `pipeline` + `$expr`: every read of the outer document inside the predicate (`$._id`, a `let` binding) is carried into the stage's `let` clause under a correlation variable, and the predicate runs as a `$match` in the sub-pipeline. The pipeline form uses the foreign collection's index too (measured). A later link that reads the outer document keeps its `let` beside the pair.
 
 ```js
 // One equality — the compact join, in either spelling
 $.orders = $$$.orders.filter(o => o.userId === $._id);
 $.orders = $$$.orders.filter({ userId: $._id });
 // → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "orders" } }]
+
+// The links after it run over the matched documents
+$.recent = $$$.orders.filter({ userId: $._id }).toSorted({ placedAt: -1 }).take(5);
+// → [{ $lookup: { from: "orders", localField: "_id", foreignField: "userId",
+//                 pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }], as: "recent" } }]
+
+// An array on both sides — joined on a shared element, from the multikey index
+const mine = $.productIds;
+$.coPurchases = $$$.orders.filter({ productIds: mine }).take(100);
+// → [{ $set: { "__jsmql.var.mine": "$productIds" } },
+//    { $lookup: { from: "orders", localField: "__jsmql.var.mine", foreignField: "productIds",
+//                 pipeline: [{ $limit: 100 }], as: "coPurchases" } },
+//    { $unset: "__jsmql" }]
 
 // A second condition needs the sub-pipeline
 $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
@@ -682,8 +697,7 @@ $.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");
 // .find stops at the first match ($limit 1) and unwraps it, so the slot holds one document or nothing
 $.user = $$$.users.find(u => u._id === $.userId);
 // → [
-//     { $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" },
-//                 pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }], as: "user" } },
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", pipeline: [{ $limit: 1 }], as: "user" } },
 //     { $set: { user: { $first: "$user" } } }
 //   ]
 
@@ -723,9 +737,9 @@ $.monthlyTotals = $$$.orders.aggregate((o) => {
 });
 // → [{ $lookup: {
 //     from: "orders",
-//     let: { jsmql_f0__id: "$_id" },
+//     localField: "_id",
+//     foreignField: "userId",
 //     pipeline: [
-//       { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //       { $group: { _id: { $month: "$createdAt" }, total: { $sum: "$amount" } } },
 //       { $sort: { _id: 1 } }
 //     ],
@@ -807,25 +821,25 @@ $$$.orders.head();        // throws — a bare value isn't a pipeline stage; ass
 **A value-extracting `.map` runs value-mode on the result — anywhere in the chain.** A `.map("field")` / `.map(x => <expr>)` (any body but an object literal) does **not** go into the sub-pipeline — a `$replaceWith` there would be invalid MQL whenever the mapped value is a scalar/array (MongoDB requires a document root). Whether it's the *last* method or feeds further methods, it runs as a value-mode `$map` over the lookup result array in the surrounding `$set`. A **block-body** value-extractor (`.map(x => { return <expr>; })`, or with `const`/`let` bindings) behaves identically to the expression form — a `{ … }` callback body is just the arrow in disguise (`x => { const y = …; return y; }` → a `$let`):
 
 ```js
-$.recentOrders = $$$.orders
+$.recentTotals = $$$.orders
   .filter({ userId: $._id })
   .toSorted({ placedAt: -1 })
   .take(5)
-  .map(o => ({ id: o._id, total: o.total }));
+  .map(o => o.total);
 // → [{
 //     $lookup: {
 //       from: "orders",
-//       let: { jsmql_f0__id: "$_id" },
+//       localField: "_id",
+//       foreignField: "userId",
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },      // toSorted({ placedAt: -1 })
 //         { $limit: 5 },                    // take(5)
 //       ],
-//       as: "__jsmql.tmp.1",
+//       as: "__jsmql.tmp.0",
 //     },
 //   },
 //   // terminal .map → value-mode $map on the result:
-//   { $set: { recentOrders: { $map: { input: "$__jsmql.tmp.1", as: "o", in: { id: "$$o._id", total: "$$o.total" } } } } },
+//   { $set: { recentTotals: { $map: { input: "$__jsmql.tmp.0", as: "o", in: "$$o.total" } } } },
 //   { $unset: "__jsmql" }]
 
 // Scalar extraction — the case a sub-pipeline $replaceWith can't express:
@@ -3074,8 +3088,7 @@ jsmql("$ = { ...$, computedScore: $.points * 1.1 };")
 // nothing has nothing to become and leaves the stream (the `$unwind` drops it).
 jsmql("$ = $$$.users.find(u => u._id === $.userId);")
 // → [
-//     { $lookup: { from: "users", let: { jsmql_f0_userId: "$userId" },
-//                 pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }], as: "__jsmql.tmp.0" } },
+//     { $lookup: { from: "users", localField: "userId", foreignField: "_id", pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" } },
 //     { $unwind: "$__jsmql.tmp.0" },
 //     { $replaceWith: "$__jsmql.tmp.0" }
 //   ]
@@ -3205,20 +3218,20 @@ jsmql`$$ = $$$.orders
 // → [
 //   { $lookup: {
 //       from: "orders",
-//       let: { jsmql_f0__id: "$_id" },
+//       localField: "_id",
+//       foreignField: "userId",
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
-//       as: "__jsmql.tmp.1",
+//       as: "__jsmql.tmp.0",
 //   } },
-//   { $unwind: "$__jsmql.tmp.1" },
-//   { $replaceWith: "$__jsmql.tmp.1" },
+//   { $unwind: "$__jsmql.tmp.0" },
+//   { $replaceWith: "$__jsmql.tmp.0" },
 // ]
 ```
 
-The predicate always runs as `let` + `$match $expr` inside the sub-pipeline — the one `$lookup` route jsmql emits (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)) — and the foreign collection's index is used all the same.
+The predicate is the `localField` / `foreignField` pair when it is one equality, and `let` + `$match $expr` inside the sub-pipeline otherwise — the two shapes of the one `$lookup` route (see [Cross-collection lookups](#cross-collection-lookups-collfind--filter)); the foreign collection's index is used either way.
 
 The `$unwind` drops outer docs with no matches by default — if you need `preserveNullAndEmptyArrays`, write the explicit `$.matched = $$$.coll.filter(...); $unwind($.matched, true); $ = $.matched` chain instead.
 
@@ -3231,8 +3244,7 @@ $$ = $$$.users.filter(u => u._id === uid);
 `
 // → [
 //   { $set: { "__jsmql.var.uid": "$userId" } },
-//   { $lookup: { from: "users", let: { jsmql_v0_uid: "$__jsmql.var.uid" },
-//               pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_v0_uid"] } } }], as: "__jsmql.tmp.0" } },
+//   { $lookup: { from: "users", localField: "__jsmql.var.uid", foreignField: "_id", as: "__jsmql.tmp.0" } },
 //   { $unwind: "$__jsmql.tmp.0" },
 //   { $replaceWith: "$__jsmql.tmp.0" },
 // ]
@@ -3259,16 +3271,16 @@ jsmql(`
 //       "jsmql assertion failed: More than one user with such email found" ] } } } } },
 //   { $lookup: {
 //       from: "orders",
-//       let: { jsmql_f0__id: "$_id" },
+//       localField: "_id",
+//       foreignField: "userId",
 //       pipeline: [
-//         { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
 //         { $sort: { placedAt: -1 } },
 //         { $limit: 5 },
 //       ],
-//       as: "__jsmql.tmp.1",
+//       as: "__jsmql.tmp.0",
 //   } },
-//   { $unwind: "$__jsmql.tmp.1" },
-//   { $replaceWith: "$__jsmql.tmp.1" },
+//   { $unwind: "$__jsmql.tmp.0" },
+//   { $replaceWith: "$__jsmql.tmp.0" },
 // ]
 ```
 

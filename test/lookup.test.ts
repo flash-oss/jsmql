@@ -16,12 +16,7 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   it(".find adds a $set { $first } follow-up so the slot holds a scalar-or-null", () => {
     expect(jsmql("$.order = $$$.orders.find(o => o.userId === $._id);")).toEqual([
       {
-        $lookup: {
-          from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $limit: 1 }],
-          as: "order",
-        },
+        $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $limit: 1 }], as: "order" },
       },
       { $set: { order: { $first: "$order" } } },
     ]);
@@ -48,8 +43,9 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
       {
         $lookup: {
           from: "profiles",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $limit: 1 }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $limit: 1 }],
           as: "user.profile",
         },
       },
@@ -201,12 +197,9 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 10 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 10 }],
           as: "recent",
         },
       },
@@ -227,12 +220,9 @@ describe("$$$.coll.find/filter — block-body sub-pipeline", () => {
       {
         $lookup: {
           from: "users",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$_id", "$$jsmql_f0__id"] } } },
-            { $project: { name: 1, email: 1 } },
-            { $limit: 1 },
-          ],
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $project: { name: 1, email: 1 } }, { $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -355,8 +345,9 @@ describe("$$$.coll.find/filter — chained terminals", () => {
       {
         $lookup: {
           from: "users",
-          let: { jsmql_f0_userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }],
+          localField: "userId",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -566,8 +557,9 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
             {
               $lookup: {
                 from: "b",
-                let: { jsmql_f1_x: "$x" },
-                pipeline: [{ $match: { $expr: { $eq: ["$x", "$$jsmql_f1_x"] } } }, { $limit: 1 }],
+                localField: "x",
+                foreignField: "x",
+                pipeline: [{ $limit: 1 }],
                 as: "__jsmql.tmp.0",
               },
             },
@@ -848,12 +840,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $replaceWith: { t: "$total" } },
-            { $limit: 5 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $replaceWith: { t: "$total" } }, { $limit: 5 }],
           as: "r",
         },
       },
@@ -903,12 +892,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "events",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { createdAt: -1 } },
-            { $limit: 10 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 10 }],
           as: "recent",
         },
       },
@@ -920,8 +906,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $unwind: "$items" }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $unwind: "$items" }],
           as: "items",
         },
       },
@@ -969,8 +956,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
       {
         $lookup: {
           from: "users",
-          let: { jsmql_f0_userId: "$userId" },
-          pipeline: [{ $match: { $expr: { $eq: ["$_id", "$$jsmql_f0_userId"] } } }, { $limit: 1 }],
+          localField: "userId",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -1241,12 +1229,9 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $group: { _id: { $month: "$createdAt" }, total: { $sum: "$amount" } } },
-            { $sort: { _id: 1 } },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $group: { _id: { $month: "$createdAt" }, total: { $sum: "$amount" } } }, { $sort: { _id: 1 } }],
           as: "monthlyTotals",
         },
       },
@@ -1262,12 +1247,9 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { placedAt: -1 } },
-            { $limit: 5 },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { placedAt: -1 } }, { $limit: 5 }],
           as: "recentOrders",
         },
       },
@@ -1290,8 +1272,9 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $group: { _id: "$productId" } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $group: { _id: "$productId" } }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -1329,8 +1312,9 @@ describe("$$$.coll.aggregate(pipeline) — full sub-pipeline → $lookup", () =>
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $sort: { a: 1 } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { a: 1 } }],
           as: "x",
         },
       },
@@ -1458,13 +1442,9 @@ describe("$$$.coll.<streamMethod>….aggregate(pipeline) — lodash chain into a
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [
-            { $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } },
-            { $sort: { t: -1 } },
-            { $limit: 2 },
-            { $group: { _id: "$status" } },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $sort: { t: -1 } }, { $limit: 2 }, { $group: { _id: "$status" } }],
           as: "r",
         },
       },
@@ -1893,8 +1873,9 @@ describe("$$$.coll.aggregate — error cases", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }, { $group: { _id: "$s" } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $group: { _id: "$s" } }],
           as: "__jsmql.tmp.0",
         },
       },

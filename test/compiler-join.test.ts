@@ -1,9 +1,10 @@
 // Phase 5 of src/compiler/ — the join road: `$$$.<coll>.<chain>` as `$lookup`.
 //
-// Two shapes, one road. One correlated equality and nothing else is the
+// Two shapes, one road. A body that OPENS with one correlated equality is the
 // `localField`/`foreignField` pair — the join a MongoDB developer writes, which
-// the planner reads from the foreign index. Everything else keeps `let` +
-// `pipeline` + `$expr` (see docs/specs/emit-pass.md § The join road). `$.` is the
+// the planner reads from the foreign index — and the links that follow it run in
+// `pipeline` beside the pair, over the matched documents. Everything else keeps
+// `let` + `pipeline` + `$expr` (see docs/specs/emit-pass.md § The join road). `$.` is the
 // OUTER document at every depth (HR4) and reaches the body through the stage's
 // `let`; the body's own document is its parameter.
 //
@@ -19,15 +20,15 @@ import { expr, pipeline } from "../src/compiler/index.ts";
 import { liveClient } from "./fixtures/live.ts";
 
 const USERS = [
-  { _id: 1, tag: "x", ids: [101, 103], minTotal: 6 },
-  { _id: 2, tag: "y", minTotal: 6 },
+  { _id: 1, tag: "x", ids: [101, 103], minTotal: 6, wants: [2, 9] },
+  { _id: 2, tag: "y", minTotal: 6, wants: [4] },
   { _id: 3 },
   { _id: 4, nul: null },
 ];
 const ORDERS = [
-  { _id: 101, userId: 1, total: 10, status: "paid", tag: "x" },
-  { _id: 102, userId: 1, total: 20, status: "open", tag: "y" },
-  { _id: 103, userId: 2, total: 5, status: "paid", tag: "y" },
+  { _id: 101, userId: 1, total: 10, status: "paid", tag: "x", productIds: [1, 2] },
+  { _id: 102, userId: 1, total: 20, status: "open", tag: "y", productIds: [2, 3] },
+  { _id: 103, userId: 2, total: 5, status: "paid", tag: "y", productIds: [3, 4] },
   { _id: 104, total: 7, nul: null },
 ];
 const ITEMS = [
@@ -46,7 +47,7 @@ const compiled = (src: string, expected?: unknown[]): unknown[] => {
 const E = (id: unknown) => ({ $expr: { $eq: ["$userId", id] } });
 const LET = { jsmql_f0__id: "$_id" };
 const byUser = { $match: E("$$jsmql_f0__id") };
-/** One correlated equality and nothing else is the pair the planner reads from the index. */
+/** A body that opens with one correlated equality is the pair the planner reads from the index. */
 const COMPACT = { localField: "_id", foreignField: "userId" };
 
 describe("compiler/emit/join — one route, the pipeline form", () => {
@@ -78,6 +79,92 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
     ).toEqual([{ $lookup: { from: "orders", localField: "nul", foreignField: "nul", as: "same" } }]);
   });
 
+  it("keeps the pair when links follow — they run over the matched documents", () => {
+    // The server (5.0+) runs `pipeline` over the pair's matches, so a link after the
+    // equality changes what the join RETURNS and never what it MATCHES: the same
+    // predicate is the same join with or without a `.take(n)`.
+    expect(
+      compiled("$.o = $$$.orders.filter({ userId: $._id }).toSorted({ total: -1 }).take(1);", [
+        { _id: 1, o: [102] },
+        { _id: 2, o: [103] },
+        { _id: 3, o: [] },
+        { _id: 4, o: [] },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $sort: { total: -1 } }, { $limit: 1 }], as: "o" } },
+    ]);
+    // a later link that still reads the outer document keeps its `let` beside the pair
+    expect(
+      compiled("$.o = $$$.orders.filter({ userId: $._id }).filter(o => o.total > $.minTotal);", [
+        { _id: 1, o: [101, 102] },
+        { _id: 2, o: [] },
+        { _id: 3, o: [] },
+        { _id: 4, o: [] },
+      ]),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          ...COMPACT,
+          let: { jsmql_f0_minTotal: "$minTotal" },
+          pipeline: [{ $match: { $expr: { $gt: ["$total", "$$jsmql_f0_minTotal"] } } }],
+          as: "o",
+        },
+      },
+    ]);
+    // the equality has to OPEN the body: after a sort and a cut it is a `$match` in place
+    expect(
+      compiled('$.top = $$$.orders.toSorted("total").take(2).filter(o => o.userId === $._id);', [
+        { _id: 1, top: [] },
+        { _id: 2, top: [103] },
+        { _id: 3, top: [] },
+        { _id: 4, top: [] },
+      ]),
+    ).toEqual([
+      { $lookup: { from: "orders", let: LET, pipeline: [{ $sort: { total: 1 } }, { $limit: 2 }, byUser], as: "top" } },
+    ]);
+  });
+
+  it("an array on either side joins on a shared element, from the multikey index", () => {
+    // `{ productIds: ids }` with an array on both sides: the pair matches when the two
+    // share ONE element (the server's rule for the pair), and the planner answers it
+    // from the multikey index — see "answers the pair from the multikey index" below.
+    // `$expr: { $eq: [array, array] }` would compare the whole arrays and match nothing.
+    // A missing `wants` counts as null, so users 3 and 4 join the order with no
+    // `productIds` (MEASURED).
+    expect(
+      compiled("const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).toSorted({ total: -1 }).take(100);", [
+        { _id: 1, o: [102, 101] },
+        { _id: 2, o: [103] },
+        { _id: 3, o: [104] },
+        { _id: 4, o: [104] },
+      ]),
+    ).toEqual([
+      { $set: { "__jsmql.var.ids": "$wants" } },
+      {
+        $lookup: {
+          from: "orders",
+          localField: "__jsmql.var.ids",
+          foreignField: "productIds",
+          pipeline: [{ $sort: { total: -1 } }, { $limit: 100 }],
+          as: "o",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    // the `.some(…includes…)` spelling is a predicate over the foreign array, and keeps
+    // the `$expr` body: JavaScript reads a missing `wants` as no elements, so users 3
+    // and 4 join nothing
+    const some = compiled("$.o = $$$.orders.filter(o => o.productIds.some(p => $.wants.includes(p)));", [
+      { _id: 1, o: [101, 102] },
+      { _id: 2, o: [103] },
+      { _id: 3, o: [] },
+      { _id: 4, o: [] },
+    ]) as { $lookup: Record<string, unknown> }[];
+    expect(Object.keys(some[0].$lookup)).toEqual(["from", "let", "pipeline", "as"]);
+    expect(some[0].$lookup.let).toEqual({ jsmql_f0_wants: "$wants" });
+  });
+
   it("keeps a constant clause native beside the correlation", () => {
     expect(
       compiled('$.paid = $$$.orders.filter(o => o.userId === $._id && o.status === "paid");', [
@@ -107,7 +194,7 @@ describe("compiler/emit/join — one route, the pipeline form", () => {
         { _id: 4 },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser, { $limit: 1 }], as: "first" } },
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "first" } },
       { $set: { first: { $first: "$first" } } },
     ]);
   });
@@ -164,12 +251,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       ]),
     ).toEqual([
       {
-        $lookup: {
-          from: "orders",
-          let: LET,
-          pipeline: [byUser, { $replaceWith: { t: "$total" } }, { $limit: 1 }],
-          as: "t",
-        },
+        $lookup: { from: "orders", ...COMPACT, pipeline: [{ $replaceWith: { t: "$total" } }, { $limit: 1 }], as: "t" },
       },
     ]);
   });
@@ -209,7 +291,7 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
         { _id: 4 },
       ]),
     ).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser, { $limit: 1 }], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" } },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
       { $set: { t: "$__jsmql.tmp.0.total" } },
       { $unset: "__jsmql" },
@@ -234,9 +316,8 @@ describe("compiler/emit/join — the chain peels into the body, the rest reads t
       {
         $lookup: {
           from: "orders",
-          let: LET,
+          ...COMPACT,
           pipeline: [
-            byUser,
             { $group: { _id: "$status", __jsmqlTmp: { $sum: 1 } } },
             {
               $group: {
@@ -288,8 +369,8 @@ describe("compiler/emit/join — inside the body", () => {
       {
         $lookup: {
           from: "orders",
-          let: LET,
-          pipeline: [byUser, { $set: { dbl: { $multiply: ["$total", 2] } } }, { $unset: "tag" }],
+          ...COMPACT,
+          pipeline: [{ $set: { dbl: { $multiply: ["$total", 2] } } }, { $unset: "tag" }],
           as: "o",
         },
       },
@@ -304,7 +385,7 @@ describe("compiler/emit/join — inside the body", () => {
         { _id: 3, o: [] },
         { _id: 4, o: [] },
       ]),
-    ).toEqual([{ $lookup: { from: "orders", let: LET, pipeline: [byUser, { $limit: 1 }], as: "o" } }]);
+    ).toEqual([{ $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "o" } }]);
     expect(() => pipeline("$.o = $$$.orders.aggregate(o => { $$.filter(d => d.a > 1); });")).toThrow(
       /'\$\$' is the root stream/,
     );
@@ -331,8 +412,9 @@ describe("compiler/emit/join — inside the body", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_s0_length: "$__jsmql.length" },
-          pipeline: [byUser, { $set: { n: "$$jsmql_s0_length" } }],
+          ...COMPACT,
+          let: { jsmql_s0_length: "$__jsmql.length" },
+          pipeline: [{ $set: { n: "$$jsmql_s0_length" } }],
           as: "o",
         },
       },
@@ -361,9 +443,9 @@ describe("compiler/emit/join — inside the body", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_f0_tag: "$tag" },
+          ...COMPACT,
+          let: { jsmql_f0_tag: "$tag" },
           pipeline: [
-            byUser,
             {
               $lookup: {
                 from: "items",
@@ -445,7 +527,7 @@ describe("compiler/emit/join — the stream and the root", () => {
   it("`$ = $$$.c.find(p)` — each document becomes the one it found; one that found nothing leaves", () => {
     // `$replaceWith: { $first: … }` fails on the server for every unmatched document (measured)
     expect(compiled("$ = $$$.orders.find(o => o.userId === $._id);", [{ _id: 101 }, { _id: 103 }])).toEqual([
-      { $lookup: { from: "orders", let: LET, pipeline: [byUser, { $limit: 1 }], as: "__jsmql.tmp.0" } },
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $limit: 1 }], as: "__jsmql.tmp.0" } },
       { $unwind: "$__jsmql.tmp.0" },
       { $replaceWith: "$__jsmql.tmp.0" },
     ]);
@@ -529,6 +611,8 @@ beforeAll(async () => {
   await db.dropDatabase();
   await db.collection("users").insertMany(USERS.map((d) => ({ ...d })));
   await db.collection("orders").insertMany(ORDERS.map((d) => ({ ...d })));
+  // the multikey index the pair is answered from when either side is an array
+  await db.collection("orders").createIndex({ productIds: 1 });
   await db.collection("items").insertMany(ITEMS.map((d) => ({ ...d })));
   await db.collection("order-log").insertMany([{ _id: 9, userId: 1 }]);
   coll = db.collection("users");
@@ -543,7 +627,19 @@ afterAll(async () => {
  * readable: a top-level document keeps its `_id` and the fields the pipeline
  * added; a joined document is its id alone unless the body added fields to it.
  */
-const FIXTURE_KEYS = new Set(["userId", "total", "status", "tag", "nul", "orderId", "q", "ids", "minTotal"]);
+const FIXTURE_KEYS = new Set([
+  "userId",
+  "total",
+  "status",
+  "tag",
+  "nul",
+  "orderId",
+  "q",
+  "ids",
+  "minTotal",
+  "wants",
+  "productIds",
+]);
 const idsOf = (v: unknown, top: boolean): unknown => {
   if (Array.isArray(v)) return v.map((x) => idsOf(x, false));
   if (v !== null && typeof v === "object" && "_id" in v) {
@@ -585,6 +681,22 @@ describe("compiler/emit/join — the server runs every pipeline this file assert
       if (got !== want) problems.push(`${src}\n  got  ${got}\n  want ${want}`);
     }
     expect(problems, `${problems.length} of ${RUNS.length}:\n${problems.join("\n")}`).toEqual([]);
+  });
+});
+
+describe("compiler/emit/join — the pair is answered from the foreign index", () => {
+  it("answers the pair from the multikey index when either side is an array", async () => {
+    if (coll === null) return;
+    const stages = pipeline(
+      "const ids = $.wants; $.o = $$$.orders.filter({ productIds: ids }).toSorted({ total: -1 }).take(100);",
+    ) as Record<string, unknown>[];
+    const plan = await coll.aggregate(stages).explain("executionStats");
+    const lookup = (plan.stages as Record<string, unknown>[]).find((s) => "$lookup" in s) as {
+      indexesUsed: string[];
+      collectionScans: number;
+    };
+    expect(lookup.indexesUsed).toContain("productIds_1");
+    expect(lookup.collectionScans).toBe(0);
   });
 });
 
