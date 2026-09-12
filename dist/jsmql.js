@@ -14505,6 +14505,9 @@ function immutableTwinOf(name2) {
 function arrayLiteralOrderOf(name2) {
   return row(name2)?.asArrayLiteral;
 }
+function isMutator(name2) {
+  return immutableTwinOf(name2) !== void 0 || arrayLiteralOrderOf(name2) !== void 0 || mutatorFormOf(name2) !== void 0;
+}
 function iterateeSlotsOf(name2, family) {
   const decl = row(name2)?.iterateeSlots;
   return decl?.[family];
@@ -17464,6 +17467,25 @@ function namesSomething(node, key) {
   const n2 = node;
   return (n2.type === "AssignExpr" || n2.type === "DeleteStmt") && key === "target" || (n2.type === "CallExpression" || n2.type === "NewExpression") && key === "callee";
 }
+function writtenField(node) {
+  const recv = node.object;
+  if (!isNode(recv)) return null;
+  if (recv.type === "Ident") return recv;
+  if (recv.type !== "FieldRef" || recv.path === "") return null;
+  return recv;
+}
+function couldWriteItsReceiver(node) {
+  const start = node.object;
+  if (!isNode(start)) return false;
+  let recv = start;
+  while ((recv.type === "MemberAccess" || recv.type === "IndexAccess") && isNode(recv.object)) {
+    recv = recv.object;
+  }
+  return writtenField({ object: recv }) !== null;
+}
+function isNode(v) {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+}
 
 // src/compiler/passes/position.ts
 var STATEMENT = { at: "statement" };
@@ -17529,8 +17551,8 @@ function edge(node, key, here) {
 }
 
 // src/compiler/passes/walk.ts
-var isNode = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-var isCarrier = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isNode(v);
+var isNode2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+var isCarrier = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && !isNode2(v);
 function mapSlot(slot, fn) {
   if (Array.isArray(slot)) {
     let changed = false;
@@ -17541,7 +17563,7 @@ function mapSlot(slot, fn) {
     });
     return changed ? { value: out, changed: true } : { value: slot, changed: false };
   }
-  if (isNode(slot)) {
+  if (isNode2(slot)) {
     const r = transform(slot, fn);
     return { value: r.value, changed: r.changed };
   }
@@ -17582,7 +17604,7 @@ function mapSlotIn(slot, ctx, edge2, fn) {
     });
     return changed ? { value: out, changed: true } : { value: slot, changed: false };
   }
-  if (isNode(slot)) return transformIn(slot, ctx, edge2, fn);
+  if (isNode2(slot)) return transformIn(slot, ctx, edge2, fn);
   if (isCarrier(slot)) {
     let changed = false;
     const out = {};
@@ -17612,11 +17634,11 @@ function mapTreeIn(root2, seed, edge2, fn) {
 }
 
 // src/compiler/passes/fold.ts
-var isNode2 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
+var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
 function* nodesIn(value) {
   if (Array.isArray(value)) {
     for (const v of value) yield* nodesIn(v);
-  } else if (isNode2(value)) {
+  } else if (isNode3(value)) {
     yield value;
   } else if (typeof value === "object" && value !== null) {
     for (const v of Object.values(value)) yield* nodesIn(v);
@@ -17628,10 +17650,10 @@ function* everyNode(root2) {
 }
 function rootName(node) {
   let cursor = node;
-  while (isNode2(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
+  while (isNode3(cursor) && (cursor.type === "MemberAccess" || cursor.type === "IndexAccess")) {
     cursor = cursor.object;
   }
-  return isNode2(cursor) && cursor.type === "Ident" && typeof cursor.name === "string" ? cursor.name : null;
+  return isNode3(cursor) && cursor.type === "Ident" && typeof cursor.name === "string" ? cursor.name : null;
 }
 function unfoldable(stmts) {
   const excluded = /* @__PURE__ */ new Set();
@@ -18011,14 +18033,7 @@ var fieldPath = {
     return optional ? { ...folded, optional: true } : folded;
   }
 };
-var isNode3 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
-function writtenField(node) {
-  const recv = node.object;
-  if (!isNode3(recv)) return null;
-  if (recv.type === "Ident") return recv;
-  if (recv.type !== "FieldRef" || recv.path === "") return null;
-  return recv;
-}
+var isNode4 = (v) => typeof v === "object" && v !== null && !Array.isArray(v) && typeof v.type === "string";
 function writeBack(target, value, pos) {
   return {
     type: "UpdateFilter",
@@ -18050,7 +18065,7 @@ var mutatorTwin = {
 function instantiate(form, recv, args, pos) {
   const sub = (v) => {
     if (Array.isArray(v)) return v.map(sub);
-    if (!isNode3(v)) return v;
+    if (!isNode4(v)) return v;
     if (v.type === "Ident" && typeof v.name === "string") {
       if (v.name === "_r") return { ...recv };
       const slot = /^_(\d+)$/.exec(v.name);
@@ -18097,7 +18112,7 @@ var mutatedArgument = {
     if (at2 === void 0) return node;
     const args = n2.args;
     const target = args[at2];
-    if (!isNode3(target)) return node;
+    if (!isNode4(target)) return node;
     if (target.type !== "Ident" && (target.type !== "FieldRef" || target.path === "")) return node;
     return writeBack(target, { ...n2 }, n2.pos);
   }
@@ -18222,7 +18237,7 @@ function bareCall(callee, param, pos) {
       return void 0;
     return { type: "CallExpression", callee: { ...callee }, args: [arg], pos };
   }
-  if (callee.type === "MemberAccess" && isNode3(callee.object) && callee.object.type === "Ident") {
+  if (callee.type === "MemberAccess" && isNode4(callee.object) && callee.object.type === "Ident") {
     const ns = callee.object.name;
     if (typeof ns !== "string" || !namespaceNames().has(ns) || typeof callee.name !== "string") return void 0;
     return { type: "MethodCall", object: { ...callee.object }, name: callee.name, args: [arg], optional: false, pos };
@@ -18332,6 +18347,7 @@ function statementShaped(node) {
   if (name2 === null) return false;
   if (name2 === "assign" && writesItsTarget(node)) return true;
   if (lists(name2, "value")) return false;
+  if (node.type === "MethodCall" && isMutator(name2) && !couldWriteItsReceiver(node)) return false;
   return lists(name2, "statement") || lists(name2, "stream");
 }
 function isBareAssignWrite(program) {
@@ -20772,8 +20788,10 @@ function select(verdict, receiver, shaped, count) {
   switch (verdict.kind) {
     case "unknown":
       return { kind: "unknown", name: name2 };
-    case "refused":
-      return { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    case "refused": {
+      const gate = isMutator(name2) ? receiverGate(name2, receiver) : null;
+      return gate ?? { kind: "refused", name: name2, message: verdict.message, needsSubject: verdict.needsSubject };
+    }
     case "fallback":
       return { kind: "fallback", name: name2 };
     case "composedOnly":
@@ -23200,9 +23218,7 @@ function stageStatement(node, env, first) {
   if (node.type === "CallExpression" && node.callee.type === "Ident" && env.scope.has(node.callee.name)) {
     throw notAStatement(node.pos);
   }
-  if (node.type === "MethodCall" && (immutableTwinOf(name2) !== void 0 || arrayLiteralOrderOf(name2) !== void 0 || mutatorFormOf(name2) !== void 0)) {
-    throw mutatorNeedsField(name2, node.pos);
-  }
+  if (node.type === "MethodCall" && isMutator(name2)) throw mutatorNeedsField(name2, node.pos);
   const verdict = consult(name2, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf2(args), args.length);
   if (sel.kind !== "rule") {
