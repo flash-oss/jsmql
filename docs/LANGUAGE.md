@@ -1369,10 +1369,11 @@ the server.
 **Operator flattening:** Chained `&&`, `||`, `+`, `*`, and `??` operators are flattened into a single MongoDB array instead of nesting:
 ```js
 $.a + $.b + $.c                // → { $add: ["$a", "$b", "$c"] }
-$.x && $.y && $.z              // → { $and: ["$x", "$y", "$z"] }
-$.x || $.y || $.z              // → { $or: ["$x", "$y", "$z"] }
+$.a > 1 && $.b > 2 && $.c > 3  // → { $and: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }   (a Filter merges them into one query document)
+$.a > 1 || $.b > 2 || $.c > 3  // → { $or: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }
 $.a ?? $.b ?? $.c              // → { $ifNull: ["$a", "$b", "$c"] }
 ```
+Between plain values (`$.x && $.y`) the operators keep JavaScript's meaning — the result is the operand that decided, after the JavaScript truthiness test — see [Truthy and falsy](#truthy-and-falsy).
 
 **Context-sensitive `+`:** If any operand is a string literal or string-producing method, the entire chain becomes `$concat`:
 ```js
@@ -3832,7 +3833,7 @@ jsmql(`[{ $match: typeof $.x === "bool" }]`);
 // → "boolean" is refused, with 'bool' named — see "typeof" under Operators
 jsmql(`[{ $match: $.items.length === 3 }]`);
 // → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
-//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
+//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
 //       { case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] }, then: { $strLenCP: { $ifNull: ["$items", ""] } } }
 //     ], default: "$$REMOVE" } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).

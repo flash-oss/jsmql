@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs: three `// →` claims match the compiler again
+
+`scripts/check-doc-claims.mjs` found three claims the compiler had stopped
+keeping. Two were the present-array change: `[...$.mods, …].includes($.userId)`
+in the README and `$.items.length === 3` in LANGUAGE.md still showed the outer
+`$ifNull` guard the compiler no longer emits where the array is known to be
+there. The third was older: the operator-flattening example claimed
+`$.x && $.y && $.z` is `{ $and: ["$x", "$y", "$z"] }`, which it has not been
+since `&&` between values took JavaScript's meaning — the example now flattens
+predicates, where the `$and` is what the compiler emits, and points at the
+truthiness section for the value case.
+
 ## 2026-09-12 — chore(scripts): check-doc-claims reads every claim the prose writes
 
 The checker skipped or misread most of the prose: a claim on the source's own
