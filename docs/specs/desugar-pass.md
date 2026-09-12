@@ -186,6 +186,48 @@ decides between the two: a chain of declarations where each needs the previous
 one folded and a rule run advances one link per round, and a developer may write
 as many links as they like.
 
+## Constant folding
+
+The fold (`src/compiler/passes/fold.ts`, with `evaluate.ts`, `fold-methods.ts`,
+`fold-dates.ts` and `literal.ts`) runs inside the driver's rounds. A `const` or
+`let` whose right-hand side is a constant is computed once, the declaration
+emits nothing, and every reference becomes the value; any constant
+SUBEXPRESSION is replaced the same way. User-facing statement and examples:
+[LANGUAGE.md § Compile-time constants](../LANGUAGE.md#compile-time-constants-folding).
+
+**What a constant is.** An expression over literals and earlier constants that
+reads neither the document nor the environment: arithmetic, the string and array
+methods, `new Date(<literal>)` and the date methods on one, an `ObjectId`
+literal and its `.toString()`, a literal array or object and a read out of it.
+A binding that reads the document, the clock or the RNG stays the runtime
+`__jsmql.var.<name>` field of [let-bindings.md](let-bindings.md).
+
+**The invariant: a fold must not change the answer.** Every rule computes what the
+SERVER computes for the same expression, measured on mongod — not what JavaScript
+computes where the two differ. That is why a month added to 31 January is the last
+day of February (`$dateAdd` clamps), why `.startOf("week")` is the Sunday
+(`$dateTrunc`'s default), why `.diff` counts the boundaries crossed (`$dateDiff`),
+and why `Math.round(0.5)` is 0. A form whose answer the fold cannot reproduce with
+certainty is left to the server: a date method with a timezone or another option
+(a named zone shifts with daylight saving), a number in `String(n)` or a template
+slot outside the integers both sides print identically, `Number("42")` (a double
+on the server, an int when written), `typeof` (a BSON type name, and a written
+`1` is an int). `test/fold-consistency.test.ts` runs every folded method against
+its runtime lowering on the fixture mongod; a rule that fails there is removed.
+
+**Spelling the value.** A value goes back into the tree as the literal that spells
+it, so later rules match on it (`const k = "name"; $.items.map(k)` reaches the
+shorthand rule). A Date has no literal spelling and goes in as an `Injected`
+node — the carrier a `${…}` slot uses — so a query compares it as written and an
+expression passes it through. A value no node can carry (`undefined`, a non-finite
+number) does not fold: a declaration keeps its binding, and a declaration whose
+constant IS such a value is a positioned error. A constant computed key
+(`{ [k]: 1 }`) becomes the static key JavaScript would compute.
+
+**What never folds.** A raw `$op(…)` call (HR2: it is emitted as written), a name
+written to or mutated anywhere in its scope, a name read before its declaration,
+and a fold that would add a name the language does not have.
+
 ## Order constraints
 
 Some rules overlap: one input matches more than one. The pass resolves those in a

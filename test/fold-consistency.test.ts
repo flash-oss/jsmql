@@ -200,6 +200,57 @@ arrayCases.push({
 });
 
 // object receivers for the lodash object family
+// A date receiver: the fold's calendar arithmetic against `$dateAdd`, `$dateTrunc`,
+// `$dateDiff`, `$dateToString` and `$dateFromParts` run on the server.
+const DATE_SAMPLES = [
+  "2024-01-31T10:20:30.123Z", // a leap year's January 31st
+  "2024-02-29T23:59:59.999Z",
+  "2026-09-16T13:45:30.123Z", // a Wednesday
+  "2026-09-13T00:00:00.000Z", // a Sunday at midnight
+  "2020-12-31T05:00:00.000Z", // ISO week 53
+  "1999-12-31T23:59:59.999Z",
+];
+const DATE_UNITS = ["year", "quarter", "month", "week", "day", "hour", "minute", "second", "millisecond"];
+const dateCases: Case[] = [];
+for (const v of DATE_SAMPLES) {
+  const lit = `new Date("${v}")`;
+  const other = 'new Date("2026-01-31T23:59:00Z")';
+  const calls = [
+    ".getFullYear()",
+    ".getMonth()",
+    ".getDate()",
+    ".getDay()",
+    ".getHours()",
+    ".getTime()",
+    ".toISOString()",
+    ".quarter()",
+    ".dayOfYear()",
+    ".isoWeekday()",
+    ".isoWeekYear()",
+    ".isoWeek()",
+    ".week()",
+    `.diff(${other}, "day")`,
+    `.diff(${other}, "month")`,
+    `.diff(${other}, "week")`,
+    `.isSame(${other}, "year")`,
+    `.isBefore(${other}, "month")`,
+    `.isAfter(${other}, "day")`,
+    '.format("%Y-%m-%d %H:%M:%S.%L")',
+    '.format("%j %w %u %U %V %G %z %Z %%")',
+    ".set({ day: 1 })",
+    ".set({ month: 13, day: 0 })",
+    ".set({ hour: 25, minute: -1 })",
+    ".set({ isoWeek: 1, isoDayOfWeek: 1 })",
+    ".set({ isoWeekYear: 2020, isoWeek: 53, isoDayOfWeek: 4 })",
+  ];
+  for (const unit of DATE_UNITS) {
+    calls.push(`.plus(1, "${unit}")`, `.plus(-1, "${unit}")`, `.plus(25, "${unit}")`);
+    calls.push(`.minus(1, "${unit}")`, `.minus(7, "${unit}")`);
+    calls.push(`.startOf("${unit}")`, `.endOf("${unit}")`);
+  }
+  for (const call of calls) dateCases.push({ lit, val: new Date(v), call });
+}
+
 const objCases: Case[] = [];
 const OBJ_SAMPLES: Record<string, unknown>[] = [{}, { a: 1, b: 2, c: 3 }, { x: 0, y: 5, z: 10 }];
 for (const v of OBJ_SAMPLES) {
@@ -335,7 +386,7 @@ describe.skipIf(!client)("fold consistency: compile-time fold === MQL lowering o
 
   let compared = 0;
   const refused: string[] = [];
-  const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases];
+  const ALL_CASES = [...stringCases, ...numberCases, ...arrayCases, ...objCases, ...dateCases];
 
   for (const { lit, val, call } of ALL_CASES) {
     it(`${lit}${call}`, async () => {

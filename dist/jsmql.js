@@ -866,11 +866,11 @@ var collapse = (key, acc) => [
 ];
 function padded(side, recv, args, value, bind) {
   const target = value(args[0]);
-  const pad = args.length === 2 ? value(args[1]) : " ";
+  const pad2 = args.length === 2 ? value(args[1]) : " ";
   const v = bind("pad");
   const need = { $subtract: [target, { $strLenCP: v.ref }] };
-  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad] } } };
-  const filler = isSingleCodePointLiteral(pad) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
+  const repeated = { $reduce: { input: { $range: [0, need] }, initialValue: "", in: { $concat: ["$$value", pad2] } } };
+  const filler = isSingleCodePointLiteral(pad2) ? repeated : { $substrCP: [repeated, 0, clampNonNegative(need)] };
   const padding = { $concat: side === "start" ? [filler, v.ref] : [v.ref, filler] };
   const bounded = args[0].type === "NumberLiteral" ? padding : { $cond: { if: { $gt: [need, 0] }, then: padding, else: v.ref } };
   return { $let: { vars: { [v.as]: coerceStringBinding(recv) }, in: bounded } };
@@ -16020,6 +16020,7 @@ function asLiteral(value, pos) {
     }
     return { type: "ObjectLiteral", entries, pos };
   }
+  if (value instanceof Date) return { type: "Injected", value, pos };
   return null;
 }
 function leafOf(value, pos) {
@@ -16044,7 +16045,17 @@ function objectIdHex(value) {
 // src/compiler/passes/fold-dates.ts
 var NO = { ok: false };
 var ok = (value) => ({ ok: true, value });
+var dateOk = (d) => Number.isNaN(d.getTime()) ? NO : ok(d);
 var DAY = 864e5;
+var FIXED_MS = { week: 7 * DAY, day: DAY, hour: 36e5, minute: 6e4, second: 1e3, millisecond: 1 };
+var MONTHS_IN = { year: 12, quarter: 3, month: 1 };
+var isUnit = (u) => typeof u === "string" && (u in FIXED_MS || u in MONTHS_IN);
+function utc(year, month, day, h = 0, mi = 0, s = 0, ms = 0) {
+  const t = /* @__PURE__ */ new Date(0);
+  t.setUTCFullYear(year, month, day);
+  t.setUTCHours(h, mi, s, ms);
+  return t;
+}
 var midnight = (d) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate());
 var isoWeekday = (d) => d.getUTCDay() === 0 ? 7 : d.getUTCDay();
 function isoThursday(d) {
@@ -16052,8 +16063,209 @@ function isoThursday(d) {
   shifted.setUTCDate(shifted.getUTCDate() + 4 - isoWeekday(d));
   return shifted;
 }
+var isoWeekYearOf = (d) => isoThursday(d).getUTCFullYear();
+function isoWeekOf(d) {
+  const thursday = isoThursday(d);
+  const firstThursday = Date.UTC(thursday.getUTCFullYear(), 0, 4);
+  const firstThursdayWeekStart = firstThursday - (isoWeekday(new Date(firstThursday)) - 1) * DAY;
+  return Math.round((midnight(thursday) - isoWeekday(thursday) * DAY + DAY - firstThursdayWeekStart) / (7 * DAY)) + 1;
+}
+function weekOf(d) {
+  const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
+  const firstSunday = jan1 + (7 - new Date(jan1).getUTCDay()) % 7 * DAY;
+  const days = Math.round((midnight(d) - firstSunday) / DAY);
+  return days < 0 ? 0 : Math.floor(days / 7) + 1;
+}
+var dayOfYearOf = (d) => Math.round((midnight(d) - Date.UTC(d.getUTCFullYear(), 0, 1)) / DAY) + 1;
+function shift(d, unit, amount) {
+  if (unit in MONTHS_IN) {
+    const month = d.getUTCMonth() + MONTHS_IN[unit] * amount;
+    const lastDay = utc(d.getUTCFullYear(), month + 1, 0).getUTCDate();
+    const day = Math.min(d.getUTCDate(), lastDay);
+    return utc(
+      d.getUTCFullYear(),
+      month,
+      day,
+      d.getUTCHours(),
+      d.getUTCMinutes(),
+      d.getUTCSeconds(),
+      d.getUTCMilliseconds()
+    );
+  }
+  return new Date(d.getTime() + amount * FIXED_MS[unit]);
+}
+function truncate(d, unit) {
+  switch (unit) {
+    case "year":
+      return utc(d.getUTCFullYear(), 0, 1);
+    case "quarter":
+      return utc(d.getUTCFullYear(), Math.floor(d.getUTCMonth() / 3) * 3, 1);
+    case "month":
+      return utc(d.getUTCFullYear(), d.getUTCMonth(), 1);
+    case "week":
+      return new Date(midnight(d) - d.getUTCDay() * DAY);
+    default: {
+      const ms = FIXED_MS[unit];
+      return new Date(Math.floor(d.getTime() / ms) * ms);
+    }
+  }
+}
+function boundariesBetween(start, end, unit) {
+  switch (unit) {
+    case "year":
+      return end.getUTCFullYear() - start.getUTCFullYear();
+    case "quarter":
+      return quarterIndex(end) - quarterIndex(start);
+    case "month":
+      return end.getUTCFullYear() * 12 + end.getUTCMonth() - (start.getUTCFullYear() * 12 + start.getUTCMonth());
+    default:
+      return Math.round((truncate(end, unit).getTime() - truncate(start, unit).getTime()) / FIXED_MS[unit]);
+  }
+}
+var quarterIndex = (d) => d.getUTCFullYear() * 4 + Math.floor(d.getUTCMonth() / 3);
+var pad = (n2, width) => String(n2).padStart(width, "0");
+function formatDate(d, format) {
+  const year = d.getUTCFullYear();
+  if (year < 1e3 || year > 9999) return null;
+  let out = "";
+  for (let i = 0; i < format.length; i++) {
+    const c = format[i];
+    if (c !== "%") {
+      out += c;
+      continue;
+    }
+    const spec = format[++i];
+    switch (spec) {
+      case "Y":
+        out += pad(year, 4);
+        break;
+      case "G":
+        out += pad(isoWeekYearOf(d), 4);
+        break;
+      case "m":
+        out += pad(d.getUTCMonth() + 1, 2);
+        break;
+      case "d":
+        out += pad(d.getUTCDate(), 2);
+        break;
+      case "H":
+        out += pad(d.getUTCHours(), 2);
+        break;
+      case "M":
+        out += pad(d.getUTCMinutes(), 2);
+        break;
+      case "S":
+        out += pad(d.getUTCSeconds(), 2);
+        break;
+      case "L":
+        out += pad(d.getUTCMilliseconds(), 3);
+        break;
+      case "j":
+        out += pad(dayOfYearOf(d), 3);
+        break;
+      case "w":
+        out += String(d.getUTCDay() + 1);
+        break;
+      case "u":
+        out += String(isoWeekday(d));
+        break;
+      case "U":
+        out += pad(weekOf(d), 2);
+        break;
+      case "V":
+        out += pad(isoWeekOf(d), 2);
+        break;
+      case "z":
+        out += "+0000";
+        break;
+      case "Z":
+        out += "0";
+        break;
+      case "%":
+        out += "%";
+        break;
+      default:
+        return null;
+    }
+  }
+  return out;
+}
+var CALENDAR_PARTS = ["year", "month", "day"];
+var ISO_PARTS = ["isoWeekYear", "isoWeek", "isoDayOfWeek"];
+var TIME_PARTS = ["hour", "minute", "second", "millisecond"];
+function setParts(d, parts) {
+  const keys = Object.keys(parts);
+  const known = [...CALENDAR_PARTS, ...ISO_PARTS, ...TIME_PARTS];
+  if (keys.some((k) => !known.includes(k))) return null;
+  const iso = keys.some((k) => ISO_PARTS.includes(k));
+  if (iso && keys.some((k) => CALENDAR_PARTS.includes(k))) return null;
+  for (const k of keys) {
+    const v = parts[k];
+    if (typeof v !== "number" || !Number.isInteger(v)) return null;
+    if (k === "year" || k === "isoWeekYear" ? v < 1 || v > 9999 : v < -32768 || v > 32767) return null;
+  }
+  const part = (k, own) => typeof parts[k] === "number" ? parts[k] : own;
+  const h = part("hour", d.getUTCHours());
+  const mi = part("minute", d.getUTCMinutes());
+  const s = part("second", d.getUTCSeconds());
+  const ms = part("millisecond", d.getUTCMilliseconds());
+  if (!iso) {
+    return utc(
+      part("year", d.getUTCFullYear()),
+      part("month", d.getUTCMonth() + 1) - 1,
+      part("day", d.getUTCDate()),
+      h,
+      mi,
+      s,
+      ms
+    );
+  }
+  const weekYear = part("isoWeekYear", isoWeekYearOf(d));
+  const week = part("isoWeek", isoWeekOf(d));
+  const weekday = part("isoDayOfWeek", isoWeekday(d));
+  const jan4 = utc(weekYear, 0, 4);
+  const monday = jan4.getTime() - (isoWeekday(jan4) - 1) * DAY;
+  const days = (week - 1) * 7 + (weekday - 1);
+  return new Date(monday + days * DAY + h * FIXED_MS.hour + mi * FIXED_MS.minute + s * FIXED_MS.second + ms);
+}
 function foldDateMethod(d, name2, args) {
-  if (args.length > 0) return NO;
+  if (args.length === 0) return getter(d, name2);
+  const [first, second] = args;
+  switch (name2) {
+    case "plus":
+    case "minus":
+      if (args.length !== 2 || !isUnit(second) || typeof first !== "number" || !Number.isInteger(first)) return NO;
+      return dateOk(shift(d, second, name2 === "plus" ? first : -first));
+    case "startOf":
+      return args.length === 1 && isUnit(first) ? dateOk(truncate(d, first)) : NO;
+    case "endOf":
+      return args.length === 1 && isUnit(first) ? dateOk(new Date(shift(truncate(d, first), first, 1).getTime() - 1)) : NO;
+    case "diff":
+      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      return ok(boundariesBetween(first, d, second));
+    case "isSame":
+    case "isBefore":
+    case "isAfter": {
+      if (args.length !== 2 || !(first instanceof Date) || !isUnit(second)) return NO;
+      const mine = truncate(d, second).getTime();
+      const theirs = truncate(first, second).getTime();
+      return ok(name2 === "isSame" ? mine === theirs : name2 === "isBefore" ? mine < theirs : mine > theirs);
+    }
+    case "format": {
+      if (args.length !== 1 || typeof first !== "string") return NO;
+      const out = formatDate(d, first);
+      return out === null ? NO : ok(out);
+    }
+    case "set": {
+      if (args.length !== 1 || first === null || typeof first !== "object" || Array.isArray(first)) return NO;
+      const out = setParts(d, first);
+      return out === null ? NO : dateOk(out);
+    }
+    default:
+      return NO;
+  }
+}
+function getter(d, name2) {
   switch (name2) {
     case "getFullYear":
     case "getUTCFullYear":
@@ -16086,25 +16298,15 @@ function foldDateMethod(d, name2, args) {
     case "quarter":
       return ok(Math.floor(d.getUTCMonth() / 3) + 1);
     case "dayOfYear":
-      return ok(Math.round((midnight(d) - Date.UTC(d.getUTCFullYear(), 0, 1)) / DAY) + 1);
+      return ok(dayOfYearOf(d));
     case "isoWeekday":
       return ok(isoWeekday(d));
     case "isoWeekYear":
-      return ok(isoThursday(d).getUTCFullYear());
-    case "isoWeek": {
-      const thursday = isoThursday(d);
-      const firstThursday = Date.UTC(thursday.getUTCFullYear(), 0, 4);
-      const firstThursdayWeekStart = firstThursday - (isoWeekday(new Date(firstThursday)) - 1) * DAY;
-      return ok(
-        Math.round((midnight(thursday) - isoWeekday(thursday) * DAY + DAY - firstThursdayWeekStart) / (7 * DAY)) + 1
-      );
-    }
-    case "week": {
-      const jan1 = Date.UTC(d.getUTCFullYear(), 0, 1);
-      const firstSunday = jan1 + (7 - new Date(jan1).getUTCDay()) % 7 * DAY;
-      const days = Math.round((midnight(d) - firstSunday) / DAY);
-      return ok(days < 0 ? 0 : Math.floor(days / 7) + 1);
-    }
+      return ok(isoWeekYearOf(d));
+    case "isoWeek":
+      return ok(isoWeekOf(d));
+    case "week":
+      return ok(weekOf(d));
     default:
       return NO;
   }
@@ -16153,9 +16355,9 @@ var MATH = {
 function roundToPlaces(n2, places) {
   if (!Number.isFinite(n2) || n2 === 0) return n2;
   const { digits: digits2, exponent } = exactDecimal(n2);
-  const shift = exponent + places;
-  if (shift >= 0) return n2;
-  const unit = 10n ** BigInt(-shift);
+  const shift2 = exponent + places;
+  if (shift2 >= 0) return n2;
+  const unit = 10n ** BigInt(-shift2);
   const whole = digits2 / unit;
   const rest = digits2 % unit;
   const half = unit / 2n;
@@ -16258,6 +16460,10 @@ function foldNamedCall(name2, args) {
       if (a === null) return ok2(null);
       if (typeof a === "string") return ok2(a);
       if (typeof a === "boolean") return ok2(String(a));
+      if (typeof a === "number") {
+        const spelled3 = numberSpelling(a);
+        return spelled3 === null ? NO2 : ok2(spelled3);
+      }
       return NO2;
     case "Boolean":
       return args.length === 1 ? ok2(Boolean(a)) : NO2;
@@ -16269,6 +16475,10 @@ function foldNamedCall(name2, args) {
       return NO2;
   }
 }
+function numberSpelling(n2) {
+  if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
+  return String(n2);
+}
 function objectIdFrom(values) {
   const [a] = values;
   if (typeof a !== "string" || !/^[0-9a-fA-F]{24}$/.test(a)) return NO2;
@@ -16279,6 +16489,7 @@ function foldInstanceCall(receiver, name2, args) {
   if (Array.isArray(receiver)) return arrayMethod(receiver, name2, args);
   if (typeof receiver === "number") return numberMethod(receiver, name2, args);
   if (receiver instanceof Date) return foldDateMethod(receiver, name2, args.map(valueOf));
+  if (receiver instanceof ObjectId) return name2 === "toString" && args.length === 0 ? ok2(receiver.toHexString()) : NO2;
   if (isPlainObject2(receiver)) return objectMethod(receiver, name2, args);
   return NO2;
 }
@@ -16402,9 +16613,9 @@ function stringMethod(s, name2, args) {
       if (typeof fill !== "string" || fill === "") return ok2(s);
       const cps = points(s);
       if (cps.length >= a) return ok2(s);
-      const pad = points(fill);
+      const pad2 = points(fill);
       const built = [];
-      while (built.length < a - cps.length) built.push(pad[built.length % pad.length]);
+      while (built.length < a - cps.length) built.push(pad2[built.length % pad2.length]);
       return ok2(name2 === "padStart" ? built.join("") + s : s + built.join(""));
     }
     case "split":
@@ -17343,9 +17554,10 @@ function at(node, env, depth) {
     case "TemplateLiteral": {
       const parts = all(node.exprs, env, depth);
       if (!Array.isArray(parts)) return parts;
-      if (!parts.every((p) => typeof p === "string")) return NOT_CONSTANT2;
+      const spelled3 = parts.map((p) => typeof p === "string" ? p : typeof p === "number" ? numberSpelling(p) : null);
+      if (spelled3.some((p) => p === null)) return NOT_CONSTANT2;
       let out = node.quasis[0] ?? "";
-      for (let i = 0; i < parts.length; i++) out += String(parts[i]) + (node.quasis[i + 1] ?? "");
+      for (let i = 0; i < spelled3.length; i++) out += spelled3[i] + (node.quasis[i + 1] ?? "");
       return spellable(out);
     }
     case "UnaryExpr": {
@@ -17752,6 +17964,12 @@ function foldConstantParts(node, known = EMPTY) {
   };
   return mapTreeIn(node, known, step, (inner, env) => {
     const n2 = inner;
+    if (n2.type === "KeyValueEntry") {
+      const key = n2.key;
+      if (key.kind !== "computed" || key.expr === void 0) return inner;
+      const computed = evaluate(key.expr, env);
+      return computed.ok && typeof computed.value === "string" ? { ...n2, key: { kind: "static", name: computed.value } } : inner;
+    }
     if (!EVALUABLE.has(n2.type) || n2.type === "RegexLiteral") return inner;
     const result = evaluate(n2, env);
     if (!result.ok) {
@@ -19518,7 +19736,7 @@ function bsonSource(tag, v, render) {
 function stringify(value, options) {
   const indent = options?.indent ?? 2;
   const width = options?.width ?? 80;
-  const pad = typeof indent === "string" ? indent : " ".repeat(indent);
+  const pad2 = typeof indent === "string" ? indent : " ".repeat(indent);
   const seen = /* @__PURE__ */ new Set();
   const leaf2 = (v) => {
     if (v === null) return "null";
@@ -19554,7 +19772,7 @@ function stringify(value, options) {
         if (v.length === 0) return "[]";
         const parts2 = v.map((x) => render(x, depth + 1));
         const flat2 = `[${parts2.join(", ")}]`;
-        if (pad === "" || fits(flat2, depth)) return flat2;
+        if (pad2 === "" || fits(flat2, depth)) return flat2;
         return `[
 ${parts2.map((p) => at2(depth + 1) + p).join(",\n")}
 ${at2(depth)}]`;
@@ -19563,7 +19781,7 @@ ${at2(depth)}]`;
       if (entries.length === 0) return "{}";
       const parts = entries.map(([k, x]) => `${keySource(k)}: ${render(x, depth + 1)}`);
       const flat = `{ ${parts.join(", ")} }`;
-      if (pad === "" || fits(flat, depth)) return flat;
+      if (pad2 === "" || fits(flat, depth)) return flat;
       return `{
 ${parts.map((p) => at2(depth + 1) + p).join(",\n")}
 ${at2(depth)}}`;
@@ -19571,7 +19789,7 @@ ${at2(depth)}}`;
       seen.delete(v);
     }
   };
-  const at2 = (d) => pad.repeat(d);
+  const at2 = (d) => pad2.repeat(d);
   const fits = (text, depth) => !text.includes("\n") && at2(depth).length + text.length <= width;
   return render(value, 0);
 }

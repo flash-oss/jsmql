@@ -10,6 +10,53 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix: a constant date folds in every shape, and a constant date's arithmetic folds to the server's answer
+
+`const start = new Date("2026-09-01"); $match({ x: start })` emitted a `$set` of
+`__jsmql.var.start` and a `$match` on `$expr` — a collection scan — while the
+same declaration before a bare predicate compiled to a Filter with the date
+inlined. The fold inlines a declaration only when `asLiteral` can spell its
+value, and `literal.ts` answered null for a `Date`; the Filter shape had a side
+road of its own in `src/index.ts` that carried the date as a value, and the
+pipeline shape had none. A `Date` inside an array or an object already rode
+through as an `Injected` node, so the bare one now does the same, and the side
+road's comment says what it still does: carry an expression that reads the
+document. `docs/LANGUAGE.md` § Compile-time constants had promised the one
+behaviour all along.
+
+`const end = start.plus(1, "month")` stayed a `$dateAdd` in every shape, in the
+previous compiler too: `fold-dates.ts` folded only the zero-argument getters, on
+the reasoning that a value with no literal spelling is not worth computing. With
+the spelling in place the reasoning is gone, and the date methods fold — `.plus`,
+`.minus`, `.startOf`, `.endOf`, `.diff`, `.isSame` / `.isBefore` / `.isAfter`,
+`.format`, `.set` — to what the SERVER computes, each rule measured on mongod:
+`$dateAdd` clamps a calendar step to the target month's last day (31 January + 1
+month is 29 February in 2024), `$dateTrunc` starts the week on Sunday,
+`$dateDiff` counts the boundaries crossed (23:59 to 00:01 is one day),
+`$dateFromParts` rolls an out-of-range part over (month 13 is January), and
+`$dateToString` prints the specifiers the row accepts. A form that names a
+timezone or another option stays on the server, where the zone table is; a
+specifier the row refuses is not folded either, so the refusal reaches the
+developer. `test/fold-consistency.test.ts` now runs the date family — six dates
+by eighty-nine calls — against the runtime lowering on the fixture mongod.
+
+Two smaller folds came out of the same survey of constants a `$match` could not
+index on. `String(n)` and a `${n}` template slot fold for an integer below 10^16
+in magnitude, which `$toString` and JavaScript write digit for digit (from there
+the server uses an exponent and JavaScript does not; a fraction's threshold
+differs; `-0` keeps its sign only on the server). An `ObjectId` constant's
+`.toString()` is its hex. And a computed key whose expression is a constant
+string becomes the static key JavaScript would compute, so
+`const f = "a"; $sort({ [f]: 1 })` compiles where it was refused. Left as they
+are, with the reason stated in the spec: `Number("42")` (a double on the server,
+an int when written), `typeof` (a BSON type name), BigInt arithmetic (a
+`$toLong` document is not a query literal), `new RegExp(…)` (not a constructor
+the language has). The fold's contract now has a home in
+`docs/specs/desugar-pass.md` § Constant folding, which `let-bindings.md` had
+pointed at without a section to land on.
+
+---
+
 ## 2026-09-12 — fix(test): the port guard reads this checkout, not the worktrees beside it
 
 The guard that keeps MongoDB's default port out of the project walks the tree

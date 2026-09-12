@@ -7331,8 +7331,10 @@ describe("template literals", () => {
     // .toLowerCase() is statically string-producing — the wrap would be redundant.
     expect(jsmql.expr("`name=${$.name.toLowerCase()}`")).toEqual({ $concat: ["name=", { $toLower: "$name" }] });
   });
-  it("number literal interpolation gets $toString wrap", () => {
-    expect(jsmql.expr("`n=${42}`")).toEqual({ $concat: ["n=", { $toString: 42 }] });
+  it("an integer interpolation folds; a fraction keeps the $toString wrap", () => {
+    // `$toString` and JavaScript write an integer alike; a fraction's spelling can differ.
+    expect(jsmql.expr("`n=${42}`")).toBe("n=42");
+    expect(jsmql.expr("`n=${0.5}`")).toEqual({ $concat: ["n=", { $toString: 0.5 }] });
   });
 });
 

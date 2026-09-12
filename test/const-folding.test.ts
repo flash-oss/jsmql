@@ -30,9 +30,66 @@ describe("const folding — collapse to Filter", () => {
   });
 
   it("new Date(literal) folds to a BSON Date", () => {
-    expect(() => jsmql('let date = new Date("2020-01-01"); $.createdAt < date')).toThrow(
-      "A Filter or an expression takes a 'const' prelude; a 'let' needs the pipeline form, where it becomes a field.",
-    );
+    expect(jsmql('let date = new Date("2020-01-01"); $.createdAt < date')).toEqual({
+      createdAt: { $lt: new Date("2020-01-01T00:00:00.000Z") },
+    });
+  });
+
+  it("a constant date is a literal in a pipeline too — the $match can use the index", () => {
+    expect(jsmql('const d = new Date("2026-09-01"); $match({ x: d })')).toEqual([
+      { $match: { x: new Date("2026-09-01T00:00:00.000Z") } },
+    ]);
+    expect(jsmql("const d = new Date(2026, 8, 1); $$.filter(o => o.t >= d)")).toEqual([
+      { $match: { t: { $gte: new Date("2026-09-01T00:00:00.000Z") } } },
+    ]);
+    expect(jsmql('const d = new Date("2026-09-01"); $.t = d')).toEqual([
+      { $set: { t: new Date("2026-09-01T00:00:00.000Z") } },
+    ]);
+  });
+
+  it("a constant date's arithmetic folds to the instant the server would compute", () => {
+    expect(
+      jsmql(`const start = new Date("2026-09-01");
+             const end = start.plus(1, "month");
+             $$.filter(d => d.createdAt >= start && d.createdAt < end)`),
+    ).toEqual([
+      {
+        $match: {
+          createdAt: { $gte: new Date("2026-09-01T00:00:00.000Z"), $lt: new Date("2026-10-01T00:00:00.000Z") },
+        },
+      },
+    ]);
+    expect(jsmql('const d = new Date("2026-01-31"); $match({ day: d.plus(1, "month").format("%Y-%m-%d") })')).toEqual([
+      { $match: { day: "2026-02-28" } },
+    ]);
+    // a timezone is the server's table, so that form stays a runtime one
+    expect(jsmql('const d = new Date("2026-09-01"); $match({ x: d.plus(1, "month", "Europe/Kyiv") })')).toEqual([
+      {
+        $match: {
+          $expr: {
+            $eq: [
+              "$x",
+              {
+                $dateAdd: {
+                  startDate: new Date("2026-09-01T00:00:00.000Z"),
+                  unit: "month",
+                  amount: 1,
+                  timezone: "Europe/Kyiv",
+                },
+              },
+            ],
+          },
+        },
+      },
+    ]);
+  });
+
+  it("an integer's string, a constant computed key and an ObjectId's hex fold", () => {
+    expect(jsmql("const s = `id-${42}`; $match({ x: s })")).toEqual([{ $match: { x: "id-42" } }]);
+    expect(jsmql('const f = "a"; $sort({ [f]: 1 })')).toEqual([{ $sort: { a: 1 } }]);
+    expect(jsmql("const id = 0x507f1f77bcf86cd799439011; $match({ x: id.toString() })")).toEqual([
+      { $match: { x: "507f1f77bcf86cd799439011" } },
+    ]);
   });
 
   it("a const chain folds (a const built from an earlier const)", () => {

@@ -257,8 +257,10 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
       if (a === null) return ok(null);
       if (typeof a === "string") return ok(a);
       if (typeof a === "boolean") return ok(String(a));
-      // A number's spelling differs between `$toString` and JavaScript on
-      // exponents, so it stays runtime. See the template-literal rule.
+      if (typeof a === "number") {
+        const spelled = numberSpelling(a);
+        return spelled === null ? NO : ok(spelled);
+      }
       return NO;
     case "Boolean":
       return args.length === 1 ? ok(Boolean(a)) : NO;
@@ -273,6 +275,19 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
     default:
       return NO;
   }
+}
+
+/**
+ * The string `$toString` writes for a number, or null where it and JavaScript
+ * part company. An integer below 10^16 in magnitude is written digit for digit
+ * by both; from there the server switches to an exponent ("1e+16") where
+ * JavaScript holds out to 10^21, a fraction's threshold differs too ("1e-07"
+ * against "1e-7"), and `-0` keeps its sign there and loses it here. Those stay
+ * runtime; the integers a query compares fold.
+ */
+export function numberSpelling(n: number): string | null {
+  if (!Number.isInteger(n) || Object.is(n, -0) || Math.abs(n) >= 1e16) return null;
+  return String(n);
 }
 
 /** A 24-hex string, and nothing else: `ObjectId()` mints one and is not constant. */
@@ -296,6 +311,8 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
   if (receiver instanceof Date) return foldDateMethod(receiver, name, args.map(valueOf));
+  // An ObjectId's one read: its 24 hex digits, the string the driver prints.
+  if (receiver instanceof ObjectId) return name === "toString" && args.length === 0 ? ok(receiver.toHexString()) : NO;
   // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
   // JavaScript, and reading one with the object rules answers about the wrong
   // thing entirely: `/ab/.size()` would be `Object.keys(regex).length`, which
