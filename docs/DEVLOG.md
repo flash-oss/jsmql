@@ -10,6 +10,27 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(test): the port guard reads this checkout, not the worktrees beside it
+
+The guard that keeps MongoDB's default port out of the project walks the tree
+from the repository root and skips a fixed list of directory names. `.claude` is
+not on that list, so the walk descended into `.claude/worktrees/` — where a
+parallel session's worktree is a different branch at a different commit. Run from
+the main checkout the guard reported thirty-one offenders, every one of them
+another session's file, most of them written before the rule existed. The rule
+cannot be met by editing them: they are not in this checkout to edit.
+
+So the walk stops at a directory that is a checkout of its own, which a nested
+git worktree announces by carrying `.git` as a FILE rather than a directory. The
+guard still reads every file this checkout holds, tracked or not, and still names
+the offender and the line — a planted URI is caught exactly as before.
+
+This is why the failure was invisible from a worktree: a worktree has no nested
+worktrees, so the walk found nothing extra and the suite passed. Only the main
+checkout could see it.
+
+---
+
 ## 2026-09-12 — docs: the desugar spec describes the pass that exists
 
 `docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it

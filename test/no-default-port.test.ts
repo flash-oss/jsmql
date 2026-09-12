@@ -16,7 +16,7 @@
  * history says what used to be true.
  */
 import { describe, it, expect } from "vitest";
-import { readFileSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readFileSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { dirname, join, relative, resolve } from "node:path";
 import { SCRATCH_DBS } from "./fixtures/config.ts";
@@ -25,6 +25,15 @@ const ROOT = resolve(dirname(fileURLToPath(import.meta.url)), "..");
 
 /** Directories that hold no source of ours — a hit there says nothing about this project. */
 const SKIP_DIRS = new Set(["node_modules", ".git", "dist", "vendor", "tmp", ".idea", "coverage"]);
+/**
+ * Is this directory a checkout of its own — a nested git worktree?
+ *
+ * A worktree's root carries `.git` as a FILE pointing at the parent repository.
+ * The ones under `.claude/worktrees/` are other branches at other commits, and
+ * what they say is true of THEM: a session working on a branch from before this
+ * rule existed would fail the rule for every session that ran a suite from here.
+ */
+const isOwnCheckout = (dir: string): boolean => existsSync(join(dir, ".git"));
 /** The historical record states what was once true; every other file states what IS true. */
 const EXEMPT = new Set(["docs/DEVLOG.md", "test/no-default-port.test.ts"]);
 const READABLE = /\.(ts|tsx|mts|mjs|js|json|md|html|yml|yaml|sh|txt)$/;
@@ -33,8 +42,9 @@ function repoFiles(dir: string, out: string[] = []): string[] {
   for (const name of readdirSync(dir)) {
     if (SKIP_DIRS.has(name)) continue;
     const full = join(dir, name);
-    if (statSync(full).isDirectory()) repoFiles(full, out);
-    else if (READABLE.test(name) || name === "probe") out.push(full);
+    if (statSync(full).isDirectory()) {
+      if (!isOwnCheckout(full)) repoFiles(full, out);
+    } else if (READABLE.test(name) || name === "probe") out.push(full);
   }
   return out;
 }
