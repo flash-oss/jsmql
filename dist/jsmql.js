@@ -20744,13 +20744,19 @@ function lookupOf(node, env, S, over = "$lookup") {
 function pathOn2(base, path, pos) {
   return path.split(".").reduce((object, name2) => ({ type: "MemberAccess", object, name: name2, optional: false, pos }), base);
 }
-function elementsOf2(slot, l, env) {
+function elementsOf2(slot, l, env, node) {
   if (l.element === "") return slot;
   if (l.one === "find") return pathOn2(slot, l.element, l.pos);
+  if (countsElements(node, l.peeledTo)) return slot;
   const x = env.fresh("el").as;
   const body = pathOn2({ type: "Ident", name: x, pos: l.pos }, l.element, l.pos);
   const map = { type: "Lambda", params: [x], body, pos: l.pos };
   return { type: "MethodCall", object: slot, name: "map", args: [map], optional: false, pos: l.pos };
+}
+function countsElements(node, peeledTo) {
+  if (node.type === "MemberAccess") return node.name === "length" && node.object === peeledTo;
+  if (node.type === "MethodCall") return node.name === "size" && node.args.length === 0 && node.object === peeledTo;
+  return false;
 }
 function fieldPath2(v) {
   return typeof v === "string" && v.startsWith("$") && !v.startsWith("$$") ? v.slice(1) : null;
@@ -20816,7 +20822,7 @@ function joinValue(node, env, S) {
     mutable: false,
     pos: l.pos
   });
-  const rebased = rebase(node, l.peeledTo, elementsOf2({ type: "Ident", name: name2, pos: l.pos }, l, env));
+  const rebased = rebase(node, l.peeledTo, elementsOf2({ type: "Ident", name: name2, pos: l.pos }, l, env, node));
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
 function joinWrite(node, path, env, S) {
