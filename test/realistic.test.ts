@@ -61,7 +61,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.productIds.some(p => myProductIds.includes(p)))
+  .filter({ productIds: myProductIds })
   .toSorted({ createdAt: -1 })
   .take(100) // a pipeline of co-purchase orders, most recent 100
   .map("productIds")
@@ -129,24 +129,9 @@ $$ = candidateProductIds
         {
           $lookup: {
             from: "orders",
-            let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
-            pipeline: [
-              {
-                $match: {
-                  $expr: {
-                    $anyElementTrue: {
-                      $map: {
-                        input: { $ifNull: ["$productIds", []] },
-                        as: "p",
-                        in: { $in: ["$$p", { $ifNull: ["$$jsmql_v0_myProductIds", []] }] },
-                      },
-                    },
-                  },
-                },
-              },
-              { $sort: { createdAt: -1 } },
-              { $limit: 100 },
-            ],
+            localField: "__jsmql.var.myProductIds",
+            foreignField: "productIds",
+            pipeline: [{ $sort: { createdAt: -1 } }, { $limit: 100 }],
             as: "__jsmql.tmp.1",
           },
         },

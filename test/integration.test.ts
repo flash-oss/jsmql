@@ -781,7 +781,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.items.some(i => myProductIds.includes(i.productId)))
+  .filter({ "items.productId": myProductIds })
   .toSorted({ placedAt: -1 })
   .take(100)
   .map("items")

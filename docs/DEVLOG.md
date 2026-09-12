@@ -10,6 +10,23 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs(examples): the recommended-products join is spelled as one equality
+
+The flagship example (`test/realistic.test.ts`, "recommended products", and its
+copy on fixture data in `test/integration.test.ts`) selected the co-purchase
+orders with `.filter(o => o.productIds.some(p => myProductIds.includes(p)))`.
+That spelling is a predicate over the foreign array and lowers to an `$expr`
+body, which the planner cannot answer from the `productIds` index: measured,
+it examined every order (5000 documents, 0 keys). The same selection written as
+one equality — `.filter({ productIds: myProductIds })` — is the
+`localField` / `foreignField` pair, joined on a shared element from the
+multikey index (803 keys, 800 documents examined for the same 100 rows). Both
+copies now use the equality spelling; the integration copy joins on the nested
+path, `{ "items.productId": myProductIds }`, and returns the same rows as
+before. The playground and the README examples follow from the suite.
+
+---
+
 ## 2026-09-12 — feat(compiler): a join that opens with one equality is the pair, whatever links follow
 
 A `$$$.<coll>` chain whose body opened with one correlated equality lowered to
