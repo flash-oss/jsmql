@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — docs(examples): the flagship example keeps co-purchases from the last year, and drops its redundant final cut
+
+The recommended-products example (`test/realistic.test.ts`, the playground's default,
+mirrored in `test/integration.test.ts`) opened its co-purchase join with
+`.filter({ productIds: myProductIds })`. It now reads
+`.filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))`:
+the same indexed pair, with a date bound beside it — `{ $match: { $expr: { $gt: ["$createdAt",
+{ $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }` as the
+first stage of the `$lookup.pipeline` — so the example shows the arrow-form join and the date
+arithmetic in one line. The integration mirrors write a constant date (`new Date("2025-01-01")`),
+because the fixture is fixed in time and a bound relative to `$$NOW` would change the
+asserted rows as the dataset ages; the `$$NOW` shape was run once against the fixture and
+answers the same four rows. The closing `.take(10)` after `.orderBy({ score: -1 })` is gone:
+the candidate list is already cut to the ten most frequent ids, so the final `$slice` said
+nothing.
+
 ## 2026-09-13 — feat(emit): the `localField`/`foreignField` pair is taken from a `&&` conjunct
 
 A join predicate with one correlated equality AND another condition —
