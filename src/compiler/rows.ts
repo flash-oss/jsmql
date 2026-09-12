@@ -494,6 +494,11 @@ export function mergesIntoOf(name: string): boolean {
   return (row(name) as { mergesInto?: true } | undefined)?.mergesInto === true;
 }
 
+/** Do the stream cell's stages give every document back as it arrived — `.uniq()`'s `$group` + `$replaceWith`? */
+export function restoresDocumentsOf(name: string): boolean {
+  return (row(name) as { restoresDocuments?: true } | undefined)?.restoresDocuments === true;
+}
+
 /** Does the stream cell fold the stream into ONE document — always, or only when the argument is a field name? */
 export function collapsesOf(name: string): true | "unlessRawBody" | null {
   return (row(name) as { collapses?: true | "unlessRawBody" } | undefined)?.collapses ?? null;

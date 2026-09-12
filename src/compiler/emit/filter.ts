@@ -394,20 +394,27 @@ export function pathOfIn(e: Expr, env: Env): string | null {
   // document (HR4), which the server reaches only through the stage's `let`: no
   // query path, so the `$expr` road reads it and captures it.
   if (e.type === "FieldRef") return e.path === "" || innermost !== null || env.level > 0 ? null : e.path;
+  // The element itself, when it is an unwound FIELD: `.flatMap("tags").filter(t => t === "x")` is `{ tags: "x" }`.
+  // The whole document has no query path, and a shallower level's element is captured by the `$expr` road.
+  if (e.type === "Ident" && env.scope.has(e.name)) {
+    const b = env.lookup(e.name, e.pos);
+    if (b.ref.kind !== "document" || b.ref.path === "" || b.level !== env.level) return null;
+    return innermost === null || innermost.element === e.name ? b.ref.path : null;
+  }
   if (e.type === "MemberAccess") {
     if (!isCallable(e.name)) return null;
-    if (
-      e.object.type === "Ident" &&
-      env.scope.has(e.object.name) &&
-      env.lookup(e.object.name, e.object.pos).ref.kind === "document" &&
+    if (e.object.type === "Ident" && env.scope.has(e.object.name)) {
+      const b = env.lookup(e.object.name, e.object.pos);
       // a parameter of a SHALLOWER level has no path here either — the `$expr` road captures it
-      env.lookup(e.object.name, e.object.pos).level === env.level
-    ) {
-      // A name bound as the DOCUMENT — a stream callback's parameter, or a `.some`
-      // element — has its fields as paths. Inside an `$elemMatch` only the
-      // INNERMOST element's do: an outer parameter read there has no query form
-      // (`$elemMatch` sees its own element only), so the body takes the `$expr` road.
-      return innermost === null || innermost.element === e.object.name ? e.name : null;
+      if (b.ref.kind === "document" && b.level === env.level) {
+        // A name bound as the ELEMENT — a stream callback's parameter, or a `.some`
+        // element — has its fields as paths, under the element's own path when it is
+        // an unwound field. Inside an `$elemMatch` only the INNERMOST element's do: an
+        // outer parameter read there has no query form (`$elemMatch` sees its own
+        // element only), so the body takes the `$expr` road.
+        if (innermost !== null && innermost.element !== e.object.name) return null;
+        return b.ref.path === "" ? e.name : `${b.ref.path}.${e.name}`;
+      }
     }
     const base = pathOfIn(e.object, env);
     return base === null ? null : `${base}.${e.name}`;

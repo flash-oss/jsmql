@@ -417,7 +417,7 @@ export function locate(node: Expr, env: Env): Located | null {
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
     if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
-    if (b.ref.kind === "document") return { kind: "f", level: b.level, path: "", hint: node.name };
+    if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
   }

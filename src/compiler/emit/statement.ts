@@ -26,6 +26,7 @@ import {
   isStageName,
   onlyOf,
   replacesDocumentOf,
+  restoresDocumentsOf,
   stageBodyRuleOf,
   pipelineOverOf,
   mergesIntoOf,
@@ -296,13 +297,18 @@ function afterStages(stages: readonly Stage[], env: Env): Env {
   let out = env;
   for (const stage of stages) {
     const name = Object.keys(stage)[0];
-    const fact = replacesDocumentOf(name);
-    const drops = fact === true || (fact === "inclusion" && isInclusion(stage[name]));
-    if (!drops) continue;
+    if (!replacesDocument(name, stage)) continue;
     out = out.dropFields(name, E.afterReplace(name));
+    env.chain.placed(true);
     env.chain.dirty = false;
   }
   return out;
+}
+
+/** Does this stage replace the document — the row's fact, an inclusion `$project` judged by its body? */
+function replacesDocument(name: string, stage: Stage): boolean {
+  const fact = replacesDocumentOf(name);
+  return fact === true || (fact === "inclusion" && isInclusion(stage[name]));
 }
 
 /** A `$project` body that names fields to KEEP: every value is an inclusion, `_id: 0` aside. */
@@ -965,6 +971,9 @@ function streamLink(
   ) as Stage[];
   const out: Stage[] = [];
   for (const stage of stages) out.push(...place(name, stage, env, first && out.length === 0, link.pos));
+  // A link whose stages replace the document leaves no unwound element to point at —
+  // unless its row says the documents come back as they were (`.uniq()`).
+  if (!restoresDocumentsOf(name) && out.some((st) => replacesDocument(Object.keys(st)[0], st))) env.chain.placed(true);
   return out;
 }
 

@@ -1013,6 +1013,20 @@ export type StageIn = {
   /** A fresh `__jsmql.tmp.<n>` scratch field path; the chain's cleanup drops it. */
   slot: () => string;
   bind: (hint: string) => { as: string; ref: string };
+  /**
+   * The stream's ELEMENT — what a callback's parameter stands for: the document
+   * (`path: ""`, read as `$$ROOT`) or, after `.flatMap("items")`, the unwound field
+   * (`path: "items"`, read as `"$items"`). A cell that keys on the element itself
+   * (`.uniq()`) or names its fields (`.pick([…])`) reads it here.
+   */
+  element: () => { readonly path: string; readonly ref: string };
+  /**
+   * The element now lives in `path` — a cell that unwinds an array field says so,
+   * and every later link's callback reads its parameter there. A stage that
+   * replaces the document (`$replaceWith`, `$group`, …) makes the document the
+   * element again.
+   */
+  unwound: (path: string) => void;
 };
 
 /**

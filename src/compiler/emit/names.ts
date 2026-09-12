@@ -109,8 +109,13 @@ export function mongoVarName(js: string): MongoVar {
 export type Ref =
   /** A MongoDB variable — a lambda parameter, a `$let` var. Read as `$$name`. */
   | { readonly kind: "var"; readonly ref: VarRef }
-  /** The current document itself — `$`, or a stream callback's element (`$$.filter(d => …)`). */
-  | { readonly kind: "document" }
+  /**
+   * The stream's ELEMENT — a stream callback's parameter (`$$.filter(d => …)`), the
+   * element of an `$elemMatch` body. `path` is where the element lives on the
+   * document: `""` when the element IS the document, the unwound field after
+   * `.flatMap("items")` — its fields are then `items.<field>`.
+   */
+  | { readonly kind: "document"; readonly path: string }
   /** A value carried between stages in a `__jsmql.var.<name>` field. */
   | { readonly kind: "field"; readonly slot: FieldSlot }
   /** A value the fold settled but could not inline as source — a live Date, an ObjectId. */

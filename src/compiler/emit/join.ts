@@ -102,6 +102,13 @@ export type Lookup = {
   readonly complete: boolean;
   /** The last peeled node, so the rest of the chain can be rebased onto the slot. */
   readonly peeledTo: Expr;
+  /**
+   * Where the body's ELEMENT lives on the documents the array holds: `""` when each
+   * document is the element, the unwound field after a `.flatMap("items")` that no
+   * later stage replaced. The value of such a chain is the elements, not their
+   * carriers — `$$$.orders.flatMap("items")` is the items.
+   */
+  readonly element: string;
   readonly pos: number;
 };
 
@@ -164,8 +171,31 @@ export function lookupOf(node: Expr, env: Env, S: JoinServices, over: "$lookup" 
   const rest = links.slice(i);
   const complete = rest.length === 0 && head === node;
   const vars = capture !== null && capture.any ? capture.vars : null;
+  const element = body.chain.element;
   const shape = takePair(vars, body.chain.close());
-  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, pos };
+  return { complete, from, ...shape, correlated: vars !== null, one, yields, rest, peeledTo, element, pos };
+}
+
+/** `<base>.a.b` for the dotted `path` — the element read off one document of the slot. */
+function pathOn(base: Expr, path: string, pos: number): Expr {
+  return path
+    .split(".")
+    .reduce<Expr>((object, name) => ({ type: "MemberAccess", object, name, optional: false, pos }), base);
+}
+
+/**
+ * The slot's value as the chain means it. The array holds the body's documents;
+ * when the element is an unwound field of theirs, the value is those fields — one
+ * per document (`.map(x => x.items)`), or the one document's (`.items`).
+ */
+function elementsOf(slot: Expr, l: Lookup, env: Env): Expr {
+  if (l.element === "") return slot;
+  if (l.one === "find") return pathOn(slot, l.element, l.pos);
+  // A compiler mint, so the two spellings of one chain (`"items"` / `d => d.items`) name it alike.
+  const x = env.fresh("el").as;
+  const body = pathOn({ type: "Ident", name: x, pos: l.pos }, l.element, l.pos);
+  const map: Expr = { type: "Lambda", params: [x], body, pos: l.pos };
+  return { type: "MethodCall", object: slot, name: "map", args: [map], optional: false, pos: l.pos };
 }
 
 /** A plain field path — `"$x"`, `"$a.b"` — and not a `$$` variable; its name without the `$`. */
@@ -264,16 +294,17 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
   if (l.one !== false) stages.push(unwrap(slot.path, l.one));
   env.chain.hoist(stages, slot.path);
   const name = `#join${slot.path}`;
-  // A `$lookup.as` array always holds the foreign collection's documents, so a
-  // terminal that answers one ELEMENT of it — `.head()`, `.maxBy(k)` — is a document.
+  // A `$lookup.as` array holds the foreign collection's documents, so a terminal
+  // that answers one ELEMENT of it — `.head()`, `.maxBy(k)` — is a document. An
+  // unwound field's elements are whatever the field held.
   const bound = env.bind(name, {
     ref: { kind: "field", slot },
     type: l.yields,
-    elements: l.yields === "array" ? "object" : "unknown",
+    elements: l.yields === "array" && l.element === "" ? "object" : "unknown",
     mutable: false,
     pos: l.pos,
   });
-  const rebased = rebase(node, l.peeledTo, { type: "Ident", name, pos: l.pos } as Expr);
+  const rebased = rebase(node, l.peeledTo, elementsOf({ type: "Ident", name, pos: l.pos }, l, env));
   // the rest of the chain is a VALUE over the slot, wherever the chain stood
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
@@ -294,7 +325,8 @@ export function joinWrite(
   // so what this attempt hoisted is taken back — else the stamp lands twice.
   const marks = [env.chain, env.rootChain].map((c) => [c, c.mark()] as const);
   const l = lookupOf(node, env, S);
-  if (!l.complete) {
+  // An unwound element is read off the documents `as` holds, which is the value road's work too.
+  if (!l.complete || l.element !== "") {
     for (const [c, m] of marks) c.rewind(m);
     return null;
   }
@@ -313,7 +345,8 @@ export function joinRoot(node: Expr, env: Env, S: JoinServices): Stage[] {
   const l = lookupOf(node, env, S);
   if (!l.complete || l.one !== "find") throw E.rootNeedsOneDocument(l.pos);
   const slot = env.chain.slot();
-  return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: "$" + slot.path }];
+  const found = l.element === "" ? "$" + slot.path : `$${slot.path}.${l.element}`;
+  return [lookupStage(l, slot.path), { $unwind: "$" + slot.path }, { $replaceWith: found }];
 }
 
 /**

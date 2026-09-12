@@ -10,6 +10,42 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(stream): after `.flatMap` a callback receives the element, and a key-less `.countBy()` counts it
+
+The recommended-products example, spelled the way a JavaScript developer writes
+it over arrays — `.flatMap("productIds")` inside the join, then
+`.filter(p => !myProductIds.includes(p)).countBy()` — compiled, ran, and answered
+the wrong thing: `p` was the whole order (`$$ROOT`), `.countBy()` was refused for
+its missing key, and with a key it would have counted orders. `$unwind` keeps the
+document and puts one element in the named field; the stream cells read every
+callback parameter as the document, so nothing after `.flatMap` saw the element.
+
+The stream now tracks WHERE its element lives (`Chain.element` in
+[env.ts](src/compiler/emit/env.ts); `""` when the element is the document). The
+`.flatMap` cell says it moved (`unwound(path)`), a callback's parameter is bound
+with that path (`{ kind: "document", path }`), and both the value road and the
+query road read `i.qty` as `items.qty`; the sort readings prefix their keys, a
+whole-element comparator names the field, `.pick` / `.omit` prefix their lists, and
+`.uniq()` groups on the element. A stage that replaces the document resets it —
+except a link whose row states the new `restoresDocuments` fact (`.uniq`,
+`.uniqBy`, the `sorted` twins), whose `$replaceWith` gives the kept document back.
+The documents themselves stay MongoDB's carriers (a string element has no document
+form), so a terminal `$$.flatMap("tags")` still runs; `.map(item => item)` makes
+the elements the documents. In a value position the chain is JavaScript's value:
+`Lookup.element` carries the body's final element and [join.ts](src/compiler/emit/join.ts)
+reads it off the joined documents (`.map(x => x.items)`, `.items` after `.find`,
+`$replaceWith: "$slot.items"` on the `$ =` road), so `$$$.orders.flatMap("items")`
+IS the items. The raw stage `$$.$unwind("$items")` is MQL and moves nothing. The
+former idiom `.flatMap("items").map("items")` now reads `items.items`; every
+example that used it is rewritten. Spec:
+[stream-methods.md § The element after `.flatMap`](specs/stream-methods.md#the-element-after-flatmap).
+
+The stream `.countBy()` / `.groupBy()` / `.keyBy()` take the `omitted` slot form
+their value-mode twins already had: no argument is lodash's identity iteratee, the
+element itself — `$group: { _id: "$$ROOT" }` on a document stream, `_id: "$productIds"`
+after `.flatMap`. Measured on the project's mongod: `$$.flatMap("tags").countBy()`
+over `[{ tags: ["x", "y"] }, { tags: ["x"] }]` answers `{ x: 2, y: 1 }`.
+
 ## 2026-09-12 — feat(parse): a parameter may be destructured into plain names
 
 `([id, count]) => -count` and `({ sku, qty: n }) => sku + n` parse, in arrows and

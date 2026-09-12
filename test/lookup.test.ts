@@ -901,7 +901,9 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
     ]);
   });
 
-  it(".flatMap(d => d.<path>) becomes $unwind inside the lookup's pipeline body", () => {
+  it(".flatMap(d => d.<path>) becomes $unwind inside the lookup's pipeline body, and the value is the unwound elements", () => {
+    // JavaScript's `orders.flatMap(o => o.items)` is the items: the `$lookup` holds
+    // one order per line, and the assignment reads the line off each.
     expect(jsmql("$.items = $$$.orders.filter(o => o.userId === $._id).flatMap(o => o.items);")).toEqual([
       {
         $lookup: {
@@ -909,9 +911,67 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           localField: "_id",
           foreignField: "userId",
           pipeline: [{ $unwind: "$items" }],
-          as: "items",
+          as: "__jsmql.tmp.0",
         },
       },
+      { $set: { items: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } } } },
+      { $unset: "__jsmql" },
+    ]);
+    // the links after `.flatMap` work on the element, in the body and after it
+    expect(
+      jsmql(
+        '$.n = $$$.orders.filter(o => o.userId === $._id).flatMap("items").filter(i => i.qty > 1).sortBy("price").length;',
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $unwind: "$items" }, { $match: { "items.qty": { $gt: 1 } } }, { $sort: { "items.price": 1 } }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      {
+        $set: {
+          n: { $size: { $ifNull: [{ $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } }, []] } },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    // `.find` after `.flatMap` is ONE element, and `$ =` becomes it
+    expect(jsmql('$.line = $$$.orders.flatMap("items").find(i => i.sku === $.sku);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_sku: "$sku" },
+          pipeline: [
+            { $unwind: "$items" },
+            { $match: { $expr: { $eq: ["$items.sku", "$$jsmql_f0_sku"] } } },
+            { $limit: 1 },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { line: "$__jsmql.tmp.0.items" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql('$ = $$$.orders.flatMap("items").find(i => i.sku === $.sku);')).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_sku: "$sku" },
+          pipeline: [
+            { $unwind: "$items" },
+            { $match: { $expr: { $eq: ["$items.sku", "$$jsmql_f0_sku"] } } },
+            { $limit: 1 },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0.items" },
     ]);
   });
 

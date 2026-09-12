@@ -3353,10 +3353,10 @@ jsmql(`$$ = $$$.archive.filter(o => o.tier === "gold").slice(0, 10);`)
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `.take(n)` → `$limit: n` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid); `.drop(n)` → `$skip: n` (`drop(0)` is identity — no stage) |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample: { size: n }` |
 | `.sample()` | Zero args | `$sample: { size: 1 }` — one random document (lodash `_.sample`; use `.sampleSize(n)` for more) |
-| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. Surrounding fields preserved (MQL-natural); chain `.map(d => d.<path>)` after for JS-faithful "just the elements". Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected |
-| `.groupBy(<key>)` / `.groupBy({ _id, … })` | One field key, **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
-| `.countBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
-| `.keyBy(<key>)` | One field key | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
+| `.flatMap(<key>)` | One field key — the array field to flatten | One `$unwind: "$<path>"` stage. From here on **the element is what every callback receives** — `.filter(i => i.qty > 1)` reads `items.qty`, a key-less `.countBy()` groups on the element, and `.sortBy("price")` sorts by `items.price` — while the documents keep their other fields (MQL-natural `$unwind`). For "the elements as the documents" chain `.map(item => item)`. Complex arrow bodies (`.flatMap(d => d.items.map(...))`) are rejected. See [The element after `.flatMap`](#the-element-after-flatmap) |
+| `.groupBy(<key>)` / `.groupBy()` / `.groupBy({ _id, … })` | One field key (or none — the element itself), **or** a raw `$group` body object (must contain `_id`; accumulator ops like `$addToSet` are allowed in the field slots) | Key form → collapses to the lodash object `{ <key>: [docs] }` (like value-mode `$.arr.groupBy(...)`); body form → `$group: <body>` verbatim (a stream of group docs — the accumulator form has no lodash analogue) |
+| `.countBy(<key>)` / `.countBy()` | One field key, or none — the element itself is the key (lodash's identity default; the natural spelling after `.flatMap`) | Collapses to the lodash object `{ <key>: <count> }` (like value-mode `$.arr.countBy(...)`). For the count-descending `{ _id, count }` stream, write the `$sortByCount("$field")` stage directly |
+| `.keyBy(<key>)` / `.keyBy()` | One field key, or none — the element itself | Collapses to the lodash object `{ <key>: <last doc> }` (like value-mode `$.arr.keyBy(...)`), last wins. "Last" follows current order — precede with `.sort(...)` when it matters |
 | `.uniqBy(<key>)` | One field key | `$group` keeping the first document per key + `$replaceWith`. "First" follows current order — precede with `.sort(...)` when it matters |
 | `.uniq()` | None | `$group` keyed on the WHOLE document + `$replaceWith` — one document per distinct document |
 | `.sortedUniq()` / `.sortedUniqBy(<key>)` | As `.uniq` / `.uniqBy` | Aliases: `$group` needs no sorted input, so lodash's sorted-input precondition has nothing to express in MQL |
@@ -3407,6 +3407,26 @@ The scratch field is cleared once the chain finishes, so it never reaches your o
 $.allTags = $.tags.concat($.extraTags);
 $$.flatMap("allTags");
 ```
+
+#### The element after `.flatMap`
+
+In JavaScript, `orders.flatMap(o => o.items)` is a list of **items**, and every method after it works on an item. The stream reads the same way: after `.flatMap("items")` each callback's parameter is the element — the unwound field — so its fields are paths under that field, the lodash shorthands name the element's fields, a comparator on the whole element sorts by the field, and the key-less `.countBy()` / `.groupBy()` / `.keyBy()` group on the element:
+
+```js
+$$.flatMap("items").filter(i => i.qty > 1).sortBy("price").uniq().pick(["sku"]);
+// → [ { $unwind: "$items" },
+//     { $match: { "items.qty": { $gt: 1 } } },
+//     { $sort: { "items.price": 1 } },
+//     { $group: { _id: "$items", __jsmqlTmp: { $first: "$$ROOT" } } }, { $replaceWith: "$__jsmqlTmp" },
+//     { $project: { "items.sku": 1, _id: 0 } } ]
+
+$$.flatMap("productIds").filter(p => !$.owned.includes(p)).countBy();   // { <productId>: count }
+// → [ { $unwind: "$productIds" }, { $match: … }, { $group: { _id: "$productIds", … } }, … ]
+```
+
+The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line with `items` holding that line. To make the elements the documents, say so — `.map(item => item)` is `{ $replaceWith: "$items" }` — and from that stage on the document is the element again, as after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and moves nothing: a callback after it still receives the whole document.
+
+In a **value** position the chain is JavaScript's value: `$$$.orders.flatMap("items")` is the items themselves (the `$lookup` holds one order per line, and the value reads the line off each), so `.length` counts lines and `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 

@@ -163,8 +163,8 @@ $$ = candidateProductIds
                               cond: { $not: { $in: ["$$p", { $ifNull: ["$__jsmql.var.myProductIds", []] }] } },
                             },
                           },
-                          as: "jsmqlX",
-                          in: { $ifNull: [{ $toString: "$$jsmqlX" }, "null"] },
+                          as: "x",
+                          in: { $ifNull: [{ $toString: "$$x" }, "null"] },
                         },
                       },
                       [],
@@ -194,8 +194,8 @@ $$ = candidateProductIds
                               cond: { $not: { $in: ["$$p", { $ifNull: ["$__jsmql.var.myProductIds", []] }] } },
                             },
                           },
-                          as: "jsmqlX",
-                          cond: { $eq: [{ $ifNull: [{ $toString: "$$jsmqlX" }, "null"] }, "$$jsmqlKey"] },
+                          as: "x",
+                          cond: { $eq: [{ $ifNull: [{ $toString: "$$x" }, "null"] }, "$$jsmqlKey"] },
                         },
                       },
                     },
@@ -228,6 +228,246 @@ $$ = candidateProductIds
             localField: "__jsmql.var.candidateProductIds",
             foreignField: "_id",
             pipeline: [{ $limit: 500 }, { $project: { _id: 1, name: 1 } }],
+            as: "__jsmql.var.candidateProducts",
+          },
+        },
+        {
+          $set: {
+            "__jsmql.tmp.2": {
+              $slice: [
+                {
+                  $sortArray: {
+                    input: {
+                      $map: {
+                        input: "$__jsmql.var.candidateProductIds",
+                        as: "id",
+                        in: {
+                          productId: "$$id",
+                          score: {
+                            $getField: {
+                              field: { $toString: { $ifNull: ["$$id", ""] } },
+                              input: "$__jsmql.var.candidateProductIdCounts",
+                            },
+                          },
+                          name: {
+                            $getField: {
+                              field: "name",
+                              input: {
+                                $arrayElemAt: [
+                                  {
+                                    $filter: {
+                                      input: "$__jsmql.var.candidateProducts",
+                                      as: "x",
+                                      cond: { $eq: ["$$x._id", "$$id"] },
+                                    },
+                                  },
+                                  0,
+                                ],
+                              },
+                            },
+                          },
+                        },
+                      },
+                    },
+                    sortBy: { score: -1 },
+                  },
+                },
+                10,
+              ],
+            },
+          },
+        },
+        { $unwind: "$__jsmql.tmp.2" },
+        { $replaceWith: "$__jsmql.tmp.2" },
+      ]);
+    },
+  );
+
+  it(
+    "the same recommendations in the JavaScript-native spelling — .some/.includes, .flatMap in the join, a key-less .countBy, a destructured sort key, `in`",
+    { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" },
+    () => {
+      // The same pipeline, spelled the way a JavaScript developer writes it over
+      // arrays. Inside the join, `.flatMap("productIds")` is `$unwind`, and every
+      // callback after it receives the product id — so `.filter(p => …)` and the
+      // key-less `.countBy()` work on the id, not on the order. `.entries()` hands
+      // `[id, count]` pairs to a destructured sort key, and
+      // `pr._id in candidateProductIds` is the `{ $in: [...] }` query.
+      expect(
+        jsmql`
+const userId = 0x507f1f77bcf86cd799439011;
+$$.filter({ _id: userId }); // limit the whole pipeline down to one pass
+assert($$.length === 1, "More than one user with such ID found");
+
+const myProductIds = $$$.orders
+  .filter({ userId })
+  .$sort({ createdAt: -1 }) // same as _.sort()
+  .take(10)
+  .map("productIds")
+  .flatten()
+  .uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o => o.productIds.some(p => myProductIds.includes(p)))
+  .toSorted({ createdAt: -1 })
+  .take(100) // a pipeline of co-purchase orders, most recent 100
+  .flatMap("productIds")
+  .filter(p => !myProductIds.includes(p))
+  .countBy() // { ID: count } map
+  .entries()
+  .sortBy(([id, count]) => -count)
+  .fromEntries();
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+
+const candidateProducts = $$$.products
+  .filter(pr => pr._id in candidateProductIds) //  { $in: [] } operator
+  .$limit(500); // same as .take(500)
+
+$$ = candidateProductIds
+  .map(id => ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name:  candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1 })
+  .take(10);
+      `,
+      ).toEqual([
+        { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
+        { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+        {
+          $match: {
+            $expr: {
+              $convert: {
+                input: true,
+                to: {
+                  $cond: [
+                    { $eq: ["$__jsmql.length", 1] },
+                    "bool",
+                    "jsmql assertion failed: More than one user with such ID found",
+                  ],
+                },
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "orders",
+            pipeline: [
+              { $match: { userId: new ObjectId("507f1f77bcf86cd799439011") } },
+              { $sort: { createdAt: -1 } },
+              { $limit: 10 },
+            ],
+            as: "__jsmql.tmp.0",
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.myProductIds": {
+              $setUnion: {
+                $reduce: {
+                  input: { $map: { input: "$__jsmql.tmp.0", as: "x", in: "$$x.productIds" } },
+                  initialValue: [],
+                  in: { $concatArrays: ["$$value", { $cond: [{ $isArray: "$$this" }, "$$this", ["$$this"]] }] },
+                },
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "orders",
+            let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
+            pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $anyElementTrue: {
+                      $map: {
+                        input: { $ifNull: ["$productIds", []] },
+                        as: "p",
+                        in: { $in: ["$$p", { $ifNull: ["$$jsmql_v0_myProductIds", []] }] },
+                      },
+                    },
+                  },
+                },
+              },
+              { $sort: { createdAt: -1 } },
+              { $limit: 100 },
+              { $unwind: "$productIds" },
+              { $match: { $expr: { $not: { $in: ["$productIds", { $ifNull: ["$$jsmql_v0_myProductIds", []] }] } } } },
+              { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } },
+              {
+                $group: {
+                  _id: null,
+                  __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+                },
+              },
+              { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+            ],
+            as: "__jsmql.tmp.1",
+          },
+        },
+        { $set: { "__jsmql.tmp.1": { $ifNull: [{ $first: "$__jsmql.tmp.1" }, {}] } } },
+        {
+          $set: {
+            "__jsmql.var.candidateProductIdCounts": {
+              $arrayToObject: {
+                $map: {
+                  input: {
+                    $map: {
+                      input: {
+                        $sortArray: {
+                          input: {
+                            $map: {
+                              input: {
+                                $map: {
+                                  input: { $objectToArray: "$__jsmql.tmp.1" },
+                                  as: "jsmqlKv",
+                                  in: ["$$jsmqlKv.k", "$$jsmqlKv.v"],
+                                },
+                              },
+                              as: "x",
+                              in: { k: { $arrayElemAt: ["$$x", 1] }, v: "$$x" },
+                            },
+                          },
+                          sortBy: { k: -1 },
+                        },
+                      },
+                      as: "jsmqlP",
+                      in: "$$jsmqlP.v",
+                    },
+                  },
+                  as: "jsmqlP",
+                  in: [{ $toString: { $arrayElemAt: ["$$jsmqlP", 0] } }, { $arrayElemAt: ["$$jsmqlP", 1] }],
+                },
+              },
+            },
+          },
+        },
+        {
+          $set: {
+            "__jsmql.var.candidateProductIds": {
+              $map: {
+                input: {
+                  $map: {
+                    input: { $objectToArray: "$__jsmql.var.candidateProductIdCounts" },
+                    as: "jsmqlKv",
+                    in: "$$jsmqlKv.k",
+                  },
+                },
+                as: "x",
+                in: { $toObjectId: "$$x" },
+              },
+            },
+          },
+        },
+        {
+          $lookup: {
+            from: "products",
+            let: { jsmql_v0_candidateProductIds: "$__jsmql.var.candidateProductIds" },
+            pipeline: [{ $match: { $expr: { $in: ["$_id", "$$jsmql_v0_candidateProductIds"] } } }, { $limit: 500 }],
             as: "__jsmql.var.candidateProducts",
           },
         },
@@ -2677,15 +2917,15 @@ describe("most expensive line items across shipped orders (`.flatMap` + `.map`)"
     "flatten order items, project to the item itself, then sort by price",
     { kind: "pipeline", usage: "db.orders.aggregate(jsmql(...))" },
     () => {
-      // `.flatMap("items")` lowers to `$unwind: "$items"` — MQL-natural,
-      // surrounding fields preserved. The follow-up `.map("items")`
-      // replaces each doc with just the item (so the next `$sort` indexes
-      // into the item directly). Both use the lodash property shorthand
-      // (equivalent to `o => o.items`); `.filter({ status: … })` is the
-      // matches-object shorthand for `o => o.status === …`.
+      // `.flatMap("items")` lowers to `$unwind: "$items"`, and from there on each
+      // callback receives the ITEM: `.map(item => item)` replaces each doc with
+      // just the item (so the next `$sort` indexes into the item directly).
+      // `.flatMap("items")` is the lodash property shorthand (equivalent to
+      // `o => o.items`); `.filter({ status: … })` is the matches-object
+      // shorthand for `o => o.status === …`.
       expect(
         jsmql`
-$$.filter({ status: "shipped" }).flatMap("items").map("items");
+$$.filter({ status: "shipped" }).flatMap("items").map(item => item);
 $sort({ price: -1 });
 $limit(50);
         `,

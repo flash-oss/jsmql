@@ -187,6 +187,14 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
    * emit, so asking for a string literal here asks something that can never be true.
    */
   collapses?: true | "unlessRawBody";
+  /**
+   * The stream cell's stages give every document back as it arrived — fewer of
+   * them, none changed. `.uniq()` groups on a key and `$replaceWith`s the document
+   * it kept, so the `$group` in it replaces nothing a later link can see: the
+   * unwound element of a `.flatMap` before it is still there. Without this fact a
+   * `$replaceWith` in the cell's stages reads as "the document changed".
+   */
+  restoresDocuments?: true;
   /** On the stream this method UNIONS documents in — `push` as a statement, `concat` as a link — a `$unionWith` per source. */
   unions?: true;
   /**
@@ -7398,7 +7406,13 @@ export const NAMES = {
     stream: {
       args: { sig: "callback", exact: 1 },
       // The array field to unwind, named through the parameter: `d => d.items` is "$items".
-      emit: ({ args, fieldPath }) => [{ $unwind: fieldPath(args[0]) }],
+      // Its elements are what the links after it work on — a later callback's
+      // parameter is the unwound field, and the documents keep their other fields.
+      emit: ({ args, fieldPath, unwound }) => {
+        const path = fieldPath(args[0]);
+        unwound(path.slice(1));
+        return [{ $unwind: path }];
+      },
     },
     statement: unsupported(
       "'.flatMap()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.flatMap();'",
@@ -9399,6 +9413,7 @@ export const NAMES = {
   }),
 
   uniq: name({
+    restoresDocuments: true,
     doc: "'.uniq()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9408,8 +9423,9 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
-      emit: () => [
-        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+      // One document per distinct ELEMENT: the whole document, or the unwound field after `.flatMap`.
+      emit: ({ element }) => [
+        { $group: { _id: element().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
         { $replaceWith: `$${GROUP_SLOT}` },
       ],
     },
@@ -9421,6 +9437,7 @@ export const NAMES = {
   }),
 
   uniqBy: name({
+    restoresDocuments: true,
     doc: "'.uniqBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9453,6 +9470,7 @@ export const NAMES = {
   }),
 
   sortedUniq: name({
+    restoresDocuments: true,
     doc: "'.sortedUniq()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -9462,8 +9480,8 @@ export const NAMES = {
     expr: { args: { sig: "", none: true }, emit: ({ recv }) => ({ $setUnion: singleArrayArg(recv) }) },
     stream: {
       args: { sig: "", none: true },
-      emit: () => [
-        { $group: { _id: "$$ROOT", [GROUP_SLOT]: { $first: "$$ROOT" } } },
+      emit: ({ element }) => [
+        { $group: { _id: element().ref, [GROUP_SLOT]: { $first: "$$ROOT" } } },
         { $replaceWith: `$${GROUP_SLOT}` },
       ],
     },
@@ -9477,6 +9495,7 @@ export const NAMES = {
   }),
 
   sortedUniqBy: name({
+    restoresDocuments: true,
     doc: "'.sortedUniqBy()' — see docs/LANGUAGE.md.",
     call: true,
     on: ["array", "stream"],
@@ -10431,7 +10450,7 @@ export const NAMES = {
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] },
     },
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
@@ -10444,7 +10463,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       // Last wins, as lodash's does; "last" follows the stream's current order.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $last: "$$ROOT" }),
     },
@@ -10465,7 +10484,7 @@ export const NAMES = {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // No matcher object: `$$.groupBy({ … })` is a raw '$group' document, whose
       // '_id' is the group key. The other two spellings are iteratees as usual.
-      stream: { 0: ["propertyPath", "matchesPropertyPair"] },
+      stream: { 0: ["propertyPath", "matchesPropertyPair", "omitted"] },
     },
     returns: { array: "object", stream: "stream", Object: "object" },
     where: ["value", "stream"],
@@ -10487,7 +10506,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       // lodash's object `{ <key>: [docs] }`, as one document: group, gather the pairs, build the object.
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $push: "$$ROOT" }),
     },
@@ -10507,7 +10526,7 @@ export const NAMES = {
     iterateeSlots: {
       array: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "bareCallable", "omitted"] },
       // A bare callable takes a VALUE; a stream element is a document.
-      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair"] },
+      stream: { 0: ["propertyPath", "matchesObject", "matchesPropertyPair", "omitted"] },
     },
     returns: { array: "object", stream: "stream" },
     where: ["value", "stream"],
@@ -10526,7 +10545,7 @@ export const NAMES = {
       },
     },
     stream: {
-      args: { sig: "iteratee", exact: 1 },
+      args: { sig: "[iteratee]", allowed: [0, 1] },
       emit: ({ args, reshape }) => collapse(reshape(args[0]), { $sum: 1 }),
     },
     statement: unsupported(
@@ -10687,15 +10706,19 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      // Keeps ONLY the named fields: `_id` goes too unless named, as lodash's does.
-      emit: ({ args, value }) => [
-        {
-          $project: Object.fromEntries([
-            ...(value(args[0]) as string[]).map((k) => [k, 1]),
-            ...((value(args[0]) as string[]).includes("_id") ? [] : [["_id", 0]]),
-          ]),
-        },
-      ],
+      // Keeps ONLY the named fields of the ELEMENT: `_id` goes too unless named, as lodash's does.
+      emit: ({ args, value, element }) => {
+        const at = element().path;
+        const keys = value(args[0]) as string[];
+        return [
+          {
+            $project: Object.fromEntries([
+              ...keys.map((k) => [at === "" ? k : `${at}.${k}`, 1]),
+              ...(keys.includes("_id") ? [] : [["_id", 0]]),
+            ]),
+          },
+        ];
+      },
     },
     statement: unsupported(
       "'.pick()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.pick();'",
@@ -10728,7 +10751,13 @@ export const NAMES = {
     },
     stream: {
       args: { sig: "[keys]", exact: 1, slotType: { 0: "array" }, arrayOf: { 0: "fieldName" }, constant: [0] },
-      emit: ({ args, value }) => [{ $project: Object.fromEntries((value(args[0]) as string[]).map((k) => [k, 0])) }],
+      // Drops the named fields of the ELEMENT.
+      emit: ({ args, value, element }) => {
+        const at = element().path;
+        return [
+          { $project: Object.fromEntries((value(args[0]) as string[]).map((k) => [at === "" ? k : `${at}.${k}`, 0])) },
+        ];
+      },
     },
     statement: unsupported(
       "'.omit()' computes a value, and a statement writes one. Assign it to a field: '$.<field> = <value>.omit();'",

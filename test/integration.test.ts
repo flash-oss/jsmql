@@ -280,12 +280,13 @@ $limit(3);`,
   });
 
   // Flatten line items across shipped orders, then the 3 most expensive lines.
-  // `.flatMap(o => o.items).map(o => o.items)` → $unwind + $replaceWith. The 3rd
-  // place is a 3-way tie at 400, so we assert the price sequence, not identity.
+  // `.flatMap(o => o.items).map(item => item)` → $unwind + $replaceWith: the callback
+  // after `.flatMap` receives the ITEM. The 3rd place is a 3-way tie at 400, so we
+  // assert the price sequence, not identity.
   it("pipeline: 3 most expensive line items across shipped orders", async () => {
     const rows = await aggregate(
       "orders",
-      `$$ = $$.filter(o => o.status === "shipped").flatMap(o => o.items).map(o => o.items);
+      `$$ = $$.filter(o => o.status === "shipped").flatMap(o => o.items).map(item => item);
 $sort({ price: -1 });
 $limit(3);`,
     );
@@ -744,12 +745,13 @@ $ = { n: mine.length, firstStatus: mine.at(0).status, lastStatus: mine.at(-1).st
   });
 
   // `.flatMap` lowers to `$unwind`, so the `.aggregate` block that follows sees
-  // one document per order line — the sum proves the unwind ran before the group.
+  // one LINE per document — its parameter is the line, so `line.qty` reads
+  // `$items.qty`; the sum proves the unwind ran before the group.
   it("pipeline: .flatMap then .aggregate sums across unwound lines", async () => {
     const rows = await aggregate(
       "users",
       `$match($._id === 0x6500000000000000000000a1);
-const lines = $$$.orders.flatMap(o => o.items).aggregate((o) => { $group({ _id: null, qty: $sum(o.items.qty) }); });
+const lines = $$$.orders.flatMap(o => o.items).aggregate((line) => { $group({ _id: null, qty: $sum(line.qty) }); });
 $ = { lines };`,
     );
     expect(rows).toEqual([{ lines: [{ _id: null, qty: 55 }] }]);
@@ -810,6 +812,60 @@ $$ = candidateProductIds
     // the rest score 1 and the `name: 1` sort key breaks the tie. Every
     // `productId` is an ObjectId, not the hex string the tally was keyed by —
     // `toEqual` fails on a string here, so the cast is what this asserts.
+    expect(rows).toEqual([
+      { productId: ID.product(1), score: 2, name: "Mechanical Keyboard" },
+      { productId: ID.product(7), score: 1, name: "4K Monitor" },
+      { productId: ID.product(5), score: 1, name: "Ergonomic Chair" },
+      { productId: ID.product(2), score: 1, name: "USB-C Cable" },
+    ]);
+  });
+
+  // The same recommendations in the JavaScript-native spelling, on the same
+  // fixture: `.flatMap("items")` inside the join hands each LINE to the callbacks
+  // after it (`.filter(i => …)` reads `items.productId`, `.countBy("productId")`
+  // groups on it), `.entries()` feeds a destructured sort key, and
+  // `pr._id in candidateProductIds` is the `$in` query. Same rows as above prove
+  // the unwound-element reading against the server, not only in a `toEqual`.
+  it("pipeline: collaborative filtering in the JavaScript-native spelling — .flatMap in the join, a destructured sort key, `in`", async () => {
+    const rows = await aggregate(
+      "users",
+      `const userId = 0x6500000000000000000000a2;
+$$.filter({ _id: userId });
+assert($$.length === 1, "More than one user with such ID found");
+
+const myProductIds = $$$.orders
+  .filter({ userId })
+  .$sort({ placedAt: -1 })
+  .take(10)
+  .flatMap("items")
+  .map("productId")
+  .uniq();
+
+const candidateProductIdCounts = $$$.orders
+  .filter(o => o.items.some(i => myProductIds.includes(i.productId)))
+  .toSorted({ placedAt: -1 })
+  .take(100)
+  .flatMap("items")
+  .filter(i => !myProductIds.includes(i.productId))
+  .countBy("productId")
+  .entries()
+  .sortBy(([id, count]) => -count)
+  .fromEntries();
+const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
+
+const candidateProducts = $$$.products
+  .filter(pr => pr._id in candidateProductIds)
+  .$limit(500);
+
+$$ = candidateProductIds
+  .map(id => ({
+    productId: id,
+    score: candidateProductIdCounts[id],
+    name: candidateProducts.find({ _id: id }).name,
+  }))
+  .orderBy({ score: -1, name: 1 })
+  .take(10);`,
+    );
     expect(rows).toEqual([
       { productId: ID.product(1), score: 2, name: "Mechanical Keyboard" },
       { productId: ID.product(7), score: 1, name: "4K Monitor" },

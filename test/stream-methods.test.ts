@@ -598,7 +598,7 @@ describe(".groupBy(spec | key) → object collapse / $group", () => {
       "'$$.groupBy({ … })' on the stream is the '$group' stage, and its body needs an '_id' — the group key: '$$.groupBy({ _id: $.status, n: $sum(1) });'. To group by one field alone, write '$$.groupBy(\"status\")'.",
     );
     expect(() => jsmql("$$ = $$.groupBy(5);")).toThrow(
-      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
+      "'.groupBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
     );
   });
 });
@@ -1164,10 +1164,63 @@ describe(".flatMap(d => d.<path>) — chain-form $unwind", () => {
     expect(jsmql("$$ = $$.flatMap(d => d.profile.tags);")).toEqual([{ $unwind: "$profile.tags" }]);
   });
 
-  it("composes after .filter and before .map (the JS-faithful unwind+project pattern)", () => {
-    expect(
-      jsmql("$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(d => ({ item: d.items }));"),
-    ).toEqual([{ $match: { active: true } }, { $unwind: "$items" }, { $replaceWith: { item: "$items" } }]);
+  it("composes after .filter and before .map — the callback after .flatMap receives the ELEMENT", () => {
+    expect(jsmql("$$ = $$.filter(o => o.active === true).flatMap(d => d.items).map(item => ({ item }));")).toEqual([
+      { $match: { active: true } },
+      { $unwind: "$items" },
+      { $replaceWith: { item: "$items" } },
+    ]);
+  });
+
+  it("every link after .flatMap works on the element: its fields are paths under the unwound field", () => {
+    expect(jsmql('$$.flatMap("items").filter(i => i.qty > 1).sortBy("price").uniq().pick(["sku"]);')).toEqual([
+      { $unwind: "$items" },
+      { $match: { "items.qty": { $gt: 1 } } },
+      { $sort: { "items.price": 1 } },
+      { $group: { _id: "$items", __jsmqlTmp: { $first: "$$ROOT" } } },
+      { $replaceWith: "$__jsmqlTmp" },
+      { $project: { "items.sku": 1, _id: 0 } },
+    ]);
+    // the matcher shorthand, a comparator on the whole element, and a key-less collapse — all on the element
+    expect(jsmql('$$.flatMap("tags").filter({ lang: "en" }).sort((a, b) => a - b).countBy();')).toEqual([
+      { $unwind: "$tags" },
+      { $match: { "tags.lang": "en" } },
+      { $sort: { tags: 1 } },
+      { $group: { _id: "$tags", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+  });
+
+  it("the element stays across statements and a document-replacing stage makes the document the element again", () => {
+    expect(jsmql('$$.flatMap("items"); $$.filter(i => i.qty > 1); $$.map(i => i); $$.filter(i => i.qty > 2);')).toEqual(
+      [
+        { $unwind: "$items" },
+        { $match: { "items.qty": { $gt: 1 } } },
+        { $replaceWith: "$items" },
+        { $match: { qty: { $gt: 2 } } },
+      ],
+    );
+  });
+
+  it("a raw $unwind stage is MQL and moves nothing: the callback after it still receives the document", () => {
+    expect(jsmql('$$.$unwind("$items").filter(i => i.qty > 1);')).toEqual([
+      { $unwind: "$items" },
+      { $match: { qty: { $gt: 1 } } },
+    ]);
+  });
+
+  it("nested .flatMap unwinds a field of the element", () => {
+    expect(jsmql('$$.flatMap("items").flatMap(i => i.tags).filter(t => t === "x");')).toEqual([
+      { $unwind: "$items" },
+      { $unwind: "$items.tags" },
+      { $match: { "items.tags": "x" } },
+    ]);
   });
 
   it("works inside $$$.<coll> lookup body", () => {
@@ -1596,6 +1649,35 @@ describe(".reduce as a chain method on $$ — rejected with wrap-pattern hint", 
     ]);
   });
 
+  it("the key-less .countBy() / .groupBy() / .keyBy() key on the element itself, as lodash's identity default does", () => {
+    const collapse = (acc: Record<string, unknown>) => [
+      { $group: { _id: "$$ROOT", __jsmqlTmp: acc } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ];
+    expect(jsmql("$$.countBy();")).toEqual(collapse({ $sum: 1 }));
+    expect(jsmql("$$.groupBy();")).toEqual(collapse({ $push: "$$ROOT" }));
+    expect(jsmql("$$.keyBy();")).toEqual(collapse({ $last: "$$ROOT" }));
+    // the natural spelling: after `.flatMap` the element is the unwound field
+    expect(jsmql('$$.flatMap("productIds").countBy();')).toEqual([
+      { $unwind: "$productIds" },
+      { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } },
+      {
+        $group: {
+          _id: null,
+          __jsmqlTmp: { $push: { k: { $ifNull: [{ $toString: "$_id" }, "null"] }, v: "$__jsmqlTmp" } },
+        },
+      },
+      { $replaceWith: { $arrayToObject: "$__jsmqlTmp" } },
+    ]);
+    expect(() => jsmql("$$.countBy(1, 2);")).toThrow("'.countBy([iteratee])'");
+  });
+
   it("multi-element ArrayLiteral at stage 0 lowers to `$documents`", () => {
     expect(jsmql("$$ = [{ a: 1 }, { b: 2 }];")).toEqual([
       { $match: { $expr: false } },
@@ -1883,7 +1965,7 @@ describe("stream callbacks — spelling never changes the emitted MQL", () => {
   it("each key-slot error names the method it was called on, not a sibling", () => {
     // `.keyBy`/`.uniqBy` must not demonstrate a sibling like `.countBy("status")` in their own errors.
     expect(() => jsmql(`$.o = $$$.orders.keyBy(5);`)).toThrow(
-      "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",
+      "'.keyBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), a '[field, value]' pair ('[\"status\", \"paid\"]'), or no argument at all. Got a number.",
     );
     expect(() => jsmql(`$.o = $$$.orders.uniqBy(5);`)).toThrow(
       "'.uniqBy()' takes a key here — an arrow ('d => …'), a field name ('\"status\"'), a matcher object ('{ status: \"paid\" }'), or a '[field, value]' pair ('[\"status\", \"paid\"]'). Got a number.",

@@ -133,8 +133,13 @@ describe("compiler/emit/names — I2: a read resolves in scope or is the develop
   });
 
   it("binds a name to what it stands for, not only to a variable", () => {
-    const scope = Scope.root([]).declare("$", { ref: { kind: "document" }, type: "object", mutable: false, pos: 0 });
-    expect(scope.lookup("$", 0).ref).toEqual({ kind: "document" });
+    const scope = Scope.root([]).declare("$", {
+      ref: { kind: "document", path: "" },
+      type: "object",
+      mutable: false,
+      pos: 0,
+    });
+    expect(scope.lookup("$", 0).ref).toEqual({ kind: "document", path: "" });
   });
 
   it("throws the positioned unknown-identifier error for an unbound name", () => {

@@ -391,7 +391,7 @@ export function filterInputs(
       const bodyEnv = argEnv
         .element(cb.params[0])
         .bind(cb.params[0], {
-          ref: { kind: "document" },
+          ref: { kind: "document", path: "" },
           type: "unknown",
           elements: "unknown",
           mutable: false,
@@ -419,7 +419,7 @@ export function filterInputs(
       const bodyEnv = argEnv
         .element(cb.params[0])
         .bind(cb.params[0], {
-          ref: { kind: "document" },
+          ref: { kind: "document", path: "" },
           type: "unknown",
           elements: "unknown",
           mutable: false,
@@ -467,10 +467,12 @@ export function stageInputs(
   const argEnv = childEnv(env, node, "args");
   const before: readonly Stage[] = [...env.chain.emitted, ...soFar];
   /**
-   * A callback's FIRST parameter IS the stream's document, so its fields are
-   * top-level paths. lodash lets a callback name an index and the collection too;
-   * a stream has no per-document index and the collection is the stream itself,
-   * so each is bound as a name whose READ says what to write instead.
+   * A callback's FIRST parameter IS the stream's element: the document itself, so
+   * its fields are top-level paths — or, after `.flatMap("items")`, the unwound
+   * field, so its fields are `items.<field>` (the chain's `element`). lodash lets a
+   * callback name an index and the collection too; a stream has no per-document
+   * index and the collection is the stream itself, so each is bound as a name
+   * whose READ says what to write instead.
    */
   const bound = (cb: Expr): Env | null => {
     if (cb.type !== "Lambda" || cb.params.length > 3) return null;
@@ -478,7 +480,7 @@ export function stageInputs(
     let e = argEnv.block();
     if (cb.params.length >= 1) {
       e = e.bind(cb.params[0], {
-        ref: { kind: "document" },
+        ref: { kind: "document", path: env.chain.element },
         type: "unknown",
         elements: "unknown",
         mutable: false,
@@ -604,12 +606,19 @@ export function stageInputs(
       if (stages === undefined) throw valueWhereBlockExpected(written, cb.pos);
       return read.block(stages, e);
     },
-    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name),
-    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name),
+    sortSpec: (e, objects = true) => streamSortAsk(sortSpecOf(e, name, objects), name, env.chain.element),
+    orderBy: (keys, orders) => streamSortAsk(orderBySpec(keys, orders, name), name, env.chain.element),
     slot: () => env.chain.slot().path,
     bind: (hint) => {
       const b = env.fresh(hint);
       return { as: b.as, ref: b.ref };
+    },
+    element: () => {
+      const path = env.chain.element;
+      return { path, ref: path === "" ? "$$ROOT" : "$" + path };
+    },
+    unwound: (path) => {
+      env.chain.element = path;
     },
   };
 }

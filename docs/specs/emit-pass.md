@@ -360,7 +360,10 @@ A stream cell receives its arguments as SOURCE and asks for the reading it wants
 `$expr`), `reshape(cb)` a value, `block(cb)` the stages of a `{ … }` body,
 `sortSpec(e)` and `orderBy(keys, orders)` the `{ field: 1 | -1 }` document from
 any of the sort spellings (`emit/sort-spec.ts`, a reader over the tree that never
-lowers), `slot()` a scratch field the chain's cleanup drops. A bare `$$.<name>(…)`
+lowers), `slot()` a scratch field the chain's cleanup drops, `element()` where the
+stream's element lives (the document, or the unwound field after `.flatMap` — see
+[stream-methods.md § The element after `.flatMap`](stream-methods.md#the-element-after-flatmap)),
+and `unwound(path)` to say it moved. A bare `$$.<name>(…)`
 with one link asks the row's STATEMENT cell first — the union sugar and the
 source stages are statements spelled on the stream, and their rows say so.
 
@@ -470,6 +473,11 @@ A link that folds the stream into one document (`collapses` on the row: `countBy
 `keyBy`, `groupBy` with a field name) is unwrapped too, to `{}` when nothing
 matched, as lodash answers for an empty array. The slot is a typed binding, so
 `.length` on it is `$size` with no runtime guard and `.total` after `.find` is a path.
+When the body ends with its element in an unwound field (`Lookup.element`, set by a
+`.flatMap` no later stage replaced), the value is the elements and not their carriers:
+the rest of the chain is rebased onto `<slot>.map(x => x.<element>)` (or `<slot>.<element>`
+after `.find`), the `$ =` road replaces with `$<slot>.<element>`, and the direct-to-`as`
+shortcut declines so the value road runs.
 
 **Where it stands decides the destination.** A bare write `$.o = <chain>` and a
 `let` make the target the stage's `as` — no scratch, no cleanup. Inside a value the

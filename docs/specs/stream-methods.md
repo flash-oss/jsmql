@@ -76,13 +76,13 @@ Per-method rows below describe *lowering*; for which callback spellings a slot a
 | `.tail()` | Zero args | — | `$skip: 1` (the stream `.drop(1)`) |
 | `.shuffle()` | Zero args | `slot()` for a `__jsmql.tmp.<N>` key; the trailing `$unset: "__jsmql"` clears the residue | `[{ $addFields: { <slot>: { $rand: {} } } }, { $sort: { <slot>: 1 } }, { $unset: <slot> }]` — non-deterministic |
 | `.aggregate((o[, i[, coll]]) => { … })` / `.aggregate([{ … }])` | A **block-body arrow** (`(o) => { $stage(...); ... }`, its statements are pipeline stages, NO `return`) or a **stage-array literal** (`[{ $sort: … }, …]`, read as a zero-param block). Params mirror `.map`/`.filter`: 1–3 `(element, index, collection)`; the index is positional-only, the 3rd exposes only `<coll>.length` (the row's `args` rule and its callback-parameter check, one for every head). Foreign fields via `o.<field>` (or raw `"$field"`); `$.<field>` = the outer doc. **This is the only method whose `{ … }` body keeps its stages** — see [lookup-stage.md](lookup-stage.md) § Grammar. On the CURRENT stream (`$$.aggregate(...)`) the block's statements are simply the chain's stages, in every container a `$$` chain reaches — a `$facet` branch (where a branch IS a sub-pipeline, so there is no "write them directly" alternative), the `$$ =` stream, an `$out` RHS, and the bare-statement form. An **uncorrelated** aggregate may be a `$$.push`/`.concat` union source; a correlated one is rejected (`$unionWith` has no `let` slot) | The same block lowering `.map` uses, minus the terminal `return` (no `$replaceWith`). Inside a correlated `$lookup`, a cross-level `$.field` read captures into that stage's `let`; on a flat `$$` chain (no `let` slot to correlate into) a `$.field` ref is rejected in favour of the lambda param, naming `.aggregate` | The block's stages, appended to the surrounding `$lookup.pipeline` (correlated chain), `$unionWith.pipeline` (source-switch), `$facet` branch, or the outer pipeline. Clears the let scope |
-| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, including the `{ return d.<path>; }` block, folded by the callback-block rule; a stage inside it is rejected) | the sort-key service resolves either spelling to the dotted path | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural). For JS-faithful "just the elements", chain `.map(d => d.<path>)` after |
+| `.flatMap(<key>)` | One field key — the array field to flatten, as a string or an arrow (`d => d.<path>`, including the `{ return d.<path>; }` block, folded by the callback-block rule; a stage inside it is rejected) | `fieldPath(cb)` resolves either spelling to the dotted path; the cell then calls `unwound(path)` so the chain's element moves to that field — see [The element after `.flatMap`](#the-element-after-flatmap) | One `{ $unwind: "$<path>" }` stage. Surrounding fields are preserved (MQL-natural); every later callback receives the ELEMENT. For "the elements as the documents", chain `.map(item => item)` after |
 | `.take(n)` / `.drop(n)` | One non-negative integer literal | `take` → `$limit` (`take(0)` → an always-false `$match`, since `$limit: 0` is invalid MQL); `drop` → `$skip` (`drop(0)` emits nothing — identity) | One `{ $limit: n }` / `{ $skip: n }` |
 | `.sampleSize(n)` | One integer literal ≥ 1 | `$sample` | One `{ $sample: { size: n } }` |
 | `.sample()` | Zero args | `$sample` with size 1 (lodash `_.sample`; a pipeline stays a stream, so this is `.sampleSize(1)`) | One `{ $sample: { size: 1 } }` |
-| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot lowers in the group position, so `$addToSet`/`$push`/… take their accumulator form — same as the direct `$group(...)` stage) **or** a bare field name | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }`); **body form** lowers the object to one `$group` stage, every slot in the group position | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
-| `.countBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
-| `.keyBy(<key>)` | One field key | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
+| `.groupBy(spec \| "<key>")` | A `$group` body object (**must contain `_id`**; every non-`_id` slot lowers in the group position, so `$addToSet`/`$push`/… take their accumulator form — same as the direct `$group(...)` stage) **or** a bare field name, or none (the identity key, as `.countBy`) | **Bare-key form** collapses the stream to the lodash object `{ <keyValue>: [docs] }` (`$group` with `$push: "$$ROOT"` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }`); **body form** lowers the object to one `$group` stage, every slot in the group position | Bare key: the three-stage collapse (one output doc). Body: one `{ $group: … }` (a stream of group docs — no lodash analogue for the accumulator form). Both clear the let scope (reshape). *This mirrors value-mode `$.arr.groupBy(...)`, which also returns the object* |
+| `.countBy(<key>)` | One field key, or none — the `omitted` slot form: the desugar pass rewrites the missing argument to the identity arrow `x => x`, so the key is the element (`$$ROOT`, or the unwound field after `.flatMap`) | Collapses the stream to the lodash object `{ <keyValue>: <count> }` (mirroring value-mode `$.arr.countBy(...)`) — `$group` with `$sum: 1` → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). Clears the let scope. For MongoDB's count-descending `{ _id, count }` stream, write the `$sortByCount("$<field>")` stage directly |
+| `.keyBy(<key>)` | One field key, or none (the identity key, as `.countBy`) | Collapses the stream to the lodash object `{ <keyValue>: <last doc> }` (mirroring value-mode `$.arr.keyBy(...)`) — `$group` with `$last: "$$ROOT"` (last wins) → second `$group` gathering `{k, v}` pairs into a scratch slot → `$replaceWith: { $arrayToObject }` | The three-stage collapse (one output doc). "Last" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters. Clears the let scope |
 | `.uniqBy(<key>)` | One field key | `$group` keeping `$first` per key into the reserved `__jsmqlTmp` group slot, then `$replaceWith` to restore it. "First" follows the stream's current order — precede with `.sort(...)` when which-duplicate-wins matters | `{ $group: { _id: "$<field>", __jsmqlTmp: { $first: "$$ROOT" } } }` + `{ $replaceWith: "$__jsmqlTmp" }`. Clears the let scope |
 | `.pick([fields])` | One array of field-name strings | The lodash object method, per document. Keeps ONLY the named fields — `_id` is dropped unless named (matching lodash `_.pick` + the value-mode `.pick`) | `{ $project: { <f>: 1, …, _id: 0 } }` (inclusion). Clears the let scope (the `__jsmql` scratch is dropped too) |
 | `.omit([fields])` | One array of field-name strings | Drops the named fields, keeps everything else including `_id` (matching lodash `_.omit`) | `{ $project: { <f>: 0, … } }` (exclusion). Keeps the let scope |
@@ -126,6 +126,53 @@ lowers to exactly what `.filter(o => o.userId === $._id)` does, indexed basic-fo
 
 Future methods (per the planning notes) extend this table — see
 [docs/DEVLOG.md](../DEVLOG.md) for the per-commit chronology.
+
+## The element after `.flatMap`
+
+JavaScript's `orders.flatMap(o => o.items)` is a list of items, and every method
+after it works on an item. `$unwind` keeps the whole document with the unwound
+field holding one element, so the stream has two things to track, and the
+compiler keeps them apart:
+
+- **The documents** are MongoDB's — one carrier per element, every other field
+  kept. Nothing about them changes; a terminal stream still returns the carriers,
+  and `$$.flatMap("tags")` on an array of strings runs (a string cannot be a
+  document, so there is no JS-faithful document form to fall into).
+- **The element** is where a callback's parameter points. `Chain.element`
+  ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts)) is the dotted path
+  of the unwound field, `""` when the element IS the document. The `.flatMap`
+  cell sets it through the `unwound(path)` service; a callback bound by
+  `stageInputs` ([src/compiler/emit/inputs.ts](../../src/compiler/emit/inputs.ts))
+  carries it in its binding (`{ kind: "document", path }`), so `i.qty` locates
+  `items.qty` on the value road ([lower.ts](../../src/compiler/emit/lower.ts)
+  `locate`) and on the query road ([filter.ts](../../src/compiler/emit/filter.ts)
+  `pathOfIn`) alike. The sort readings prefix their keys and a whole-element
+  comparator names the field (`streamSortAsk` in
+  [sort-spec.ts](../../src/compiler/emit/sort-spec.ts)); `.pick` / `.omit`
+  prefix their field lists; `.uniq()` groups on `element().ref`.
+- **A stage that replaces the document** (`replacesDocument` on the stage's row —
+  `$replaceWith`, `$group`, an inclusion `$project`, …) makes the document the
+  element again, whether it comes from a link (`streamLink`) or a statement
+  (`afterStages`). A link whose row states `restoresDocuments` (`.uniq`, `.uniqBy`
+  and their `sorted` twins: a `$group` that keeps `$first: "$$ROOT"` and
+  `$replaceWith`s it back) changes nothing. The raw stage `$$.$unwind("$items")`
+  is MQL (HR2) and moves the element nowhere.
+
+The element persists across statements on one chain (`$$.flatMap("items");
+$$.filter(i => …);` reads `items.qty`), and each sub-pipeline has its own chain,
+so a `$lookup` body's `.flatMap` is invisible outside it — except through the
+value it yields: `Lookup.element` ([join.ts](../../src/compiler/emit/join.ts))
+carries the body's final element, and a chain in a value position reads the
+elements off the joined documents (`<slot>.map(x => x.<element>)`; `<slot>.<element>`
+after `.find`; `$replaceWith: "$<slot>.<element>"` on the `$ =` road). The
+direct-to-`as` shortcut declines such a chain so the value road runs. See
+[emit-pass.md § The join road](emit-pass.md#the-join-road).
+
+```js
+$$$.orders.filter({ userId: $._id }).flatMap("productIds").filter(p => !$.owned.includes(p)).countBy();
+// → the $lookup body: [{ $unwind: "$productIds" }, { $match: { $expr: { $not: { $in: ["$productIds", …] } } } },
+//                      { $group: { _id: "$productIds", __jsmqlTmp: { $sum: 1 } } }, …the collapse ]
+```
 
 ### `.reduce` is intentionally NOT in the registry
 

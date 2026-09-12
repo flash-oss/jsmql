@@ -107,6 +107,23 @@ export class Chain {
    * emitted, so nothing can land after it and the cleanup always precedes it.
    */
   terminal: Stage | null = null;
+  /**
+   * Where the stream's ELEMENT lives on its documents: `""` when the element IS the
+   * document, the unwound field's path after `.flatMap("items")` — a callback's
+   * parameter then stands for that field, and its fields for `items.<field>`. The
+   * documents themselves keep carrying their other fields (`$unwind` preserves
+   * them); a stage that replaces the document makes the document the element
+   * again. See docs/specs/stream-methods.md § The element after `.flatMap`.
+   */
+  element = "";
+
+  /**
+   * A stage has been placed: one that replaces the document leaves no unwound
+   * field to point at. `replaces` is the row's own fact, judged by the caller.
+   */
+  placed(replaces: boolean): void {
+    if (replaces) this.element = "";
+  }
 
   /** A fresh `__jsmql.tmp.<n>` scratch slot. */
   slot(): FieldSlot {
