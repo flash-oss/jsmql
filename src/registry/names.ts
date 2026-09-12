@@ -13675,7 +13675,7 @@ export const NAMES = {
     filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
     expr: {
       byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
+        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A valid date spelling never reaches this row — the fold makes it a Date value first.
         // A constant the fold could evaluate never reaches this row; one that stays
         // is a string `Date.parse` refuses.

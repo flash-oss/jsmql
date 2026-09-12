@@ -133,7 +133,7 @@ describe("const folding — pipeline interaction", () => {
 
   it("mixed fold + runtime binding stays a Pipeline", () => {
     expect(jsmql("const x = 5; const t = new Date(); $match($.a === x && $.b >= t)")).toEqual([
-      { $set: { "__jsmql.var.t": { $toDate: "$$NOW" } } },
+      { $set: { "__jsmql.var.t": "$$NOW" } },
       { $match: { a: 5, $expr: { $gte: ["$b", "$__jsmql.var.t"] } } },
       { $unset: "__jsmql" },
     ]);
@@ -169,7 +169,7 @@ describe("const folding — fallback to runtime binding", () => {
 
   it("new Date() (reads the clock) stays runtime", () => {
     expect(jsmql("const now = new Date(); $match($.createdAt < now)")).toEqual([
-      { $set: { "__jsmql.var.now": { $toDate: "$$NOW" } } },
+      { $set: { "__jsmql.var.now": "$$NOW" } },
       { $match: { $expr: { $lt: ["$createdAt", "$__jsmql.var.now"] } } },
       { $unset: "__jsmql" },
     ]);

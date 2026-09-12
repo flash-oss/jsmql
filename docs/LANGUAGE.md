@@ -2446,7 +2446,7 @@ new Date(2024, 11, 31, 23, 59, 58, 999)
 new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
-new Date()                         // { $toDate: "$$NOW" }  (current date/time)
+new Date()                         // "$$NOW"  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
@@ -2531,7 +2531,7 @@ $.end.diff($.start, "day")
 // { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
 
 new Date().diff($._id, "day")      // how old is this document?
-// { $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
 **The receiver is the later date**, so the result is `receiver − other` — the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
@@ -3087,7 +3087,7 @@ jsmql(`[
 // → [
 //     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
 //                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
-//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
 //   ]
 ```
@@ -4760,7 +4760,7 @@ jsmql.expr("$.createdAt.getFullYear()")
 
 // Days since creation
 jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
-// → { $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// → { $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" } }
 
 // Format date
 jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')

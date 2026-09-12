@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(emit): `new Date()` is the bare `"$$NOW"`
+
+`new Date()` lowered to `{ $toDate: "$$NOW" }`. `$$NOW` is already a date, so the
+wrap converted a date to a date: 24 characters to say what 7 say, in every
+`$dateDiff`, `$set` and `$expr` comparison that names "now". The row in
+`src/registry/names.ts` now emits `"$$NOW"`, so `$.expiresAt < new Date()` is
+`{ $expr: { $lt: ["$expiresAt", "$$NOW"] } }` and `$.createdAt.diff(new Date(), "day")`
+is `{ $dateDiff: { startDate: "$$NOW", endDate: "$createdAt", unit: "day" } }`.
+Measured on the project's mongod: a `$set` stores a real date, the filter matches an
+expired document, `.diff` counts days and `.getTime()` answers milliseconds.
+
+This supersedes the note in the 2026-08 entry on default-restating lowerings, which
+kept the wrap because a bare `"$$NOW"` in a non-pipeline update document is the
+eight-character string. That road no longer exists: `jsmql.update` lowers
+`$.t = new Date()` to `{ $currentDate: { t: true } }` and refuses `new Date()` in
+every other update-document slot, and `jsmql.expr` refuses a write outright. No
+entry point hands an aggregation expression to a literal-value slot, so the wrap
+guarded nothing. `Date.now()` keeps `{ $toLong: "$$NOW" }` — that conversion is real.
+
 ## 2026-09-12 — feat(stream): the lodash set methods, `.compact()`, `.flat()` and the bare sorts work on an unwound element
 
 `.difference(list)`, `.without(...values)`, `.intersection(list)`, `.differenceBy`,
