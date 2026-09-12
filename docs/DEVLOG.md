@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(playground): an error render does not reset the MQL panel's scroll offset
+
+The scroll-offset restore read the offset of whatever the output panel held at
+write time. An error message is three lines long, so its offset is zero, and the
+next valid render restored that zero: a typo in a long pipeline sent the reader
+back to the top as soon as they fixed it.
+
+`setOutput` in `playground_skeleton.html` now keeps the offset of the last
+real MQL render. Message renders (an error, a variables error, an empty panel)
+pass `{ message: true }`: they neither record their own offset nor restore one,
+so the typo → error → fix round trip lands where the reader was. This
+supersedes the "error text goes through the same helper" note in the entry
+below.
+
+---
+
 ## 2026-09-12 — fix(playground): the MQL panel keeps its scroll offset across edits
 
 Every keystroke in the query editor re-rendered the output panel with
