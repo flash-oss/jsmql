@@ -932,9 +932,43 @@ describe("$$$.coll.filter(p).<chain> — stream-method chain extends the $lookup
           as: "__jsmql.tmp.0",
         },
       },
+      // one joined document per line, so the count of the lines is the count of the documents
+      { $set: { n: { $size: { $ifNull: ["$__jsmql.tmp.0", []] } } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql('$.n = $$$.orders.flatMap("items").size();')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $unwind: "$items" }], as: "__jsmql.tmp.0" } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
+      { $unset: "__jsmql" },
+    ]);
+    // anything else reads the lines off the documents: a value `.map`, an index
+    expect(jsmql('$.n = $$$.orders.flatMap("items").map(i => i.qty).length;')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $unwind: "$items" }], as: "__jsmql.tmp.0" } },
       {
         $set: {
-          n: { $size: { $ifNull: [{ $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } }, []] } },
+          n: {
+            $size: {
+              $ifNull: [
+                {
+                  $map: {
+                    input: { $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } },
+                    as: "i",
+                    in: "$$i.qty",
+                  },
+                },
+                [],
+              ],
+            },
+          },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql('$.first = $$$.orders.flatMap("items")[0];')).toEqual([
+      { $lookup: { from: "orders", pipeline: [{ $unwind: "$items" }], as: "__jsmql.tmp.0" } },
+      {
+        $set: {
+          first: { $arrayElemAt: [{ $map: { input: "$__jsmql.tmp.0", as: "jsmqlEl", in: "$$jsmqlEl.items" } }, 0] },
         },
       },
       { $unset: "__jsmql" },

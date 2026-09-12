@@ -10,6 +10,16 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(join): `.length` after `.flatMap` counts the joined documents directly
+
+`$.n = $$$.orders.flatMap("items").length` picked every line out of the joined
+array (`$size` over a `$map` of `$$jsmqlEl.items`) and then counted them. One
+joined document holds one line, so the count of the lines is the count of the
+documents: the value road now reads the slot itself under a bare `.length` or
+`.size()` — `{ $size: { $ifNull: ["$__jsmql.tmp.0", []] } }`, the shape a join
+without `.flatMap` already had. Anything else after the chain (`[0]`, a value
+`.map`, `.find(…).name`) still reads the elements off the documents.
+
 ## 2026-09-12 — feat(stream): after `.flatMap` a callback receives the element, and a key-less `.countBy()` counts it
 
 The recommended-products example, spelled the way a JavaScript developer writes

@@ -163,8 +163,9 @@ $$.filter(i => …);` reads `items.qty`), and each sub-pipeline has its own chai
 so a `$lookup` body's `.flatMap` is invisible outside it — except through the
 value it yields: `Lookup.element` ([join.ts](../../src/compiler/emit/join.ts))
 carries the body's final element, and a chain in a value position reads the
-elements off the joined documents (`<slot>.map(x => x.<element>)`; `<slot>.<element>`
-after `.find`; `$replaceWith: "$<slot>.<element>"` on the `$ =` road). The
+elements off the joined documents (`<slot>.map(x => x.<element>)`; the slot itself
+under a bare `.length` / `.size()`, since one document holds one element;
+`<slot>.<element>` after `.find`; `$replaceWith: "$<slot>.<element>"` on the `$ =` road). The
 direct-to-`as` shortcut declines such a chain so the value road runs. See
 [emit-pass.md § The join road](emit-pass.md#the-join-road).
 

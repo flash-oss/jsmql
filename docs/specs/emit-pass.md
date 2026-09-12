@@ -475,7 +475,9 @@ matched, as lodash answers for an empty array. The slot is a typed binding, so
 `.length` on it is `$size` with no runtime guard and `.total` after `.find` is a path.
 When the body ends with its element in an unwound field (`Lookup.element`, set by a
 `.flatMap` no later stage replaced), the value is the elements and not their carriers:
-the rest of the chain is rebased onto `<slot>.map(x => x.<element>)` (or `<slot>.<element>`
+the rest of the chain is rebased onto `<slot>.map(x => x.<element>)` (or onto the slot
+itself when the whole value is a COUNT — `.length` / `.size()` — since one document
+holds one element; or `<slot>.<element>`
 after `.find`), the `$ =` road replaces with `$<slot>.<element>`, and the direct-to-`as`
 shortcut declines so the value road runs.
 

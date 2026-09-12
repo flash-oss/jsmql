@@ -820,6 +820,21 @@ $$ = candidateProductIds
     ]);
   });
 
+  // `.length` after `.flatMap` in a join counts the joined documents themselves
+  // (one per line) — no pick of the lines first. The long spelling that does pick
+  // them agrees, and so does the sum of the per-order line counts.
+  it("pipeline: .length after .flatMap counts one joined document per line", async () => {
+    const rows = await aggregate(
+      "users",
+      `$match($._id === 0x6500000000000000000000a1);
+$.n = $$$.orders.filter({ userId: $._id }).flatMap("items").length;
+$.m = $$$.orders.filter({ userId: $._id }).flatMap("items").map(i => i.qty).length;
+$.lines = $$$.orders.filter({ userId: $._id }).map(o => o.items.length);
+$ = { n: $.n, m: $.m, lines: $.lines };`,
+    );
+    expect(rows).toEqual([{ n: 6, m: 6, lines: [2, 1, 3] }]);
+  });
+
   // The same recommendations in the JavaScript-native spelling, on the same
   // fixture: `.flatMap("items")` inside the join hands each LINE to the callbacks
   // after it (`.filter(i => …)` reads `items.productId`, `.countBy("productId")`

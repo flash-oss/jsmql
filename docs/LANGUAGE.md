@@ -3426,7 +3426,7 @@ $$.flatMap("productIds").filter(p => !$.owned.includes(p)).countBy();   // { <pr
 
 The **documents** stay MongoDB's: `$unwind` keeps every other field, so the stream still carries one order per line with `items` holding that line. To make the elements the documents, say so — `.map(item => item)` is `{ $replaceWith: "$items" }` — and from that stage on the document is the element again, as after any stage that replaces the document (`$group`, `$project`, `.map`). The raw stage spelling `$$.$unwind("$items")` is MQL and moves nothing: a callback after it still receives the whole document.
 
-In a **value** position the chain is JavaScript's value: `$$$.orders.flatMap("items")` is the items themselves (the `$lookup` holds one order per line, and the value reads the line off each), so `.length` counts lines and `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
+In a **value** position the chain is JavaScript's value: `$$$.orders.flatMap("items")` is the items themselves (the `$lookup` holds one order per line, and the value reads the line off each), so `.length` counts lines (`{ $size: "$<the joined array>" }` — one joined document per line, so nothing is picked out first), `[0]` is a line, and `$$$.orders.flatMap("items").find(i => i.sku === $.sku)` is one item.
 
 On three methods an object means something richer than a matcher, so it is read that way: `.orderBy({ field: -1 })` and `.sort`/`.toSorted({ field: -1 })` are direction specs, and `.groupBy({ _id, … })` is a raw `$group` body.
 

@@ -188,14 +188,25 @@ function pathOn(base: Expr, path: string, pos: number): Expr {
  * when the element is an unwound field of theirs, the value is those fields — one
  * per document (`.map(x => x.items)`), or the one document's (`.items`).
  */
-function elementsOf(slot: Expr, l: Lookup, env: Env): Expr {
+function elementsOf(slot: Expr, l: Lookup, env: Env, node: Expr): Expr {
   if (l.element === "") return slot;
   if (l.one === "find") return pathOn(slot, l.element, l.pos);
+  // One document per element, so a COUNT of the elements is the count of the
+  // documents: `.length` / `.size()` read the slot itself — `$size: "$slot"` —
+  // instead of picking each element out first.
+  if (countsElements(node, l.peeledTo)) return slot;
   // A compiler mint, so the two spellings of one chain (`"items"` / `d => d.items`) name it alike.
   const x = env.fresh("el").as;
   const body = pathOn({ type: "Ident", name: x, pos: l.pos }, l.element, l.pos);
   const map: Expr = { type: "Lambda", params: [x], body, pos: l.pos };
   return { type: "MethodCall", object: slot, name: "map", args: [map], optional: false, pos: l.pos };
+}
+
+/** Is the whole value the COUNT of the peeled chain — `<chain>.length` or `<chain>.size()`, nothing else? */
+function countsElements(node: Expr, peeledTo: Expr): boolean {
+  if (node.type === "MemberAccess") return node.name === "length" && node.object === peeledTo;
+  if (node.type === "MethodCall") return node.name === "size" && node.args.length === 0 && node.object === peeledTo;
+  return false;
 }
 
 /** A plain field path — `"$x"`, `"$a.b"` — and not a `$$` variable; its name without the `$`. */
@@ -304,7 +315,7 @@ export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {
     mutable: false,
     pos: l.pos,
   });
-  const rebased = rebase(node, l.peeledTo, elementsOf({ type: "Ident", name, pos: l.pos }, l, env));
+  const rebased = rebase(node, l.peeledTo, elementsOf({ type: "Ident", name, pos: l.pos }, l, env, node));
   // the rest of the chain is a VALUE over the slot, wherever the chain stood
   return lowerValue(rebased, bound.at({ at: "value" }));
 }
