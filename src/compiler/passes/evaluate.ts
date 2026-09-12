@@ -22,6 +22,7 @@ import {
   foldInstanceCall,
   foldNamedCall,
   foldNamespaceCall,
+  numberSpelling,
   foldNamespaceConstant,
 } from "./fold-methods.ts";
 import type { Family } from "../../registry/vocabulary.ts";
@@ -716,13 +717,12 @@ function at(node: Expr, env: Constants, depth: number): Evaluation {
     case "TemplateLiteral": {
       const parts = all(node.exprs, env, depth);
       if (!Array.isArray(parts)) return parts;
-      // STRINGS only. `$toString` of a double and JavaScript's own formatting
-      // part company on exponents and on the thresholds for using one at all:
-      // `1e-7` writes as "1e-7" here and "1e-07" there, and `0.000001` as
-      // "0.000001" here and "1e-06" there. A number interpolation stays runtime.
-      if (!parts.every((p) => typeof p === "string")) return NOT_CONSTANT;
+      // Strings, and the numbers `$toString` writes as JavaScript does — see
+      // `numberSpelling`. Any other interpolation stays runtime.
+      const spelled = parts.map((p) => (typeof p === "string" ? p : typeof p === "number" ? numberSpelling(p) : null));
+      if (spelled.some((p) => p === null)) return NOT_CONSTANT;
       let out = node.quasis[0] ?? "";
-      for (let i = 0; i < parts.length; i++) out += String(parts[i]) + (node.quasis[i + 1] ?? "");
+      for (let i = 0; i < spelled.length; i++) out += (spelled[i] as string) + (node.quasis[i + 1] ?? "");
       return spellable(out);
     }
 

@@ -1835,6 +1835,19 @@ jsmql`
 
 `.forEach()`, `.entries()`, `.keys()`, `.values()`, and `.toLocaleString()` also throw tailored errors explaining why they're not expressible (iterator protocol / void return / locale-dependence) and what to use instead.
 
+**A mutator at the END of a chain is expression position too**, which surprises JavaScript developers: `[...].filter(p).sort()` reads fine in JS, because the `.filter` makes a throw-away array and sorting it in place is invisible. jsmql has no throw-away array to mutate, so it asks for the immutable spelling:
+
+```js
+jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().sort()");
+// ✗ .sort() mutates the array in JavaScript. In expression position, use '.toSorted()' — or
+//   call it at statement position (top-level on a '$.<field>' receiver) to mutate the field.
+
+jsmql.expr("$.items.filter(i => i.qty > 0).map(i => i.sku).uniq().toSorted()");
+// → { $sortArray: { input: { $setUnion: { $map: {
+//       input: { $filter: { input: "$items", as: "i", cond: { $gt: ["$$i.qty", 0] } } },
+//       as: "i", in: "$$i.sku" } } }, sortBy: 1 } }
+```
+
 #### `Object.assign(target, ...sources)` mutates `target`
 
 `Object.assign` is JavaScript's *mutating* merge: it writes the merged object back into its first argument. At statement position jsmql honours that — the target may be a document field **or** an in-scope `let`/`const` binding:
@@ -2461,7 +2474,7 @@ $.t.plus(2, "hour", "America/New_York")
 // { $dateAdd: { startDate: "$t", unit: "hour", amount: 2, timezone: "America/New_York" } }
 ```
 
-`unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
+On a constant date the call folds to the instant the server would compute — see [Compile-time constants](#compile-time-constants-folding). `unit` accepts the same time units as the `$dateAdd` operator (listed under [Date Operator Calls](#date-operator-calls) below); a literal typo is rejected with a suggestion (`.plus(30, "days")` → *"unit must be one of: … — got 'days'. Did you mean 'day'?"*). A literal `amount` must be an integer and a literal `timezone` must be a string — otherwise you get the same compile-time error the `$dateAdd(…)` operator form gives; a field path or parameter in either slot passes through unchecked. The method name follows Temporal/Luxon (`.plus` / `.minus`), while the `(amount, unit)` argument order follows Moment's `.add(amount, unit)` — `amount` first, `unit` second.
 
 **Date difference** — `.diff(other, unit)` gives the whole number of `unit`s between two dates:
 
@@ -3857,7 +3870,21 @@ jsmql("const msInDay = 24 * 60 * 60 * 1000; $.elapsedMs > msInDay");
 // → { elapsedMs: { $gt: 86400000 } }
 ```
 
-A "compile-time constant" is any pure, deterministic expression over literals and earlier constants — arithmetic, `new Date("2020-01-01")`, ObjectId literals, array/object literals, and (see the method sections) string/array transforms. A binding whose RHS reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. This means a constant folds the same way in every entry point, including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile) (a constant built from a parameter folds against each call's arguments).
+A "compile-time constant" is any pure, deterministic expression over literals and earlier constants — arithmetic, `new Date("2020-01-01")` and the date methods on it, ObjectId literals and their `.toString()`, array/object literals, a constant computed key (`{ [k]: 1 }`), and (see the method sections) string/array transforms. A binding whose RHS reads the document (`$.x`), the clock (`new Date()`), or the RNG (`Math.random()`) is **not** constant, so it keeps the runtime `$set` binding described above. This means a constant folds the same way in every entry point — a Filter, a pipeline stage, an expression — including per call in [`jsmql.compile`](#parameterised-queries-jsmqlcompile) (a constant built from a parameter folds against each call's arguments).
+
+A folded value is what the **server** would compute, not what JavaScript computes where the two differ: a month added to 31 January lands on the last day of February as `$dateAdd` does, `.startOf("week")` is the Sunday as `$dateTrunc` does, and `.diff(other, "day")` counts the midnights crossed as `$dateDiff` does. So a date range built from constants is two literal dates, and the `$match` can use the index on the field:
+
+```js
+jsmql(`const start = new Date("2026-09-01");
+       const end = start.plus(1, "month");
+       $.createdAt >= start && $.createdAt < end`);
+// → { createdAt: { $gte: new Date("2026-09-01T00:00:00.000Z"), $lt: new Date("2026-10-01T00:00:00.000Z") } }
+
+jsmql('const monthStart = new Date("2026-09-15").startOf("month"); $match({ day: monthStart.format("%Y-%m-%d") })');
+// → [{ $match: { day: "2026-09-01" } }]
+```
+
+A date method called with a `timezone` or another option (`.plus(1, "month", "Europe/Kyiv")`, `.startOf("week", { startOfWeek: "monday" })`) is **not** folded — a named zone shifts with daylight saving, and that table is the server's — so it stays the aggregation operator. `String(n)` and a `${n}` template slot fold for an integer (both sides write `"42"`); a fraction or a number of sixteen or more digits stays `$toString`, because the two spell exponents differently. `Number("42")` never folds: `$toDouble` yields a double on the server where a written `42` is an int.
 
 > A constant expression that can't be represented as a MongoDB literal — e.g. one that evaluates to `Infinity` or `NaN` (`1 / 0`) — is a compile-time error rather than silently-broken MQL.
 

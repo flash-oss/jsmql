@@ -9,10 +9,13 @@
 //   const k = "name"; $.items.map(k)   folds to   $.items.map("name")
 //                                    desugars to  $.items.map(x => x.name)
 //
-// Not every value has a literal spelling. A Date does not, so a declaration
-// holding one KEEPS ITS BINDING and is read at run time — see `asLiteral`
-// returning null, and `fold.ts` for why inlining the source expression instead
-// would carry its free names to every use site.
+// Not every value has a literal SPELLING. A Date does not, and it goes back into
+// the tree as the value itself — an `Injected` node, the carrier a `${…}` slot
+// uses — so a constant date is inlined exactly as a constant number is, and a
+// `$match` on it stays a query the index can serve. What has no node at all
+// (`undefined`, a non-finite number) answers null, and the declaration KEEPS ITS
+// BINDING — see `fold.ts` for why inlining the source expression instead would
+// carry its free names to every use site.
 
 import type { Expr } from "../../registry/ast.ts";
 // A leaf with no dependencies of its own — see its header for why jsmql mints
@@ -78,11 +81,9 @@ function isPlainObject(v: unknown): v is Record<string, unknown> {
 }
 
 /**
- * The literal that spells `value`, or null when none does.
- *
- * Null is not a failure: a `Date` is a perfectly good constant with no literal
- * spelling in the language. The caller inlines the constant expression instead,
- * which is equally faithful and equally surface-expressible.
+ * The node that carries `value`: the literal that spells it, an `Injected` node
+ * holding it when the language has no spelling (a Date), or null when no node can
+ * carry it (`undefined`, a non-finite number).
  *
  * `pos` is the source offset the literal reports. A folded value has no source
  * of its own, so it borrows the position of the reference it replaces — which is
@@ -136,7 +137,10 @@ export function asLiteral(value: unknown, pos: number): Expr | null {
     return { type: "ObjectLiteral", entries, pos };
   }
 
-  // A Date, a Binary, a Decimal128 — a constant with no literal spelling.
+  // A Date has no spelling, and rides as the value it is — the query road compares
+  // it as written and the value road passes it through, like a `${date}` slot.
+  if (value instanceof Date) return { type: "Injected", value, pos };
+  // A Binary, a Decimal128 — no spelling, and no fold produces one.
   return null;
 }
 

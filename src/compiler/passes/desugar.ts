@@ -41,7 +41,7 @@ import {
   receiverFamily,
 } from "../rows.ts";
 import { freshParam } from "./fresh.ts";
-import { chainBase, readsAContextRef } from "./naming.ts";
+import { chainBase, readsAContextRef, writtenField } from "./naming.ts";
 import { isSlotLayout } from "../../registry/vocabulary.ts";
 import type { Where } from "./position.ts";
 import { edge, STATEMENT } from "./position.ts";
@@ -251,22 +251,6 @@ type Node = { type: string; pos: number } & Record<string, unknown>;
 
 const isNode = (v: unknown): v is Node =>
   typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
-
-/**
- * The field this mutator writes back to, or null.
- *
- * A field PATH and nothing else: MQL writes a path, so `$.items[0].push(1)` and
- * `$.items.filter(p).sort()` have no destination and are not statements at all.
- * `$$` lands here too, and declining it is what keeps `$$.push(…)` ($unionWith)
- * and `$$.sort(…)` ($sort) out of a rule meant for fields.
- */
-function writtenField(node: Node): Node | null {
-  const recv = node.object;
-  if (!isNode(recv)) return null;
-  if (recv.type === "Ident") return recv; // a binding or a callback parameter: the emitter judges the write
-  if (recv.type !== "FieldRef" || recv.path === "") return null;
-  return recv;
-}
 
 /** The write, spelled the way the parser spells `$.a = …;`. */
 function writeBack(target: Node, value: object, pos: number): object {

@@ -13,7 +13,7 @@
 
 import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Db } from "mongodb";
-import { pipeline } from "../src/compiler/index.ts";
+import { expr, pipeline } from "../src/compiler/index.ts";
 import { liveClient } from "./fixtures/live.ts";
 
 const MAIN = [
@@ -497,6 +497,31 @@ describe("compiler/emit — a mutator statement writes its receiver", () => {
     expect(() => pipeline("Object.assign(zzz, { a: 1 });")).toThrow(/zzz/);
     expect(() => pipeline("$.s.trim().sort();")).toThrow(/needs a field or a binding to write/);
     expect(() => pipeline("[1, 2].reverse();")).toThrow(/needs a field or a binding to write/);
+  });
+
+  it("a mutator with nothing to write is a VALUE, and the row names the immutable form", () => {
+    // A call in the middle makes a fresh array, so there is no field to write back
+    // to. Such a chain is an expression, and the value road answers it by name —
+    // it is not a Pipeline, and sending the reader to `jsmql.pipeline()` sent them
+    // to an entry that refuses it just as hard.
+    expect(() => expr("$.xs.filter(x => x > 1).map(x => x * 2).uniq().sort()")).toThrow(
+      ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
+    );
+    expect(() => expr("$.xs.filter(x => x > 1).reverse()")).toThrow(
+      ".reverse() mutates the array in JavaScript. In expression position, use '.toReversed()'",
+    );
+    expect(() => expr("$.xs.filter(x => x > 1).push(9)")).toThrow(
+      ".push() mutates the array in JavaScript. In expression position, use '.concat(x)' or spread '[...arr, x]'",
+    );
+    expect(() => expr("[3, 1, 2].sort()")).toThrow(
+      ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
+    );
+    // The receiver answers before the row does: a string has neither method.
+    expect(() => expr("$.tag.trim().sort()")).toThrow(
+      "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
+    );
+    // …and a receiver that IS a place still writes it, however deep the path.
+    expect(pipeline("$.o.xs.sort()")).toEqual([{ $set: { "o.xs": { $sortArray: { input: "$o.xs", sortBy: 1 } } } }]);
   });
 
   it("Object.assign at statement position writes its target", () => {

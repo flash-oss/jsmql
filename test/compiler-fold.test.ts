@@ -395,14 +395,89 @@ describe("compiler/passes/fold — a constant date, and the named conversions", 
     expect(valueOf('Number("nope")')).toBe("(not constant)");
     // `$toString(null)` is null, not the four letters.
     expect(valueOf("String(null)")).toBe(null);
-    // A number's spelling differs between `$toString` and JavaScript.
-    expect(valueOf("String(42)")).toBe("(not constant)");
+    // An integer below 10^16 is written digit for digit by `$toString` and by
+    // JavaScript; from there the server uses an exponent where JavaScript does not,
+    // a fraction's threshold differs, and `-0` keeps its sign on the server only.
+    expect(valueOf("String(42)")).toBe("42");
+    expect(valueOf("String(9999999999999998)")).toBe("9999999999999998");
+    expect(valueOf("String(10000000000000000)")).toBe("(not constant)");
+    expect(valueOf("String(2.5)")).toBe("(not constant)");
+    expect(valueOf("String(-0)")).toBe("(not constant)");
+    expect(valueOf("`id-${42}`")).toBe("id-42");
+    expect(valueOf("`id-${1e16}`")).toBe("(not constant)");
+    expect(valueOf("`id-${0.5}`")).toBe("(not constant)");
   });
 
   it("reads `new Set([…])` as the array, because that is what the language does", () => {
     // jsmql has no set type: the constructor is a way of writing an array that
     // the set operators then read, and it does NOT de-duplicate.
     expect(valueOf("new Set([1, 2, 2, 3])")).toEqual([1, 2, 2, 3]);
+  });
+});
+
+describe("compiler/passes/fold — a date's arithmetic is the server's", () => {
+  const iso = (src: string): unknown => {
+    const v = valueOf(src);
+    return v instanceof Date ? v.toISOString() : v;
+  };
+
+  it("clamps a calendar step to the target month's last day, as $dateAdd does", () => {
+    expect(iso('new Date("2024-01-31T10:00:00Z").plus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
+    expect(iso('new Date("2024-02-29T10:00:00Z").plus(1, "year")')).toBe("2025-02-28T10:00:00.000Z");
+    expect(iso('new Date("2024-03-31T10:00:00Z").minus(1, "month")')).toBe("2024-02-29T10:00:00.000Z");
+    expect(iso('new Date("2026-09-01T00:00:00Z").plus(36, "hour")')).toBe("2026-09-02T12:00:00.000Z");
+  });
+
+  it("starts the week on Sunday, as $dateTrunc does", () => {
+    expect(iso('new Date("2026-09-16T13:45:30.123Z").startOf("week")')).toBe("2026-09-13T00:00:00.000Z");
+    expect(iso('new Date("2026-11-16T00:00:00Z").startOf("quarter")')).toBe("2026-10-01T00:00:00.000Z");
+    expect(iso('new Date("2026-09-16T13:45:30.123Z").endOf("month")')).toBe("2026-09-30T23:59:59.999Z");
+  });
+
+  it("counts the boundaries crossed, as $dateDiff does", () => {
+    expect(valueOf('new Date("2026-02-01T00:01:00Z").diff(new Date("2026-01-31T23:59:00Z"), "day")')).toBe(1);
+    expect(valueOf('new Date("2026-01-31T00:00:00Z").diff(new Date("2026-01-01T00:00:00Z"), "month")')).toBe(0);
+    expect(valueOf('new Date("2026-09-13T01:00:00Z").diff(new Date("2026-09-12T23:00:00Z"), "week")')).toBe(1);
+    expect(valueOf('new Date("2026-09-15T00:00:00Z").isSame(new Date("2026-09-01T00:00:00Z"), "month")')).toBe(true);
+  });
+
+  it("writes $dateToString's specifiers, and leaves one the server refuses", () => {
+    expect(
+      valueOf('new Date("2026-09-16T13:45:30.123Z").format("%Y-%m-%d %H:%M:%S.%L %j %w %u %U %V %G %z %Z %%")'),
+    ).toBe("2026-09-16 13:45:30.123 259 4 3 37 38 2026 +0000 0 %");
+    // `%e` is not a specifier the server knows, and `%b` is one the row does not
+    // accept: either way the refusal must reach the developer, so neither folds.
+    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%e")')).toBe("(not constant)");
+    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%b")')).toBe("(not constant)");
+    expect(valueOf('new Date("2026-09-16T13:45:30.123Z").format("%Y%")')).toBe("(not constant)");
+  });
+
+  it("rolls a part over as $dateFromParts does, and refuses what the server refuses", () => {
+    expect(iso('new Date("2026-09-16T13:45:30.123Z").set({ month: 13, day: 0 })')).toBe("2026-12-31T13:45:30.123Z");
+    expect(iso('new Date("2026-09-16T13:45:30.123Z").set({ isoWeek: 1, isoDayOfWeek: 1 })')).toBe(
+      "2025-12-29T13:45:30.123Z",
+    );
+    // ISO and calendar parts mixed; a year the server has no date for; an unknown part
+    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ isoWeek: 1, month: 3 })')).toBe("(not constant)");
+    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ year: 10000 })')).toBe("(not constant)");
+    expect(valueOf('new Date("2026-09-16T00:00:00Z").set({ week: 1 })')).toBe("(not constant)");
+  });
+
+  it("leaves every form that names a timezone or an option to the server", () => {
+    const d = 'new Date("2026-09-16T13:45:30.123Z")';
+    expect(valueOf(`${d}.plus(1, "month", "Europe/Kyiv")`)).toBe("(not constant)");
+    expect(valueOf(`${d}.startOf("week", { startOfWeek: "monday" })`)).toBe("(not constant)");
+    expect(valueOf(`${d}.diff(${d}, "day", "UTC")`)).toBe("(not constant)");
+    expect(valueOf(`${d}.format("%Y", "UTC")`)).toBe("(not constant)");
+    // a non-integer amount and a unit the server has no name for keep the row's refusals
+    expect(valueOf(`${d}.plus(1.5, "day")`)).toBe("(not constant)");
+    expect(valueOf(`${d}.plus(1, "days")`)).toBe("(not constant)");
+  });
+
+  it("reads an ObjectId's hex, and settles a constant computed key", () => {
+    expect(valueOf("0x507f1f77bcf86cd799439011.toString()")).toBe("507f1f77bcf86cd799439011");
+    expect(shape('const k = "a"; $sort({ [k]: 1 })')).toBe(shape("$sort({ a: 1 })"));
+    expect(shape('const k = "a"; $match({ [k + "b"]: 1 })')).toBe(shape("$match({ ab: 1 })"));
   });
 });
 

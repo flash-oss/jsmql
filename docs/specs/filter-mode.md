@@ -18,6 +18,7 @@ Which of the two documents a program becomes is decided once, for the WHOLE prog
 | a chain on a context reference (`$$.filter(…)`, `$$$.orders.find(…)`, `$$ = …`) | pipeline | a stream is a pipeline wherever it stands |
 | a name whose row has a `statement` or `stream` form and NO value form (`$match(…)`, `{ $match: … }`) | pipeline | a stage is not a value |
 | `Object.assign($.p, …)` / `Object.assign(binding, …)` | pipeline | it writes its first argument; a merged object is truthy, so as a filter it would keep every document |
+| a mutator (`.sort()`, `.push(…)`, …) on a receiver that is NOT a place — a call in the middle (`$.items.filter(p).sort()`), a literal (`[3, 1, 2].sort()`) | filter | a mutator is a write, and a fresh array is nothing to write to; so the chain is a value, and the value road refuses it by name (`.toSorted()`) instead of naming an entry that refuses it too |
 | declarations followed by ONE expression (`const cutoff = 18; $.age > cutoff`) | filter | a prelude the fold inlines, then the filter |
 | a bracketed literal | its FIRST element decides | `[$match(…), 1]` is a pipeline that refuses element 1; `[1, $match(…)]` an array |
 | anything else — a predicate, a value, a raw `{ … }` document | filter | |

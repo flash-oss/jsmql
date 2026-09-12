@@ -244,6 +244,17 @@ function foldConstantParts<T extends object>(node: T, known: Constants = EMPTY):
 
   return mapTreeIn(node, known, step, (inner, env) => {
     const n = inner as Any;
+    // `{ [k]: 1 }` with a constant `k` is `{ "<k>": 1 }` — the key JavaScript would
+    // compute. Settled here so the stage rules that take only a written key
+    // (`$sort({ [field]: 1 })`) see one, and a document literal stays a document.
+    if (n.type === "KeyValueEntry") {
+      const key = n.key as { kind: string; expr?: Expr };
+      if (key.kind !== "computed" || key.expr === undefined) return inner;
+      const computed = evaluate(key.expr, env);
+      return computed.ok && typeof computed.value === "string"
+        ? ({ ...n, key: { kind: "static", name: computed.value } } as object)
+        : inner;
+    }
     // a regex node is a constant already, and re-spelling it would lose whether the call supplied it
     if (!EVALUABLE.has(n.type) || n.type === "RegexLiteral") return inner;
     const result = evaluate(n as unknown as Expr, env);

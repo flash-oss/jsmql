@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs: the desugar spec describes the pass that exists
+
+`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
+mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
+`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
+whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
+and the sentence that explains why the spread pack skips a stream receiver was
+split across the seam, half of it stranded 200 lines below the other.
+
+Repairing the seam exposed the larger drift it had been hiding. The pass now
+carries eleven rules, and the spec described a table of twenty-four forms and five
+order constraints, of which one rule pair and one constraint were still real: the
+destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
+`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
+hand, and the prose describing them as desugar rules outlived them. The stranded
+tail was older still — it argued for a "lowering grid" whose spec was deleted with
+the compiler that had one.
+
+So the overview, the form table and the order constraints are rebuilt from `RULES`
+in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
+input→output pair in them is the compiler's own answer rather than a remembered
+one. The four accurate sections — position, the statement mutators, the iteratee
+shorthands, the driver — stand as they were. Two sections went: the exclusion-list
+constraint, which described a set the registry replaced, and "why a pass and not a
+hub", whose argument the overview already makes.
+
+---
+
 ## 2026-09-12 — feat(site): the landing page opens on a compile, compares SQL with JSMQL, and fits a phone
 
 The page had grown a three-row header on a phone (brand, a grey caption, and a nav
@@ -51,6 +79,53 @@ the fold and the row markup.
 
 ---
 
+## 2026-09-12 — fix: a constant date folds in every shape, and a constant date's arithmetic folds to the server's answer
+
+`const start = new Date("2026-09-01"); $match({ x: start })` emitted a `$set` of
+`__jsmql.var.start` and a `$match` on `$expr` — a collection scan — while the
+same declaration before a bare predicate compiled to a Filter with the date
+inlined. The fold inlines a declaration only when `asLiteral` can spell its
+value, and `literal.ts` answered null for a `Date`; the Filter shape had a side
+road of its own in `src/index.ts` that carried the date as a value, and the
+pipeline shape had none. A `Date` inside an array or an object already rode
+through as an `Injected` node, so the bare one now does the same, and the side
+road's comment says what it still does: carry an expression that reads the
+document. `docs/LANGUAGE.md` § Compile-time constants had promised the one
+behaviour all along.
+
+`const end = start.plus(1, "month")` stayed a `$dateAdd` in every shape, in the
+previous compiler too: `fold-dates.ts` folded only the zero-argument getters, on
+the reasoning that a value with no literal spelling is not worth computing. With
+the spelling in place the reasoning is gone, and the date methods fold — `.plus`,
+`.minus`, `.startOf`, `.endOf`, `.diff`, `.isSame` / `.isBefore` / `.isAfter`,
+`.format`, `.set` — to what the SERVER computes, each rule measured on mongod:
+`$dateAdd` clamps a calendar step to the target month's last day (31 January + 1
+month is 29 February in 2024), `$dateTrunc` starts the week on Sunday,
+`$dateDiff` counts the boundaries crossed (23:59 to 00:01 is one day),
+`$dateFromParts` rolls an out-of-range part over (month 13 is January), and
+`$dateToString` prints the specifiers the row accepts. A form that names a
+timezone or another option stays on the server, where the zone table is; a
+specifier the row refuses is not folded either, so the refusal reaches the
+developer. `test/fold-consistency.test.ts` now runs the date family — six dates
+by eighty-nine calls — against the runtime lowering on the fixture mongod.
+
+Two smaller folds came out of the same survey of constants a `$match` could not
+index on. `String(n)` and a `${n}` template slot fold for an integer below 10^16
+in magnitude, which `$toString` and JavaScript write digit for digit (from there
+the server uses an exponent and JavaScript does not; a fraction's threshold
+differs; `-0` keeps its sign only on the server). An `ObjectId` constant's
+`.toString()` is its hex. And a computed key whose expression is a constant
+string becomes the static key JavaScript would compute, so
+`const f = "a"; $sort({ [f]: 1 })` compiles where it was refused. Left as they
+are, with the reason stated in the spec: `Number("42")` (a double on the server,
+an int when written), `typeof` (a BSON type name), BigInt arithmetic (a
+`$toLong` document is not a query literal), `new RegExp(…)` (not a constructor
+the language has). The fold's contract now has a home in
+`docs/specs/desugar-pass.md` § Constant folding, which `let-bindings.md` had
+pointed at without a section to land on.
+
+---
+
 ## 2026-09-12 — fix: a live suite can no longer report green while its server half never ran
 
 Every suite that runs jsmql's MQL on a real server wraps its setup so an unreachable
@@ -79,6 +154,38 @@ and its neighbours skip green as they should.
 `test/live-suites.test.ts` keeps the shape: it fails when a suite builds its own
 `MongoClient`, keeps its own reachability probe, or nulls a client inside a `catch` —
 the three ways the hole reopens.
+
+---
+
+## 2026-09-12 — fix: a mutator with nothing to write is a value, not a Pipeline
+
+`jsmql.expr("$.items.filter(p).map(f).uniq().sort()")` answered "received a top-level
+'sort' stage call. Use jsmql.pipeline()" — and `jsmql.pipeline()` refuses it just as
+hard, so the reader was sent to a second dead end. The shape pass
+([shape.ts](src/compiler/passes/shape.ts)) asked the row alone: `.sort()` states no
+value form, so it read as a statement, so the whole program read as a Pipeline. But a
+statement WRITES, and a chain with a call in the middle makes a fresh array, which is
+nothing to write to. The receiver decides this, and only desugar was asking it.
+
+So the shape pass asks it too, through `couldWriteItsReceiver`
+([naming.ts](src/compiler/passes/naming.ts)), and such a chain is now the value it is.
+Every mutator then reaches its own row's value-position refusal, each of which already
+named the exact alternative — `.toSorted()`, `.toReversed()`, `.concat(x)`, `.at(-1)`.
+The shape pass runs one phase before the field-path fold, where `$.a.b` is still a
+chain of accesses, so the question it asks is the deliberately wider one: it admits any
+receiver the fold MIGHT reach a path from. That direction is the safe one — a receiver
+admitted there and declined in desugar is refused by name on the statement road, while
+the reverse reads a whole program as the wrong document.
+
+Removing the misrouting exposed a second ordering, which a test had pinned in its
+accidental form: a mutator's refusal is advice ABOUT arrays, so on `$.s.trim()` it told
+a string to use `.toSorted()`, which a string also lacks. A row's own refusal still
+wins over the generic receiver gate — it is the more specific sentence, and
+`$$.takeRight(3)` should hear why a stream cannot count from the end — but a mutator is
+the exception, and there the receiver's proof answers first
+([select.ts](src/compiler/emit/select.ts)). `docs/LANGUAGE.md` now flags the JavaScript
+surprise behind all of this: `[...].filter(p).sort()` reads fine in JS because the
+throw-away array makes the mutation invisible, and jsmql has no throw-away array.
 
 ---
 
@@ -120,6 +227,27 @@ first; `$indexStats` needs a privilege no built-in per-database role carries. Be
 the grants were widened, those suites reported green while their server half never
 ran. A green `npm test` is not evidence the server half ran — the scratch databases
 existing on `:27018` is.
+
+---
+
+## 2026-09-12 — fix(test): the port guard reads this checkout, not the worktrees beside it
+
+The guard that keeps MongoDB's default port out of the project walks the tree
+from the repository root and skips a fixed list of directory names. `.claude` is
+not on that list, so the walk descended into `.claude/worktrees/` — where a
+parallel session's worktree is a different branch at a different commit. Run from
+the main checkout the guard reported thirty-one offenders, every one of them
+another session's file, most of them written before the rule existed. The rule
+cannot be met by editing them: they are not in this checkout to edit.
+
+So the walk stops at a directory that is a checkout of its own, which a nested
+git worktree announces by carrying `.git` as a FILE rather than a directory. The
+guard still reads every file this checkout holds, tracked or not, and still names
+the offender and the line — a planted URI is caught exactly as before.
+
+This is why the failure was invisible from a worktree: a worktree has no nested
+worktrees, so the walk found nothing extra and the suite passed. Only the main
+checkout could see it.
 
 ---
 
@@ -183,6 +311,51 @@ See [docs/specs/mql-stringify.md](specs/mql-stringify.md).
 
 ---
 
+## 2026-09-10 — chore: the differential harness is retired
+
+`scripts/diff-compilers.mjs` compared a REFERENCE compiler against the working tree,
+and its reference was the main checkout. The main checkout now holds the compiler the
+harness was built to prove, so it compares the tree against itself and reports zero
+divergence — it cannot fail, and a gate that cannot fail is worse than no gate,
+because it still reads like one.
+
+Gone with it: `test/accepted-divergences.json`, ten megabytes and 11,263 classified
+rows, meaningless once there is nothing to diverge FROM; `docs/specs/differential-harness.md`;
+and the `diff:compilers` script. Nothing executed any of them — four suites named the
+script in a header comment and that was all — so the deletion changes no behaviour.
+The classifications live on in this file, and in git history.
+
+What proves the compiler now is what proved it all along beside the harness: the
+suites that run each construct on a live mongod and compare the server's answer with
+JavaScript's own for the same input — `compiler-methods`, `compiler-fold-agrees`,
+`compiler-returns-agrees`, `compiler-js-agreement`, `compiler-query-expr-agreement`,
+`compiler-join`, `compiler-update`, and `integration`. A `toEqual` proves what jsmql
+EMITS; only the server proves the document runs.
+
+---
+
+## 2026-09-10 — docs: the prose stops describing a compiler that no longer exists
+
+CLAUDE.md's rule is that every file says WHAT JSMQL IS, and only this one says how it
+got here. The rewrite left 121 sentences breaking it, across 43 files — comments and
+test titles that explained a shape by naming "the shipped compiler", "the reference
+compiler", "the old lexer", or what something "used to" do. A reader who never saw the
+old compiler could not use any of them.
+
+Almost none were deleted. The rule says rewrite rather than delete, because most of
+these carried a real fact inside the historical framing, and the fact is the reason
+the comment exists. `emit/filter.ts` explained the per-branch `||` ruling by saying
+what the old compiler did wrong; it now states the fact directly — wrapping a whole
+disjunction in `$expr` changes the OTHER side's answer, because
+`{ $expr: { $eq: ["$tags", "red"] } }` does not match `tags: ["red", "blue"]` where
+`{ tags: "red" }` does. `passes/literal.ts` argued for one spellability boundary by
+listing three places the old compiler disagreed with itself; it now states the
+inconsistency as the rule, with the same two inputs. Nine test titles lost "the
+reported case" and "the reported bug" — a bug report is not a description of what a
+test proves — and one constant stopped being called `SHIPPED_TRUTHY`.
+
+---
+
 ## 2026-09-10 — fix: a field name JavaScript refuses to store the ordinary way
 
 MongoDB reserves no field names, so `__proto__` is ordinary data. It is also the one
@@ -217,64 +390,6 @@ Six names are now asserted across fourteen roads in
 [test/security.test.ts](test/security.test.ts) — `__proto__`, `constructor`,
 `prototype`, `toString`, `hasOwnProperty`, `valueOf`. The suite was checked for teeth
 by disabling `setKey` and watching it go red.
-
----
-
-## 2026-09-10 — docs: the prose stops describing a compiler that no longer exists
-
-CLAUDE.md's rule is that every file says WHAT JSMQL IS, and only this one says how it
-got here. The rewrite left 121 sentences breaking it, across 43 files — comments and
-test titles that explained a shape by naming "the shipped compiler", "the reference
-compiler", "the old lexer", or what something "used to" do. A reader who never saw the
-old compiler could not use any of them.
-
-Almost none were deleted. The rule says rewrite rather than delete, because most of
-these carried a real fact inside the historical framing, and the fact is the reason
-the comment exists. `emit/filter.ts` explained the per-branch `||` ruling by saying
-what the old compiler did wrong; it now states the fact directly — wrapping a whole
-disjunction in `$expr` changes the OTHER side's answer, because
-`{ $expr: { $eq: ["$tags", "red"] } }` does not match `tags: ["red", "blue"]` where
-`{ tags: "red" }` does. `passes/literal.ts` argued for one spellability boundary by
-listing three places the old compiler disagreed with itself; it now states the
-inconsistency as the rule, with the same two inputs. Nine test titles lost "the
-reported case" and "the reported bug" — a bug report is not a description of what a
-test proves — and one constant stopped being called `SHIPPED_TRUTHY`.
-
----
-
-## 2026-09-10 — chore: the differential harness is retired
-
-`scripts/diff-compilers.mjs` compared a REFERENCE compiler against the working tree,
-and its reference was the main checkout. The main checkout now holds the compiler the
-harness was built to prove, so it compares the tree against itself and reports zero
-divergence — it cannot fail, and a gate that cannot fail is worse than no gate,
-because it still reads like one.
-
-Gone with it: `test/accepted-divergences.json`, ten megabytes and 11,263 classified
-rows, meaningless once there is nothing to diverge FROM; `docs/specs/differential-harness.md`;
-and the `diff:compilers` script. Nothing executed any of them — four suites named the
-script in a header comment and that was all — so the deletion changes no behaviour.
-The classifications live on in this file, and in git history.
-
-What proves the compiler now is what proved it all along beside the harness: the
-suites that run each construct on a live mongod and compare the server's answer with
-JavaScript's own for the same input — `compiler-methods`, `compiler-fold-agrees`,
-`compiler-returns-agrees`, `compiler-js-agreement`, `compiler-query-expr-agreement`,
-`compiler-join`, `compiler-update`, and `integration`. A `toEqual` proves what jsmql
-EMITS; only the server proves the document runs.
-
----
-
-## 2026-09-09 — fix: the DEVLOG merge resolver could not read a DEVLOG over a megabyte
-
-`scripts/merge-devlog.mjs` reads the three conflict stages with `spawnSync`, whose default
-output ceiling is one megabyte. This file passed that size, so the read failed with ENOBUFS
-and the script reported "cannot read stage 2 … Is docs/DEVLOG.md actually conflicted?" — the
-opposite of what had happened, on a file that WAS conflicted. The ceiling is now explicit, and
-a spawn failure is reported as itself rather than as a missing conflict.
-
-Found by using the tool: the merge that brought the site branch in stopped on this file, and
-the resolver refused it.
 
 ---
 
@@ -706,6 +821,19 @@ after:  'c' is the body's own stream, and a stream is not a value a statement wr
 Every way out the message names compiles — `c.concat([{ x: 1 }])` is the same
 `$unionWith` the mutator meant, and `c.$match(…)` the stage — and the test asserts
 each. One message covers every spelling, because they all arrive as one assignment.
+
+---
+
+## 2026-09-09 — fix: the DEVLOG merge resolver could not read a DEVLOG over a megabyte
+
+`scripts/merge-devlog.mjs` reads the three conflict stages with `spawnSync`, whose default
+output ceiling is one megabyte. This file passed that size, so the read failed with ENOBUFS
+and the script reported "cannot read stage 2 … Is docs/DEVLOG.md actually conflicted?" — the
+opposite of what had happened, on a file that WAS conflicted. The ceiling is now explicit, and
+a spawn failure is reported as itself rather than as a missing conflict.
+
+Found by using the tool: the merge that brought the site branch in stopped on this file, and
+the resolver refused it.
 
 ---
 

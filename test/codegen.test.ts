@@ -5880,20 +5880,25 @@ describe("chain type-check — reject a method on a provably-incompatible receiv
     // "use '.toSorted()'" is the wrong advice for a string, so the family
     // mismatch has to be reported first.
     expect(() => jsmql.expr("$.s.trim().sort()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'sort' stage call. Use jsmql.pipeline().",
+      "'.sort()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr("$.s.trim().push(1)")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'push' stage call. Use jsmql.pipeline().",
+      "'.push()' is not available on a 'string' — it is defined on 'array', 'stream'.",
     );
     expect(() => jsmql.expr("$.n.round(2).pop()")).toThrow(
-      "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'pop' stage call. Use jsmql.pipeline().",
+      "'.pop()' is not available on a 'number' — it is defined on 'array'.",
     );
     expect(() => jsmql.expr("$.s.trim().forEach(x => x)")).toThrow(
       ".forEach() returns undefined in JavaScript; jsmql expressions must produce a value. Use '.map(...)' to transform, or move side-effecting work outside the query.",
     );
-    // On a real array the mutator advice is what the user needs, so it survives.
+    // On a real array the mutator advice is what the user needs, so it survives —
+    // on a field, which `jsmql.expr` reads as the statement it is, and on a
+    // computed array, where the value road names the immutable twin.
     expect(() => jsmql.expr("$.a.sort()")).toThrow(
       "jsmql.expr() expects an aggregation expression (the value of a stage field, `jsmql.expr`), but received a top-level 'sort' stage call. Use jsmql.pipeline().",
+    );
+    expect(() => jsmql.expr("$.a.filter(x => x > 1).sort()")).toThrow(
+      ".sort() mutates the array in JavaScript. In expression position, use '.toSorted()'",
     );
     expect(() => jsmql.expr("$.a.forEach(x => x)")).toThrow(/\.forEach\(\) returns undefined in JavaScript/);
   });
@@ -7326,8 +7331,10 @@ describe("template literals", () => {
     // .toLowerCase() is statically string-producing — the wrap would be redundant.
     expect(jsmql.expr("`name=${$.name.toLowerCase()}`")).toEqual({ $concat: ["name=", { $toLower: "$name" }] });
   });
-  it("number literal interpolation gets $toString wrap", () => {
-    expect(jsmql.expr("`n=${42}`")).toEqual({ $concat: ["n=", { $toString: 42 }] });
+  it("an integer interpolation folds; a fraction keeps the $toString wrap", () => {
+    // `$toString` and JavaScript write an integer alike; a fraction's spelling can differ.
+    expect(jsmql.expr("`n=${42}`")).toBe("n=42");
+    expect(jsmql.expr("`n=${0.5}`")).toEqual({ $concat: ["n=", { $toString: 0.5 }] });
   });
 });
 

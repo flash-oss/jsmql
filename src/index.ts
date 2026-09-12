@@ -306,8 +306,8 @@ function expressionOf(program: Program): Expr {
   const rest: Expr[] = [];
   for (const s of program.stmts) {
     if (s.type === "LetDecl") {
-      // `const` binds a value or an expression; a Date or an ObjectId has no spelling
-      // the fold could inline, so it goes in as the value itself.
+      // `const` binds a value or an expression. A constant is already inlined by the
+      // fold; what reaches here reads the document, and goes in as the expression.
       if (s.kind !== "const") {
         throw new CodegenError(
           "A Filter or an expression takes a 'const' prelude; a 'let' needs the pipeline form, where it becomes a field.",

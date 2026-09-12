@@ -189,6 +189,20 @@ export function arrayLiteralOrderOf(name: string): "receiver, then arguments" | 
 }
 
 /**
+ * Does this name CHANGE its receiver — `.sort()`, `.push()`, `.fill()`?
+ *
+ * A row says so with the write form it states, and there are three spellings of
+ * one fact: a twin name, an array literal, or a form by argument count. The test
+ * is "any of the three", and it is here so that no caller repeats the list —
+ * a caller that knew two of the three read a mutator as an ordinary method.
+ */
+export function isMutator(name: string): boolean {
+  return (
+    immutableTwinOf(name) !== undefined || arrayLiteralOrderOf(name) !== undefined || mutatorFormOf(name) !== undefined
+  );
+}
+
+/**
  * The slot layout for `name` on `family`: which argument slots stand in for an
  * arrow and with which spellings, or `{ arrowOnly }` when none does.
  */

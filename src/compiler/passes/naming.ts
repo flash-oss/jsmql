@@ -128,3 +128,55 @@ export function namesSomething(node: object, key: string): boolean {
     ((n.type === "CallExpression" || n.type === "NewExpression") && key === "callee")
   );
 }
+
+/** Any AST node, seen as the two properties every node carries. */
+export type AstNode = { type: string; pos: number } & Record<string, unknown>;
+
+/**
+ * The field a mutator on `node` writes back to, or null when it has none.
+ *
+ * A field PATH and nothing else: MQL writes a path, so `$.items[0].push(1)` and
+ * `$.items.filter(p).sort()` have no destination. `$$` lands here too, and
+ * declining it is what keeps `$$.push(…)` ($unionWith) and `$$.sort(…)` ($sort)
+ * out of a rule meant for fields.
+ *
+ * Read AFTER the field-path fold, which is what makes `$.a.b.sort()` arrive here
+ * with a single `FieldRef("a.b")` receiver. Before the fold the question is
+ * `couldWriteItsReceiver`, below.
+ */
+export function writtenField(node: object): AstNode | null {
+  const recv = (node as Any).object;
+  if (!isNode(recv)) return null;
+  if (recv.type === "Ident") return recv; // a binding or a callback parameter: the emitter judges the write
+  if (recv.type !== "FieldRef" || recv.path === "") return null;
+  return recv;
+}
+
+/**
+ * Could a mutator on `node` write its receiver — is that receiver a PLACE?
+ *
+ * The same question as `writtenField`, asked one phase earlier, where `$.a.b` is
+ * still a chain of accesses and not yet the path it folds to. So the chain is
+ * walked to its base, and only an access link is walked through: a call in the
+ * middle (`$.items.filter(p).sort()`) makes a fresh array, and a fresh array is
+ * a VALUE, whatever the row says the name does.
+ *
+ * It answers yes wherever the fold MIGHT reach a path, which is wider than the
+ * set the fold really reaches. That direction is the safe one: a receiver
+ * admitted here and declined there is refused by name on the statement road,
+ * while the reverse would read a whole program as the wrong document.
+ */
+export function couldWriteItsReceiver(node: object): boolean {
+  const start = (node as Any).object;
+  if (!isNode(start)) return false;
+  let recv: AstNode = start;
+  while ((recv.type === "MemberAccess" || recv.type === "IndexAccess") && isNode(recv.object)) {
+    recv = recv.object;
+  }
+  return writtenField({ object: recv }) !== null;
+}
+
+/** Is this value an AST node? */
+function isNode(v: unknown): v is AstNode {
+  return typeof v === "object" && v !== null && !Array.isArray(v) && typeof (v as { type?: unknown }).type === "string";
+}

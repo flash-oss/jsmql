@@ -17,14 +17,12 @@ import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
 import { chainBase, isContextRef, namedRow, staticKey } from "../passes/naming.ts";
 import {
-  arrayLiteralOrderOf,
   bansNestedOf,
   diagnosticOf,
   everyStageName,
   forbiddenInOf,
-  immutableTwinOf,
   placementOf,
-  mutatorFormOf,
+  isMutator,
   isStageName,
   onlyOf,
   replacesDocumentOf,
@@ -1078,14 +1076,7 @@ function stageStatement(node: Expr, env: Env, first: boolean): Stage[] {
     throw E.notAStatement(node.pos);
   }
   // A mutator writes its receiver; one on a receiver that is neither a field nor a binding has nowhere to write.
-  if (
-    node.type === "MethodCall" &&
-    (immutableTwinOf(name) !== undefined ||
-      arrayLiteralOrderOf(name) !== undefined ||
-      mutatorFormOf(name) !== undefined)
-  ) {
-    throw E.mutatorNeedsField(name, node.pos);
-  }
+  if (node.type === "MethodCall" && isMutator(name)) throw E.mutatorNeedsField(name, node.pos);
   const verdict = consult(name, "statement");
   const sel = select(verdict, { kind: "none" }, shapeOf(args), args.length);
   if (sel.kind !== "rule") {
