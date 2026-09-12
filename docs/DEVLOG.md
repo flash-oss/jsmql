@@ -10,6 +10,34 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — docs: the desugar spec describes the pass that exists
+
+`docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
+mid-sentence — in the middle of `` `$$` / `$$$` ``, the signature of a
+`String.replace` whose replacement ate each `$$` into a `$` — and concatenated a
+whole earlier copy of the file behind the cut. Seven `##` sections appeared twice,
+and the sentence that explains why the spread pack skips a stream receiver was
+split across the seam, half of it stranded 200 lines below the other.
+
+Repairing the seam exposed the larger drift it had been hiding. The pass now
+carries eleven rules, and the spec described a table of twenty-four forms and five
+order constraints, of which one rule pair and one constraint were still real: the
+destination-visible sugars (`$ = <expr>`, `$$$.<coll>.find(…)`, `$$.push(…)`,
+`$$.indexStats()`) moved to the emit phase, where the neighbours they read are in
+hand, and the prose describing them as desugar rules outlived them. The stranded
+tail was older still — it argued for a "lowering grid" whose spec was deleted with
+the compiler that had one.
+
+So the overview, the form table and the order constraints are rebuilt from `RULES`
+in [desugar.ts](src/compiler/passes/desugar.ts), one row per rule, and every
+input→output pair in them is the compiler's own answer rather than a remembered
+one. The four accurate sections — position, the statement mutators, the iteratee
+shorthands, the driver — stand as they were. Two sections went: the exclusion-list
+constraint, which described a set the registry replaced, and "why a pass and not a
+hub", whose argument the overview already makes.
+
+---
+
 ## 2026-09-12 — fix: a mutator with nothing to write is a value, not a Pipeline
 
 `jsmql.expr("$.items.filter(p).map(f).uniq().sort()")` answered "received a top-level
