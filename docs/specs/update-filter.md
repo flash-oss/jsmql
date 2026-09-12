@@ -115,7 +115,7 @@ Each group is one stage: `{ $set: { <path>: <value>, … } }`, or `{ $unset: "pa
 | `$.b = $.a` paired with `delete $.a`, either order | `$rename` |
 | `$inc({ n: 2 })`, `{ $set: { a: 1 } }` | merged in as written |
 
-A value computed from the document is refused — the server reads `"$b"` in an update document as the string — with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` accepts as well — the rename pair above is the one read of the document a document-form update takes, because `$rename` names the source field rather than evaluating it. Two writes to one path, and anything that is not a write or an update operator (a stage, `assert`, a stream chain), are refused too.
+A value computed from the document is refused — the server reads `"$b"` in an update document as the string — with the pipeline form (`jsmql.pipeline("$.a = $.b + 1;")`), which `updateOne` accepts as well — the rename pair above is the one read of the document a document-form update takes, because `$rename` names the source field rather than evaluating it. A value the server computes without reading the document (`new Date()` inside a value, `ObjectId()`, `Date.now()`) is refused by its row's `updateDoc` cell, which names the write that does exist (`$.<field> = new Date()` is `$currentDate`) and the pipeline form; a row without that cell gets the position's general sentence from `refusalFor` in [src/compiler/emit/errors.ts](../../src/compiler/emit/errors.ts). Two writes to one path, and anything that is not a write or an update operator (a stage, `assert`, a stream chain), are refused too.
 
 ### Mutators and `Object.assign`
 

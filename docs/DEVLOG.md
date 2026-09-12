@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(errors): a name with no cell for a position is refused in that position's own words
+
+`$.a = { t: new Date() }` on `jsmql.update` said `Date cannot stand in updateDoc
+position` — an internal label, and no way out. `noCell` in `refusalFor`
+(`src/compiler/emit/errors.ts`) now has one sentence per position, in the words
+the rows use for that position: an update document "takes constants" and names the
+pipeline form, `$group` says "is not an accumulator", a statement says "computes a
+value, and a statement writes one". `typeof $.x` in `$group` and every other name
+whose row never mentions the position read the same way as a name whose row does.
+
+The three names a document-form update refuses most — `new Date(…)` inside a
+value, `ObjectId()`, `Date.now()` — get an `updateDoc` cell on their row, because
+only the row knows its own alternative: `new Date()` says that the whole write
+`$.<field> = new Date()` is `$currentDate` and that a nested Date comes from the
+caller's code or the pipeline form. `NameSpec` and `GlobalSpec` gain the optional
+cell for exactly this use; the update document holds constants, so the cell is
+always a refusal.
+
 ## 2026-09-12 — fix(emit): `new Date()` is the bare `"$$NOW"`
 
 `new Date()` lowered to `{ $toDate: "$$NOW" }`. `$$NOW` is already a date, so the

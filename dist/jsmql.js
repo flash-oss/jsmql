@@ -13195,6 +13195,9 @@ var NAMES = {
     returns: "date",
     where: ["value"],
     filter: because(`a date is a value, not a test. Compare it: '$.t > new Date("2024-01-01")'.`),
+    updateDoc: unsupported(
+      `'new Date(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date("2026-01-01")', or an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new Date() };")'), which 'updateOne' accepts as well.`
+    ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
@@ -13228,6 +13231,9 @@ var NAMES = {
     returns: "objectId",
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
+    updateDoc: unsupported(
+      `'ObjectId(\u2026)' is computed on the server, and a document-form update takes constants. Pass an id from your code (a '0x507f1f77bcf86cd799439011' literal, or an interpolated '\${new ObjectId()}'), or use the pipeline form ('jsmql.pipeline("$.id = ObjectId();")'), which 'updateOne' accepts as well.`
+    ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
@@ -13363,6 +13369,9 @@ var NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
+    updateDoc: unsupported(
+      `'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline("$.t = Date.now();")'), which 'updateOne' accepts as well.`
+    ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
     statement: unsupported(
@@ -19265,6 +19274,15 @@ var countWord = (args) => {
   if (args.atLeast !== void 0) return `requires at least ${args.atLeast} argument${args.atLeast === 1 ? "" : "s"}`;
   return "takes a different number of arguments";
 };
+var NO_CELL = {
+  value: (q) => `${q} has no value form here \u2014 see its 'where'.`,
+  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
+  stream: (q) => `${q} produces a value, not a stream of documents.`,
+  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
+  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
+  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+  updateDoc: (q, b) => `${q} is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}\u2026;")'), which 'updateOne' accepts as well, or pass the value from your code.`
+};
 function refusalFor(sel, spelled3, container, position, pos, near, format = (s) => `.${s}()`) {
   const bare = spelled3.replace(/^'(.*)'$/, "$1").replace(/\(\)$/, "");
   switch (sel.kind) {
@@ -19311,7 +19329,7 @@ function refusalFor(sel, spelled3, container, position, pos, near, format = (s) 
         pos
       );
     case "noCell":
-      return new CodegenError(`${spelled3} cannot stand in ${position} position.`, pos);
+      return new CodegenError(NO_CELL[position](spelled3.startsWith("'") ? spelled3 : `'${spelled3}'`, bare), pos);
     case "rule":
     case "dispatch":
       return new CodegenError(

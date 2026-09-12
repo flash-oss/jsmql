@@ -3062,6 +3062,8 @@ jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
 jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
 jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
 jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
+// `new Date()` is the server's clock only as the whole write; `$.a = { t: new Date() }`
+// is refused, naming '$.a.t = new Date()' and the pipeline form.
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
