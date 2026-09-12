@@ -10,6 +10,22 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — fix(playground): the MQL panel keeps its scroll offset across edits
+
+Every keystroke in the query editor re-rendered the output panel with
+CodeMirror's `setValue`, which scrolls the panel back to the top. A reader who
+inspects a stage near the end of a long pipeline lost their place on each
+character they typed and had to scroll down again.
+
+The panel now writes through a small `setOutput` helper in
+`playground_skeleton.html`: it reads the scroll offset, sets the value, and
+restores the offset with `scrollTo`. `scrollTo` clamps, so when the new document
+is shorter the panel lands at its end rather than at a stale offset. Error text
+goes through the same helper, so an edit that passes through a transient syntax
+error and back to valid MQL returns the reader to the same region.
+
+---
+
 ## 2026-09-12 — docs: the desugar spec describes the pass that exists
 
 `docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
