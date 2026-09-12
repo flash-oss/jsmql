@@ -10,6 +10,47 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — feat(site): the landing page opens on a compile, compares SQL with JSMQL, and fits a phone
+
+The page had grown a three-row header on a phone (brand, a grey caption, and a nav
+that dropped under the GitHub corner ribbon), said "a subset of JavaScript that
+compiles to MQL" three times before the first button, and spent 5 000 of its 8 000
+mobile pixels on seven example cards whose code panels all scrolled sideways. The
+rebuild is mobile-first and follows the order the conference talk earned: a
+one-row header (`JSMQL · Playground · Docs · GitHub`, no caption, no ribbon); a hero
+with one heading, one line, the playground button and the install line beside a
+live-compiled filter (`$.items.sumBy((i) => i.qty * i.price) > 100`, sixteen lines of
+MQL — a filter that needs a computed value is the one kind that grows, so it makes
+the point where a plain comparison collapses to one line); the `fullAddress`
+expression from `test/realistic.test.ts` beside its seventy lines; a **SQL vs JSMQL**
+section; four example cards instead of seven; sixteen short "Why JSMQL" cards; and a
+"Get started" list in place of a card grid. See [index.html](../index.html).
+
+The SQL section is new ground for the site and is deliberately MQL-free: it compares
+the two languages people *write*, one idea per row, with a dialect line each for
+PostgreSQL, MySQL and SQL Server where they disagree. Every JSMQL cell is compiled
+by the page on load (a cell that stops compiling marks itself) and links the
+playground, which is where its MQL lives. The rows are the ones verified for the
+talk — each JSMQL ran on the project's mongod and each PostgreSQL line on PostgreSQL
+17 over one dataset, and the pairs agree. Two rows changed under that check and the
+page carries the corrected forms: PostgreSQL has no `DATEDIFF`, and
+`EXTRACT(DAY FROM a - b)` counts 24-hour periods where `$dateDiff` counts calendar
+boundaries, so the day-difference row is not on the page; and `string_agg` over no
+rows is `NULL` where `.join()` is `""`, so the tags row wraps the SQL in `COALESCE`.
+
+Every MQL pane sits in a `<details>` fold: open on a wide screen, closed under
+760px, where one line states how many lines of MQL there are and a tap shows them
+— except the hero card, which exists to show the compile and stays open. The prose
+is written in the third person throughout, states no development history, and uses
+none of this codebase's own vocabulary (no sigils, streams, supersets, `$op`,
+"never knowingly emits"); a scripted sweep over the visible text guards both.
+[test/site.test.ts](../test/site.test.ts) now also extracts the SQL rows and
+compiles each through the entry its `data-mode` names, and tolerates a formatter
+wrapping a long `<pre>` opening tag; [docs/specs/site.md](specs/site.md) documents
+the fold and the row markup.
+
+---
+
 ## 2026-09-12 — fix: a live suite can no longer report green while its server half never ran
 
 Every suite that runs jsmql's MQL on a real server wraps its setup so an unreachable

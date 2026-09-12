@@ -65,7 +65,7 @@ function readExamples(): Example[] {
   const article = /<article class="example[^"]*" data-example data-mode="([a-z]+)">([\s\S]*?)<\/article>/g;
   for (const [, mode, body] of INDEX.matchAll(article)) {
     const chip = /<span class="chip ([a-z]+)">/.exec(body);
-    const source = /<pre class="src"><code>([\s\S]*?)<\/code><\/pre>/.exec(body);
+    const source = /<pre\s+class="src"\s*><code>([\s\S]*?)<\/code><\/pre>/.exec(body);
     if (!chip || !source) throw new Error(`index.html example (mode ${mode}) lost its chip or source`);
     out.push({ mode: mode as Mode, chip: chip[1], source: decodeEntities(source[1]).trim() });
   }
@@ -77,7 +77,29 @@ function countMarkupExamples(): number {
   return (INDEX.match(/<article[^>]*\bdata-example\b/g) ?? []).length;
 }
 
+/**
+ * The SQL-vs-JSMQL rows: one `<div class="vs">` per idea, a `data-mode`, and
+ * the JSMQL cell in `pre.src > code`. They show no MQL on the page — the page
+ * compiles each to prove the cell and links the playground for the output — so
+ * the guard here is that every cell compiles through the entry it names.
+ */
+function readVersus(): Example[] {
+  const out: Example[] = [];
+  const row = /<div class="vs" data-vs data-mode="([a-z]+)">([\s\S]*?)<a class="play"/g;
+  for (const [, mode, body] of INDEX.matchAll(row)) {
+    const source = /<pre\s+class="src"\s*><code>([\s\S]*?)<\/code><\/pre>/.exec(body);
+    if (!source) throw new Error(`index.html SQL-vs-JSMQL row (mode ${mode}) lost its JSMQL cell`);
+    out.push({ mode: mode as Mode, chip: mode, source: decodeEntities(source[1]).trim() });
+  }
+  return out;
+}
+
+function countMarkupVersus(): number {
+  return (INDEX.match(/<div[^>]*\bdata-vs\b/g) ?? []).length;
+}
+
 const EXAMPLES = readExamples();
+const VERSUS = readVersus();
 
 describe("site: landing-page examples", () => {
   it("extracts every example the markup declares", () => {
@@ -85,8 +107,21 @@ describe("site: landing-page examples", () => {
     // slips out of the parse, which leaves the cases below reviewing a page
     // that is not the published one.
     expect(EXAMPLES.length).toBe(countMarkupExamples());
-    expect(EXAMPLES.length).toBeGreaterThanOrEqual(7);
+    expect(EXAMPLES.length).toBeGreaterThanOrEqual(6);
   });
+
+  it("extracts every SQL-vs-JSMQL row the markup declares", () => {
+    expect(VERSUS.length).toBe(countMarkupVersus());
+    expect(VERSUS.length).toBeGreaterThanOrEqual(6);
+  });
+
+  it.each(VERSUS.map((e, i) => [i, e.source.split("\n")[0]] as const))(
+    "SQL-vs-JSMQL row %i: `%s` compiles to the shape its mode names",
+    (i) => {
+      const { mode, source } = VERSUS[i];
+      expect(Array.isArray(ENTRIES[mode](source))).toBe(CHIP_IS_ARRAY[mode]);
+    },
+  );
 
   it.each(EXAMPLES.map((e, i) => [i, e.chip, e.source.split("\n")[0]] as const))(
     "example %i (%s): `%s` compiles",

@@ -52,6 +52,20 @@ Each example is one `<article>` carrying:
 - optionally an empty `<span data-loc>`, which the script fills with the
   source-to-output line counts, measured from the text it has just rendered.
 
+The MQL pane sits inside a `<details class="fold">`. The script leaves every
+fold open on a wide screen, where the two panes sit side by side, and closes
+them under 760px, where the panes stack: a phone then shows each example as its
+title, its JSMQL and one line stating how many lines of MQL that made, and a
+tap opens the pane. The prose and the JSMQL never fold.
+
+The "SQL vs JSMQL" section holds a second kind of example: one
+`<div class="vs" data-vs data-mode="…">` per idea, with the SQL in `pre.sql`
+cells (one per dialect where the dialects disagree) and the JSMQL in
+`pre.src > code`. These rows show **no MQL on the page**, on purpose — they
+compare the two languages people write. The script still compiles each JSMQL
+cell (a cell that stops compiling marks itself red with the error) and builds a
+playground link for it, which is where its MQL is shown.
+
 The script writes output with **`jsmql.stringify`**, the library's own printer,
 taken from the same bundle it compiles with — see
 [mql-stringify.md](mql-stringify.md). Neither page carries a printer of its own,
@@ -112,6 +126,8 @@ entry its `data-mode` names, and asserts:
   for `filter` / `expression`);
 - the chip matches `data-mode`, except under `auto`, where the entry chooses
   the shape and the chip reports it;
+- every SQL-vs-JSMQL row's JSMQL cell compiles to the shape its `data-mode`
+  names, and the extraction found as many rows as the markup declares;
 - `CNAME` matches the host in `package.json#homepage` **when the file is
   present**. It has to be absent while the domain does not resolve yet, because
   Pages redirects the github.io URL to whatever `CNAME` names, leaving nowhere

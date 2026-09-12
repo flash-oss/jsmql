@@ -18,15 +18,15 @@
     <title>Compile JS you know to the MQL for DB-side performance efficiency</title>
     <meta
       name="description"
-      content="JSMQL is a subset of JavaScript that compiles to MongoDB's MQL. Write hard MQL in the simple JS syntax you already know."
+      content="JSMQL is plain JavaScript syntax that compiles to MongoDB's MQL. Write hard MQL in the simple JS you already know."
     />
     <link rel="canonical" href="https://jsmql.js.org/" />
     <meta property="og:type" content="website" />
     <meta property="og:url" content="https://jsmql.js.org/" />
-    <meta property="og:title" content="JSMQL — write complex MongoDB queries in simple JavaScript" />
+    <meta property="og:title" content="JSMQL — complex MongoDB queries in simple JavaScript" />
     <meta
       property="og:description"
-      content="A subset of JavaScript that compiles to MongoDB MQL, you'd be using the syntax you already know."
+      content="Plain JavaScript syntax that compiles to MongoDB MQL — the syntax you already know."
     />
     <meta name="twitter:card" content="summary" />
     <link
@@ -44,6 +44,7 @@
     <link rel="stylesheet" href="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/theme/neo.min.css" />
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/addon/runmode/runmode-standalone.min.js"></script>
     <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/javascript/javascript.min.js"></script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/codemirror/5.65.16/mode/sql/sql.min.js"></script>
 
     <style>
       :root {
@@ -211,84 +212,83 @@
       }
 
       /* ── Header ──────────────────────────────────────────────────────────── */
+      /* One row at every width: the wordmark, then the three places a reader
+         goes next. Nothing else — a caption here would say what the heading
+         under it says, and a second GitHub link in the corner would fight the
+         nav for the same 48px on a phone. */
       header.bar {
-        padding: 10px 16px;
-        padding-right: 60px;
+        padding: 11px 20px;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
-        font-size: 13px;
+        font-size: 14px;
         display: flex;
         align-items: center;
-        gap: 14px;
-        flex-wrap: wrap;
+        justify-content: space-between;
+        gap: 16px;
       }
 
       header.bar strong {
-        font-size: 14px;
-      }
-
-      header.bar .tag {
-        color: var(--muted);
+        font-size: 15px;
+        letter-spacing: 0.01em;
       }
 
       header.bar nav {
-        margin-left: auto;
         display: flex;
-        gap: 14px;
+        gap: 18px;
+        white-space: nowrap;
       }
 
-      .github-corner {
-        position: absolute;
-        top: 0;
-        right: 0;
-        color: var(--panel);
-        fill: var(--fg);
+      header.bar nav a {
+        color: var(--fg);
       }
 
-      .github-corner svg {
-        display: block;
+      header.bar nav a:hover {
+        color: var(--accent);
+        text-decoration: none;
       }
 
       /* ── Hero ────────────────────────────────────────────────────────────── */
+      /* Text beside a live compile, so the first screen shows the thing itself
+         and not only a claim about it. Under 900px the card drops below the
+         text; the call to action stays inside the first screen either way. */
       .hero {
-        padding: 56px 0 40px;
+        padding: 44px 0 40px;
         border-bottom: 1px solid var(--border);
         background: var(--panel);
+      }
+
+      .hero .wrap {
+        display: grid;
+        grid-template-columns: minmax(0, 1.05fr) minmax(0, 1fr);
+        gap: 36px;
+        align-items: center;
       }
 
       .hero h1 {
         margin: 0;
-        font-size: 44px;
+        font-size: 42px;
         line-height: 1.1;
         letter-spacing: -0.02em;
       }
 
-      /* Prose takes the full page measure, the same span the heading, the
-         buttons, the card grids and the footer take. A narrower reading cap
-         would pin these paragraphs to the left of a column everything around
-         them fills, which reads as a page that lost its centre. */
       .hero .lede {
         margin: 14px 0 0;
-        font-size: 20px;
+        font-size: 19px;
         line-height: 1.45;
-      }
-
-      .hero .sub {
-        margin: 14px 0 0;
         color: var(--muted);
       }
 
       .cta {
-        margin-top: 26px;
+        margin-top: 24px;
         display: flex;
-        gap: 10px;
+        gap: 12px;
         flex-wrap: wrap;
         align-items: center;
       }
 
       .btn {
         display: inline-block;
-        padding: 9px 16px;
+        padding: 10px 18px;
         border-radius: 7px;
         border: 1px solid var(--border-strong);
         background: var(--panel);
@@ -316,25 +316,19 @@
       }
 
       .install {
-        margin-top: 22px;
         display: inline-block;
-        padding: 10px 14px;
+        padding: 9px 14px;
         border: 1px solid var(--border);
         border-radius: 7px;
         background: var(--sidebar-bg);
         font-family: var(--mono);
         font-size: 13.5px;
+        white-space: nowrap;
       }
 
       .install .prompt {
         color: var(--subtle);
         user-select: none;
-      }
-
-      .hero .meta {
-        margin: 12px 0 0;
-        color: var(--muted);
-        font-size: 13.5px;
       }
 
       /* ── Sections ────────────────────────────────────────────────────────── */
@@ -422,18 +416,22 @@
         min-width: 0;
       }
 
-      @media (max-width: 760px) {
-        .io {
-          grid-template-columns: 1fr;
-        }
+      /* The hero card sits in a half-width column, so its two panes stack at
+         every width; its own pre panes are shorter than the section cards'. */
+      .example.hero {
+        margin: 0;
+      }
 
-        .hero h1 {
-          font-size: 34px;
-        }
+      .example.hero .io {
+        grid-template-columns: 1fr;
+      }
 
-        .hero .lede {
-          font-size: 17px;
-        }
+      .example.hero pre.src {
+        max-height: 120px;
+      }
+
+      .example.hero pre.out {
+        max-height: 250px;
       }
 
       .io-label {
@@ -443,6 +441,45 @@
         letter-spacing: 0.05em;
         color: var(--subtle);
         margin-bottom: 5px;
+      }
+
+      /* The MQL pane folds behind its label. The script opens every fold on a
+         wide screen, where the two panes sit side by side and the fold costs
+         nothing; on a phone the panes stack, and a closed fold keeps each card
+         to its title, its JSMQL and one line stating how much MQL that made —
+         a tap opens it. The marker is the label itself, so there is no
+         triangle to align. */
+      details.fold > summary {
+        list-style: none;
+        cursor: pointer;
+      }
+
+      details.fold > summary::-webkit-details-marker {
+        display: none;
+      }
+
+      details.fold > summary .io-label {
+        display: inline-block;
+        margin-bottom: 5px;
+      }
+
+      details.fold > summary .io-label::after {
+        content: " ▸";
+        color: var(--subtle);
+      }
+
+      details.fold[open] > summary .io-label::after {
+        content: " ▾";
+      }
+
+      details.fold > summary .lines {
+        margin-left: 8px;
+        font-size: 11px;
+        color: var(--subtle);
+      }
+
+      details.fold:not([open]) > pre {
+        display: none;
       }
 
       /* Lines are never broken: code reads as it was written. `--code-panel`
@@ -500,9 +537,8 @@
         color: var(--code-fg);
       }
 
-      /* One example compiles a whole recommendation engine. Its MQL runs to
-         hundreds of lines, so give that pair a taller window — the size gap is
-         the point it makes, and a 320px box hides almost all of it. */
+      /* The address example's MQL runs to seventy lines. Give that pair a
+         taller window — the size gap is the point it makes. */
       .example.tall pre {
         max-height: 520px;
       }
@@ -536,11 +572,119 @@
         margin-left: auto;
       }
 
+      .aside {
+        margin: 0 0 18px;
+        padding: 12px 16px;
+        border-left: 3px solid var(--accent);
+        background: var(--accent-soft);
+        border-radius: 0 8px 8px 0;
+        font-size: 15px;
+      }
+
+      /* ── SQL vs JSMQL ────────────────────────────────────────────────────── */
+      /* One idea per row: what it is, how SQL says it, how JSMQL says it. No
+         MQL on these rows on purpose — this is a comparison of the two
+         languages people write, and a third column of what the machine runs
+         would only say "look how long" about both. Where the SQL dialects
+         disagree, each gets its own line with its name; the disagreement is
+         the point of that row. Under 760px the three cells stack. */
+      .vs {
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1.2fr) minmax(0, 1fr);
+        gap: 16px;
+        align-items: center;
+        padding: 14px 16px;
+        margin-bottom: 10px;
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 10px;
+      }
+
+      /* Grid items default to `min-width: auto`; a long SQL or JSMQL line would
+         widen the row — and the page — past the viewport. Zero it so each
+         <pre> scrolls on its own, as the example panes do. */
+      .vs > *,
+      .dl > * {
+        min-width: 0;
+      }
+
+      .vs-head {
+        margin-top: 20px;
+        display: grid;
+        grid-template-columns: 150px minmax(0, 1.2fr) minmax(0, 1fr);
+        gap: 16px;
+        padding: 0 16px 8px;
+        font-size: 11px;
+        font-weight: 600;
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        color: var(--subtle);
+      }
+
+      .vs-idea {
+        font-weight: 600;
+        font-size: 14.5px;
+        line-height: 1.35;
+      }
+
+      .vs pre {
+        max-height: none;
+        padding: 8px 12px;
+        font-size: 12.5px;
+      }
+
+      .vs pre.src {
+        background-color: var(--sidebar-bg);
+      }
+
+      /* A dialect line: the dialect's name, then its spelling. */
+      .dl {
+        display: grid;
+        grid-template-columns: 92px minmax(0, 1fr);
+        gap: 8px;
+        align-items: start;
+      }
+
+      .dl + .dl {
+        margin-top: 6px;
+      }
+
+      .dl b {
+        margin-top: 8px;
+        font-size: 10px;
+        font-weight: 600;
+        letter-spacing: 0.06em;
+        text-transform: uppercase;
+        color: var(--muted);
+        white-space: nowrap;
+      }
+
+      .vs-js .play {
+        display: inline-block;
+        margin-top: 6px;
+        font-size: 12.5px;
+      }
+
+      .vs-js.failed pre.src {
+        border-color: var(--error);
+      }
+
+      .vs-js .err {
+        margin-top: 6px;
+        font-size: 12.5px;
+        color: var(--error);
+      }
+
       /* ── Feature grid ────────────────────────────────────────────────────── */
       .grid {
         display: grid;
         grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
         gap: 16px;
+      }
+
+      /* a heading straight above the grid keeps the gap an intro used to give */
+      h2 + .grid {
+        margin-top: 20px;
       }
 
       .card {
@@ -569,6 +713,35 @@
         padding: 0 4px;
       }
 
+      /* ── Get started ─────────────────────────────────────────────────────── */
+      .start {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px 40px;
+        align-items: start;
+      }
+
+      .start h3 {
+        margin: 0 0 8px;
+        font-size: 15px;
+      }
+
+      .start ul {
+        margin: 0;
+        padding: 0;
+        list-style: none;
+      }
+
+      .start li {
+        margin: 0 0 10px;
+        font-size: 14px;
+        color: var(--muted);
+      }
+
+      .start li a {
+        font-weight: 500;
+      }
+
       /* ── Notices + footer ────────────────────────────────────────────────── */
       .notice {
         margin-bottom: 22px;
@@ -594,139 +767,311 @@
         gap: 18px;
         flex-wrap: wrap;
       }
+
+      footer.site p {
+        margin: 0;
+      }
+
+      /* ── Narrow screens ──────────────────────────────────────────────────── */
+      @media (max-width: 900px) {
+        .hero .wrap {
+          grid-template-columns: 1fr;
+          gap: 28px;
+        }
+      }
+
+      @media (max-width: 760px) {
+        .io {
+          grid-template-columns: 1fr;
+        }
+
+        .hero {
+          padding: 32px 0 30px;
+        }
+
+        .hero h1 {
+          font-size: 32px;
+        }
+
+        .hero .lede {
+          font-size: 17px;
+        }
+
+        section {
+          padding: 34px 0;
+        }
+
+        .vs,
+        .vs-head {
+          grid-template-columns: 1fr;
+          gap: 10px;
+        }
+
+        .vs-head {
+          display: none;
+        }
+
+        .vs-idea::after {
+          content: "";
+        }
+
+        .vs-sql::before,
+        .vs-js::before {
+          display: block;
+          margin-bottom: 4px;
+          font-size: 11px;
+          font-weight: 600;
+          text-transform: uppercase;
+          letter-spacing: 0.05em;
+          color: var(--subtle);
+        }
+
+        .vs-sql::before {
+          content: "SQL";
+        }
+
+        .vs-js::before {
+          content: "JSMQL";
+        }
+
+        .dl {
+          grid-template-columns: 1fr;
+          gap: 2px;
+        }
+
+        .dl b {
+          margin-top: 0;
+        }
+
+        .vs {
+          padding: 12px 14px;
+        }
+
+        .vs pre {
+          padding: 6px 10px;
+          font-size: 12px;
+        }
+
+        .dl + .dl {
+          margin-top: 4px;
+        }
+
+        .example {
+          padding: 14px;
+        }
+      }
     </style>
   </head>
 
   <body>
     <header class="bar">
       <strong>JSMQL</strong>
-      <span class="tag">Subset of JavaScript which compiles to the MongoDB query language</span>
       <nav>
         <a href="playground.html">Playground</a>
-        <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Syntax</a>
-        <a href="https://www.npmjs.com/package/@koresar/jsmql">npm</a>
+        <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Docs</a>
+        <a href="https://github.com/flash-oss/jsmql">GitHub</a>
       </nav>
     </header>
 
-    <a
-      href="https://github.com/flash-oss/jsmql"
-      class="github-corner"
-      aria-label="View source on GitHub"
-      title="View source on GitHub"
-    >
-      <svg width="48" height="48" viewBox="0 0 250 250" aria-hidden="true">
-        <path d="M0,0 L115,115 L130,115 L142,142 L250,250 L250,0 Z"></path>
-        <path
-          d="M128.3,109.0 C113.8,99.7 119.0,89.6 119.0,89.6 C122.0,82.7 120.5,78.6 120.5,78.6 C119.2,72.0 123.4,76.3 123.4,76.3 C127.3,80.9 125.5,87.3 125.5,87.3 C122.9,97.6 130.6,101.9 134.4,103.2"
-          fill="currentColor"
-          style="transform-origin: 130px 106px"
-        ></path>
-        <path
-          d="M115.0,115.0 C114.9,115.1 118.7,116.5 119.8,115.4 L133.7,101.6 C136.9,99.2 139.9,98.4 142.2,98.6 C133.8,88.0 127.5,74.4 143.8,58.0 C148.5,53.4 154.0,51.2 159.7,51.0 C160.3,49.4 163.2,43.6 171.4,40.1 C171.4,40.1 176.1,42.5 178.8,56.2 C183.1,58.6 187.2,61.8 190.9,65.4 C194.5,69.0 197.7,73.2 200.1,77.6 C213.8,80.2 216.3,84.9 216.3,84.9 C212.7,93.1 206.9,96.0 205.4,96.6 C205.1,102.4 203.0,107.8 198.3,112.5 C181.9,128.9 168.3,122.5 157.7,114.1 C157.9,116.9 156.7,120.9 152.7,124.9 L141.0,136.5 C139.8,137.7 141.6,141.6 141.8,141.5 Z"
-          fill="currentColor"
-        ></path>
-      </svg>
-    </a>
-
     <div class="hero">
       <div class="wrap">
-        <h1>Write complex MongoDB queries in simple JavaScript</h1>
-        <p class="lede">
-          JSMQL is a subset of JavaScript that compiles to MongoDB MQL, you'd be using the syntax you already know.
-        </p>
-        <p class="sub">
-          MongoDB 8.0 deprecated server-side JavaScript through <code>$function</code>, <code>$accumulator</code> and
-          <code>$where</code>. JSMQL is the replacement: it compiles ahead of time to native MQL, so the server runs
-          ordinary operators.
-        </p>
-
-        <div class="cta">
-          <a class="btn primary" href="playground.html">Try the playground</a>
-          <a class="btn" href="https://github.com/flash-oss/jsmql">GitHub</a>
-          <a class="btn" href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a>
+        <div>
+          <h1>Complex MongoDB queries in simple JavaScript</h1>
+          <p class="lede">
+            JSMQL is plain JavaScript syntax that compiles to MongoDB's query language: everyday JavaScript in, native
+            MQL out.
+          </p>
+          <div class="cta">
+            <a class="btn primary" href="playground.html">Try the playground</a>
+            <span class="install"><span class="prompt">$</span> npm install @koresar/jsmql</span>
+          </div>
         </div>
 
-        <div class="install"><span class="prompt">$</span> npm install @koresar/jsmql</div>
-        <p class="meta">ESM and CJS, runs in browsers, zero dependencies. Node 14+, Deno and Bun.</p>
+        <article class="example hero" data-example data-mode="filter">
+          <h3><span class="chip filter">Filter</span> Compiled in the browser, right now</h3>
+          <div class="io">
+            <div>
+              <div class="io-label">JSMQL</div>
+              <pre class="src"><code>$.items.sumBy((i) =&gt; i.qty * i.price) &gt; 100</code></pre>
+            </div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
+              <pre class="out pending"><code>compiling…</code></pre>
+            </details>
+          </div>
+          <footer>
+            <span class="call">db.orders.find( … )</span>
+            <a class="play" data-play href="playground.html">Open in playground →</a>
+          </footer>
+        </article>
       </div>
     </div>
 
     <section>
       <div class="wrap">
-        <h2>How it compiles</h2>
-        <p class="section-intro">
-          Every MQL document below is compiled in your browser, right now, by the same build of the library that npm
-          ships. Edit any of them in the playground to see the output change as you type.
-        </p>
+        <h2>One expression. Seventy lines of MQL.</h2>
 
         <div class="notice" id="live-notice" hidden>
-          The compiler bundle could not be loaded, so the MQL output is not shown. Open this page over http(s) rather
-          than from a local file, or read the compiled examples in the
-          <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">realistic test suite</a>.
+          The compiler could not be loaded, so the MQL output is not shown. The page has to be served over http(s), not
+          opened from a local file; the compiled examples are also in the
+          <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">worked examples</a>.
         </div>
         <noscript>
           <div class="notice">
-            The MQL output on this page is compiled by JavaScript in your browser. With JavaScript off you can still
-            read every JSMQL input below; their compiled output is spelled out in the
+            The MQL output on this page is compiled by JavaScript in the browser. With JavaScript off, every JSMQL
+            example below is still readable; the compiled output is spelled out in the
             <a href="https://github.com/flash-oss/jsmql/blob/master/README.md">README</a>.
           </div>
         </noscript>
       </div>
 
-      <!-- The examples take their own, wider wrap: the heading and the notices
-           above read as prose and keep the page measure, while these cards are
-           sized by the code they hold. See `.wrap.code`. -->
       <div class="wrap code">
-        <article class="example" data-example data-mode="filter">
-          <h3><span class="chip filter">Filter</span> Comparisons stay index-friendly</h3>
-          <p class="blurb">
-            A query with no <code>;</code> at the top level compiles to the plain document <code>find()</code> takes. No
-            <code>$expr</code> wrapper, so your indexes still apply.
-          </p>
+        <article class="example tall" data-example data-mode="expression">
+          <h3><span class="chip expression">Expression</span> Full address from six optional fields</h3>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
-              <pre class="src"><code>$.age &gt; 18 &amp;&amp; $.status === "active"</code></pre>
+              <pre
+                class="src"
+              ><code>[$.building &amp;&amp; $.building + ",", $.streetNo, $.street, $.suburb, $.state, $.country, $.postcode]
+  .filter(Boolean)
+  .join(" ")</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
               <pre class="out pending"><code>compiling…</code></pre>
-            </div>
+            </details>
           </div>
           <footer>
-            <span class="call">db.users.find( … )</span>
+            <span class="call">{ $set: { fullAddress: … } }</span>
             <a class="play" data-play href="playground.html">Open in playground →</a>
           </footer>
         </article>
+      </div>
+    </section>
 
-        <article class="example" data-example data-mode="filter">
-          <h3><span class="chip filter">Filter</span> Spread and optional chaining</h3>
-          <p class="blurb">
-            Write <code>?.</code> where a field might be missing and you get an <code>$ifNull</code> guard in exactly
-            that position — nowhere else.
-          </p>
-          <div class="io">
-            <div>
-              <div class="io-label">JSMQL</div>
-              <pre class="src"><code>[...$.mods, ...$.room?.mods, "root"].includes($.userId)</code></pre>
+    <section>
+      <div class="wrap">
+        <h2>SQL vs JSMQL</h2>
+      </div>
+
+      <!-- The rows take the code measure, as the example cards do, so a SQL
+           line and its JSMQL line each sit whole on a wide screen. -->
+      <div class="wrap code">
+        <div class="vs-head"><span></span><span>SQL</span><span>JSMQL</span></div>
+
+        <div class="vs" data-vs data-mode="expression">
+          <div class="vs-idea">Build a string</div>
+          <div class="vs-sql">
+            <div class="dl">
+              <b>PostgreSQL</b>
+              <pre class="sql"><code>'Order #' || n || ': ' || total || ' AUD'</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
-              <pre class="out pending"><code>compiling…</code></pre>
+            <div class="dl">
+              <b>MySQL</b>
+              <pre class="sql"><code>CONCAT('Order #', n, ': ', total, ' AUD')</code></pre>
+            </div>
+            <div class="dl">
+              <b>SQL Server</b>
+              <pre class="sql"><code>'Order #' + CAST(n AS varchar) + ': '
+          + CAST(total AS varchar) + ' AUD'</code></pre>
             </div>
           </div>
-          <footer>
-            <span class="call">db.rooms.find( … )</span>
-            <a class="play" data-play href="playground.html">Open in playground →</a>
-          </footer>
-        </article>
+          <div class="vs-js">
+            <pre class="src"><code>`Order #${$.n}: ${$.total} AUD`</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
 
+        <div class="vs" data-vs data-mode="expression">
+          <div class="vs-idea">Start of the month</div>
+          <div class="vs-sql">
+            <div class="dl">
+              <b>PostgreSQL</b>
+              <pre class="sql"><code>DATE_TRUNC('month', created_at)</code></pre>
+            </div>
+            <div class="dl">
+              <b>MySQL</b>
+              <pre class="sql"><code>DATE_FORMAT(created_at, '%Y-%m-01')</code></pre>
+            </div>
+            <div class="dl">
+              <b>SQL Server</b>
+              <pre class="sql"><code>DATETRUNC(month, created_at)</code></pre>
+            </div>
+          </div>
+          <div class="vs-js">
+            <pre class="src"><code>$.createdAt.startOf("month")</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
+
+        <div class="vs" data-vs data-mode="expression">
+          <div class="vs-idea">Join the tags into one string</div>
+          <div class="vs-sql">
+            <pre class="sql"><code>COALESCE((SELECT string_agg(t.tag, ', ')
+   FROM order_tags t WHERE t.order_id = o.id), '')</code></pre>
+          </div>
+          <div class="vs-js">
+            <pre class="src"><code>$.tags.join(", ")</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
+
+        <div class="vs" data-vs data-mode="pipeline">
+          <div class="vs-idea">Filter after the group</div>
+          <div class="vs-sql">
+            <pre class="sql"><code>SELECT customer_id, SUM(total) AS spent FROM orders
+GROUP BY customer_id HAVING SUM(total) &gt; 1000</code></pre>
+          </div>
+          <div class="vs-js">
+            <pre class="src"><code>$$.$group({ _id: $.customerId, spent: $sum($.total) })
+  .filter((c) =&gt; c.spent &gt; 1000);</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
+
+        <div class="vs" data-vs data-mode="pipeline">
+          <div class="vs-idea">Latest order per customer</div>
+          <div class="vs-sql">
+            <pre class="sql"><code>SELECT * FROM (
+  SELECT *, ROW_NUMBER() OVER
+    (PARTITION BY customer_id ORDER BY created_at DESC) AS rn
+  FROM orders) t WHERE rn = 1</code></pre>
+          </div>
+          <div class="vs-js">
+            <pre class="src"><code>$$.orderBy({ createdAt: -1 }).uniqBy("customerId");</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
+
+        <div class="vs" data-vs data-mode="pipeline">
+          <div class="vs-idea">Count related rows</div>
+          <div class="vs-sql">
+            <pre class="sql"><code>(SELECT COUNT(*) FROM payments p
+   WHERE p.order_id = o.id AND p.status = 'failed')</code></pre>
+          </div>
+          <div class="vs-js">
+            <pre class="src"><code>$.failed = $$$.payments.filter(
+  (p) =&gt; p.orderId === $._id &amp;&amp; p.status === "failed",
+).length;</code></pre>
+            <a class="play" data-play href="playground.html">MQL in the playground →</a>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <section>
+      <div class="wrap">
+        <h2>How it compiles</h2>
+        <p class="section-intro">Every MQL document on this page is compiled in the browser.</p>
+      </div>
+
+      <!-- The examples take their own, wider wrap: the heading above reads as
+           prose and keeps the page measure, while these cards are sized by the
+           code they hold. See `.wrap.code`. -->
+      <div class="wrap code">
         <article class="example" data-example data-mode="pipeline">
           <h3><span class="chip pipeline">Pipeline</span> Stages are statements</h3>
-          <p class="blurb">
-            One <code>;</code> at the top level flips the output to the array <code>aggregate()</code> takes. Stage
-            names are the MongoDB ones, so what you know transfers.
-          </p>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
@@ -734,10 +1079,10 @@
 $group({ _id: $.shopId, total: $sum($.amount) });
 $sort({ total: -1 });</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
               <pre class="out pending"><code>compiling…</code></pre>
-            </div>
+            </details>
           </div>
           <footer>
             <span class="call">db.orders.aggregate( … )</span>
@@ -747,19 +1092,15 @@ $sort({ total: -1 });</code></pre>
 
         <article class="example" data-example data-mode="expression">
           <h3><span class="chip expression">Expression</span> Array work reads like JavaScript</h3>
-          <p class="blurb">
-            <code>.map()</code> and <code>.reduce()</code> lower to <code>$map</code> and <code>$reduce</code>, arrow
-            parameters included. Use these anywhere an aggregation expression is allowed.
-          </p>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
-              <pre class="src"><code>$.items.map(i =&gt; i.price * i.qty).reduce((a, x) =&gt; a + x, 0)</code></pre>
+              <pre class="src"><code>$.items.map("price").sum()</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
               <pre class="out pending"><code>compiling…</code></pre>
-            </div>
+            </details>
           </div>
           <footer>
             <span class="call">{ $addFields: { total: … } }</span>
@@ -769,10 +1110,6 @@ $sort({ total: -1 });</code></pre>
 
         <article class="example" data-example data-mode="update">
           <h3><span class="chip update">Update</span> Assignment, <code>+=</code> and <code>delete</code></h3>
-          <p class="blurb">
-            Mutating statements compile to the update document <code>updateOne()</code> takes as its second argument —
-            <code>$inc</code>, <code>$set</code>, <code>$unset</code> — with every value a constant.
-          </p>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
@@ -780,10 +1117,10 @@ $sort({ total: -1 });</code></pre>
 delete $.tempToken;
 $.status = "done";</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
               <pre class="out pending"><code>compiling…</code></pre>
-            </div>
+            </details>
           </div>
           <footer>
             <span class="call">db.users.updateOne(filter, … )</span>
@@ -793,79 +1130,16 @@ $.status = "done";</code></pre>
 
         <article class="example" data-example data-mode="auto">
           <h3><span class="chip pipeline">Pipeline</span> Joins without hand-writing <code>$lookup</code></h3>
-          <p class="blurb">
-            Read another collection the way you would read an array. The correlated
-            <code>$lookup</code>, its sub-pipeline and the unwind that follows are all generated for you.
-          </p>
           <div class="io">
             <div>
               <div class="io-label">JSMQL</div>
-              <pre class="src"><code>$$ = $$$.orders
-  .filter({ userId: $._id })
-  .toSorted({ placedAt: -1 })
-  .take(5)</code></pre>
+              <pre class="src"><code>$.customer = $$$.customers.find({ _id: $.customerId });
+$.payments = $$$.payments.filter({ orderId: $._id, status: "paid" });</code></pre>
             </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
+            <details class="fold" open>
+              <summary><span class="io-label">MongoDB MQL</span><span class="lines" data-lines></span></summary>
               <pre class="out pending"><code>compiling…</code></pre>
-            </div>
-          </div>
-          <footer>
-            <span class="call">db.users.aggregate( … )</span>
-            <a class="play" data-play href="playground.html">Open in playground →</a>
-          </footer>
-        </article>
-        <article class="example tall" data-example data-mode="pipeline">
-          <h3><span class="chip pipeline">Pipeline</span> A recommendation engine, in one query</h3>
-          <p class="blurb">
-            Collaborative filtering end to end: narrow to the signed-in user, assert the match is unique, collect what
-            they bought, tally what co-buyers bought that they do not own, then join the product documents and emit the
-            top ten by score. Every scan of the large collections is recency-sorted and capped, so the work stays
-            bounded.
-            <span data-loc></span>
-          </p>
-          <div class="io">
-            <div>
-              <div class="io-label">JSMQL</div>
-              <pre class="src"><code>const userId = 0x507f1f77bcf86cd799439011;
-$$.filter({ _id: userId }); // limit the whole pipeline down to one pass
-assert($$.length === 1, "More than one user with such ID found");
-
-const myProductIds = $$$.orders
-  .filter({ userId })
-  .$sort({ createdAt: -1 }) // same as _.sort()
-  .take(10)
-  .map("productIds")
-  .flatten()
-  .uniq();
-
-const candidateProductIdCounts = $$$.orders
-  .filter(o =&gt; o.productIds.some(p =&gt; myProductIds.includes(p)))
-  .toSorted({ createdAt: -1 })
-  .take(100) // a pipeline of co-purchase orders, most recent 100
-  .map("productIds")
-  .flatten()
-  .filter(p =&gt; !myProductIds.includes(p))
-  .countBy(); // { ID: count } map
-const candidateProductIds = Object.keys(candidateProductIdCounts).map(ObjectId);
-
-const candidateProducts = $$$.products
-  .filter(pr =&gt; pr._id in candidateProductIds) //  { $in: [] } operator
-  .$limit(500); // same as .take(500)
-
-$$ = candidateProductIds
-  .map(id =&gt; ({
-    productId: id,
-    score: candidateProductIdCounts[id],
-    name:  candidateProducts.find({ _id: id }).name,
-  }))
-  .orderBy({ score: -1 })
-  .take(10);</code></pre>
-            </div>
-            <div>
-              <div class="io-label">MongoDB MQL</div>
-              <pre class="out pending"><code>compiling…</code></pre>
-            </div>
+            </details>
           </div>
           <footer>
             <span class="call">db.users.aggregate( … )</span>
@@ -878,49 +1152,114 @@ $$ = candidateProductIds
     <section>
       <div class="wrap">
         <h2>Why JSMQL</h2>
-        <p class="section-intro">
-          MQL is a fine thing for a machine to read and an awkward thing for a person to write.
-        </p>
         <div class="grid">
           <div class="card">
-            <h3>Your editor already understands it</h3>
+            <h3>MQL is an AST</h3>
             <p>
-              It is JavaScript syntax, so highlighting, bracket matching and formatting work with no plugin. Import
-              <code>@koresar/jsmql/globals</code> for the autocomplete.
+              A developer thinks <code>$.qty * $.price + $.shipping</code>. MongoDB needs
+              <code>{ $add: [{ $multiply: ["$qty", "$price"] }, "$shipping"] }</code>. That is the abstract syntax tree
+              of the expression. Writing MQL by hand is writing an AST by hand.
+            </p>
+          </div>
+          <div class="card">
+            <h3>LLM-generated MQL still needs to be reviewed</h3>
+            <p>
+              Code generated by an LLM still has to be reviewed by a person. The smaller the diff, the faster the
+              review: five lines of JavaScript are read in seconds; 250 lines of nested <code>$reduce</code> are not.
+              LLMs like smaller diffs too — less to generate, less to get wrong.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Existing MQL keeps working</h3>
+            <p>Any MQL pasted into JSMQL comes out unchanged, so existing MQL code will work out of the box.</p>
+          </div>
+          <div class="card">
+            <h3>Every operator is a function call</h3>
+            <p>
+              Any MongoDB operator can be written as a function: <code>$op(args)</code> becomes
+              <code>{ $op: args }</code>. <code>$dateTrunc({ date: $.createdAt, unit: "week" })</code> compiles to
+              <code>{ $dateTrunc: { date: "$createdAt", unit: "week" } }</code>, and
+              <code>$setUnion($.tags, $.extra)</code> to <code>{ $setUnion: ["$tags", "$extra"] }</code>. This also
+              covers operators that do not exist yet.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Plain JavaScript syntax</h3>
+            <p>
+              Your IDE syntax highlighting, formatting and refactoring will work without a plugin. Autocomplete for
+              every operator ships in the package.
             </p>
           </div>
           <div class="card">
             <h3>Indexes keep working</h3>
+            <p>JSMQL makes sure that collection indexes are used as much as possible.</p>
+          </div>
+          <div class="card">
+            <h3>Errors suggest a fix</h3>
+            <p>Every error message tries to suggest a fix for the syntax error it reports.</p>
+          </div>
+          <div class="card">
+            <h3>Never invalid MQL</h3>
+            <p>JSMQL makes sure it never generates invalid MQL — unless you write <code>$typo</code> yourself.</p>
+          </div>
+          <div class="card">
+            <h3>Not server-side JavaScript</h3>
             <p>
-              JSMQL makes all the effort to utilise collection indexes. Otherwise <code>$expr</code> operator is used.
+              MongoDB 8.0 deprecated <code>$function</code>, <code>$accumulator</code> and <code>$where</code>:
+              JavaScript running inside the server, per document, without indexes. Rightly. JSMQL compiles ahead of
+              time, on the application side; the server only ever sees ordinary MQL.
             </p>
           </div>
           <div class="card">
-            <h3>Errors tell you what to write</h3>
+            <h3>Computations on the server</h3>
             <p>
-              An unsupported syntax is rejected with error message which suggests alternatives. Every error points to
-              the source JSMQL position.
+              A typical pattern: fetch all the documents, then filter, group and sum them on the client side. JSMQL
+              helps you move that computation to the database server.
             </p>
           </div>
           <div class="card">
-            <h3>Pre-compile for runtime performance</h3>
+            <h3>No need to learn a new programming language</h3>
             <p>
-              <code>jsmql.compile((arg1, arg2) => ..some JSMQL code..)</code> parses a parameterised function once and
-              returns a function that binds arguments per call.
+              Two in three developers write JavaScript, and lodash is downloaded tens of millions of times a week.
+              <code>.filter</code>, <code>.groupBy</code>, <code>.sumBy</code> are already known words.
             </p>
           </div>
           <div class="card">
-            <h3>Value interpolation safety</h3>
+            <h3>SQL over MongoDB keeps failing</h3>
             <p>
-              The <code>jsmql``</code> template tag places runtime values as literals rather than as source text, so a
-              value can never be read as syntax.
+              Since 2015 MongoDB has offered analysts SQL three times: a BI connector built on PostgreSQL, then its
+              Atlas successor now deprecated, and a read-only SQL-92 interface. Each assumed the people who need data
+              speak SQL. JSMQL assumes they speak JavaScript.
             </p>
           </div>
           <div class="card">
-            <h3>Drop it in where you are</h3>
+            <h3>Simple way to reference sibling collections</h3>
             <p>
-              Use the library, the mongoose plugin, or the <code>jsmql</code> command line, which reads source on stdin
-              and writes MQL you can paste straight into mongosh.
+              <code>$</code> is the document, <code>$$</code> the collection being queried, <code>$$$</code> the
+              database, <code>$$$$</code> the current MongoDB server.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Parse once, run many times</h3>
+            <p>
+              On a hot path the same JSMQL should not be compiled on every request.
+              <code>jsmql.compile((params, { $ }) =&gt; …)</code> parses it once, at startup, and returns a function;
+              each call only binds the parameter values.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Mongoose plugin</h3>
+            <p>
+              Model methods accept JSMQL wherever they take a filter, an update or a pipeline; plain MQL keeps working
+              untouched. <code>UserModel.find(`$.email.endsWith("@gmail.com")`)</code>, or
+              <code>OrderModel.aggregate(() =&gt; $$.groupBy("sku"))</code>.
+            </p>
+          </div>
+          <div class="card">
+            <h3>Command line</h3>
+            <p>
+              <code>echo '$.age &gt; 18' | jsmql</code> prints <code>{ age: { $gt: 18 } }</code>. Compiles JSMQL to MQL
+              in a shell — handy for LLM coding tools.
             </p>
           </div>
         </div>
@@ -929,41 +1268,31 @@ $$ = candidateProductIds
 
     <section>
       <div class="wrap">
-        <h2>Learn more</h2>
-        <div class="grid">
-          <div class="card">
-            <h3><a href="playground.html">Playground</a></h3>
-            <p>
-              Write JSMQL and watch the MQL update as you type. Loaded with real recipes: tiered discounts, slug
-              generation, audit logs, pivot tables, parameterised reports.
-            </p>
+        <h2>Get started</h2>
+        <div class="start">
+          <div>
+            <h3>Install</h3>
+            <p class="install"><span class="prompt">$</span> npm install @koresar/jsmql</p>
+            <ul style="margin-top: 14px">
+              <li><a href="playground.html">Playground</a> — JSMQL on the left, its MQL on the right.</li>
+            </ul>
           </div>
-          <div class="card">
-            <h3>
-              <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a>
-            </h3>
-            <p>
-              The canonical description of the syntax: what is supported, what each construct compiles to, and where the
-              behaviour departs from JavaScript.
-            </p>
-          </div>
-          <div class="card">
-            <h3>
-              <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">Worked examples</a>
-            </h3>
-            <p>
-              A test suite of complete, real-world queries, each asserted against the exact MQL it produces. The
-              examples in the playground come from this file.
-            </p>
-          </div>
-          <div class="card">
-            <h3>
-              <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANG_RULES.md">Language rules</a>
-            </h3>
-            <p>
-              The invariants the compiler holds to — including that JSMQL never knowingly emits MQL the server would
-              refuse.
-            </p>
+          <div>
+            <h3>Read</h3>
+            <ul>
+              <li>
+                <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANGUAGE.md">Language reference</a> — the
+                syntax, what each piece compiles to, and where it departs from JavaScript.
+              </li>
+              <li>
+                <a href="https://github.com/flash-oss/jsmql/blob/master/test/realistic.test.ts">Worked examples</a> —
+                complete queries, each asserted against the exact MQL it produces.
+              </li>
+              <li>
+                <a href="https://github.com/flash-oss/jsmql/blob/master/docs/LANG_RULES.md">Language rules</a> — the
+                promises the compiler keeps, including that the server never receives MQL that would fail.
+              </li>
+            </ul>
           </div>
         </div>
       </div>
@@ -994,6 +1323,10 @@ $$ = candidateProductIds
       // playground uses, so one value drives both the compile below and the
       // share link that opens the example in the playground.
       const examples = document.querySelectorAll("[data-example]");
+      // The SQL-vs-JSMQL rows carry a JSMQL cell and no MQL pane: each one is
+      // compiled too — a cell that stops compiling marks itself — and its link
+      // opens the playground, which is where the MQL is shown.
+      const versus = document.querySelectorAll("[data-vs]");
 
       // The playground restores a session from a `#s=<base64url>` fragment
       // holding { v, input, vars, mode } — see playground_skeleton.html. Build
@@ -1010,6 +1343,7 @@ $$ = candidateProductIds
       // `new ObjectId(…)`, bare keys. The JSON tokeniser would mis-read all three.
       const JSMQL_MODE = { name: "javascript" };
       const MQL_MODE = { name: "javascript" };
+      const SQL_MODE = { name: "text/x-sql" };
 
       // Highlight one block into numbered lines. `runMode` is CodeMirror's
       // tokeniser without an editor, and its callback form reports one token at
@@ -1061,13 +1395,21 @@ $$ = candidateProductIds
 
       // Read every JSMQL source before anything rewrites its block, and paint it
       // now: it is already on the page, so it does not wait on the bundle that
-      // the MQL side needs.
+      // the MQL side needs. The SQL cells are painted the same way.
       const sources = new Map();
-      for (const el of examples) {
+      for (const el of [...examples, ...versus]) {
         const code = el.querySelector(".src code");
         sources.set(el, code.textContent.trim());
         paint(code, JSMQL_MODE);
       }
+      for (const code of document.querySelectorAll("pre.sql code")) paint(code, SQL_MODE);
+
+      // On a wide screen the two panes sit side by side, so every MQL fold is
+      // open; on a phone they stack, and a closed fold keeps the page short —
+      // one line says how much MQL there is, a tap shows it. The hero card is
+      // the exception: it exists to show the compile, so its MQL stays open.
+      const narrow = matchMedia("(max-width: 760px)").matches;
+      if (narrow) for (const d of document.querySelectorAll(".example:not(.hero) details.fold")) d.open = false;
 
       // The library prints its own MQL: `jsmql.stringify` writes the document as the
       // JavaScript that rebuilds it, so a Date, an ObjectId or a Binary reads here
@@ -1088,7 +1430,7 @@ $$ = candidateProductIds
         document.getElementById("live-notice").hidden = false;
       }
 
-      for (const el of examples) {
+      for (const el of [...examples, ...versus]) {
         const mode = el.dataset.mode || "auto";
         const source = sources.get(el);
 
@@ -1098,17 +1440,35 @@ $$ = candidateProductIds
         if (!entries) continue;
 
         const out = el.querySelector(".out");
+        if (!out) {
+          // a SQL-vs-JSMQL row: compile to prove the cell, show nothing but a failure
+          try {
+            entries[mode](source);
+          } catch (err) {
+            const cell = el.querySelector(".vs-js");
+            cell.classList.add("failed");
+            const msg = document.createElement("div");
+            msg.className = "err";
+            msg.textContent = String(err && err.message ? err.message : err);
+            cell.append(msg);
+          }
+          continue;
+        }
+
         out.classList.remove("pending");
         try {
           const mql = stringify(entries[mode](source));
           paint(out.querySelector("code"), MQL_MODE, mql);
+
+          const to = mql.split("\n").length;
+          const lines = el.querySelector("[data-lines]");
+          if (lines) lines.textContent = `${to} line${to === 1 ? "" : "s"}`;
 
           // Where the example asks for it, state the size gap in its own terms.
           // Counted from the rendered text so the figures cannot go stale.
           const loc = el.querySelector("[data-loc]");
           if (loc) {
             const from = source.split("\n").length;
-            const to = mql.split("\n").length;
             loc.textContent = `${from} lines of JSMQL compile to ${to} lines of MQL.`;
           }
         } catch (err) {
