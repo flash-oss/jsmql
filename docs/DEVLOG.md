@@ -10,6 +10,18 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-12 — chore(scripts): check-doc-claims reads every claim the prose writes
+
+The checker skipped or misread most of the prose: a claim on the source's own
+line (`$.a + $.b   // → { $add: … }`), a template tag with nothing interpolated,
+a `jsmql.stringify(<call>)` wrapper, a `jsmql.validate(…)` claim, a `\"` inside
+a quoted source, a trailing `// note` on a claim line, a trailing comma before a
+closing bracket, prose after the shape (`db.users.find(…)`, `identical to: …`),
+and a fragment that opens on a key (`let: { … }`). Each is now read as the
+author meant it, or skipped as illustrative. Exact claims checked went from 123
+to 184 and the false disagreements from 15 to 0 — the two that remained were
+real drift and are fixed in the docs commit beside this one.
+
 ## 2026-09-12 — fix(errors): a name with no cell for a position is refused in that position's own words
 
 `$.a = { t: new Date() }` on `jsmql.update` said `Date cannot stand in updateDoc
