@@ -519,7 +519,7 @@ shortcut declines so the value road runs.
 
 **Where it stands decides the destination.** A bare write `$.o = <chain>` and a
 `let` make the target the stage's `as` — no scratch, no cleanup. Inside a value the
-stage is hoisted ahead of the statement into `__jsmql.tmp.<n>`. `$$ = <chain>`
+stage is hoisted ahead of the stage that reads it, into `__jsmql.tmp.<n>`. `$$ = <chain>`
 switches the stream: correlated (the body read the outer document), a `$lookup`
 per document unwound into the stream; uncorrelated, `{ $match: { $expr: false } }`
 and a `$unionWith`. `$ = $$$.c.find(p)` makes each document the one it found,

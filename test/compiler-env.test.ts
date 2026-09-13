@@ -78,7 +78,7 @@ describe("compiler/emit/env — the HR1 gate is one predicate", () => {
 });
 
 describe("compiler/emit/env — a chain closes in one order", () => {
-  it("drains hoisted stages ahead of the statement, then cleanup, then the terminal stage", () => {
+  it("drains hoisted stages ahead of the stage that needed them, then cleanup, then the terminal stage", () => {
     const c = new Chain();
     c.emitted.push({ $match: { a: 1 } });
     const ref = c.hoist([{ $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } }], "__jsmql.length");
@@ -93,6 +93,20 @@ describe("compiler/emit/env — a chain closes in one order", () => {
       { $unset: "__jsmql" },
       { $out: "archive" },
     ]);
+  });
+
+  // A statement that becomes SEVERAL stages drains at each of them: the hoisted
+  // stage reads the documents the stage it was written for reads, so it stands
+  // beside it and not at the front of the statement.
+  it("hands the hoisted stages back so a road can place them between two of its own", () => {
+    const c = new Chain();
+    c.emitted.push({ $sortByCount: "$tag" });
+    c.hoist([{ $lookup: { from: "o", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } }], "__jsmql.tmp.0");
+    expect(c.ahead()).toEqual([
+      { $lookup: { from: "o", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+    ]);
+    // taken out: a second drain has nothing left to give
+    expect(c.ahead()).toEqual([]);
   });
 
   it("emits no cleanup when nothing was written under __jsmql", () => {

@@ -305,9 +305,9 @@ function rebase(node: Expr, peeledTo: Expr, replacement: Expr): Expr {
 }
 
 /**
- * A chain in a VALUE position: the `$lookup` is hoisted ahead of the statement
- * into a scratch slot, and the value is what the rest of the chain makes of that
- * slot. The slot is bound as a typed name, so `.length` on an array slot is
+ * A chain in a VALUE position: the `$lookup` is hoisted ahead of the stage that
+ * reads it, into a scratch slot, and the value is what the rest of the chain makes
+ * of that slot. The slot is bound as a typed name, so `.length` on an array slot is
  * `$size` and `.total` on a document slot is a path.
  */
 export function joinValue(node: Expr, env: Env, S: JoinServices): unknown {

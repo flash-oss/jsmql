@@ -311,7 +311,7 @@ export function exprInputs(
     },
     hoist: (stages: readonly Stage[], reads: string) => {
       // `$$` is the TOP-MOST stream at every depth: the count is materialised on the
-      // root pipeline, ahead of the statement that holds this read, and reaches a
+      // root pipeline, ahead of the stage that holds this read, and reaches a
       // body over another collection through its `let` like any outer field. The
       // body's OWN stream is its callback's third parameter, whose chain is this one.
       const source = (node as { object?: Expr }).object ?? null;
@@ -331,13 +331,14 @@ export function exprInputs(
 
 /**
  * The first stage in this callback's block that changes what a stamped count MEANS, or
- * null. The count is a field, hoisted to the front of the body, so a stage that drops
- * the fields loses it (`$group`) and a stage that changes how many documents there are
- * makes it stale (`$unwind`, `$match`, `$limit`). Only the stages whose rows state
+ * null. The count is a FIELD on the body's documents, so a stage that drops the fields
+ * loses it (`$group`) and a stage that changes how many documents there are makes it
+ * stale (`$unwind`, `$match`, `$limit`). Only the stages whose rows state
  * `preservesCount` leave it meaning what it said.
  *
- * A syntactic question, asked of the source: the answer must not depend on where the
- * read sits, because the stamp is hoisted whatever the source order.
+ * A syntactic question, asked of the source, and answered once for the whole body: a
+ * per-read answer would turn on where in the block the read sits — and a stage BODY
+ * reads the documents its own stage receives, which is not where the read is written.
  */
 function staleCountStage(cb: Expr): string | null {
   const stmts = (cb as { stages?: { stmts?: readonly { type: string; name?: string }[] } }).stages?.stmts;

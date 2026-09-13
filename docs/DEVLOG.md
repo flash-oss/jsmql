@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(join): a hoisted `$lookup` lands beside the stage that reads it, not at the front of the statement
+
+A join written in a callback was hoisted ahead of the whole STATEMENT, past the stages
+of the same statement. `$$.$sortByCount($.productIds).map(g => ({ _id: g._id, name:
+$$$.products.find({ _id: g._id }).name }))` put the `$lookup` first, so `localField: "_id"`
+read the SOURCE document's `_id` and not the group key `g._id` names — and `$sortByCount`
+then replaced the document and discarded the scratch slot, so the trailing `$replaceWith`
+read a path that resolves to missing. Measured on a live mongod: every row came back
+without its `name` and the server raised nothing. The `.length` spelling of the same shape
+was refused instead ("The argument to $size must be an array, but was of type: missing"),
+and a `$unwind` in the same position answered the WRONG document silently, because
+`$unwind` keeps the slot.
+
+The constraint is one sentence: a stage a lowering hoists must run over the documents the
+stage that lowering produces runs over, because a callback's parameter names the document
+ITS stage receives. `Chain.flush` only ever drained at the statement boundary, which is
+correct for a statement that becomes one stage and wrong for every statement that becomes
+several. [`Chain.ahead`](src/compiler/emit/env.ts) now hands the hoisted stages back, and
+every road in [statement.ts](src/compiler/emit/statement.ts) that builds a statement out of
+more than one stage drains at each of them: the stream chain per link, a `,`-joined run of
+writes per op (so `$.k = $.pid, $.name = $$$.c.find({ _id: $.k }).name` joins on the `k` the
+first write made), the array reducer, a bracketed program, and a stage block's statements.
+`lookupOf` in [join.ts](src/compiler/emit/join.ts) had always drained per link, which is why
+the identical chain inside a `$lookup` body placed its nested join correctly — that was the
+reference for what the top level should do.
+
+Two things follow. `$$.length` now agrees with itself across spellings:
+`$$.$match(p).map(d => $$.length)` counts the MATCHED documents, exactly as `$match(p); $.n
+= $$.length;` does, where the chained form previously stamped the count before the `$match`.
+And a join whose body reads a variable an ENCLOSING expression binds is now refused rather
+than emitted: `$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name)` has no correct
+placement at all — `$lookup` is a stage and cannot run once per array element — and mongod
+answered "Use of undefined variable: x", an HR3 violation hiding behind a green `toEqual`.
+`Located` of kind `var` now carries the level it was BOUND on and `Env.render` refuses a read
+of one from a deeper level, with a message naming the two spellings that work (`$$ = $.items;`
+to make the elements documents, or `let ps = $$$.<coll>.filter(…);` to join once outside the
+callback). Placement and refusal are specced in
+[docs/specs/lookup-stage.md](docs/specs/lookup-stage.md) § Where a hoisted stage lands, and the
+regressions run on a live mongod in [test/compiler-join.test.ts](test/compiler-join.test.ts) —
+a `toEqual` on the MQL is exactly what let this through.
+
+---
+
 ## 2026-09-13 — feat(registry): `.inRange()` reads a date, and a constant range on a field becomes an indexable clause
 
 `.inRange()` stated `on: "number"`, so a receiver PROVEN to be a date —

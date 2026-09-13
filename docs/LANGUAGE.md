@@ -809,6 +809,28 @@ let name = $$$.users.find(u => u._id === $.userId).name;
 // .find's $first is applied first; the trailing .name reads off the scalar slot
 ```
 
+**The materialised `$lookup` runs beside the stage that reads it.** A join written inside a callback reads the document that callback's *stage* receives, so the `$lookup` is placed directly ahead of that stage — never at the front of the statement. The callback parameter of a chain link names what the previous link produced, and the join follows it:
+
+```js
+$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length }));
+// → [{ $sortByCount: "$tag" },
+//    { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+//    { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } }]
+```
+
+`g._id` is the group key `$sortByCount` made, and `localField: "_id"` reads it because the join stands after that stage. The same holds inside one `,`-joined run of writes: `$.k = $.pid, $.name = $$$.products.find({ _id: $.k }).name` joins on the `k` the first write made.
+
+**A join can't read a variable an enclosing callback binds.** `$lookup` is a stage, and a stage runs over whole documents — it cannot run once per element of an array inside one document. So a join whose predicate reads a `.map` / `.filter` / `.reduce` element is rejected, and the message names the two spellings that work:
+
+```js
+$.names = $.items.map(x => $$$.products.find({ _id: x.pid }).name);
+// ✗ 'x' is bound by an enclosing callback, and a read of another collection is a
+//   '$lookup' STAGE …
+
+$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;     // ✅ each element is a document
+let ps = $$$.products.filter(p => p.ok); $.n = $.items.map(x => ps.length);  // ✅ joined once, outside
+```
+
 A chained terminal (`.length`, `.reduce`, `.map`) requires a preceding `.find/.filter` — a bare `$$$.coll.reduce(...)` would be a Cartesian product over the whole foreign collection and is rejected. `.length` and `.reduce` on a `.find()` result are also rejected with a targeted message — `.find` returns scalar-or-null (after `$set $first`), so array reductions over it aren't meaningful. To count matches, use `.filter(pred).length`; to read a property of the matched doc, chain `.find(pred).<field>`.
 
 **Stream-method chains push into the `$lookup.pipeline` body.** A sequence of registered stream methods (the stream-method vocabulary in [src/registry/names.ts](../src/registry/names.ts) — e.g. `.map`, `.toSorted`, `.slice`) chained on a `$$$.<coll>` receiver becomes the `$lookup`'s sub-pipeline. The slot then holds the already-transformed array — no temp-slot reshape stage, and methods without a clean expression-form equivalent (a `.toSorted((a, b) => …)` comparator, `.flatMap` / `$unwind`) lower cleanly.
@@ -1110,8 +1132,8 @@ count. `$$.length` is the root count at every depth: a `$lookup` body
 (predicate, `.aggregate` block, or `.map` chain) reads it through the
 `$lookup.let` capture above, a `$facet` branch and a declared function body read
 the stamped field directly. The one place it cannot reach is a `$$.push(…)`
-(`$unionWith`) body — that stage has no `let`, so the compiler refuses the read
-and names the join form that carries the value.
+(`$unionWith`) body — that stage has no `let`, so the compiler refuses
+the read and names the join form that carries the value.
 
 ### `$out`: write the pipeline to a collection
 

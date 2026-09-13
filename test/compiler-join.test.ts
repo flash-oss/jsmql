@@ -602,6 +602,145 @@ describe("compiler/emit/join — the refusals name the way out", () => {
   });
 });
 
+describe("compiler/emit/join — a hoisted `$lookup` lands beside the stage that reads it", () => {
+  // The join is written in a callback, and the callback's parameter names the
+  // document ITS stage receives — so the `$lookup` belongs directly ahead of that
+  // stage, not ahead of the statement. MEASURED with the `$lookup` at the front
+  // instead: `$size` of a slot `$sortByCount` had already dropped ("The argument
+  // to $size must be an array, but was of type: missing").
+  it("joins on the group key a reshaping stage made, not on the source document", () => {
+    expect(
+      compiled(
+        "$$.$sortByCount($.tag).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ n: -1, _id: 1 });",
+        [
+          { _id: "y", n: 2 },
+          { _id: null, n: 1 },
+          { _id: "x", n: 1 },
+        ],
+      ),
+    ).toEqual([
+      { $sortByCount: "$tag" },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } },
+      { $sort: { n: -1, _id: 1 } },
+    ]);
+    // `$group` is the same reshape by another name.
+    expect(
+      compiled(
+        '$$.$group({ _id: "$tag", top: { $max: "$minTotal" } }).map(g => ({ _id: g._id, n: $$$.orders.filter(o => o.tag === g._id).length })); $$.toSorted({ _id: 1 });',
+        [
+          { _id: null, n: 1 },
+          { _id: "x", n: 1 },
+          { _id: "y", n: 2 },
+        ],
+      ),
+    ).toEqual([
+      { $group: { _id: "$tag", top: { $max: "$minTotal" } } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", n: { $size: "$__jsmql.tmp.0" } } },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  // `$unwind` keeps the slot, so this one answered no error at all: both rows read
+  // the `$lookup` that had matched the WHOLE `ids` array before the unwind, and
+  // came back with the same order's total. MEASURED: `t: 10` twice.
+  it("joins on the element an unwinding stage made, not on the array it came from", () => {
+    expect(
+      compiled(
+        '$$.$unwind("$ids").map(u => ({ _id: u.ids, t: $$$.orders.find(o => o._id === u.ids).total })); $$.toSorted({ _id: 1 });',
+        [
+          { _id: 101, t: 10 },
+          { _id: 103, t: 5 },
+        ],
+      ),
+    ).toEqual([
+      { $unwind: "$ids" },
+      {
+        $lookup: {
+          from: "orders",
+          localField: "ids",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { _id: "$ids", t: "$__jsmql.tmp.0.total" } },
+      { $sort: { _id: 1 } },
+    ]);
+  });
+
+  // A `,`-joined run splits into two `$set`s because the second write reads what
+  // the first one wrote — and the join between them reads the NEW field.
+  it("reads the field the write before it made", () => {
+    expect(
+      compiled("$.t = $.tag, $.n = $$$.orders.filter(o => o.tag === $.t).length;", [
+        { _id: 1, t: "x", n: 1 },
+        { _id: 2, t: "y", n: 2 },
+        { _id: 3, n: 1 },
+        { _id: 4, n: 1 },
+      ]),
+    ).toEqual([
+      { $set: { t: "$tag" } },
+      { $lookup: { from: "orders", localField: "t", foreignField: "tag", as: "__jsmql.tmp.0" } },
+      { $set: { n: { $size: "$__jsmql.tmp.0" } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // A stage that only DROPS documents leaves the join reading the same fields, so
+  // the answer is unchanged — the `$lookup` still moves behind it and runs over
+  // fewer documents.
+  it("runs after a stage that only selects documents", () => {
+    expect(
+      compiled(
+        '$$.filter(u => u.tag === "y").map(u => ({ _id: u._id, o: $$$.orders.filter(o => o.userId === u._id).length }));',
+        [{ _id: 2, o: 1 }],
+      ),
+    ).toEqual([
+      { $match: { tag: "y" } },
+      { $lookup: { from: "orders", localField: "_id", foreignField: "userId", as: "__jsmql.tmp.0" } },
+      { $replaceWith: { _id: "$_id", o: { $size: "$__jsmql.tmp.0" } } },
+    ]);
+  });
+});
+
+describe("compiler/emit/join — a join inside an expression that binds its own variable", () => {
+  // A `$lookup` is a STAGE: it is hoisted out of the `$map` / `$filter` / `$reduce`
+  // that binds the element, so its body would name a variable the server never
+  // bound there. MEASURED before the refusal: "Use of undefined variable: x".
+  const REFUSAL =
+    /'x' is bound by an enclosing callback.*'\$lookup' STAGE.*'\$\$ = \$\.<array>;'.*let <name> = \$\$\$\.<coll>/s;
+
+  it("refuses the read and names the two spellings that work", () => {
+    expect(() => pipeline("$.n = $.items.map(x => $$$.orders.find({ _id: x.oid }).total);")).toThrow(REFUSAL);
+    expect(() => pipeline("$.n = $.items.filter(x => $$$.orders.find({ _id: x.oid }).paid);")).toThrow(REFUSAL);
+    expect(() => pipeline("$.n = $.items.reduce((a, x) => a + $$$.orders.find({ _id: x.oid }).total, 0);")).toThrow(
+      REFUSAL,
+    );
+    // the value-mode `.map` over a joined array binds its element the same way
+    expect(() =>
+      pipeline("$.o = $$$.items.filter(i => i.orderId === $._id).map(x => $$$.orders.find({ _id: x.orderId }).total);"),
+    ).toThrow(/'x' is bound by an enclosing callback/);
+  });
+
+  it("keeps the reads that ARE stage-level", () => {
+    // the DOCUMENT a stream callback names is a field path, which the `let` carries
+    expect(
+      compiled("$.o = $$$.orders.filter(o => o.userId === $._id).map(o => ({ id: o._id, u: o.userId }));"),
+    ).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, pipeline: [{ $replaceWith: { id: "$_id", u: "$userId" } }], as: "o" } },
+    ]);
+    // a callback that binds an element but never reads it inside the join is fine
+    expect(compiled("$.n = $.ids.map(x => $$$.orders.filter(o => o.userId === $._id).length);")).toEqual([
+      { $lookup: { from: "orders", ...COMPACT, as: "__jsmql.tmp.0" } },
+      { $set: { n: { $map: { input: "$ids", as: "x", in: { $size: "$__jsmql.tmp.0" } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 // ── the server ───────────────────────────────────────────────────────────────
 
 let client: MongoClient | null = null;

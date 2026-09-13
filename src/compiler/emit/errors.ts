@@ -692,6 +692,18 @@ export const noCorrelationSlot = (stage: string, pos: number): CodegenError =>
     pos,
   );
 
+/**
+ * `$.items.map(x => $$$.c.find({ _id: x.k }))` — a join inside an expression that
+ * binds its own variable. The `$lookup` is a STAGE, hoisted out of the `$map`, so
+ * its body names a variable the server never bound there ("Use of undefined
+ * variable: x", measured).
+ */
+export const readsEnclosingVariable = (name: string, stage: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' is bound by an enclosing callback, and a read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name}' has no value. Make the elements documents first ('$$ = $.<array>;' — then each one is a document the join reads, '$.<field> = $$$.<coll>.find(…)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.`,
+    pos,
+  );
+
 /** `$$$$.<db>.<coll>.find(…)` — a `$lookup` reads the current database only. */
 export const crossDatabaseRead = (pos: number): CodegenError =>
   new CodegenError(

@@ -176,13 +176,14 @@ export type Declared = Omit<Binding, "level">;
 
 /**
  * A value on one level of documents, as a READ on a possibly deeper level sees
- * it. `var` is a MongoDB variable, lexically scoped through every sub-pipeline
- * and so level-free. The rest name a document level and a path on it — "" for
- * the whole document — and how the variable that carries it across a `$lookup`
- * is named: `f` a field, `v` a `let` binding, `s` a system value.
+ * it. `var` is a MongoDB variable, lexically scoped: its level is the level it
+ * was BOUND on, because an expression that binds one does not cross into the
+ * sub-pipeline of a stage hoisted out of it. The rest name a document level and a
+ * path on it — "" for the whole document — and how the variable that carries it
+ * across a `$lookup` is named: `f` a field, `v` a `let` binding, `s` a system value.
  */
 export type Located =
-  | { readonly kind: "var"; readonly ref: string }
+  | { readonly kind: "var"; readonly level: number; readonly ref: string; readonly hint: string }
   | { readonly kind: "f" | "v" | "s"; readonly level: number; readonly path: string; readonly hint: string };
 
 /**

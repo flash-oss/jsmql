@@ -11,7 +11,7 @@
 //   site    where this node stands — phase 4's answer, the program's root, the
 //           `$literal` envelope, the sub-pipeline boundaries crossed to get here
 //   chain   the (sub-)pipeline being assembled, held BY REFERENCE: what it has
-//           emitted, what a value hoisted ahead of the current statement, and the
+//           emitted, what a value hoisted ahead of the stage it stands in, and the
 //           scratch-slot counter
 //
 // A lowering receives its `In` record built from an Env by emit/inputs.ts; it
@@ -25,7 +25,7 @@ import { Capture, Scope, scratchSlot } from "./names.ts";
 import { JSMQL_NS } from "../../namespace.ts";
 import { namesIn } from "../passes/fresh.ts";
 import { pipelineOverOf, preservesCountOf } from "../rows.ts";
-import { noCorrelationSlot, readInUpdateDocument } from "./errors.ts";
+import { noCorrelationSlot, readInUpdateDocument, readsEnclosingVariable } from "./errors.ts";
 
 /**
  * A boundary crossed on the way here: a sub-pipeline (the stage whose body it
@@ -97,7 +97,7 @@ export class Chain {
   }
   /** The stages emitted so far. */
   readonly emitted: Stage[] = [];
-  /** Stages a value placed ahead of the statement it stands in; drained by `flush`. */
+  /** Stages a value placed ahead of the stage it stands in; drained by `ahead`. */
   readonly hoisted: Stage[] = [];
   private slots = 0;
   /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
@@ -155,7 +155,7 @@ export class Chain {
     this.stamped = new Set(m.stamped);
   }
 
-  /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
+  /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages: readonly Stage[], reads: string): string {
     if (!this.stamped.has(reads)) {
       this.hoisted.push(...stages);
@@ -179,10 +179,28 @@ export class Chain {
     }
   }
 
-  /** Move the hoisted stages into the emitted list — called before the statement that triggered them. */
-  flush(): void {
-    this.emitted.push(...this.hoisted);
+  /**
+   * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
+   * stages of the lowering that hoisted them.
+   *
+   * A hoisted stage reads the documents the stage it was written for reads, so it
+   * has to land beside it and not at the front of the statement: MEASURED, the
+   * `$lookup` of `$$.$sortByCount($.productIds).map(g => $$$.products.find({ _id:
+   * g._id }))` placed ahead of the whole statement joined on the SOURCE document's
+   * `_id`, and `$sortByCount` then replaced the document and dropped the slot — so
+   * every row came back without its joined field and the server said nothing. A
+   * road that makes several stages out of one statement therefore drains at each
+   * of them. See docs/specs/lookup-stage.md § Where a hoisted stage lands.
+   */
+  ahead(): Stage[] {
+    const out = [...this.hoisted];
     this.hoisted.length = 0;
+    return out;
+  }
+
+  /** Move the hoisted stages into the emitted list — the drain of a statement that is ONE stage. */
+  flush(): void {
+    this.emitted.push(...this.ahead());
   }
 
   /** The finished pipeline: the stages, the cleanup if anything was written under `__jsmql`, the terminal stage. */
@@ -228,7 +246,7 @@ export class Env {
 
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level(): number {
-    return this.site.boundaries.filter(isForeign).length;
+    return this.foreign().length;
   }
 
   /**
@@ -237,14 +255,32 @@ export class Env {
    * boundary that starts the level below it, as `$$<var>`.
    */
   render(loc: Located, pos: number): string {
-    if (loc.kind === "var") return loc.ref;
+    if (loc.kind === "var") {
+      // A MongoDB variable is bound by an EXPRESSION — `$map`, `$filter`, `$reduce`,
+      // `$let` — and a body over another collection belongs to a STAGE hoisted out of
+      // it, where the name has never been bound. MEASURED: mongod answers "Use of
+      // undefined variable: x" and the pipeline does not run at all.
+      if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
+      return loc.ref;
+    }
     if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
     if (loc.level === this.level) return value;
     // The boundary whose `let` evaluates against level-`loc.level` documents.
-    const boundary = this.site.boundaries.filter(isForeign)[loc.level];
+    const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === undefined) throw noCorrelationSlot(boundary.stage, pos);
     return "$$" + boundary.capture.take(loc.kind, loc.hint, value);
+  }
+
+  /** The bodies over another collection enclosing this node, outermost first. */
+  private foreign(): readonly Boundary[] {
+    return this.site.boundaries.filter(isForeign);
+  }
+
+  /** The stage whose body this is — the innermost one over another collection. */
+  private foreignStage(): string {
+    const boundaries = this.foreign();
+    return boundaries[boundaries.length - 1].stage;
   }
 
   /** The Env after a stage that replaced the document: every field-carried binding is gone. */

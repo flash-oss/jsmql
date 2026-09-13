@@ -122,7 +122,7 @@ function subPipeline(node: Expr, env: Env, slot: { stage: string; key: string } 
     if (el.type === "SpreadElement") throw E.spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
     const step = statementStages(el as PipelineStmt, scope, out.length === 0);
-    out.push(...step.stages);
+    out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
   }
   return out;
@@ -171,7 +171,7 @@ const READ = {
     const out: Stage[] = [];
     for (const stmt of stages.stmts) {
       const step = statementStages(stmt, scope, out.length === 0);
-      out.push(...step.stages);
+      out.push(...env.chain.ahead(), ...step.stages);
       scope = step.env;
     }
     return out;
@@ -736,6 +736,15 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     sets = null;
     unsets = null;
   };
+  /**
+   * One op's stages, with whatever its lowering hoisted standing directly ahead of
+   * them — so the ops already emitted run first and a `$lookup` a value wrote reads
+   * the document its own `$set` reads. Called with nothing when the op joins the
+   * group `flush` pushes, which is still ahead of it.
+   */
+  const emit = (made: readonly Stage[] = []): void => {
+    out.push(...env.chain.ahead(), ...made);
+  };
 
   for (const op of uf.ops) {
     // `$$$.<coll> = <stream>` / `$$$$.<db>.<coll> = <stream>` — the stream written to a collection.
@@ -743,7 +752,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     if (out_ !== null) {
       if (op.type === "DeleteStmt") throw E.notAWriteTarget(op.pos);
       flush();
-      out.push(...outStages(op as Extract<UpdateOp, { type: "AssignExpr" }>, out_, inner, first && out.length === 0));
+      emit(outStages(op as Extract<UpdateOp, { type: "AssignExpr" }>, out_, inner, first && out.length === 0));
       continue;
     }
     const path = targetPath(op, inner);
@@ -757,7 +766,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     ) {
       // `$$ = $$.reduce((acc, d) => acc.concat(…), [])`: the array reducer, in its assignment spelling
       flush();
-      out.push(...arrayReduceStages(op.value, inner, first && out.length === 0));
+      emit(arrayReduceStages(op.value, inner, first && out.length === 0));
       continue;
     }
     if (path === STREAM_TARGET) {
@@ -767,7 +776,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       // holding anything else — a spread, a value — is an array like any other, and
       // its ELEMENTS become the documents, the same as `$$ = $.items;`.
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
-        out.push(...documentsStages(op.value, inner));
+        emit(documentsStages(op.value, inner));
         continue;
       }
       // `$$ = <array>` starts the stream from the array's elements, one document
@@ -776,9 +785,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       // A chain on the stream, on the callbacks own stream, or on another collection is
       // the STREAM road, whatever kind its last link returns: a `$lookup` yields an array
       // and `$$ = $$$.orders.filter(p)` is still a source switch, not a value.
-      out.push(
-        ...becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0),
-      );
+      emit(becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0));
       continue;
     }
     if (op.type === "DeleteStmt") {
@@ -791,7 +798,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
     // `$ = { k: $$.filter(…), … }` — the stream branched: a `$facet`.
     if (path === "" && op.value.type === "ObjectLiteral" && isFacet(op.value)) {
       flush();
-      out.push(...facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
+      emit(facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
       continue;
     }
     if (unsets !== null) flush();
@@ -807,7 +814,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       const valueEnv = childEnv(inner, op, "value");
       if (path === "") {
         flush();
-        out.push(...joinRoot(op.value, valueEnv, JOIN));
+        emit(joinRoot(op.value, valueEnv, JOIN));
         continue;
       }
       // `$.o = $$$.c.filter(p)` — the target IS the stage's `as`; a chain that goes
@@ -815,7 +822,7 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       const w = joinWrite(op.value, path, valueEnv, JOIN);
       if (w !== null) {
         flush();
-        out.push(...w.stages);
+        emit(w.stages);
         continue;
       }
     }
@@ -832,9 +839,10 @@ function writeStages(uf: UpdateFilter, env: Env, first: boolean): Step {
       if (kind === "array") throw E.rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw E.rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
-      out.push({ $replaceWith: value });
+      emit([{ $replaceWith: value }]);
       continue;
     }
+    emit();
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
@@ -901,7 +909,10 @@ function streamStages(chain: Expr, env: Env, first: boolean): Stage[] {
         link.pos,
       );
     }
-    out.push(...stages);
+    // What this link's own callbacks hoisted stands directly ahead of the link, not
+    // ahead of the chain: `g` in `.$sortByCount(k).map(g => …)` is the document
+    // `$sortByCount` MADE, and a `$lookup` placed before it would read the other one.
+    out.push(...env.chain.ahead(), ...stages);
   }
   return out;
 }
@@ -1152,8 +1163,14 @@ function arrayReduceStages(call: Extract<Expr, { type: "MethodCall" }>, env: Env
   const parts = arrayReduceParts(call);
   const inputs = stageInputs("reduce", call.args as readonly Expr[], [], env, call, READ);
   const out: Stage[] = [];
-  if (parts.test !== null) out.push(...place("$match", { $match: inputs.predicate(parts.test) }, env, first, call.pos));
+  if (parts.test !== null) {
+    const test = inputs.predicate(parts.test);
+    out.push(...env.chain.ahead(), ...place("$match", { $match: test }, env, first, call.pos));
+  }
   const doc = inputs.document(parts.doc);
-  out.push(...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos));
+  out.push(
+    ...env.chain.ahead(),
+    ...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos),
+  );
   return out;
 }

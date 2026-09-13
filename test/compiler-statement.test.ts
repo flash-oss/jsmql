@@ -96,11 +96,26 @@ describe("compiler/emit/statement — the writes", () => {
     expect(() => pipeline("$ = $abs($.a);")).toThrow(/a number is not one/);
   });
 
-  it("places a stage a value needed ahead of the statement that needed it", () => {
+  it("places a stage a value needed ahead of the stage that needed it", () => {
     expect(compiled("$.n = $$.length;")).toEqual([
       { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
       { $set: { n: "$__jsmql.length" } },
       { $unset: "__jsmql" },
+    ]);
+    // A `,`-joined run that splits into two `$set`s puts it between them: the count
+    // is the one the stage that reads it sees.
+    expect(compiled("$.k = $.tag, $.n = $$.length + $.k;")).toEqual([
+      { $set: { k: "$tag" } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $set: { n: { $add: ["$__jsmql.length", "$k"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // A chain link is a stage too, so the count is the MATCHED stream's — the same
+    // answer the two-statement spelling gives.
+    expect(compiled("$$.$match({ ok: true }).map(d => ({ _id: d._id, n: $$.length }));")).toEqual([
+      { $match: { ok: true } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $replaceWith: { _id: "$_id", n: "$__jsmql.length" } },
     ]);
   });
 });

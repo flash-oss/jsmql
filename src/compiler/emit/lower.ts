@@ -100,7 +100,7 @@ function holdsBigInt(v: unknown): boolean {
 
 /**
  * The join road, lent by statement.ts at load: a chain on another collection in a
- * value position hoists its `$lookup` ahead of the statement. Registered rather
+ * value position hoists its `$lookup` ahead of the stage that reads it. Registered rather
  * than imported, because the road needs the statement target's link walker and
  * the statement target imports this file.
  */
@@ -416,7 +416,7 @@ export function locate(node: Expr, env: Env): Located | null {
   }
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
-    if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
+    if (b.ref.kind === "var") return { kind: "var", level: b.level, ref: b.ref.ref, hint: node.name };
     if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
@@ -432,7 +432,7 @@ export function locate(node: Expr, env: Env): Located | null {
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
     const base = locate(node.object, env);
     if (base === null) return null;
-    if (base.kind === "var") return { kind: "var", ref: `${base.ref}.${node.name}` };
+    if (base.kind === "var") return { ...base, ref: `${base.ref}.${node.name}` };
     // A field of the DOCUMENT is a root path, spelled as `$.x` spells it: `d.x` in
     // `$$.map(d => d.x)` is "$x", not "$$ROOT.x".
     return { ...base, path: base.path === "" ? node.name : `${base.path}.${node.name}`, hint: node.name };

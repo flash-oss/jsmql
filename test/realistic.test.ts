@@ -3279,6 +3279,40 @@ $.recentCoPurchaseOrders = $$$.orders
   });
 });
 
+describe("Best sellers: rank by order count, then name each product", { features: ["Pipelines"] }, () => {
+  it("compiles to the expected MQL", { kind: "pipeline", usage: "db.orderItems.aggregate(jsmql(...))" }, () => {
+    // The top 10 products by line-item count, each with its name from `products`.
+    // `$sortByCount` REPLACES the document with `{ _id, count }`, so `g._id` inside
+    // the `.map` is the product id it grouped on — and the `$lookup` the join
+    // materialises runs directly ahead of the `$replaceWith` that reads it, joining
+    // on that group key rather than on the line item the pipeline started from.
+    // Verified on a live mongod: each row carries its product name.
+    expect(
+      jsmql(`
+$$.$sortByCount($.productId).take(10).map(g => ({
+  productId: g._id,
+  orders: g.count,
+  name: $$$.products.find({ _id: g._id }).name,
+}));
+      `),
+    ).toEqual([
+      { $sortByCount: "$productId" },
+      { $limit: 10 },
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { productId: "$_id", orders: "$count", name: "$__jsmql.tmp.0.name" } },
+    ]);
+  });
+});
+
 describe("Cross-level references across three nested lookup levels", { features: ["Pipelines"] }, () => {
   it("compiles to the expected MQL", { kind: "pipeline", usage: "db.users.aggregate(jsmql(...))" }, () => {
     // The hardest cross-level case: an `.aggregate` sub-pipeline nested inside
@@ -3318,7 +3352,6 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                 let: { jsmql_f1__id: "$_id" },
                 pipeline: [
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
-                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
                     $match: {
                       $expr: {
@@ -3350,6 +3383,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                       },
                     },
                   },
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
                     $match: {
                       $expr: {

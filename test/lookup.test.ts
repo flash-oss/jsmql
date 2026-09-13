@@ -2160,3 +2160,145 @@ describe("chained stage calls on $$$.<coll>", () => {
     );
   });
 });
+
+describe("$$$.coll — where the hoisted $lookup lands", () => {
+  // A join in a callback reads the document that callback's STAGE receives, so the
+  // `$lookup` stands directly ahead of that stage. Ahead of the whole statement it
+  // would read the document the statement STARTED from — a different one as soon as
+  // any stage between the two reshapes it. See docs/specs/lookup-stage.md § Where a
+  // hoisted stage lands.
+  it("lands after a stage that replaces the document with a group key", () => {
+    expect(
+      jsmql("$$.$sortByCount($.productIds).map(g => ({ _id: g._id, name: $$$.products.find({ _id: g._id }).name }));"),
+    ).toEqual([
+      { $sortByCount: "$productIds" },
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { _id: "$_id", name: "$__jsmql.tmp.0.name" } },
+    ]);
+  });
+
+  it("lands after a $replaceWith link, whose fields the join reads", () => {
+    expect(
+      jsmql('$$.$replaceWith({ k: "$pid" }).map(d => ({ k: d.k, name: $$$.products.find({ _id: d.k }).name }));'),
+    ).toEqual([
+      { $replaceWith: { k: "$pid" } },
+      {
+        $lookup: {
+          from: "products",
+          localField: "k",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $replaceWith: { k: "$k", name: "$__jsmql.tmp.0.name" } },
+    ]);
+  });
+
+  it("lands after the write its key comes from, inside one `,`-joined run", () => {
+    expect(jsmql("$.k = $.pid, $.name = $$$.products.find({ _id: $.k }).name;")).toEqual([
+      { $set: { k: "$pid" } },
+      {
+        $lookup: {
+          from: "products",
+          localField: "k",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { name: "$__jsmql.tmp.0.name" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lands beside its own statement in a bracketed program", () => {
+    expect(jsmql('[$group({ _id: "$pid" }), $set({ n: $$$.products.find({ _id: $._id }).name })]')).toEqual([
+      { $group: { _id: "$pid" } },
+      {
+        $lookup: {
+          from: "products",
+          localField: "_id",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { n: "$__jsmql.tmp.0.name" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lands beside its own statement inside an .aggregate(...) block", () => {
+    expect(
+      jsmql(
+        "$.o = $$$.orders.aggregate(o => { $set({ k: o.pid }); $set({ n: $$$.products.find({ _id: o.k }).name }); });",
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            { $set: { k: "$pid" } },
+            {
+              $lookup: {
+                from: "products",
+                localField: "k",
+                foreignField: "_id",
+                pipeline: [{ $limit: 1 }],
+                as: "__jsmql.tmp.0",
+              },
+            },
+            { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+            { $set: { n: "$__jsmql.tmp.0.name" } },
+            { $unset: "__jsmql" },
+          ],
+          as: "o",
+        },
+      },
+    ]);
+  });
+
+  // Only a stage can carry a `$lookup`, so a callback that binds its own element
+  // has nowhere to put one: the body would read a variable the stage never bound.
+  it("refuses a join whose body reads a variable an enclosing callback binds", () => {
+    expect(() => jsmql("$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name);")).toThrow(
+      "'x' is bound by an enclosing callback, and a read of another collection is a '$lookup' STAGE: the server runs it over the documents, outside that callback, where 'x' has no value. Make the elements documents first ('$$ = $.<array>;' — then each one is a document the join reads, '$.<field> = $$$.<coll>.find(…)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);') and use that binding inside it.",
+    );
+    // both spellings the message names do compile
+    expect(jsmql("$$ = $.items; $.name = $$$.products.find({ _id: $.pid }).name;")).toEqual([
+      { $set: { "__jsmql.tmp.0": "$items" } },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+      {
+        $lookup: {
+          from: "products",
+          localField: "pid",
+          foreignField: "_id",
+          pipeline: [{ $limit: 1 }],
+          as: "__jsmql.tmp.1",
+        },
+      },
+      { $set: { "__jsmql.tmp.1": { $first: "$__jsmql.tmp.1" } } },
+      { $set: { name: "$__jsmql.tmp.1.name" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let ps = $$$.products.filter(p => p.ok === true); $.n = $.items.map(x => ps.length);")).toEqual([
+      { $lookup: { from: "products", pipeline: [{ $match: { ok: true } }], as: "__jsmql.var.ps" } },
+      { $set: { n: { $map: { input: "$items", as: "x", in: { $size: "$__jsmql.var.ps" } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});

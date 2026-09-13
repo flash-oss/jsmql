@@ -985,6 +985,7 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         "$$ = $$.filter(o => o.active === true).map(d => ({ id: d._id, archived: $$$.archive.find(x => x._id === d._id) }));",
       ),
     ).toEqual([
+      { $match: { active: true } },
       {
         $lookup: {
           from: "archive",
@@ -995,7 +996,6 @@ describe(".map(d => <expr>) — chain-form per-doc reshape", () => {
         },
       },
       { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
-      { $match: { active: true } },
       { $replaceWith: { id: "$_id", archived: "$__jsmql.tmp.0" } },
     ]);
   });
