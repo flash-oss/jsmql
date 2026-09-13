@@ -433,16 +433,15 @@ describe("let bindings — member / method / index access", () => {
       {
         $project: {
           first: {
-            $cond: {
-              if: { $isArray: "$__jsmql.var.xs" },
-              then: { $arrayElemAt: ["$__jsmql.var.xs", 0] },
-              else: {
-                $cond: {
-                  if: { $eq: [{ $type: "$__jsmql.var.xs" }, "string"] },
+            $switch: {
+              branches: [
+                { case: { $isArray: "$__jsmql.var.xs" }, then: { $arrayElemAt: ["$__jsmql.var.xs", 0] } },
+                {
+                  case: { $eq: [{ $type: "$__jsmql.var.xs" }, "string"] },
                   then: { $substrCP: ["$__jsmql.var.xs", 0, 1] },
-                  else: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
                 },
-              },
+              ],
+              default: { $getField: { field: "0", input: "$__jsmql.var.xs" } },
             },
           },
         },

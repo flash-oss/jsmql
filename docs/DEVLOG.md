@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(lower): the bracket-index dispatch is a `$switch`, which a constant receiver cannot fold
+
+`$.arr[0]` has no provable receiver type, so it lowered to a nested `$cond` over the
+three meanings JavaScript gives an integer key: array position, string character, and a
+field named `"0"`. MongoDB optimises a `$cond`'s branches BEFORE it reads the test, and
+`$lookup` substitutes its `let` into the sub-pipeline before optimising it — so
+`$.o = $$$.products.find({ _id: $.arr[0] })` folded `$substrCP` against an array and the
+server refused the whole pipeline before reading a document ("can't convert from BSON
+type array to String"). A string key refused the other way, on `$arrayElemAt`. An HR3
+violation: the pipeline does not run at all.
+
+Not a join bug. Any value the server holds as a CONSTANT is the same hazard, and a
+`jsmql.compile` parameter inside `$literal` is one —
+`jsmql.expr.compile(({ s }) => s[0])({ s: "$b" })` failed with no `$lookup` anywhere.
+`$switch` drops a branch whose case folds to false without optimising it, measured for
+an array, a string, a document, a number, null and missing, against the `$cond` on each:
+identical answers on every field-path receiver, and no refusal on any constant one. So
+`indexAccess` in [lower.ts](src/compiler/emit/lower.ts) writes a `$switch` — which is
+what every other runtime family dispatch here already wrote (`.at`, `.length`, `.slice`,
+`.includes`, `.indexOf`, `.concat` all build one through `select.ts`), and the flatter
+document besides. One shape everywhere, never chosen by position.
+
+Verified on the project's mongod that the three JavaScript meanings survive: over
+`["p1","p2"]`, `"p2xyz"` and `{ "0": "p1" }` the join key answers the p1 product, no
+product (the character `"p"` matches none) and the p1 product — the same three answers
+a plain field path gave before and still gives. Specs:
+[lookup-stage.md](docs/specs/lookup-stage.md) § A correlated key is a CONSTANT,
+[LANGUAGE.md](docs/LANGUAGE.md) § Bracket Access.
+
+---
+
 ## 2026-09-13 — fix(stream-length): a stream handle counts the body that BOUND it, not the one reading it
 
 `coll.length` on an `.aggregate`/`.map` callback's third parameter is the count of the

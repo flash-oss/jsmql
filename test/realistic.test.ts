@@ -1198,12 +1198,14 @@ describe(
     it("dynamic bracket key dispatches at runtime, still without interpreting the key", { kind: "expression" }, () => {
       // `$.cart.field[$.mainSide]` — a computed key. jsmql doesn't guess the key;
       // it accesses whatever `$mainSide` names, dispatching array-index vs
-      // object-field at query time (a BSON value can be either).
+      // object-field at query time (a BSON value can be either). The dispatch is a
+      // `$switch`: the server optimises a `$cond`'s branches before it reads the
+      // test, so a receiver it holds as a constant would fold the branch that does
+      // not apply and refuse the pipeline.
       expect(jsmql.expr(`$.cart.field[$.mainSide]`)).toEqual({
-        $cond: {
-          if: { $isArray: "$cart.field" },
-          then: { $arrayElemAt: ["$cart.field", "$mainSide"] },
-          else: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
+        $switch: {
+          branches: [{ case: { $isArray: "$cart.field" }, then: { $arrayElemAt: ["$cart.field", "$mainSide"] } }],
+          default: { $getField: { field: { $toString: { $ifNull: ["$mainSide", ""] } }, input: "$cart.field" } },
         },
       });
     });

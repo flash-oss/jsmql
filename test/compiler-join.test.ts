@@ -800,6 +800,61 @@ describe("compiler/emit/join — a stream handle counts the body that BOUND it",
   });
 });
 
+describe("compiler/emit/join — a correlated key the server holds as a constant", () => {
+  // `$lookup` evaluates its `let` against the outer document and then OPTIMISES the
+  // sub-pipeline with the result substituted in, so every branch of a type dispatch
+  // is folded against that one value. A nested `$cond` folds the branch that does
+  // not apply and the pipeline is refused before a document is read — MEASURED,
+  // "can't convert from BSON type array to String" for an array key and
+  // "$arrayElemAt's first argument must be an array" for a string one. A `$switch`
+  // drops a branch whose case folds to false without optimising it.
+  it("reads a bracket index in a join key without folding the branch that does not apply", () => {
+    expect(
+      compiled("$.found = $$$.orders.find({ _id: $.ids[0] }).status;", [
+        { _id: 1, found: "paid" },
+        { _id: 2 },
+        { _id: 3 },
+        { _id: 4 },
+      ]),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          let: { jsmql_f0_ids: "$ids" },
+          pipeline: [
+            {
+              $match: {
+                $expr: {
+                  $eq: [
+                    "$_id",
+                    {
+                      $switch: {
+                        branches: [
+                          { case: { $isArray: "$$jsmql_f0_ids" }, then: { $arrayElemAt: ["$$jsmql_f0_ids", 0] } },
+                          {
+                            case: { $eq: [{ $type: "$$jsmql_f0_ids" }, "string"] },
+                            then: { $substrCP: ["$$jsmql_f0_ids", 0, 1] },
+                          },
+                        ],
+                        default: { $getField: { field: "0", input: "$$jsmql_f0_ids" } },
+                      },
+                    },
+                  ],
+                },
+              },
+            },
+            { $limit: 1 },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $set: { "__jsmql.tmp.0": { $first: "$__jsmql.tmp.0" } } },
+      { $set: { found: "$__jsmql.tmp.0.status" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 // ── the server ───────────────────────────────────────────────────────────────
 
 let client: MongoClient | null = null;

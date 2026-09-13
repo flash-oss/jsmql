@@ -108,25 +108,23 @@ describe("compiler/emit/lower — access", () => {
     // a constant settles in the fold; the runtime shapes are for what the fold cannot see
     expect(expr("[1, 2][0]")).toBe(1);
     expect(expr("[$.a, 2][0]")).toEqual({ $arrayElemAt: [["$a", 2], 0] });
+    // The dispatch is a `$switch`, never a nested `$cond`: the server optimises a
+    // `$cond`'s branches before it reads the test, so a receiver it holds as a
+    // constant folds the branch that does not apply and refuses the pipeline.
     expect(expr("$.a[0]")).toEqual({
-      $cond: {
-        if: { $isArray: "$a" },
-        then: { $arrayElemAt: ["$a", 0] },
-        else: {
-          $cond: {
-            if: { $eq: [{ $type: "$a" }, "string"] },
-            then: { $substrCP: ["$a", 0, 1] },
-            else: { $getField: { field: "0", input: "$a" } },
-          },
-        },
+      $switch: {
+        branches: [
+          { case: { $isArray: "$a" }, then: { $arrayElemAt: ["$a", 0] } },
+          { case: { $eq: [{ $type: "$a" }, "string"] }, then: { $substrCP: ["$a", 0, 1] } },
+        ],
+        default: { $getField: { field: "0", input: "$a" } },
       },
     });
     expect(expr('$.o["k-1"]')).toEqual({ $getField: { field: "k-1", input: "$o" } });
     expect(expr("$.a[$.i]")).toEqual({
-      $cond: {
-        if: { $isArray: "$a" },
-        then: { $arrayElemAt: ["$a", "$i"] },
-        else: { $getField: { field: { $toString: { $ifNull: ["$i", ""] } }, input: "$a" } },
+      $switch: {
+        branches: [{ case: { $isArray: "$a" }, then: { $arrayElemAt: ["$a", "$i"] } }],
+        default: { $getField: { field: { $toString: { $ifNull: ["$i", ""] } }, input: "$a" } },
       },
     });
     expect(() => expr("$.a[-1]")).toThrow(/Negative bracket index/);

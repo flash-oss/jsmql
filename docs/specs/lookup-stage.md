@@ -106,6 +106,20 @@ callback into a binding (`let ps = $$$.<coll>.filter(…);`) the callback then u
 `Env.render` holds the gate: a `Located` of kind `var` carries the LEVEL it was
 bound on, and a read of one from a deeper level is the refusal.
 
+**A correlated key is a CONSTANT to the server.** `$lookup` evaluates its `let`
+against the outer document and then optimises the sub-pipeline with the result
+substituted in, so a type-dispatching expression there is folded against that one
+value, branch by branch. A nested `$cond` folds the branch that does not apply and the
+whole pipeline is refused before a document is read — MEASURED, `$.o =
+$$$.products.find({ _id: $.arr[0] })` answered "can't convert from BSON type array to
+String" for an array key and "$arrayElemAt's first argument must be an array" for a
+string one. So every runtime type dispatch jsmql writes is a `$switch`, which drops a
+branch whose case folds to false without optimising it (`indexAccess` in
+[src/compiler/emit/lower.ts](../../src/compiler/emit/lower.ts), and the family dispatch
+`select.ts` builds). The same hazard reaches a plain expression through any value the
+server holds as a constant — a `jsmql.compile` parameter inside `$literal` — so the
+shape is one shape everywhere and never chosen by position.
+
 **The collection's name** is a compile-time constant: `$$$.orders`, `$$$["orders"]`, or a `jsmql.compile` parameter / template slot holding a string (`$$$[coll]`) — MongoDB's `$lookup.from` takes no expression. `$$$[$.name]` is refused ("the collection is named when the pipeline is written"), and `$$$[""]` names no collection.
 
 **Cross-database reads are refused.** `$$$$.<db>.<coll>.<chain>` would need `from: { db, coll }`, which is Atlas Data Federation's form and not a MongoDB server's; the refusal says to drop the `$$$$.<db>.` prefix and run the pipeline against that database, and that the cross-database WRITE (`$$$$.<db>.<coll> = $$` → `$out`) works ([out-stage.md](out-stage.md)).

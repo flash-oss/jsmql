@@ -486,6 +486,22 @@ function memberAccess(node: Extract<Expr, { type: "MemberAccess" }>, env: Env): 
   return { $getField: { field: node.name, input } };
 }
 
+/**
+ * `x[i]` — the three meanings JavaScript gives an integer key, in the ONE the
+ * receiver proves, or a runtime dispatch over all three.
+ *
+ * The dispatch is a `$switch` and never a nested `$cond`, because the server
+ * OPTIMISES a `$cond`'s branches before it reads the test: MEASURED, a receiver
+ * the server holds as a constant — a `$lookup.let` variable, an injected value
+ * inside `$literal` — folds the branch that does not apply and the whole pipeline
+ * is refused before a document is read (`$.o = $$$.c.find({ _id: $.arr[0] })`
+ * answered "can't convert from BSON type array to String"; a string receiver
+ * answered "$arrayElemAt's first argument must be an array"). A `$switch` drops a
+ * branch whose case folds to false without optimising it, so every receiver type
+ * — array, string, document, number, null, missing — answers as it always did
+ * (measured, the two shapes agree on each). It is the flatter document too, and
+ * the reading every other runtime family dispatch here already uses.
+ */
 function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): unknown {
   const objEnv = childEnv(env, node, "object");
   // `$["a.b"]` — a field whose name is not a bare identifier.
@@ -510,17 +526,21 @@ function indexAccess(node: Extract<Expr, { type: "IndexAccess" }>, env: Env): un
     if (known === "string") return charAt(wrapped(""));
     if (known === "object") return fieldAt(wrapped({}));
     const o = wrapped([]);
-    return cond(
-      truthOf({ $isArray: o }, true),
-      { $arrayElemAt: [o, i] },
-      cond(truthOf({ $eq: [{ $type: o }, "string"] }, true), charAt(o), fieldAt(o)),
+    return switchOn(
+      [
+        { case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, i] } },
+        { case: truthOf({ $eq: [{ $type: o }, "string"] }, true), then: charAt(o) },
+      ],
+      fieldAt(o),
     );
   }
   const key = { $toString: { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return cond(truthOf({ $isArray: o }, true), { $arrayElemAt: [o, idx] }, { $getField: { field: key, input: o } });
+  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+    $getField: { field: key, input: o },
+  });
 }
 
 // ── calls ────────────────────────────────────────────────────────────────────

@@ -493,16 +493,22 @@ time and the right one wins:
 
 ```js
 $.items[0]
-// → { $cond: {
-//       if: { $isArray: "$items" },
-//       then: { $arrayElemAt: ["$items", 0] },
-//       else: { $cond: {
-//         if: { $eq: [{ $type: "$items" }, "string"] },
-//         then: { $substrCP: ["$items", 0, 1] },
-//         else: { $getField: { field: "0", input: "$items" } }
-//       } }
+// → { $switch: {
+//       branches: [
+//         { case: { $isArray: "$items" }, then: { $arrayElemAt: ["$items", 0] } },
+//         { case: { $eq: [{ $type: "$items" }, "string"] }, then: { $substrCP: ["$items", 0, 1] } }
+//       ],
+//       default: { $getField: { field: "0", input: "$items" } }
 //     } }
 ```
+
+The dispatch is a `$switch` and never a nested `$cond`, because MongoDB optimises a
+`$cond`'s branches *before* it reads the test. Where the server holds the receiver as a
+constant — a `$lookup.let` variable, a `jsmql.compile` parameter — a `$cond` folds the
+branch that doesn't apply and the whole pipeline is refused before a document is read
+(`$.o = $$$.products.find({ _id: $.arr[0] })` answered *"can't convert from BSON type
+array to String"*). A `$switch` drops a branch whose case is false without evaluating it,
+so every receiver type answers the same as it always did.
 
 **A numeric object key builds the stringified field name.** JavaScript coerces every
 property key to a string, so `{ 0: 1 }` is the field `"0"` and `{ 0x10: 1 }` is `"16"` —
