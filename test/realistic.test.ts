@@ -32,15 +32,18 @@ declare module "@vitest/runner" { interface TestOptions { kind?: string; usage?:
 //      ($setWindowFields), guarded by a $convert-error $match.
 //   2) that user's distinct, recently-bought product ids (correlated $lookup,
 //      then value-mode .map/.flatten/.uniq).
-//   3) products co-purchased by everyone who bought those (.flatMap("productIds")
-//      inside the join hands each id to the callbacks after it), minus what the
-//      user already owns, tallied into a { productId: count } map with .countBy()
+//   3) products co-purchased by everyone who bought those in the last year — the
+//      equality in the `&&` is the indexed localField/foreignField pair, the date
+//      bound (`new Date().minus(1, "year")` → $dateSubtract from $$NOW) a $match
+//      beside it; .flatMap("productIds") inside the join hands each id to the
+//      callbacks after it — minus what the user already owns, tallied into a
+//      { productId: count } map with .countBy()
 //      and cut to the 10 most frequent (.entries → .sortBy(([id, count]) => -count)
 //      → .take(10) → .fromEntries).
 //   4) cast the tally's keys back to ObjectIds — an object keys by string, and a
 //      string never equals an `_id` — then join the product docs (indexed
-//      `pr._id in [...]` lookup) and emit the top-10 scored recommendations as a
-//      *stream of documents* (`$ = <array>` fans the array out via $unwind +
+//      `pr._id in [...]` lookup) and emit the scored recommendations, best first,
+//      as a *stream of documents* (`$ = <array>` fans the array out via $unwind +
 //      $replaceWith).
 // Every scan of the massive `orders` / `products` collections is recency-sorted
 // (.toSorted) and capped (.take) so the work stays bounded at scale.
@@ -64,9 +67,9 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter({ productIds: myProductIds })
+  .filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))
   .toSorted({ createdAt: -1 })
-  .take(100) // a pipeline of co-purchase orders, most recent 100
+  .take(100) // a pipeline of co-purchase orders, most recent 100 of the last year
   .flatMap("productIds")
   .filter(p => !myProductIds.includes(p))
   .countBy() // { ID: count } map
@@ -87,8 +90,7 @@ $$ = candidateProductIds
     score: candidateProductIdCounts[id],
     name:  candidateProducts.find({ _id: id }).name,
   }))
-  .orderBy({ score: -1 })
-  .take(10);
+  .orderBy({ score: -1 });
       `,
       ).toEqual([
         { $match: { _id: new ObjectId("507f1f77bcf86cd799439011") } },
@@ -140,6 +142,16 @@ $$ = candidateProductIds
             foreignField: "productIds",
             let: { jsmql_v0_myProductIds: "$__jsmql.var.myProductIds" },
             pipeline: [
+              {
+                $match: {
+                  $expr: {
+                    $gt: [
+                      "$createdAt",
+                      { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } },
+                    ],
+                  },
+                },
+              },
               { $sort: { createdAt: -1 } },
               { $limit: 100 },
               { $unwind: "$productIds" },
@@ -227,46 +239,41 @@ $$ = candidateProductIds
         {
           $set: {
             "__jsmql.tmp.2": {
-              $slice: [
-                {
-                  $sortArray: {
-                    input: {
-                      $map: {
-                        input: "$__jsmql.var.candidateProductIds",
-                        as: "id",
-                        in: {
-                          productId: "$$id",
-                          score: {
-                            $getField: {
-                              field: { $toString: { $ifNull: ["$$id", ""] } },
-                              input: "$__jsmql.var.candidateProductIdCounts",
-                            },
-                          },
-                          name: {
-                            $getField: {
-                              field: "name",
-                              input: {
-                                $arrayElemAt: [
-                                  {
-                                    $filter: {
-                                      input: "$__jsmql.var.candidateProducts",
-                                      as: "x",
-                                      cond: { $eq: ["$$x._id", "$$id"] },
-                                    },
-                                  },
-                                  0,
-                                ],
+              $sortArray: {
+                input: {
+                  $map: {
+                    input: "$__jsmql.var.candidateProductIds",
+                    as: "id",
+                    in: {
+                      productId: "$$id",
+                      score: {
+                        $getField: {
+                          field: { $toString: { $ifNull: ["$$id", ""] } },
+                          input: "$__jsmql.var.candidateProductIdCounts",
+                        },
+                      },
+                      name: {
+                        $getField: {
+                          field: "name",
+                          input: {
+                            $arrayElemAt: [
+                              {
+                                $filter: {
+                                  input: "$__jsmql.var.candidateProducts",
+                                  as: "x",
+                                  cond: { $eq: ["$$x._id", "$$id"] },
+                                },
                               },
-                            },
+                              0,
+                            ],
                           },
                         },
                       },
                     },
-                    sortBy: { score: -1 },
                   },
                 },
-                10,
-              ],
+                sortBy: { score: -1 },
+              },
             },
           },
         },
@@ -2281,16 +2288,9 @@ $project({ name: 1, recentOrders: 1 });
               {
                 $lookup: {
                   from: "shipments",
-                  let: { jsmql_f1__id: "$_id" },
-                  pipeline: [
-                    {
-                      $match: {
-                        $expr: {
-                          $and: [{ $eq: ["$orderId", "$$jsmql_f1__id"] }, { $eq: ["$userId", "$$jsmql_f0__id"] }],
-                        },
-                      },
-                    },
-                  ],
+                  localField: "_id",
+                  foreignField: "orderId",
+                  pipeline: [{ $match: { $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
                   as: "shipments",
                 },
               },
@@ -3079,15 +3079,11 @@ $$ = $$$.orders
           {
             $lookup: {
               from: "orders",
-              let: { jsmql_f0__id: "$_id", jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
+              localField: "_id",
+              foreignField: "userId",
+              let: { jsmql_v0_minSpend: "$__jsmql.var.minSpend" },
               pipeline: [
-                {
-                  $match: {
-                    $expr: {
-                      $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $gt: ["$total", "$$jsmql_v0_minSpend"] }],
-                    },
-                  },
-                },
+                { $match: { $expr: { $gt: ["$total", "$$jsmql_v0_minSpend"] } } },
                 { $sort: { placedAt: -1 } },
                 { $limit: 10 },
               ],

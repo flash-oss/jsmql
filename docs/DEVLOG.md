@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — docs(examples): the flagship example keeps co-purchases from the last year, and drops its redundant final cut
+
+The recommended-products example (`test/realistic.test.ts`, the playground's default,
+mirrored in `test/integration.test.ts`) opened its co-purchase join with
+`.filter({ productIds: myProductIds })`. It now reads
+`.filter(o => o.productIds === myProductIds && o.createdAt > new Date().minus(1, "year"))`:
+the same indexed pair, with a date bound beside it — `{ $match: { $expr: { $gt: ["$createdAt",
+{ $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } }] } } }` as the
+first stage of the `$lookup.pipeline` — so the example shows the arrow-form join and the date
+arithmetic in one line. The integration mirrors write a constant date (`new Date("2025-01-01")`),
+because the fixture is fixed in time and a bound relative to `$$NOW` would change the
+asserted rows as the dataset ages; the `$$NOW` shape was run once against the fixture and
+answers the same four rows. The closing `.take(10)` after `.orderBy({ score: -1 })` is gone:
+the candidate list is already cut to the ten most frequent ids, so the final `$slice` said
+nothing.
+
+## 2026-09-13 — feat(emit): the `localField`/`foreignField` pair is taken from a `&&` conjunct
+
+A join predicate with one correlated equality AND another condition —
+`$$$.orders.filter(o => o.userId === $._id && o.status === "paid")` — kept the whole body as
+`let` + `pipeline` + `$expr`, with the equality inside an `$and`. For an array on either side
+that was the documented trap: `$expr: { $eq: [array, array] }` compares whole arrays, so
+`o.productIds === myProductIds && o.createdAt > d` scanned the collection and matched
+nothing, where the one-equality spelling `{ productIds: myProductIds }` joined on a shared
+element from the multikey index. `takePair` (`src/compiler/emit/join.ts`) now reads the
+first stage's `$expr` as a conjunction — `$and: [...]` or the one clause — and takes the
+FIRST conjunct that is a correlated equality as the pair; the other conjuncts and the
+stage's query-document keys stay as the pipeline's first `$match`, over the pair's matches
+(the `$and` is dropped when one clause is left). The example above is now
+`{ $lookup: { from: "orders", localField: "_id", foreignField: "userId", pipeline: [{ $match: { status: "paid" } }], as: "paid" } }`.
+A second correlated equality keeps its `let` var and its `$expr` beside the pair; an equality
+under `||` is no pair, because that `$match` is an `$or`, not a conjunction. Measured on the
+project's mongod (the live half of `test/compiler-join.test.ts`): every moved shape answers
+the same documents as before.
 ## 2026-09-12 — docs: three `// →` claims match the compiler again
 
 `scripts/check-doc-claims.mjs` found three claims the compiler had stopped

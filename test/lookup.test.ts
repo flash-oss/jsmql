@@ -64,16 +64,16 @@ describe("$$$.coll.find/filter — direct assignment, basic form", () => {
   });
 });
 
-describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", () => {
-  it("compound && predicate auto-hoists `$.x` refs into `let`", () => {
+describe("$$$.coll.find/filter — a richer predicate: the pair, with the rest beside it", () => {
+  it("a compound && predicate takes the pair from its equality and needs no `let`", () => {
     const out = jsmql("$.user = $$$.users.find(u => u._id === $.userId && u.active);");
-    // Two stages: the $lookup (pipeline form) and the $set $first for `.find`.
+    // Two stages: the $lookup (the pair, `u.active` a $match beside it) and the $set $first for `.find`.
     expect(out).toHaveLength(2);
     const lookupStage = (out as object[])[0] as {
       $lookup: { from: string; let: Record<string, string>; pipeline: object[]; as: string };
     };
     expect(lookupStage.$lookup.from).toBe("users");
-    expect(lookupStage.$lookup.let).toEqual({ jsmql_f0_userId: "$userId" });
+    expect(lookupStage.$lookup.let).toEqual(undefined);
     expect(lookupStage.$lookup.as).toBe("user");
     expect((out as object[])[1]).toEqual({ $set: { user: { $first: "$user" } } });
   });
@@ -85,24 +85,24 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
     expect(lookup.let.jsmql_f0_userId).toBe("$userId");
   });
 
-  it("multiple distinct `$.x` refs land as multiple let entries", () => {
+  it("a second correlated equality keeps its own let entry beside the pair", () => {
     const out = jsmql("$.users = $$$.users.filter(u => u._id === $.userId && u.tenantId === $.tenantId);");
     const lookup = ((out as object[])[0] as { $lookup: { let: Record<string, string> } }).$lookup;
-    expect(Object.keys(lookup.let).sort()).toEqual(["jsmql_f0_tenantId", "jsmql_f0_userId"]);
+    expect(Object.keys(lookup.let).sort()).toEqual(["jsmql_f0_tenantId"]);
   });
 
-  it("constant comparisons use index-friendly query form; only correlated parts fall back to $expr", () => {
+  it("constant comparisons use index-friendly query form beside the pair", () => {
     // `o.status === "shipped"` (constant) becomes a `{ status: "shipped" }` query
-    // field the server can index. Only `o.userId === $._id` — a comparison
-    // against the `$$jsmql_f0__id` let var, which the query language cannot express —
-    // stays in $expr. Same translator the top-level `$match` uses; verified
-    // joining correctly against a live mongod.
+    // field the server can index, in the pipeline the server runs over the pair's
+    // matches; `o.userId === $._id` is the pair. Same translator the top-level
+    // `$match` uses; verified joining correctly against a live mongod.
     expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && o.status === "shipped");')).toEqual([
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $match: { status: "shipped" } }],
           as: "x",
         },
       },
@@ -162,21 +162,17 @@ describe("$$$.coll.find/filter — pipeline-form fallback (richer predicate)", (
   });
 
   it("top-level bracket-accessed local field hoists into `let` cleanly (no leading dot in value or var)", () => {
-    // The pipeline-form counterpart of the basic-form leading-dot case: `$["ext-code"]`
+    // The `let` counterpart of the pair's leading-dot case: `$["ext-code"]`
     // must hoist to the `let` VALUE `$ext-code` (not `$.ext-code`) and the var name
     // `jsmql_f0_ext_code`. Verified against a live mongod.
     expect(jsmql('$.x = $$$.orders.filter(o => o.userId === $._id && $["ext-code"] === "K1");')).toEqual([
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id", jsmql_f0_ext_code: "$ext-code" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $eq: ["$$jsmql_f0_ext_code", "K1"] }] },
-              },
-            },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_f0_ext_code: "$ext-code" },
+          pipeline: [{ $match: { $expr: { $eq: ["$$jsmql_f0_ext_code", "K1"] } } }],
           as: "x",
         },
       },
@@ -629,13 +625,13 @@ describe("$$$.coll.find/filter — nested lookups (expression body and block bod
     expect(innermost.let).toEqual(undefined);
   });
 
-  it("inner lookup with a non-trivial predicate (compound &&) still extracts let-vars correctly", () => {
+  it("inner lookup with a compound && predicate takes the pair too, and needs no let", () => {
     const out = jsmql(
       "$.x = $$$.a.filter(a => $$$.b.filter(b => b.x === a.x && b.active === true).length > 0)",
     ) as Array<Record<string, unknown>>;
     const outer = out[0].$lookup as { pipeline: Array<Record<string, unknown>> };
     const inner = outer.pipeline[0].$lookup as { let: Record<string, string> };
-    expect(inner.let).toEqual({ jsmql_f1_x: "$x" });
+    expect(inner.let).toEqual(undefined);
   });
 
   it("bare enclosing-foreign-param ref (no member access) is rejected", () => {
@@ -1204,9 +1200,7 @@ describe("$$$.coll stream chains — HR3 / consistency guards (from adversarial 
     }
     // A predicate that DOES correlate still gets its `let` — the shape follows the
     // predicate, never the code path.
-    expect(lookupOf("$.x = $$$.orders.filter(o => o.uid === $._id && o.qty > 0);").let).toEqual({
-      jsmql_f0__id: "$_id",
-    });
+    expect(lookupOf("$.x = $$$.orders.filter(o => o.uid === $._id && o.qty > 0);").let).toEqual(undefined);
   });
 
   it("a malformed shorthand still reports its own targeted error, not a lookup-shape one", () => {
@@ -2045,8 +2039,9 @@ describe("chained stage calls on $$$.<coll>", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $match: { status: "shipped" } }],
           as: "t",
         },
       },
@@ -2055,8 +2050,9 @@ describe("chained stage calls on $$$.<coll>", () => {
       {
         $lookup: {
           from: "orders",
-          let: { jsmql_f0__id: "$_id" },
-          pipeline: [{ $match: { status: "shipped", $expr: { $eq: ["$userId", "$$jsmql_f0__id"] } } }],
+          localField: "_id",
+          foreignField: "userId",
+          pipeline: [{ $match: { status: "shipped" } }],
           as: "t",
         },
       },

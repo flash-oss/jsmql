@@ -967,19 +967,15 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("multi-field correlated predicate → pipeline-form $lookup with multiple let vars", () => {
+  it("two correlated equalities → the first is the pair, the second a let var matched beside it", () => {
     expect(jsmql(`$$ = $$$.events.filter(e => e.userId === $._id && e.region === $.region);`)).toEqual([
       {
         $lookup: {
           from: "events",
-          let: { jsmql_f0__id: "$_id", jsmql_f0_region: "$region" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $eq: ["$region", "$$jsmql_f0_region"] }] },
-              },
-            },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_f0_region: "$region" },
+          pipeline: [{ $match: { $expr: { $eq: ["$region", "$$jsmql_f0_region"] } } }],
           as: "__jsmql.tmp.0",
         },
       },
@@ -1177,7 +1173,7 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
     ]);
   });
 
-  it("mixed `$.<field>` + outer-let predicate → pipeline-form with both hoisted as $lookup.let vars", () => {
+  it("mixed `$.<field>` + outer-let predicate → the field equality is the pair, the binding a let var", () => {
     expect(
       jsmql(`let region = $.region; $$ = $$$.events.filter(e => e.userId === $._id && e.region === region);`),
     ).toEqual([
@@ -1185,14 +1181,10 @@ describe("$$ = $$$.<coll>.filter(<correlatedPred>).<chain> — $lookup-pivot dis
       {
         $lookup: {
           from: "events",
-          let: { jsmql_f0__id: "$_id", jsmql_v0_region: "$__jsmql.var.region" },
-          pipeline: [
-            {
-              $match: {
-                $expr: { $and: [{ $eq: ["$userId", "$$jsmql_f0__id"] }, { $eq: ["$region", "$$jsmql_v0_region"] }] },
-              },
-            },
-          ],
+          localField: "_id",
+          foreignField: "userId",
+          let: { jsmql_v0_region: "$__jsmql.var.region" },
+          pipeline: [{ $match: { $expr: { $eq: ["$region", "$$jsmql_v0_region"] } } }],
           as: "__jsmql.tmp.0",
         },
       },

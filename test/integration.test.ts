@@ -783,7 +783,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter({ "items.productId": myProductIds })
+  .filter(o => o.items.productId === myProductIds && o.placedAt > new Date("2025-01-01"))
   .toSorted({ placedAt: -1 })
   .take(100)
   .map("items")
@@ -807,6 +807,11 @@ $$ = candidateProductIds
   .orderBy({ score: -1, name: 1 })
   .take(10);`,
     );
+    // The equality in the `&&` is the localField/foreignField pair on the multikey
+    // `items.productId`; the date bound is a $match beside it, over the pair's
+    // matches. The fixture is fixed in time, so the bound is a constant date where
+    // the flagship example writes `new Date().minus(1, "year")` — the one order it
+    // drops (placed 2024-12-01) holds only a product Bo already owns.
     // Bo owns the headphones, laptop stand, notebook and desk lamp. Two other
     // orders pair a keyboard with something Bo owns, so the keyboard scores 2;
     // the rest score 1 and the `name: 1` sort key breaks the tie. Every
@@ -897,7 +902,7 @@ const myProductIds = $$$.orders
   .uniq();
 
 const candidateProductIdCounts = $$$.orders
-  .filter(o => o.items.some(i => myProductIds.includes(i.productId)))
+  .filter(o => o.items.some(i => myProductIds.includes(i.productId)) && o.placedAt > new Date("2025-01-01"))
   .toSorted({ placedAt: -1 })
   .take(100)
   .flatMap("items")
@@ -919,8 +924,7 @@ $$ = candidateProductIds
     score: candidateProductIdCounts[id],
     name: candidateProducts.find({ _id: id }).name,
   }))
-  .orderBy({ score: -1, name: 1 })
-  .take(10);`,
+  .orderBy({ score: -1, name: 1 });`,
     );
     expect(rows).toEqual([
       { productId: ID.product(1), score: 2, name: "Mechanical Keyboard" },
