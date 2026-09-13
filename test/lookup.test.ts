@@ -278,6 +278,58 @@ describe("$$$.coll.filter — block-body 3rd 'collection' param (sub-stream leng
     ).toThrow(/can't be written|only 'c/);
   });
 
+  // An ANCESTOR body's handle is a different stream from this body's, so its count
+  // is stamped on the ancestor's own pipeline and carried down through each
+  // `$lookup.let` — `jsmql_s<level>_length`, the same hop an outer field takes.
+  // Stamped on the reading body instead, the two counts collapse onto one field
+  // and answer the same number, which the server accepts without a word.
+  it("counts an ancestor sub-stream on its OWN pipeline, and the body's own on this one", () => {
+    expect(
+      jsmql(`$.o = $$$.orders.aggregate((o, i, ordersColl) => {
+        o.items = $$$.items.aggregate((t, k, itemsColl) => {
+          t = { here: itemsColl.length, up: ordersColl.length };
+        });
+      });`),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $lookup: {
+                from: "items",
+                let: { jsmql_s1_length: "$__jsmql.length" },
+                pipeline: [
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  { $replaceWith: { here: "$__jsmql.length", up: "$$jsmql_s1_length" } },
+                ],
+                as: "items",
+              },
+            },
+            { $unset: "__jsmql" },
+          ],
+          as: "o",
+        },
+      },
+    ]);
+  });
+
+  // `$$` is the ROOT stream at every depth (HR4), so its count belongs to the
+  // top-most chain — not to the body that happens to read it, and not to a
+  // `$facet` branch, which assembles a chain of its own at the same level.
+  it("keeps the ROOT count on the top-most pipeline, beside a handle's own", () => {
+    expect(jsmql("$ = { peers: $$.filter(u => u.n === $$.length) };")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $facet: { peers: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } }] } },
+    ]);
+    // a handle read inside a branch counts the stream the BLOCK runs over, not the branch
+    expect(jsmql("$$.aggregate((o, i, coll) => { $ = { a: $$.filter(x => x.n === coll.length) }; });")).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $facet: { a: [{ $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } }] } },
+    ]);
+  });
+
   it("a 3-param `.filter` predicate is rejected with an `.aggregate` redirect", () => {
     expect(jsmql(`$.x = $$$.orders.filter((o, i, c) => c.length > 0);`)).toEqual([
       {

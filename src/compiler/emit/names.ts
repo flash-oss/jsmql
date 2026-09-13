@@ -25,6 +25,8 @@
 // src/namespace.ts, the one home for jsmql's three namespaces.
 
 import type { Expr, Kind } from "../../registry/vocabulary.ts";
+// Type-only, so nothing is imported at run time and env.ts keeps importing this file.
+import type { Chain } from "./env.ts";
 import { UnknownIdentifierError, internalError } from "../../errors.ts";
 import { exprVar, letBindingVar, letFieldVar, letSysVar, tmpSlot } from "../../namespace.ts";
 
@@ -125,8 +127,15 @@ export type Ref =
    * block of STAGES that expands in place, rather than a value.
    */
   | { readonly kind: "function"; readonly lambda: Expr; readonly expanding: boolean }
-  /** A named stream — `const s = $$.filter(…)` — lowered where it is consumed. */
-  | { readonly kind: "streamHandle"; readonly source: Expr }
+  /**
+   * A named stream — a callback's collection parameter, `const s = $$.filter(…)`.
+   * `chain` is the (sub-)pipeline whose documents it names, kept because a value it
+   * materialises — its count — belongs on THAT pipeline and nowhere else: a
+   * `$facet` branch and a body over another collection each assemble a chain of
+   * their own, and a stamp written on the wrong one counts the wrong documents
+   * under the same field name.
+   */
+  | { readonly kind: "streamHandle"; readonly source: Expr; readonly chain: Chain }
   /**
    * A binding a document-replacing stage destroyed. Reading it is the
    * developer's error, and `fix` is the row's own advice:

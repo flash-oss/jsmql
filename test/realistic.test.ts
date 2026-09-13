@@ -3322,7 +3322,10 @@ describe("Cross-level references across three nested lookup levels", { features:
     //   • `o._id`              — the parent order doc (an enclosing foreign param)
     //   • `$._id`              — the ROOT user doc (two lookup levels up)
     // Each is captured into the correct `$lookup.let` (foreign/system vars
-    // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper via `$$` propagation.
+    // `jsmql_f<d>_…` / `jsmql_s<d>_…`) and read deeper via `$$` propagation. The
+    // two counts are DIFFERENT documents — `$__jsmql.length` is stamped on the
+    // shipments sub-stream, `$$jsmql_s1_length` carries the orders one down — so
+    // the second assert compares two numbers and not one with itself.
     // Verified end-to-end on a live mongod (per-user → per-order → per-shipment
     // data correct; `userId: $._id` resolves to the root user at every order).
     expect(
@@ -3344,12 +3347,13 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
           foreignField: "userId",
           let: { jsmql_f0__id: "$_id" },
           pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
             {
               $lookup: {
                 from: "shipments",
                 localField: "_id",
                 foreignField: "orderId",
-                let: { jsmql_f1__id: "$_id" },
+                let: { jsmql_f1__id: "$_id", jsmql_s1_length: "$__jsmql.length" },
                 pipeline: [
                   { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
                   {
@@ -3391,7 +3395,7 @@ $$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
                           input: true,
                           to: {
                             $cond: [
-                              { $lt: ["$__jsmql.length", "$__jsmql.length"] },
+                              { $lt: ["$__jsmql.length", "$$jsmql_s1_length"] },
                               "bool",
                               "jsmql assertion failed: fewer shipments than orders",
                             ],

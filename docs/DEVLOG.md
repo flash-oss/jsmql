@@ -10,6 +10,38 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(stream-length): a stream handle counts the body that BOUND it, not the one reading it
+
+`coll.length` on an `.aggregate`/`.map` callback's third parameter is the count of the
+sub-stream that callback runs over. The `hoist` service in
+[inputs.ts](src/compiler/emit/inputs.ts) asked `onOwnStream` — a BOOLEAN — where the
+answer is a stream, so a DEEPER body reading an ANCESTOR's handle stamped its own chain
+at its own level. `shpmntsColl.length` and `ordersColl.length` both became
+`$__jsmql.length`, one field for two different counts: `assert(shpmntsColl.length <
+ordersColl.length, …)` compared a value with itself and could never pass. Nothing about
+that document is invalid MQL, so the server answered it without a word —
+[test/realistic.test.ts](test/realistic.test.ts) asserted the
+`{ $lt: ["$__jsmql.length", "$__jsmql.length"] }` it produced while its own comment
+claimed all three scopes resolved correctly.
+
+The binding now CARRIES the chain its body assembles: `Ref.streamHandle` in
+[names.ts](src/compiler/emit/names.ts) holds the `Chain`, `Binding.level` already held
+the level, and `streamHandleOf` reads both back where the stamp is placed. So an
+ancestor's count is materialised on the ancestor's own pipeline and comes back down
+through each `$lookup.let` as `jsmql_s<level>_length` — the hop an outer field already
+took. The CHAIN and not the level is what decides, because a `$facet` branch assembles a
+chain of its own at the same level: keying on the level alone put the ROOT count inside
+a branch, where it counted the branch instead of the stream.
+
+Measured on the project's mongod over users → orders → shipments: the two counts now
+answer 2/1/4/1 shipments per order against 3/3/3/1 orders per user, where before both
+read the shipment count. The regression runs there too
+([test/compiler-join.test.ts](test/compiler-join.test.ts) compares the documents that
+come back), because a `toEqual` on the MQL is exactly what let this through. Spec:
+[stream-length.md](docs/specs/stream-length.md) § Sub-stream length.
+
+---
+
 ## 2026-09-13 — fix(join): a hoisted `$lookup` lands beside the stage that reads it, not at the front of the statement
 
 A join written in a callback was hoisted ahead of the whole STATEMENT, past the stages

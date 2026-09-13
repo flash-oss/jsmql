@@ -906,7 +906,7 @@ As in a `.map`, the lambda parameter *is* the current document (`o.total` → `$
 
 **Caveats:**
 - **Nested lookups work at any depth, in a predicate and in an `.aggregate` sub-pipeline alike.** A `$$$.coll2.find/filter(...)` inside another lookup's lambda materialises as a prologue `$lookup` stage inside the outer's `$lookup.pipeline`. Refs to the enclosing-foreign param (`o.x`) auto-let into the inner's `$lookup.let` clause. Predicate example: `$.posts = $$$.posts.filter(p => p.userId === $._id && $$$.tags.filter(t => t.postId === p._id).length > 0)`. Sub-pipeline example: `$.users = $$$.users.aggregate(u => { $match(u.active); u.orders = $$$.orders.filter(o => o.userId === u._id); })`.
-  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
+  - **Cross-level references resolve correctly at any depth.** A reference to an *ancestor* scope — the root stream count (`$$.length`), the root doc (`$.field`), an enclosing foreign param (`outer.field`), an ancestor sub-stream count (`outerColl.length`, the 3rd `.aggregate` param — computed on that ancestor's own pipeline, not on the one reading it), or an outer-pipeline `let`/`const` declared before the lookup — is captured **once** into the `$lookup.let` of the level it belongs to (depth-stamped `jsmql_f<d>_…` for fields, `jsmql_s<d>_…` for counts, `jsmql_v<d>_…` for bindings) and read at every deeper level through MongoDB's `$$`-variable propagation. So one sub-pipeline can read four different "lengths" at once — `$$.length` (root stream count), `$.length` (a root doc field), a `const` derived from it, and `coll.length` (the sub-stream) — each resolving to its own var with no collision, and the value taken from the right document, not the immediate parent. This needs the **correlated** lookup form (`$$ = $$$.<coll>.filter(o => o.x === $.y).aggregate(…)` or `$.field = $$$.<coll>.filter(…)`); a bare `$$ = $$$.<coll>.aggregate(…)` (no filter) is a [`$unionWith` source-switch](#replace-stream-via---expr) that *replaces* the stream, so the outer doc / count / `let` can't be read inside it — only `coll.length` is available there.
 - **`$$.find(...)` (self-join on the current collection)** needs collection-name binding from a schema or driver `[DEF-013]` — see [DEFERRED.md](DEFERRED.md).
 - **`.find()` multi-match.** `$first` picks the first matching doc; ordering follows MongoDB's storage order. For deterministic single-doc selection use `.aggregate((o) => { …; $sort({ … }); $limit(1); }).at(0)`.
 - **Bracket-index collection name.** The bracket form `$$$[collVar]` accepts a string literal *or* a [`jsmql.compile`](#parameterised-queries-jsmqlcompile) parameter binding — its value is inlined into `$lookup.from` at call time. A runtime field-ref (`$$$[$.dynColl]`) cannot be materialised into the compile-time `from` field and is rejected with the bare-reference error. Non-string bindings (number, array, …) throw a precise "parameter binding must be a string" error.
@@ -1126,6 +1126,19 @@ jsmql(`$.peers = $$$.users.filter(u => u.orderCount === $$.length);`);
 To count an **inner** sub-stream (not the root), use the 3rd callback param —
 `$$$.orders.filter(p).map((o, _i, coll) => coll.length)` (see *Cross-collection
 lookups* above). `$$.length` = root; `coll.length` = that sub-stream.
+
+Each handle counts **the stream the callback that bound it runs over**, at any depth.
+A body nested inside another can read both its own and every ancestor's at once, and
+each is taken from the right documents — the ancestor's count is computed on the
+ancestor's own pipeline and carried down through the `$lookup.let` it passes:
+
+```js
+$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, _i, ordersColl) => {
+  o.items = $$$.items.filter({ orderId: o._id }).aggregate((t, _k, itemsColl) => {
+    t = { id: t._id, inThisOrder: itemsColl.length, ordersForUser: ordersColl.length };
+  });
+});
+```
 
 **Scope.** Pipeline-only — in a Filter / `jsmql.expr` there is no stream to
 count. `$$.length` is the root count at every depth: a `$lookup` body

@@ -36,7 +36,7 @@ import {
 } from "./errors.ts";
 import { preservesCountOf, slotFormsOf } from "../rows.ts";
 import { elementKindOf, isPresent, kindOf } from "./types.ts";
-import type { Env } from "./env.ts";
+import type { Chain, Env } from "./env.ts";
 import { reduceVar } from "./names.ts";
 import { indexedPairs, mongoRegexOptions } from "../../registry/mql.ts";
 import { edge } from "../passes/position.ts";
@@ -310,16 +310,21 @@ export function exprInputs(
       return { as: b.as, ref: b.ref };
     },
     hoist: (stages: readonly Stage[], reads: string) => {
-      // `$$` is the TOP-MOST stream at every depth: the count is materialised on the
-      // root pipeline, ahead of the stage that holds this read, and reaches a
-      // body over another collection through its `let` like any outer field. The
-      // body's OWN stream is its callback's third parameter, whose chain is this one.
+      // WHICH stream is being counted decides where the stamp goes. `$$` is the
+      // TOP-MOST stream at every depth (HR4), so it is level 0. A callback's third
+      // parameter is the stream of the body that BOUND it — this body's, or an
+      // ancestor's when the read crosses back out. Either way the stamp is
+      // materialised on that level's own pipeline, ahead of the stage that holds the
+      // read, and the read comes back down through each `$lookup.let` on the way —
+      // the same hop an outer field takes. Stamping an ancestor's count on THIS
+      // chain would write this body's count under the same field and answer it
+      // instead: two different counts, one field, silently equal.
       const source = (node as { object?: Expr }).object ?? null;
-      const own = onOwnStream(source, env);
-      const chain = own ? env.chain : env.rootChain;
+      const handle = streamHandleOf(source, env);
+      const chain = handle === null ? env.rootChain : handle.chain;
+      const level = handle === null ? 0 : handle.level;
       if (!chain.isPipeline) throw needsPipeline(name, (node as { pos: number }).pos);
       chain.hoist(stages, reads);
-      const level = own ? env.level : 0;
       return env.render(
         { kind: "s", level, path: reads, hint: reads.slice(reads.lastIndexOf(".") + 1) },
         (node as { pos: number }).pos,
@@ -348,6 +353,21 @@ function staleCountStage(cb: Expr): string | null {
     if (!preservesCountOf(st.name)) return st.name;
   }
   return null;
+}
+
+/**
+ * The stream `recv` names, when it is a callback's collection parameter: the chain
+ * whose documents it stands for and their level. Null for `$$`, which is the ROOT
+ * stream at every depth (HR4) and so belongs to the top-most chain at level 0.
+ *
+ * Both halves come from the BINDING, not from where the read sits: a handle is read
+ * inside bodies nested under the one that bound it, and each of those assembles a
+ * chain of its own.
+ */
+function streamHandleOf(recv: Expr | null, env: Env): { chain: Chain; level: number } | null {
+  if (recv === null || recv.type !== "Ident" || !env.scope.has(recv.name)) return null;
+  const b = env.lookup(recv.name, recv.pos);
+  return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 
 /** Is `recv` the body's OWN stream — a callback's collection parameter — rather than `$$`, the root stream? */
@@ -520,7 +540,7 @@ export function stageInputs(
       e = e.bind(cb.params[2], {
         ref:
           replaces === null
-            ? { kind: "streamHandle", source: cb }
+            ? { kind: "streamHandle", source: cb, chain: e.chain }
             : {
                 kind: "dropped",
                 message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,

@@ -741,6 +741,65 @@ describe("compiler/emit/join — a join inside an expression that binds its own 
   });
 });
 
+describe("compiler/emit/join — a stream handle counts the body that BOUND it", () => {
+  // `coll.length` is the count of the sub-stream the callback's THIRD parameter
+  // names, and a deeper body reads an ancestor's handle through each `$lookup.let`
+  // on the way down — the same hop an outer field takes. Stamped on the reading
+  // body's chain instead, the two counts become one field and answer the same
+  // number: MEASURED, `{ $set: { a: "$__jsmql.length", b: "$__jsmql.length" } }`,
+  // which the server accepts and answers wrongly without a word.
+  it("carries an ancestor sub-stream's count down, distinct from the body's own", () => {
+    expect(
+      compiled(
+        `$$ = $$$.orders.filter({ userId: $._id }).aggregate((o, i, ordersColl) => {
+  const its = $$$.items.filter({ orderId: o._id }).aggregate((t, k, itemsColl) => {
+    t = { id: t._id, items: itemsColl.length, orders: ordersColl.length };
+  });
+  o = { orderId: o._id, its };
+});`,
+        [
+          {
+            orderId: 101,
+            its: [
+              { id: "i1", items: 2, orders: 2 },
+              { id: "i2", items: 2, orders: 2 },
+            ],
+          },
+          { orderId: 102, its: [] },
+          { orderId: 103, its: [{ id: "i3", items: 1, orders: 1 }] },
+        ],
+      ),
+    ).toEqual([
+      {
+        $lookup: {
+          from: "orders",
+          ...COMPACT,
+          pipeline: [
+            { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+            {
+              $lookup: {
+                from: "items",
+                localField: "_id",
+                foreignField: "orderId",
+                let: { jsmql_s1_length: "$__jsmql.length" },
+                pipeline: [
+                  { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+                  { $replaceWith: { id: "$_id", items: "$__jsmql.length", orders: "$$jsmql_s1_length" } },
+                ],
+                as: "__jsmql.var.its",
+              },
+            },
+            { $replaceWith: { orderId: "$_id", its: "$__jsmql.var.its" } },
+          ],
+          as: "__jsmql.tmp.0",
+        },
+      },
+      { $unwind: "$__jsmql.tmp.0" },
+      { $replaceWith: "$__jsmql.tmp.0" },
+    ]);
+  });
+});
+
 // ── the server ───────────────────────────────────────────────────────────────
 
 let client: MongoClient | null = null;
