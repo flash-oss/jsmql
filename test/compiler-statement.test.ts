@@ -302,11 +302,15 @@ describe("compiler/emit/statement — bindings between stages", () => {
     // spelling does.
     expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
-      { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.1" } },
-      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.1" } } },
+      { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
       { $set: { o: "$__jsmql.var.b" } },
       { $unset: "__jsmql" },
     ]);
+    // and the `;` spelling of it is the same document, scratch slots included
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual(
+      compiled("let a = $.x; let b = $$$.other.filter(o => o.k === a).length; $.o = b;"),
+    );
   });
 
   it("loses a binding at a stage that replaces the document, and says so on the next read", () => {

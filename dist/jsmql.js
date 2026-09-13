@@ -19980,14 +19980,21 @@ var Chain = class {
    * lowers the body twice, and the first attempt's hoists are discarded — so the
    * stamps it took have to go with them, or the second attempt reuses a field the
    * discarded stage was going to write.
+   *
+   * The scratch counter goes back too. A slot the discarded attempt minted is named
+   * only by the stages that went with it, so holding the number would leave a gap —
+   * and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and `__jsmql.tmp.0`.
+   * One lowering, one output.
    */
   mark() {
-    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped) };
+    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
   }
-  /** Undo everything hoisted and stamped since `mark`. */
+  /** Undo everything hoisted, stamped and minted since `mark`. */
   rewind(m) {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
+    this.slots = m.slots;
   }
   /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
   hoist(stages, reads2) {

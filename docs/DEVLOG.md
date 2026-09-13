@@ -10,6 +10,25 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(emit): a taken-back lowering gives its scratch slot back
+
+`Chain.rewind` restored what a discarded lowering had hoisted and stamped, but not the
+scratch-slot counter it had advanced. The number was then skipped, and the gap was VISIBLE:
+`let a = $.x, b = $$$.probe.filter(o => o.x === a).length + 1;` named its `$lookup` output
+`__jsmql.tmp.1`, while the same program spelled with a `;` named it `__jsmql.tmp.0`. Two
+spellings of one lowering emitted two different documents — the drift the project rejects.
+
+A slot the discarded attempt minted is named only by the stages discarded with it, which is the
+same argument that already makes rewinding the stamps safe, so the counter goes back with them.
+Both callers — the declaration-list run in
+[src/compiler/emit/statement.ts](src/compiler/emit/statement.ts) and the chain-after-a-join
+retry in [src/compiler/emit/join.ts](src/compiler/emit/join.ts) — discard a whole attempt, so
+neither can hold a reference to the returned number. The two spellings of that program are now
+byte-identical, and the regression tests assert that identity rather than a literal slot name,
+so a future gap fails the build instead of being written into the expectation.
+
+---
+
 ## 2026-09-13 — fix(emit): a declaration list never shares a stage with a value that hoists one
 
 An adversarial audit of the stage-merge below found two ways it produced a pipeline that

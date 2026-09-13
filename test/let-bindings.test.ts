@@ -142,15 +142,17 @@ describe("let bindings — declaration lists", () => {
     // Such a declarator therefore ends the run and takes a stage of its own.
     expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
       { $set: { "__jsmql.var.a": "$x" } },
-      { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.1" } },
-      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.1" } } },
+      { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
       { $set: { o: "$__jsmql.var.b" } },
       { $unset: "__jsmql" },
     ]);
-    // the `;` spelling of the same program orders the stages the same way
-    const semi = jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).length; $.o = b;") as unknown[];
-    const comma = jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;") as unknown[];
-    expect(comma.map((st) => Object.keys(st as object)[0])).toEqual(semi.map((st) => Object.keys(st as object)[0]));
+    // One lowering, one output: the `;` spelling of this program is the SAME
+    // document, scratch-slot numbers included. The taken-back lowering gives its
+    // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual(
+      jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).length; $.o = b;"),
+    );
   });
 
   it("does not let a folded-away declarator bridge a `;` the developer wrote", () => {
