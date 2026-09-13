@@ -19528,6 +19528,14 @@ var mustBeFirstStage = (name2, pos, why) => new CodegenError(
   why ?? `'${name2}' produces the pipeline's source documents, so it has to be the FIRST stage \u2014 the server refuses it anywhere else. Move it to the top of the program.`,
   pos
 );
+var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ \u2026 }).<field>" : "$$.length";
+  const later = `$match($.<field> === ${value});`;
+  return new CodegenError(
+    carrier === null ? `'${name2}' has to be the FIRST stage of the pipeline, and a value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name2}', so read that value in a LATER statement \u2014 '${name2}({ \u2026 }); ${later}' \u2014 or, where the value IS one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.` : `'${name2}' only runs in the pipeline's FIRST '${carrier}', and a value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}', so keep the '${name2}' test on its own and make the other one a later stage: '${carrier}(${name2}(\u2026)); ${later}'.`,
+    pos
+  );
+};
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
   `'${name2}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination \u2014 keep one of them.`,
   pos
@@ -19636,6 +19644,10 @@ var shadowsOuterBinding = (kind, name2, pos) => new CodegenError(
 );
 var noCorrelationSlot = (stage, pos) => new CodegenError(
   `'${stage}' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(\u2026)'), whose '$lookup' carries the value.`,
+  pos
+);
+var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
+  `'${name2}' is bound by an enclosing callback, and a read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first ('$$ = $.<array>;' \u2014 then each one is a document the join reads, '$.<field> = $$$.<coll>.find(\u2026)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
   pos
 );
 var crossDatabaseRead = (pos) => new CodegenError(
@@ -19901,7 +19913,7 @@ var Chain = class {
   constructor(isPipeline = true) {
     /** The stages emitted so far. */
     this.emitted = [];
-    /** Stages a value placed ahead of the statement it stands in; drained by `flush`. */
+    /** Stages a value placed ahead of the stage it stands in; drained by `ahead`. */
     this.hoisted = [];
     this.slots = 0;
     /** Has anything written under `__jsmql`? Owns the trailing cleanup. */
@@ -19955,7 +19967,7 @@ var Chain = class {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
   }
-  /** Place `stages` ahead of the current statement; answer the reference that reads `reads`. */
+  /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages, reads2) {
     if (!this.stamped.has(reads2)) {
       this.hoisted.push(...stages);
@@ -19977,10 +19989,27 @@ var Chain = class {
       }
     }
   }
-  /** Move the hoisted stages into the emitted list — called before the statement that triggered them. */
-  flush() {
-    this.emitted.push(...this.hoisted);
+  /**
+   * The stages hoisted so far, TAKEN OUT so they can stand directly ahead of the
+   * stages of the lowering that hoisted them.
+   *
+   * A hoisted stage reads the documents the stage it was written for reads, so it
+   * has to land beside it and not at the front of the statement: MEASURED, the
+   * `$lookup` of `$$.$sortByCount($.productIds).map(g => $$$.products.find({ _id:
+   * g._id }))` placed ahead of the whole statement joined on the SOURCE document's
+   * `_id`, and `$sortByCount` then replaced the document and dropped the slot — so
+   * every row came back without its joined field and the server said nothing. A
+   * road that makes several stages out of one statement therefore drains at each
+   * of them. See docs/specs/lookup-stage.md § Where a hoisted stage lands.
+   */
+  ahead() {
+    const out = [...this.hoisted];
     this.hoisted.length = 0;
+    return out;
+  }
+  /** Move the hoisted stages into the emitted list — the drain of a statement that is ONE stage. */
+  flush() {
+    this.emitted.push(...this.ahead());
   }
   /** The finished pipeline: the stages, the cleanup if anything was written under `__jsmql`, the terminal stage. */
   close() {
@@ -20013,7 +20042,7 @@ var Env = class _Env {
   }
   /** How many bodies over another collection enclose this node: the level of ITS documents. */
   get level() {
-    return this.site.boundaries.filter(isForeign).length;
+    return this.foreign().length;
   }
   /**
    * A located value as THIS level reads it: a variable as itself; a path on this
@@ -20021,13 +20050,25 @@ var Env = class _Env {
    * boundary that starts the level below it, as `$$<var>`.
    */
   render(loc, pos) {
-    if (loc.kind === "var") return loc.ref;
+    if (loc.kind === "var") {
+      if (loc.level < this.level) throw readsEnclosingVariable(loc.hint, this.foreignStage(), pos);
+      return loc.ref;
+    }
     if (this.site.root === "updateDoc") throw readInUpdateDocument(pos);
     const value = loc.path === "" ? "$$ROOT" : "$" + loc.path;
     if (loc.level === this.level) return value;
-    const boundary = this.site.boundaries.filter(isForeign)[loc.level];
+    const boundary = this.foreign()[loc.level];
     if (boundary.capture === null || boundary.capture === void 0) throw noCorrelationSlot(boundary.stage, pos);
     return "$$" + boundary.capture.take(loc.kind, loc.hint, value);
+  }
+  /** The bodies over another collection enclosing this node, outermost first. */
+  foreign() {
+    return this.site.boundaries.filter(isForeign);
+  }
+  /** The stage whose body this is — the innermost one over another collection. */
+  foreignStage() {
+    const boundaries = this.foreign();
+    return boundaries[boundaries.length - 1].stage;
   }
   /** The Env after a stage that replaced the document: every field-carried binding is gone. */
   dropFields(by, message) {
@@ -22087,11 +22128,11 @@ function exprInputs(name2, recv, args, keys, env, node, read, overrides = /* @__
     },
     hoist: (stages, reads2) => {
       const source = node.object ?? null;
-      const own = onOwnStream(source, env);
-      const chain = own ? env.chain : env.rootChain;
+      const handle = streamHandleOf(source, env);
+      const chain = handle === null ? env.rootChain : handle.chain;
+      const level = handle === null ? 0 : handle.level;
       if (!chain.isPipeline) throw needsPipeline(name2, node.pos);
       chain.hoist(stages, reads2);
-      const level = own ? env.level : 0;
       return env.render(
         { kind: "s", level, path: reads2, hint: reads2.slice(reads2.lastIndexOf(".") + 1) },
         node.pos
@@ -22108,6 +22149,11 @@ function staleCountStage(cb) {
     if (!preservesCountOf(st.name)) return st.name;
   }
   return null;
+}
+function streamHandleOf(recv, env) {
+  if (recv === null || recv.type !== "Ident" || !env.scope.has(recv.name)) return null;
+  const b = env.lookup(recv.name, recv.pos);
+  return b.ref.kind === "streamHandle" ? { chain: b.ref.chain, level: b.level } : null;
 }
 function onOwnStream(recv, env) {
   return recv !== null && recv.type === "Ident" && env.scope.has(recv.name) && env.lookup(recv.name, recv.pos).ref.kind === "streamHandle";
@@ -22199,7 +22245,7 @@ function stageInputs(name2, args, keys, env, node, read, soFar = [], written = n
     if (cb.params.length === 3) {
       const replaces = staleCountStage(cb);
       e = e.bind(cb.params[2], {
-        ref: replaces === null ? { kind: "streamHandle", source: cb } : {
+        ref: replaces === null ? { kind: "streamHandle", source: cb, chain: e.chain } : {
           kind: "dropped",
           message: streamHandleAfterReplace(cb.params[2], replaces, cb.pos).message,
           replaced: false
@@ -22579,7 +22625,7 @@ function locate(node, env) {
   }
   if (node.type === "Ident" && env.scope.has(node.name)) {
     const b = env.lookup(node.name, node.pos);
-    if (b.ref.kind === "var") return { kind: "var", ref: b.ref.ref };
+    if (b.ref.kind === "var") return { kind: "var", level: b.level, ref: b.ref.ref, hint: node.name };
     if (b.ref.kind === "document") return { kind: "f", level: b.level, path: b.ref.path, hint: node.name };
     if (b.ref.kind === "field") return { kind: "v", level: b.level, path: b.ref.slot.path, hint: node.name };
     return null;
@@ -22593,7 +22639,7 @@ function locate(node, env) {
   if (node.type === "MemberAccess" && !isPropertyRow(node)) {
     const base = locate(node.object, env);
     if (base === null) return null;
-    if (base.kind === "var") return { kind: "var", ref: `${base.ref}.${node.name}` };
+    if (base.kind === "var") return { ...base, ref: `${base.ref}.${node.name}` };
     return { ...base, path: base.path === "" ? node.name : `${base.path}.${node.name}`, hint: node.name };
   }
   return null;
@@ -22650,17 +22696,21 @@ function indexAccess(node, env) {
     if (known === "string") return charAt(wrapped(""));
     if (known === "object") return fieldAt(wrapped({}));
     const o2 = wrapped([]);
-    return cond2(
-      truthOf({ $isArray: o2 }, true),
-      { $arrayElemAt: [o2, i] },
-      cond2(truthOf({ $eq: [{ $type: o2 }, "string"] }, true), charAt(o2), fieldAt(o2))
+    return switchOn(
+      [
+        { case: truthOf({ $isArray: o2 }, true), then: { $arrayElemAt: [o2, i] } },
+        { case: truthOf({ $eq: [{ $type: o2 }, "string"] }, true), then: charAt(o2) }
+      ],
+      fieldAt(o2)
     );
   }
   const key = { $toString: { $ifNull: [idx, ""] } };
   if (known === "object") return { $getField: { field: key, input: wrapped({}) } };
   if (known === "array") return { $arrayElemAt: [wrapped([]), idx] };
   const o = wrapped([]);
-  return cond2(truthOf({ $isArray: o }, true), { $arrayElemAt: [o, idx] }, { $getField: { field: key, input: o } });
+  return switchOn([{ case: truthOf({ $isArray: o }, true), then: { $arrayElemAt: [o, idx] } }], {
+    $getField: { field: key, input: o }
+  });
 }
 function receiverOf(recv, env) {
   const src = sourceFamily(recv);
@@ -23395,7 +23445,7 @@ function subPipeline(node, env, slot = null) {
     if (el.type === "SpreadElement") throw spreadInStageList(el.pos);
     if (env.chain.terminal !== null) throw afterTerminalStage(Object.keys(env.chain.terminal)[0], el.pos);
     const step = statementStages(el, scope, out.length === 0);
-    out.push(...step.stages);
+    out.push(...env.chain.ahead(), ...step.stages);
     scope = step.env;
   }
   return out;
@@ -23424,7 +23474,7 @@ var READ2 = {
     const out = [];
     for (const stmt of stages.stmts) {
       const step = statementStages(stmt, scope, out.length === 0);
-      out.push(...step.stages);
+      out.push(...env.chain.ahead(), ...step.stages);
       scope = step.env;
     }
     return out;
@@ -23548,31 +23598,39 @@ function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
   const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
-function namesWithin(body, out = /* @__PURE__ */ new Set()) {
+function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
+  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement";
   if (Array.isArray(body)) {
-    for (const el of body) namesWithin(el, out);
+    for (const el of body) namesWithin(stage, el, path, out);
   } else if (typeof body === "object" && body !== null) {
     for (const [k, v] of Object.entries(body)) {
-      if (k.startsWith("$") && positionsOf(k) !== void 0) out.add(k);
-      namesWithin(v, out);
+      if (k.startsWith("$") && positionsOf(k) !== void 0 && !out.has(k)) out.set(k, nested);
+      namesWithin(stage, v, [...path, k], out);
     }
   }
   return out;
 }
 function place(name2, stage, env, first, pos) {
   const only = onlyOf(name2);
-  for (const held of [name2, ...namesWithin(stage[name2])]) {
+  const hoisted = env.chain.hoisted[0];
+  const noPlacement = (held) => {
+    throw firstStageNeedsHoist(held, Object.keys(hoisted)[0], pos, held === name2 ? null : name2);
+  };
+  for (const [held, nested] of [[name2, false], ...namesWithin(name2, stage[name2])]) {
     const containers = held === name2 ? env.site.boundaries.map((b) => b.stage) : [name2, ...env.site.boundaries.map((b) => b.stage)];
     for (const container of containers) {
       if (forbiddenInOf(held).includes(container) || bansNestedOf(container).includes(held)) {
         throw forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
-    if (held !== name2 && onlyOf(held).includes("stageFirst") && !first) {
-      throw mustBeFirstStage(held, pos, placementOf(held).first);
-    }
+    if (held === name2 || !onlyOf(held).includes("stageFirst")) continue;
+    if (!first) throw mustBeFirstStage(held, pos, placementOf(held).first);
+    if (hoisted !== void 0 && !nested) noPlacement(held);
   }
-  if (only.includes("stageFirst") && !first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);
+  if (only.includes("stageFirst")) {
+    if (!first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);
+    if (hoisted !== void 0) noPlacement(name2);
+  }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
@@ -23756,30 +23814,31 @@ function writeStages(uf, env, first) {
     sets = null;
     unsets = null;
   };
+  const emit = (made = []) => {
+    out.push(...env.chain.ahead(), ...made);
+  };
   for (const op of uf.ops) {
     const out_ = outTarget(op.target);
     if (out_ !== null) {
       if (op.type === "DeleteStmt") throw notAWriteTarget(op.pos);
       flush();
-      out.push(...outStages(op, out_, inner, first && out.length === 0));
+      emit(outStages(op, out_, inner, first && out.length === 0));
       continue;
     }
     const path = targetPath(op, inner);
     if (path === STREAM_TARGET && op.type === "AssignExpr" && op.value.type === "MethodCall" && isStreamReduce(op.value)) {
       flush();
-      out.push(...arrayReduceStages(op.value, inner, first && out.length === 0));
+      emit(arrayReduceStages(op.value, inner, first && out.length === 0));
       continue;
     }
     if (path === STREAM_TARGET) {
       if (op.type === "DeleteStmt") throw cannotDeleteRoot(op.pos);
       flush();
       if (op.value.type === "ArrayLiteral" && !holdsSpread(op.value)) {
-        out.push(...documentsStages(op.value, inner));
+        emit(documentsStages(op.value, inner));
         continue;
       }
-      out.push(
-        ...becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0)
-      );
+      emit(becomeStream(op.value, inner, childEnv(inner, op, "value").at({ at: "value" }), first && out.length === 0));
       continue;
     }
     if (op.type === "DeleteStmt") {
@@ -23791,7 +23850,7 @@ function writeStages(uf, env, first) {
     if (op.op !== "=") internalError(`an assignment reached the emit phase spelled '${op.op}'`);
     if (path === "" && op.value.type === "ObjectLiteral" && isFacet(op.value)) {
       flush();
-      out.push(...facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
+      emit(facetStages(op.value, childEnv(inner, op, "value"), first && out.length === 0));
       continue;
     }
     if (unsets !== null) flush();
@@ -23804,13 +23863,13 @@ function writeStages(uf, env, first) {
       const valueEnv = childEnv(inner, op, "value");
       if (path === "") {
         flush();
-        out.push(...joinRoot(op.value, valueEnv, JOIN));
+        emit(joinRoot(op.value, valueEnv, JOIN));
         continue;
       }
       const w = joinWrite(op.value, path, valueEnv, JOIN);
       if (w !== null) {
         flush();
-        out.push(...w.stages);
+        emit(w.stages);
         continue;
       }
     }
@@ -23823,9 +23882,10 @@ function writeStages(uf, env, first) {
       if (kind === "array") throw rootIsArray(op.pos);
       if (kind !== "unknown" && kind !== "object") throw rootMustBeDocument(KIND_NOUN[kind] ?? `a ${kind}`, op.pos);
       flush();
-      out.push({ $replaceWith: value });
+      emit([{ $replaceWith: value }]);
       continue;
     }
+    emit();
     sets ??= { paths: [], fields: {} };
     sets.paths.push(path);
     setKey(sets.fields, path, replacesWhole(value) ? { $mergeObjects: [value] } : value);
@@ -23871,7 +23931,7 @@ function streamStages(chain, env, first) {
         link.pos
       );
     }
-    out.push(...stages);
+    out.push(...env.chain.ahead(), ...stages);
   }
   return out;
 }
@@ -24019,9 +24079,14 @@ function arrayReduceStages(call, env, first) {
   const parts = arrayReduceParts(call);
   const inputs = stageInputs("reduce", call.args, [], env, call, READ2);
   const out = [];
-  if (parts.test !== null) out.push(...place("$match", { $match: inputs.predicate(parts.test) }, env, first, call.pos));
+  if (parts.test !== null) {
+    const test = inputs.predicate(parts.test);
+    const stages2 = place("$match", { $match: test }, env, first, call.pos);
+    out.push(...env.chain.ahead(), ...stages2);
+  }
   const doc = inputs.document(parts.doc);
-  out.push(...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos));
+  const stages = place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos);
+  out.push(...env.chain.ahead(), ...stages);
   return out;
 }
 
