@@ -10,6 +10,36 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(union): a written document list holds only what the program spells
+
+`$$ = [{ n: $.a }]` emitted `{ $documents: [{ n: "$a" }] }` and the server answered
+`{}` — the documents run inside a `$unionWith`, over NO input document, so there is no
+`$a` to read. The `$$.push({ n: $.a })` spelling of the same stage refused that read
+correctly, because `unionStages` lowers its documents under the `$unionWith` boundary
+and `documentsStages` lowered them outside it. One lowering, two answers, and the one
+that compiled lost the value in silence.
+
+`documentsStages` now enters the same boundary, which states no `let`, so both
+spellings meet the existing "'$unionWith' has no 'let'" refusal and meet it alike.
+
+The position's other half went with it. `$documents` is the FIRST stage of that body,
+so nothing can stand ahead of it to produce a value either — and a field whose value
+needs a stage of its own (`$$.push({ n: $$$.p.find({ _id: "x" }).n })`) hoisted a
+`$lookup` onto a chain nothing drains, leaving `"$__jsmql.tmp.0.n"` as a path nothing
+writes. Measured: the joined value 42 came back as `{}`, in all three spellings.
+`noStageInDocuments` in [union.ts](src/compiler/emit/union.ts) is the one gate both
+roads call; its message names the collection append (`$$.push(...$$$.<coll>.filter(…))`
+for many, `$$.push($$$.<coll>.find({ … }))` for one) and the constant or
+`jsmql.compile` parameter, each compiled and checked.
+
+A written list the program does spell out is untouched — `$$ = [{ n: 1 }]`,
+`$$ = []`, `$$ = [{ a: 1 }, { a: 2 }]`, `$$.push({ a: 1 })` and a `jsmql.compile`
+parameter as a field value all emit what they emitted. Specs:
+[union-stage.md](docs/specs/union-stage.md) § A written list of documents,
+[replace-stream-stage.md](docs/specs/replace-stream-stage.md).
+
+---
+
 ## 2026-09-13 — fix(out): the stage that writes the output cannot read a scratch field
 
 `$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] })` emitted

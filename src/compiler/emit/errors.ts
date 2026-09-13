@@ -741,6 +741,18 @@ export const readsEnclosingVariable = (name: string, stage: string, pos: number)
     pos,
   );
 
+/**
+ * `$$.push({ n: $$$.c.find(p).n })` — a written document whose value materialises a
+ * stage. The documents run inside a `$unionWith` where `$documents` is the first
+ * stage, so nothing can stand ahead of them to produce the value, and the read is
+ * left as a path nothing writes (measured: the server answers `{}` for it).
+ */
+export const documentsNeedNoStage = (written: string, made: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${written}' writes the documents out as the program spells them, and this value needs a '${made}' stage of its own to produce it — the documents run where nothing may stand ahead of them. Append the other collection's documents themselves ('$$.push(...$$$.<coll>.filter(…))' for many, '$$.push($$$.<coll>.find({ … }))' for one), or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter.`,
+    pos,
+  );
+
 /** `$$$$.<db>.<coll>.find(…)` — a `$lookup` reads the current database only. */
 export const crossDatabaseRead = (pos: number): CodegenError =>
   new CodegenError(

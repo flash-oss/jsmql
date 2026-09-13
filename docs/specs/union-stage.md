@@ -59,6 +59,18 @@ a sub-pipeline), one written document, and a written list of them — `$$.push({
 consecutive arguments together, source order kept. An array the data decides has no
 append form at all; `$$ = <array>` makes the stream from it instead.
 
+The list is lowered inside the `$unionWith` body, where the server evaluates it —
+`noStageInDocuments` in [src/compiler/emit/union.ts](../../src/compiler/emit/union.ts)
+holds the other half of that. Nothing there can read the outer document (the body has
+no `let`, below), and `$documents` is the FIRST stage of that body, so nothing can
+stand ahead of it to produce a value either: a field whose value would need a stage of
+its own — a `$$$.<coll>` read's `$lookup`, the root count's `$setWindowFields` — is
+refused, naming the collection append (`$$.push(...$$$.<coll>.filter(…))`) and the
+constant / `jsmql.compile` parameter as the two ways out. Both spellings of the list
+go through the same gate, so `$$.push({ n: <value> })` and `$$ = [{ n: <value> }]`
+answer alike; lowered outside the boundary the second one emitted a field path the
+server answered `{}` for, in silence.
+
 ### `$unionWith` has no `let`
 
 `$lookup` has a correlation slot (`let`) — `$unionWith` does not. The body is entered with a null capture ([src/compiler/emit/env.ts](../../src/compiler/emit/env.ts) `Boundary.capture`), so a read of the outer document or of an outer binding inside it is refused rather than silently misread: "'$unionWith' has no 'let': its body cannot read the outer document or a binding declared outside it. Filter or reshape the outer stream in a statement before it, or read the other collection through a join ('$.<field> = $$$.<coll>.filter(…)'), whose '$lookup' carries the value." The same holds for `$$.length` there ([stream-length.md](stream-length.md)).
@@ -84,6 +96,7 @@ or `[` after `$$` already accommodates `.push(...)`.
 | `$$.push(42)` / `$$.push("x")` / `$$.push(null)` | "A stream holds documents, and this is a number. Push a document ('$$.push({ … })') or another collection ('$$.push(...$$$.<coll>)')." |
 | `$$.push(...$$$.coll.filter(o => o.x === $.y))` (an outer read) | the no-`let` refusal above |
 | `$$.push(...$$$$.<db>.<coll>…)` (cross-database) | the cross-database refusal ([lookup-stage.md](lookup-stage.md)) |
+| `$$.push({ n: $$$.<coll>.find(p).<field> })` / `$$ = [{ n: … }]` — a value needing a stage | "'.push({ … })' writes the documents out as the program spells them, and this value needs a '$lookup' stage of its own to produce it … Append the other collection's documents themselves … or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter." |
 | `$$.push(...)` inside a `$lookup` body | "'$$' is the root stream, and a body over another collection cannot reach it. Name the body's own stream through the callback's third parameter — '(o, _i, coll) => { coll.filter(…); }' — or write the stage: '$match(…)', '$sort(…)'." |
 | `jsmql.filter("$$.push(...)")` | "jsmql.filter() expects a Filter (the document \`db.coll.find(filter)\` takes), but received a top-level 'push' stage call. Use jsmql.pipeline()." |
 | `jsmql.update("$$.push(...)")` | "An update document is made of writes … This is neither." |

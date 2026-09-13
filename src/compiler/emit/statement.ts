@@ -46,7 +46,7 @@ import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, typ
 import { elementKindOf, isPresent, kindOf } from "./types.ts";
 import { bodySlotAt, positionalKeysOf, positionsOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
-import { unionStages } from "./union.ts";
+import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
 import { FILTER } from "../passes/position.ts";
 
@@ -355,7 +355,14 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   const sel = select(consult(DOCUMENTS, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS}' has no statement rule`);
   checkSlots(written, sel.rule.args, [list], false);
-  const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
+  // The documents run inside the `$unionWith`, with NO input document, so the list is
+  // lowered under that boundary — the same one `unionStages` enters. Lowered outside
+  // it, `$$ = [{ n: $.a }]` read `"$a"` and the server answered `{}`, where the
+  // `$$.push({ n: $.a })` spelling of the same stage was refused: one lowering, two
+  // answers. The boundary states no `let`, so either spelling now refuses alike.
+  const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
+  const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
+  noStageInDocuments(body.chain, written, list.pos);
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS]: documents }] } }];
 }
 
