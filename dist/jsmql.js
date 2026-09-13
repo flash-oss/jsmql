@@ -19536,6 +19536,10 @@ var firstStageNeedsHoist = (name2, hoisted, pos, carrier) => {
     pos
   );
 };
+var terminalReadsScratch = (name2, pos) => new CodegenError(
+  `'${name2}' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it \u2014 so a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first and read that field: '$.n = $$.length; ${name2}({ \u2026 let: { v: $.n } \u2026 });'.`,
+  pos
+);
 var twoTerminalStages = (name2, already, pos) => new CodegenError(
   `'${name2}' writes the pipeline's output and has to be its last stage, and '${already}' already is. A pipeline writes to one destination \u2014 keep one of them.`,
   pos
@@ -19648,6 +19652,10 @@ var noCorrelationSlot = (stage, pos) => new CodegenError(
 );
 var readsEnclosingVariable = (name2, stage, pos) => new CodegenError(
   `'${name2}' is bound by an enclosing callback, and a read of another collection is a '${stage}' STAGE: the server runs it over the documents, outside that callback, where '${name2}' has no value. Make the elements documents first ('$$ = $.<array>;' \u2014 then each one is a document the join reads, '$.<field> = $$$.<coll>.find(\u2026)'), or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(\u2026);') and use that binding inside it.`,
+  pos
+);
+var documentsNeedNoStage = (written, made, pos) => new CodegenError(
+  `'${written}' writes the documents out as the program spells them, and this value needs a '${made}' stage of its own to produce it \u2014 the documents run where nothing may stand ahead of them. Append the other collection's documents themselves ('$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one), or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter.`,
   pos
 );
 var crossDatabaseRead = (pos) => new CodegenError(
@@ -23104,6 +23112,10 @@ function exprBlock(node, env, ret) {
 
 // src/compiler/emit/union.ts
 var DOCUMENTS = "$documents";
+function noStageInDocuments(chain, written, pos) {
+  const made = chain.hoisted[0] ?? chain.emitted[0];
+  if (made !== void 0) throw documentsNeedNoStage(written, Object.keys(made)[0], pos);
+}
 function writtenDocuments(e) {
   if (e.type !== "ArrayLiteral" || e.elements.length === 0) return null;
   const out = [];
@@ -23131,6 +23143,8 @@ function unionStages(args, env, node, S) {
     }
     const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
     const list = docs.map((d) => lowerValue(d, childEnv(body, node, "args")));
+    const verb = node.type === "MethodCall" ? node.name : "push";
+    noStageInDocuments(body.chain, `.${verb}(${verb === "concat" ? "[{ \u2026 }]" : "{ \u2026 }"})`, node.pos);
     out.push({ $unionWith: { pipeline: [{ $documents: list }] } });
     docs = [];
   };
@@ -23595,7 +23609,9 @@ function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
   const sel = select(consult(DOCUMENTS2, "statement"), { kind: "none" }, { kind: "multiple" }, 1);
   if (sel.kind !== "rule") internalError(`'${DOCUMENTS2}' has no statement rule`);
   checkSlots(written, sel.rule.args, [list], false);
-  const documents = lowerValue(list, childEnv(env, list, "elements").at({ at: "value" }));
+  const body = env.enter({ stage: "$unionWith", path: ["pipeline"], capture: null }, new Chain());
+  const documents = lowerValue(list, childEnv(body, list, "elements").at({ at: "value" }));
+  noStageInDocuments(body.chain, written, list.pos);
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
 function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
@@ -23634,10 +23650,17 @@ function place(name2, stage, env, first, pos) {
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw twoTerminalStages(name2, Object.keys(already)[0], pos);
+    if (readsScratch(stage)) throw terminalReadsScratch(name2, pos);
     env.chain.terminal = stage;
     return [];
   }
   return [stage];
+}
+function readsScratch(v) {
+  if (typeof v === "string") return v.startsWith("$" + JSMQL_NS);
+  if (Array.isArray(v)) return v.some(readsScratch);
+  if (v !== null && typeof v === "object") return Object.values(v).some(readsScratch);
+  return false;
 }
 var STREAM_TARGET = "$$";
 function targetPath(op, env) {
