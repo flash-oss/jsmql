@@ -144,12 +144,7 @@ $$ = candidateProductIds
             pipeline: [
               {
                 $match: {
-                  $expr: {
-                    $gt: [
-                      "$createdAt",
-                      { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } },
-                    ],
-                  },
+                  $expr: { $gt: ["$createdAt", { $dateSubtract: { startDate: "$$NOW", unit: "year", amount: 1 } }] },
                 },
               },
               { $sort: { createdAt: -1 } },
