@@ -14501,8 +14501,8 @@ var PRODUCTIONS = {
     statement: unsupported("'{ return \u2026 }' is not a statement \u2014 see its 'where'.")
   }),
   constantBinding: production({
-    doc: "Binds a name for the statements that follow.",
-    tokens: ["const", "=", "identifier"],
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["const", "=", "identifier", ","],
     spelling: "const x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -14514,8 +14514,8 @@ var PRODUCTIONS = {
     stream: unsupported("'const x = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   mutableBinding: production({
-    doc: "Binds a reassignable name.",
-    tokens: ["let", "=", "identifier"],
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["let", "=", "identifier", ","],
     spelling: "let x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -15737,11 +15737,12 @@ var Parser = class _Parser {
         const close = this.c.expect("RBrace");
         return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
-      const st = this.statement();
+      const run = this.statement();
+      const st = run[0];
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
-      stmts.push(st);
+      stmts.push(...run);
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
       if (!this.c.eat("Semi") && !this.c.is(terminator) && !blockBodied) {
@@ -15750,12 +15751,16 @@ var Parser = class _Parser {
     }
     return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
+  /**
+   * One statement — or the RUN of them a declaration list stands for, since
+   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   */
   statement() {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
     this.refuseAsync();
-    if (this.functionAhead()) return this.functionDecl();
-    if (this.writeAhead()) return this.writes();
-    return this.expression();
+    if (this.functionAhead()) return [this.functionDecl()];
+    if (this.writeAhead()) return [this.writes()];
+    return [this.expression()];
   }
   /** Is a `function` declaration next? The word comes from its row's `word`. */
   functionAhead() {
@@ -15822,17 +15827,47 @@ var Parser = class _Parser {
     const params = this.paramList();
     return this.lambdaOf(params, kw.pos);
   }
-  /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
-  binding() {
+  /**
+   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * wherever `;` separates statements. Each declarator becomes its own
+   * declaration, so N declarators lower exactly as N statements do: `y` reads
+   * the `x` bound before it, and each runtime binding still takes a `$set` of
+   * its own (a `$set` evaluates every field against the stage's INPUT document,
+   * so two bindings sharing one stage could not depend on each other).
+   * See docs/specs/let-bindings.md.
+   */
+  bindings() {
     const kw = this.c.next();
     const kind = kw.type === "Const" ? "const" : "let";
+    const out = [this.declarator(kind, kw.pos)];
+    while (this.c.eat("Comma")) out.push(this.declarator(kind, null));
+    return out;
+  }
+  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  binding() {
+    const kw = this.c.next();
+    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos);
+  }
+  /**
+   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
+   * keyword and every later one at its own name, so an error underlines the
+   * declarator it is about. A function body makes it a FuncDecl.
+   */
+  declarator(kind, kwPos) {
     const name2 = this.c.expect("Ident");
-    this.c.expect("Eq");
+    const pos = kwPos ?? name2.pos;
+    if (!this.c.is("Eq")) {
+      throw new ParseError(
+        `'${kind} ${name2.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind \u2014 write '${kind} ${name2.text} = <expr>'.`,
+        pos
+      );
+    }
+    this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", pos: kw.pos };
+      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", pos };
     }
-    return { type: "LetDecl", name: name2.text, value, kind, pos: kw.pos };
+    return { type: "LetDecl", name: name2.text, value, kind, pos };
   }
   // ── writes ────────────────────────────────────────────────────────────────
   //
