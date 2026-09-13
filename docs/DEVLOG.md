@@ -10,6 +10,40 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(emit): a stage that must be FIRST is refused when its own body needs a hoisted stage
+
+A value in a stage's body can need a stage of its own — `$$.length` a
+`$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and that stage is placed directly
+ahead of the one that reads it. `place` in [statement.ts](src/compiler/emit/statement.ts)
+judged "is this stage first?" against a `first` flag computed BEFORE the body was
+lowered, so the hoist was invisible to it and landed ahead of `$geoNear`, `$documents`,
+`$changeStream`, `$search`, `$vectorSearch`, `$listSearchIndexes`, or a `$text` inside
+the first `$match`. Ten reachable shapes, every one refused by the server — MEASURED,
+"$geoNear was not the first stage in the pipeline after optimization". An HR3 violation:
+the pipeline does not run at all.
+
+There is no placement to find. The materialiser cannot follow the read and nothing may
+precede the stage, so it is a refusal, and `place` now asks the question of the chain's
+PENDING hoist as well as of `first`. The message names the later-statement rewrite, and
+— because `maxDistance: $$.length` has no later-statement form at all, the server
+reading a setting before it has any documents — the constant or `jsmql.compile`
+parameter for a value that IS one of the stage's settings. Where the rule belongs to an
+operator the body holds rather than to the stage, it words it as that instead:
+`$match($text(…)); $match(<the test>);`. Each alternative was compiled and run.
+
+Two details the shape of the fix turns on. `place` reads a hoist that is still pending,
+so it has to run BEFORE the drain — on the array-reducer road the two sat in one
+argument list, `ahead()` was evaluated first and handed `place` an empty one, and
+`$$.reduce((acc, d) => $text(…) && d.n === $$.length ? … )` kept emitting the bad shape.
+And a first-only name the BODY holds is only judged against THIS pipeline: `namesWithin`
+now says whether the name sits in a slot the row files as a sub-pipeline, where the
+stage is first where IT stands and its own `place` call has already said so. Without
+that, `$lookup({ … pipeline: [$geoNear(…)] })` with an outer hoist was refused while its
+`$$$.<coll>.$geoNear(…)` twin compiled — two spellings of one lowering disagreeing, and
+the server runs both. Spec: [emit-pass.md](docs/specs/emit-pass.md) § the placement table.
+
+---
+
 ## 2026-09-13 — fix(lower): the bracket-index dispatch is a `$switch`, which a constant receiver cannot fold
 
 `$.arr[0]` has no provable receiver type, so it lowered to a nested `$cond` over the

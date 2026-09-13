@@ -1152,7 +1152,10 @@ count. `$$.length` is the root count at every depth: a `$lookup` body
 `$lookup.let` capture above, a `$facet` branch and a declared function body read
 the stamped field directly. The one place it cannot reach is a `$$.push(…)`
 (`$unionWith`) body — that stage has no `let`, so the compiler refuses
-the read and names the join form that carries the value.
+the read and names the join form that carries the value. One other position refuses it
+for the same reason, naming the rewrite that works: the body of a stage the server
+requires FIRST (`$geoNear`, `$documents`, `$search`, …), because the `$setWindowFields`
+would have to run ahead of a stage nothing may precede.
 
 ### `$out`: write the pipeline to a collection
 

@@ -480,6 +480,31 @@ export const mustBeFirstStage = (name: string, pos: number, why?: string): Codeg
     pos,
   );
 
+/**
+ * A stage that has to be FIRST whose own body reads a value that materialises a
+ * stage — `$geoNear({ …, query: { n: $$.length } })`. The hoisted stage has to run
+ * before the read and nothing may run before a first-only stage, so there is no
+ * placement at all. MEASURED: mongod answered "$geoNear was not the first stage in
+ * the pipeline after optimization".
+ */
+export const firstStageNeedsHoist = (
+  name: string,
+  hoisted: string,
+  pos: number,
+  /** The stage that HOLDS the name, when the rule belongs to an operator in its body (`$text` in a `$match`). */
+  carrier: string | null,
+): CodegenError => {
+  // The value the reader has to move is named after the stage jsmql had to make for it.
+  const value = hoisted === "$lookup" ? "$$$.<coll>.find({ … }).<field>" : "$$.length";
+  const later = `$match($.<field> === ${value});`;
+  return new CodegenError(
+    carrier === null
+      ? `'${name}' has to be the FIRST stage of the pipeline, and a value in its body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of '${name}', so read that value in a LATER statement — '${name}({ … }); ${later}' — or, where the value IS one of the stage's settings, give it a constant or a 'jsmql.compile' parameter: the server reads a setting before it has any documents.`
+      : `'${name}' only runs in the pipeline's FIRST '${carrier}', and a value in that body needs a '${hoisted}' stage of its own to run BEFORE it. Nothing may stand ahead of that '${carrier}', so keep the '${name}' test on its own and make the other one a later stage: '${carrier}(${name}(…)); ${later}'.`,
+    pos,
+  );
+};
+
 /** Two stages that each have to be last. */
 export const twoTerminalStages = (name: string, already: string, pos: number): CodegenError =>
   new CodegenError(

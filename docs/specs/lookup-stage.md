@@ -145,4 +145,5 @@ Every refusal is a `CodegenError` with the offending node's `pos`, so `validate(
 | `$$$[$.name]` / `$$$[""]` | "named when the pipeline is written" / "names no collection" |
 | `$$$$.<db>.<coll>.filter(p)` | the cross-database refusal above |
 | `$$.push($$$.c.filter(x => x.n > $.m))` — an outer read in a `$unionWith` body | "'$unionWith' has no 'let': its body cannot read the outer document …" ([union-stage.md](union-stage.md)) |
+| `$geoNear({ …, query: { n: $$.length } })` — a first-only stage whose body needs a hoisted stage | "'$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '$setWindowFields' stage of its own to run BEFORE it …" ([emit-pass.md](emit-pass.md) § Placement) |
 | `$.n = $.items.map(x => $$$.c.find({ _id: x.k }))` — a join reading a variable an enclosing callback binds | "'x' is bound by an enclosing callback, and a read of another collection is a '$lookup' STAGE … Make the elements documents first ('$$ = $.<array>;') … or read the collection OUTSIDE the callback ('let <name> = $$$.<coll>.filter(…);')" |

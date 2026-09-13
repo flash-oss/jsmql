@@ -1404,6 +1404,83 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     );
   });
 
+  // A value in the stage's own body may need a STAGE of its own — `$$.length` a
+  // `$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and jsmql places that
+  // stage directly ahead of the one that reads it. Ahead of a first-only stage
+  // there is no room, and the server says so: MEASURED, "$geoNear was not the
+  // first stage in the pipeline after optimization".
+  it("rejects a first-only stage whose body needs a stage of its own ahead of it", () => {
+    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } });')).toThrow(
+      /'\$geoNear' has to be the FIRST stage of the pipeline, and a value in its body needs a '\$setWindowFields' stage of its own to run BEFORE it\..*\$geoNear\(\{ … \}\); \$match\(\$\.<field> === \$\$\.length\);/s,
+    );
+    // the message names the stage jsmql actually had to make, and the value that makes it
+    expect(() =>
+      jsmql('$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$$.p.find({ _id: $.pid }).n } });'),
+    ).toThrow(/needs a '\$lookup' stage of its own.*\$\$\$\.<coll>\.find\(\{ … \}\)\.<field>/s);
+    // a SETTING has no later-statement form at all, so the message names the other way out
+    expect(() => jsmql('$geoNear({ near: [1, 2], distanceField: "d", maxDistance: $$.length });')).toThrow(
+      /give it a constant or a 'jsmql\.compile' parameter/,
+    );
+    // the same for a source stage, and for the array-reducer road, whose `$match` is
+    // placed after its predicate is lowered
+    expect(() => jsmql("$documents([{ n: $$.length }]);")).toThrow(/'\$documents' has to be the FIRST stage/);
+    expect(() =>
+      jsmql('$$.reduce((acc, d) => $text({ $search: "x" }) && d.n === $$.length ? acc.concat(d) : acc, []);'),
+    ).toThrow(/needs a '\$setWindowFields' stage of its own/);
+  });
+
+  // The rule can belong to an OPERATOR the body holds rather than to the stage.
+  it("rejects a first-only OPERATOR whose $match body needs a stage of its own", () => {
+    expect(() => jsmql('$match({ $text: { $search: "x" }, n: $$.length });')).toThrow(
+      /'\$text' only runs in the pipeline's FIRST '\$match'.*\$match\(\$text\(…\)\); \$match\(\$\.<field> === \$\$\.length\);/s,
+    );
+    // the alternative the message names does compile
+    expect(jsmql('$match($text({ $search: "x" })); $match($.n === $$.length);')).toEqual([
+      { $match: { $text: { $search: "x" } } },
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $match: { $expr: { $eq: ["$n", "$__jsmql.length"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  // A first-only stage inside a SUB-pipeline is first where IT stands, and a hoist
+  // on the outer chain leaves that body's order alone — measured, the server runs it.
+  it("keeps a first-only stage in a sub-pipeline when the OUTER chain hoists", () => {
+    expect(
+      jsmql(
+        '$lookup({ from: "p", as: "o", pipeline: [$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } })] });',
+      ),
+    ).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $lookup: {
+          from: "p",
+          as: "o",
+          pipeline: [
+            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_length"] } } } },
+          ],
+          let: { jsmql_s0_length: "$__jsmql.length" },
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+    // the join-chain spelling of the same lowering answers the same document
+    expect(jsmql('$.o = $$$.p.$geoNear({ near: [1, 2], distanceField: "d", query: { n: $$.length } });')).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      {
+        $lookup: {
+          from: "p",
+          let: { jsmql_s0_length: "$__jsmql.length" },
+          pipeline: [
+            { $geoNear: { near: [1, 2], distanceField: "d", query: { $expr: { $eq: ["$n", "$$jsmql_s0_length"] } } } },
+          ],
+          as: "o",
+        },
+      },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   // .validate() carries a meaningful position.
   it("surfaces a structural violation through validate() with a meaningful pos", () => {
     const src = "[ { $facet: { a: [ { $out: 'x' } ] } } ]";

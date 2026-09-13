@@ -44,7 +44,7 @@ import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { elementKindOf, isPresent, kindOf } from "./types.ts";
-import { positionalKeysOf, positionsOf } from "../rows.ts";
+import { bodySlotAt, positionalKeysOf, positionsOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -359,14 +359,26 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS]: documents }] } }];
 }
 
-/** Every registry name that appears as a KEY anywhere inside an emitted stage's body. */
-function namesWithin(body: unknown, out: Set<string> = new Set()): Set<string> {
+/**
+ * Every registry name that appears as a KEY anywhere inside an emitted stage's
+ * body, and whether it sits in a SUB-PIPELINE of it — a body key the row files as
+ * `statement`. A name in a sub-pipeline is a stage of ANOTHER pipeline, whose own
+ * `place` call already judged where it stands; a name outside one is part of this
+ * stage and stands where this stage does.
+ */
+function namesWithin(
+  stage: string,
+  body: unknown,
+  path: BodyPath = [],
+  out: Map<string, boolean> = new Map(),
+): Map<string, boolean> {
+  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement";
   if (Array.isArray(body)) {
-    for (const el of body) namesWithin(el, out);
+    for (const el of body) namesWithin(stage, el, path, out);
   } else if (typeof body === "object" && body !== null) {
     for (const [k, v] of Object.entries(body)) {
-      if (k.startsWith("$") && positionsOf(k) !== undefined) out.add(k);
-      namesWithin(v, out);
+      if (k.startsWith("$") && positionsOf(k) !== undefined && !out.has(k)) out.set(k, nested);
+      namesWithin(stage, v, [...path, k], out);
     }
   }
   return out;
@@ -382,11 +394,19 @@ function namesWithin(body: unknown, out: Set<string> = new Set()): Set<string> {
  */
 function place(name: string, stage: Stage, env: Env, first: boolean, pos: number): Stage[] {
   const only = onlyOf(name);
+  // A value in this stage's own body may have hoisted a stage of its own, which by
+  // then stands AHEAD of it — so the stage is no longer first, whatever `first` said
+  // before the body was lowered. The hoist is on this chain only: a `$$.length` read
+  // inside a sub-pipeline stamps the ROOT pipeline and leaves this one's order alone.
+  const hoisted = env.chain.hoisted[0];
+  const noPlacement = (held: string): never => {
+    throw E.firstStageNeedsHoist(held, Object.keys(hoisted as Stage)[0], pos, held === name ? null : name);
+  };
   // A placement rule can belong to an OPERATOR the stage's body holds rather than to the
   // stage itself: `$text` may only appear in the first `$match` of a pipeline, at any
   // depth of its body. So every registry name the emitted document mentions is judged,
   // not just the stage's own.
-  for (const held of [name, ...namesWithin(stage[name])]) {
+  for (const [held, nested] of [[name, false] as const, ...namesWithin(name, stage[name])]) {
     // The containers a name may not stand in: every sub-pipeline boundary crossed to
     // get here, and — for a name the BODY holds — the stage carrying it. MEASURED,
     // `$where` runs in a `find` filter and is refused in an aggregation `$match` at
@@ -398,11 +418,16 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
         throw E.forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
-    if (held !== name && onlyOf(held).includes("stageFirst") && !first) {
-      throw E.mustBeFirstStage(held, pos, placementOf(held).first);
-    }
+    if (held === name || !onlyOf(held).includes("stageFirst")) continue;
+    if (!first) throw E.mustBeFirstStage(held, pos, placementOf(held).first);
+    // A name inside a SUB-pipeline is first where IT stands; a hoist on this chain
+    // stands ahead of this stage and leaves that body's own order alone.
+    if (hoisted !== undefined && !nested) noPlacement(held);
   }
-  if (only.includes("stageFirst") && !first) throw E.mustBeFirstStage(name, pos, placementOf(name).first);
+  if (only.includes("stageFirst")) {
+    if (!first) throw E.mustBeFirstStage(name, pos, placementOf(name).first);
+    if (hoisted !== undefined) noPlacement(name);
+  }
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw E.twoTerminalStages(name, Object.keys(already)[0], pos);
@@ -1163,14 +1188,15 @@ function arrayReduceStages(call: Extract<Expr, { type: "MethodCall" }>, env: Env
   const parts = arrayReduceParts(call);
   const inputs = stageInputs("reduce", call.args as readonly Expr[], [], env, call, READ);
   const out: Stage[] = [];
+  // `place` reads the hoist still PENDING on the chain, so it runs before the drain:
+  // an argument list would evaluate `ahead()` first and hand `place` an empty one.
   if (parts.test !== null) {
     const test = inputs.predicate(parts.test);
-    out.push(...env.chain.ahead(), ...place("$match", { $match: test }, env, first, call.pos));
+    const stages = place("$match", { $match: test }, env, first, call.pos);
+    out.push(...env.chain.ahead(), ...stages);
   }
   const doc = inputs.document(parts.doc);
-  out.push(
-    ...env.chain.ahead(),
-    ...place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos),
-  );
+  const stages = place("$replaceWith", { $replaceWith: doc }, env, first && out.length === 0, call.pos);
+  out.push(...env.chain.ahead(), ...stages);
   return out;
 }
