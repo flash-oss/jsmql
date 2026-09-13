@@ -77,30 +77,73 @@ one, so `let x;` is refused with the spelling that works —
 ### Declaration lists
 
 A `,` continues the declaration, exactly as JavaScript reads
-`const a = …, b = …;`. Each declarator is its OWN declaration, so the parser
-builds for a list the same nodes it builds for the `;`-separated statements: a
-later declarator reads the ones before it, a foldable declarator still emits no
-stage, and a declarator whose initialiser is an arrow is still a reusable
-function ([reusable-functions.md](reusable-functions.md)). An initialiser is
-required per declarator, and a trailing `,` is refused — JavaScript refuses both.
+`const a = …, b = …;`. Each declarator is its OWN declaration, so a later one
+reads the ones before it, a foldable declarator emits no stage, and a declarator
+whose initialiser is an arrow is a reusable function
+([reusable-functions.md](reusable-functions.md)). An initialiser is required per
+declarator, and a trailing `,` is refused — JavaScript refuses both.
 
-Each runtime binding therefore keeps a `$set` of its own, and that is what lets a
-binding read the one before it: a `$set` evaluates every field against the stage's
-INPUT document, so two bindings sharing a stage could not depend on each other
-(measured on `{ x: 10 }`: one stage answers `b: null`, two answer `b: 11`).
+**The `,` is the merge; the `;` is the stage boundary.** This is the rule
+[update ops](update-filter.md) already follow (`$.a = …, $.b = …` is one `$set`,
+`$.a = …; $.b = …;` is two), and declarations follow it too:
 
 ```js
-let x = $.a, y = x + 1;
-$.c = y;
-// → [{ $set: { "__jsmql.var.x": "$a" } },
-//    { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
-//    { $set: { c: "$__jsmql.var.y" } },
+let a = $.p, b = $.q;                  let a = $.p;
+$match(a > b);                         let b = $.q;
+                                       $match(a > b);
+// → [{ $set: { "__jsmql.var.a": "$p",   // → [{ $set: { "__jsmql.var.a": "$p" } },
+//              "__jsmql.var.b": "$q" } },//    { $set: { "__jsmql.var.b": "$q" } },
+//    { $match: … }, { $unset: … }]        //    { $match: … }, { $unset: … }]
+```
+
+#### Where a shared stage breaks
+
+A `$set` evaluates every field against the stage's INPUT document, so a
+declarator cannot read a sibling bound beside it. Measured on a running mongod
+over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add:
+["$__jsmql.var.a", 1] } } }]` answers `b: null`, where the split form answers
+`b: 11`.
+
+The run therefore opens a new stage exactly at a declarator that reads one bound
+in the same stage, and nowhere else. The test is on the LOWERED value, so a
+dependency that arrives through an inlined function counts too:
+
+```js
+let a = $.x, b = a + 1, c = $.y;
+$.o = b + c;
+// → [{ $set: { "__jsmql.var.a": "$x" } },
+//    { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] },
+//              "__jsmql.var.c": "$y" } },
+//    { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
 //    { $unset: "__jsmql" }]
+```
+
+`c` reads neither `a` nor `b`, so it joins `b` rather than opening a third stage.
+A declarator whose lowering is not a plain `$set` — a `$lookup` join — stands on
+its own. One that emits no stage at all (a folded constant, a function) groups
+with anything.
+
+#### The same rule inside a block
+
+A block-body arrow binds `$let` variables rather than document fields
+([emit-pass.md](emit-pass.md#bindings-between-stages)), and `$let` evaluates every
+var in the ENCLOSING scope — mongod answers `Use of undefined variable: a` for
+`vars: { a: 5, b: { $add: ["$$a", 1] } }`. So the merge and the break are the
+same there, one `$let` per group:
+
+```js
+$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });
+// → { $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } },
+//             in: { $add: ["$$d", "$$e"] } } }
+
+$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });
+// → { $let: { vars: { d: { $multiply: ["$$v", 2] } },
+//             in: { $let: { vars: { e: { $add: ["$$d", 1] } }, in: "$$e" } } } }
 ```
 
 Inside a bracketed `[…]` pipeline the `,` is already the ELEMENT separator, so a
 list is not read there: each element carries its own keyword
-(`[ let a = …, let b = …, … ]`).
+(`[ let a = …, let b = …, … ]`), and each takes a stage of its own.
 
 The declaration's `pos` — the offset every codegen error about the binding
 forwards — is the KEYWORD for the first declarator and the declarator's own NAME

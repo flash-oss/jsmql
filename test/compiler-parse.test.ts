@@ -434,17 +434,23 @@ describe("compiler/parse — one statement loop", () => {
     }
   });
 
-  it("reads a declaration list as the declarations it stands for", () => {
-    // `const a = …, b = …;` is N declarations in JavaScript, and the parser
-    // builds the same N nodes it builds for N statements — so nothing
-    // downstream needs a second shape to lower.
+  it("reads a declaration list as the declarations it stands for, each marked with the `,` that joined it", () => {
+    // `const a = …, b = …;` is N declarations in JavaScript, and the parser builds
+    // the same N nodes it builds for N statements. The ONE thing a list adds is
+    // `joined` on each declarator after the first: the `,` the developer wrote,
+    // which the emitter reads to share a stage. Erase it and the trees are equal.
+    const bare = (src: string): string => JSON.stringify(parse(src), (k, v) => (k === "pos" || k === "joined" ? 0 : v));
     for (const [list, separate] of [
       ["let x = 1, y = 2; $.a = x + y;", "let x = 1; let y = 2; $.a = x + y;"],
       ["const a = $.p, b = a + 1, c = b * 2; $.d = c;", "const a = $.p; const b = a + 1; const c = b * 2; $.d = c;"],
       ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
     ]) {
-      expect(shape(parse(list)), list).toBe(shape(parse(separate)));
+      expect(bare(list), list).toBe(bare(separate));
     }
+    const decls = (src: string): boolean[] =>
+      (parse(src) as { stmts: { joined?: boolean }[] }).stmts.filter((st) => "joined" in st).map((st) => st.joined!);
+    expect(decls("let x = 1, y = 2, z = 3; $.a = x;")).toEqual([false, true, true]);
+    expect(decls("let x = 1; let y = 2; $.a = x;")).toEqual([false, false]);
   });
 
   it("carries a real position on every entry-form refusal", () => {

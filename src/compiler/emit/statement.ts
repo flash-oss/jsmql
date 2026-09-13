@@ -11,7 +11,8 @@
 // See docs/specs/emit-pass.md § the statement target.
 
 import type { Expr, QueryDoc, Stage } from "../../registry/vocabulary.ts";
-import type { LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
+import type { FuncDecl, LetDecl, Pipeline, PipelineStmt, Program, UpdateFilter, UpdateOp } from "../../registry/ast.ts";
+import { readsRef } from "./mql.ts";
 import { setKey } from "../../registry/mql.ts";
 import type { BodyPath } from "../rows.ts";
 import { internalError } from "../../errors.ts";
@@ -190,14 +191,19 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
   // The scope THREADS: a `let` declared in one statement is a name the next one
   // reads, and a stage that replaced the document takes it away again.
   let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
-  for (const stmt of stmts) {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
     // The stage that writes the output is FILED rather than emitted, so the
     // `__jsmql` cleanup precedes it — but it still has to be written last.
     if (env.chain.terminal !== null) {
       throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], (stmt as { pos: number }).pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    const step = statementStages(stmt, scope, first);
+    // `let a = …, b = …;` — the `,` joined the declarators, so they share a stage
+    // the way `$.a = …, $.b = …` does. The run is every declarator the commas carried.
+    const run = declRun(stmts, i);
+    const step = run === null ? statementStages(stmt, scope, first) : declStages(run, scope);
+    if (run !== null) i += run.length - 1;
     // A value that needed a stage of its own placed it ahead of this statement.
     env.chain.flush();
     env.chain.emitted.push(...step.stages);
@@ -232,6 +238,65 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
   }
   const stages = stageStatement(stmt, env, first);
   return { stages, env: afterStages(stages, env) };
+}
+
+/**
+ * The declarators one `,`-joined declaration holds, read at `i`, or null where
+ * no comma joined anything. A declaration list is ONE statement, so it takes one
+ * stage — the same rule `$.a = …, $.b = …` follows.
+ */
+function declRun(stmts: readonly PipelineStmt[], i: number): (LetDecl | FuncDecl)[] | null {
+  const head = stmts[i];
+  if (head.type !== "LetDecl" && head.type !== "FuncDecl") return null;
+  const run = [head as LetDecl | FuncDecl];
+  while (i + run.length < stmts.length) {
+    const next = stmts[i + run.length];
+    if ((next.type !== "LetDecl" && next.type !== "FuncDecl") || !(next as LetDecl | FuncDecl).joined) break;
+    run.push(next as LetDecl | FuncDecl);
+  }
+  return run.length === 1 ? null : run;
+}
+
+/**
+ * `let a = …, b = …;` — the declarators of one declaration, in ONE `$set` where
+ * that says what the source says. A `$set` evaluates every field against the
+ * stage's INPUT document, so a declarator that reads a sibling bound beside it
+ * would read nothing: the run therefore breaks into a new stage exactly there,
+ * and nowhere else. Measured on `{ x: 10 }`, `let a = $.x, b = a + 1;` answers
+ * `b: null` merged and `b: 11` split. See docs/specs/let-bindings.md.
+ */
+function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): Step {
+  const out: Stage[] = [];
+  let fields: Record<string, unknown> | null = null;
+  let slots: string[] = [];
+  let scope = env;
+  const flush = (): void => {
+    if (fields !== null) out.push({ $set: fields });
+    fields = null;
+    slots = [];
+  };
+  for (const decl of run) {
+    const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    scope = step.env;
+    // A declaration that takes no stage of its own (a function, a folded value)
+    // groups with anything; one that takes a shape other than a plain `$set`
+    // (a `$lookup` join) stands alone.
+    const only = step.stages.length === 1 ? (step.stages[0] as Record<string, unknown>) : null;
+    const set = only !== null && Object.keys(only).length === 1 ? (only.$set as Record<string, unknown>) : undefined;
+    if (step.stages.length === 0) continue;
+    if (set === undefined) {
+      flush();
+      out.push(...step.stages);
+      continue;
+    }
+    const slot = Object.keys(set)[0];
+    if (slots.some((s) => readsRef(set[slot], `$${s}`))) flush();
+    fields ??= {};
+    fields[slot] = set[slot];
+    slots.push(slot);
+  }
+  flush();
+  return { stages: out, env: scope };
 }
 
 /**

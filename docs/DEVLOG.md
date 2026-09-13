@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — feat(emit): the `,` in a declaration list shares a stage, as it does for writes
+
+`let a = $.p, b = $.q;` now takes ONE `$set`, and a block's `const d = …, e = …;` one `$let`.
+This completes the declaration list: the earlier entry below gave the list its syntax but kept
+one stage per declarator, which left the `,` with no meaning beyond the keyword it saves. The
+rule now matches the one update ops already follow — `$.a = …, $.b = …` is one `$set` and
+`$.a = …; $.b = …;` is two — so the `,` is the merge and the `;` is the stage boundary for
+every statement in the language, not just for writes.
+
+The merge breaks at exactly one place: a declarator that reads a sibling bound beside it. A
+`$set` evaluates every field against the stage's INPUT document, and a `$let` evaluates every
+var in the ENCLOSING scope (mongod answers `Use of undefined variable: a` for
+`vars: { a: 5, b: { $add: ["$$a", 1] } }`), so a shared slot would read nothing. The test runs
+on the LOWERED value through `readsRef` in [src/compiler/emit/mql.ts](src/compiler/emit/mql.ts),
+not on the source: a dependency that arrives through an inlined reusable function counts the
+same as one written by hand. `let a = $.x, b = a + 1, c = $.y;` therefore breaks once — `c`
+reads neither `a` nor `b`, so it joins `b` rather than opening a third stage. Verified on the
+fixture `mongod` in both roads: the merged, the split and the three-way forms all return
+JavaScript's own answers.
+
+The parser keeps the flat statements it already built and marks each continuation declarator
+`joined` — the `,` the developer wrote, which
+[src/compiler/emit/statement.ts](src/compiler/emit/statement.ts) reads to group a run. Nothing
+else in the compiler learned a new node. This supersedes the earlier entry's claim that N
+declarators lower as N statements: they do where a declarator reads the one before it, and
+share a stage where none does. It also closes the §B row *Multi-binding `let a = …, b = …;`*
+in [docs/DEFERRED.md](docs/DEFERRED.md), which is removed — the row rejected the merge as
+unconditional, and the break makes it conditional and correct.
+
+---
+
 ## 2026-09-13 — feat(parse): `const a = …, b = …;` — a declaration is a LIST of declarators
 
 `const start = new Date("2026-08-01"), end = start.plus(1, "month");` was a parse error at the

@@ -99,24 +99,93 @@ describe("let bindings — declaration lists", () => {
     ]);
   });
 
-  it("lowers exactly as the same declarators written as separate statements", () => {
-    const pairs: readonly [string, string][] = [
-      ["let x = $.a, y = x + 1; $.c = y;", "let x = $.a; let y = x + 1; $.c = y;"],
+  it("shares ONE $set across the declarators a `,` joined", () => {
+    // The `,` is the merge and the `;` is the stage boundary — the rule
+    // `$.a = …, $.b = …` already follows.
+    expect(jsmql("let a = $.p, b = $.q; $match(a > b);")).toEqual([
+      { $set: { "__jsmql.var.a": "$p", "__jsmql.var.b": "$q" } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let a = $.p; let b = $.q; $match(a > b);")).toEqual([
+      { $set: { "__jsmql.var.a": "$p" } },
+      { $set: { "__jsmql.var.b": "$q" } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("breaks the shared $set exactly where a declarator reads a sibling, and nowhere else", () => {
+    // A `$set` evaluates every field against the stage's INPUT document, so `y`
+    // could not read an `x` bound beside it. Measured: merged answers `y: null`.
+    expect(jsmql("let x = $.a, y = x + 1; $.c = y;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { c: "$__jsmql.var.y" } },
+      { $unset: "__jsmql" },
+    ]);
+    // The break is only at the dependency: `c` reads neither `a` nor `b`, so it
+    // joins `b` rather than opening a third stage.
+    expect(jsmql("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("shares ONE $let across the declarators a `,` joined inside a block", () => {
+    // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds:
+    // independent vars share one `$let`, a dependent one opens the next.
+    expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });")).toEqual([
+      {
+        $set: {
+          o: {
+            $map: {
+              input: "$i",
+              as: "v",
+              in: {
+                $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } }, in: { $add: ["$$d", "$$e"] } },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });")).toEqual([
+      {
+        $set: {
+          o: {
+            $map: {
+              input: "$i",
+              as: "v",
+              in: {
+                $let: {
+                  vars: { d: { $multiply: ["$$v", 2] } },
+                  in: { $let: { vars: { e: { $add: ["$$d", 1] } }, in: "$$e" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("gives a declarator that takes no stage the meaning its own statement has", () => {
+    // A folded constant and a function each emit nothing, list or no list.
+    for (const [list, separate] of [
       ["const k = 2, n = k * 3; $.c = $.a * n;", "const k = 2; const n = k * 3; $.c = $.a * n;"],
       ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
-      ["let a = $.p, b = $.q; $match(a > b);", "let a = $.p; let b = $.q; $match(a > b);"],
-      [
-        "$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });",
-        "$.o = $.i.map((v) => { const d = v * 2; const e = d + 1; return e; });",
-      ],
-    ];
-    for (const [list, separate] of pairs) expect(jsmql(list), list).toEqual(jsmql(separate));
+    ]) {
+      expect(jsmql(list), list).toEqual(jsmql(separate));
+    }
+    expect(jsmql("const k = 2, n = k * 3; $.c = $.a * n;")).toEqual([{ $set: { c: { $multiply: ["$a", 6] } } }]);
   });
 
   it("keeps `const` read-only and `let` reassignable per declarator", () => {
     expect(jsmql("let x = $.a, y = $.b; x = y; $.c = x;")).toEqual([
-      { $set: { "__jsmql.var.x": "$a" } },
-      { $set: { "__jsmql.var.y": "$b" } },
+      { $set: { "__jsmql.var.x": "$a", "__jsmql.var.y": "$b" } },
       { $set: { "__jsmql.var.x": "$__jsmql.var.y" } },
       { $set: { c: "$__jsmql.var.x" } },
       { $unset: "__jsmql" },

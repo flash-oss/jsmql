@@ -35,10 +35,12 @@ let_decl       = ("let" | "const") declarator ("," declarator)*
                   bracketed `[...]` pipeline element). A top-level let/const in
                   expression mode is a parse error.
                   A declaration list is N declarations, as in JavaScript: a later
-                  declarator reads the earlier ones, and the parser builds the
-                  same nodes it builds for N `;`-separated statements. Inside a
-                  bracketed `[...]` pipeline the `,` is already the ELEMENT
-                  separator, so each element there carries its own keyword. *)
+                  declarator reads the earlier ones. The `,` is also the MERGE and
+                  the `;` the stage boundary, the rule update_filter follows, so
+                  one list takes one `$set` — broken only at a declarator that
+                  reads a sibling bound in it. Inside a bracketed `[...]` pipeline
+                  the `,` is already the ELEMENT separator, so each element there
+                  carries its own keyword. *)
 
 declarator     = IDENT "=" expression
                (* an initialiser is required: a binding is a value, and MQL has
@@ -178,7 +180,8 @@ lambda_unparen = IDENT "=>" lambda_body                      (* x => expr | x =>
 lambda_paren   = "(" [IDENT ("," IDENT)* ","?] ")" "=>" lambda_body  (* (x, y) => … *)
 lambda_body    = expr_block | expression
 expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let;
-                  a let_decl here may be a list, and each declarator nests one more $let *)
+                  a let_decl here may be a list, and one list shares one $let — the
+                  same merge-and-break rule the $set road follows *)
 function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                (* a function expression — the same node a block-body arrow
                   produces. An optional name is parsed and discarded (unreachable

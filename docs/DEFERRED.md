@@ -153,16 +153,6 @@ The spread is therefore refused wherever the operand is PROVABLY a string: a str
 
 Reconsider only if MongoDB gains a string-to-array operator.
 
-### Merging a declaration list into ONE `$set` stage
-
-`let a = …, b = …;` is [accepted syntax](specs/let-bindings.md#declaration-lists) — a declaration list is N declarations, and JavaScript parity (priority #2) settles the spelling. What stays rejected is emitting those N declarators as a SINGLE `$set` stage.
-
-The single stage is **wrong** wherever a binding reads the one before it. `$set` evaluates every field against the stage's INPUT document, so a sibling added in the same stage is not visible. Measured on a running mongod over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] } } }]` answers `{ a: 10, b: null }`, where the two-stage form answers `{ a: 10, b: 11 }`. Combining is therefore correct only when no binding depends on an earlier one — which would make the emitted stage count depend on whether the author happened to write a dependency, the silent output drift rejected elsewhere in this section.
-
-What a merge would buy is one stage boundary. `let userId = $.userId; let total = $.amount * 1.1; $match(total > 100);` is 182 bytes of compact MQL against the 171 a combined `$set` would hold — eleven bytes, for an output that stops meaning what the source says.
-
-Reconsider only if MongoDB adds a stage whose fields evaluate left to right.
-
 ### `$let`-as-optimisation (peephole)
 
 When a `let` is read in exactly one downstream expression with no reshape between, the compiler *could* emit a single `$let` instead of `$set`/`$unset`. Rejected: the same input producing a different stage shape because of a downstream-reshape heuristic is the surprise jsmql avoids. Users who need `$let` write `$op($let, …)` explicitly.

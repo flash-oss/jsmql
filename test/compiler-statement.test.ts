@@ -262,16 +262,25 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(() => pipeline("const x = $.a; x = $.b;")).toThrow(/is a 'const' and cannot be assigned again/);
   });
 
-  it("reads a declaration list as one declaration per declarator", () => {
-    // `,` continues the list, exactly as JavaScript reads it, and a later
-    // declarator sees the earlier ones. N declarators lower as N statements:
-    // each runtime binding keeps a `$set` of its own, because a `$set` evaluates
-    // every field against the stage's INPUT document.
-    expect(compiled("let x = $.a, y = x + 1; $.c = y;")).toEqual(compiled("let x = $.a; let y = x + 1; $.c = y;"));
-    expect(compiled("let x = $.a, y = x + 1; $.c = y;")).toEqual([
-      { $set: { "__jsmql.var.x": "$a" } },
-      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
-      { $set: { c: "$__jsmql.var.y" } },
+  it("shares one $set across the declarators a `,` joined, and breaks it at a dependency", () => {
+    // The `,` merges and the `;` does not — the rule `$.a = …, $.b = …` follows.
+    expect(compiled("let a = $.x, b = $.y; $.o = a + b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(compiled("let a = $.x; let b = $.y; $.o = a + b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    // A `$set` evaluates every field against the stage's INPUT document, so a
+    // declarator that reads a sibling opens the next stage — and only there.
+    expect(compiled("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
       { $unset: "__jsmql" },
     ]);
     // a foldable declarator emits no stage in a list either

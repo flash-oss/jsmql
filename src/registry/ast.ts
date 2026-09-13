@@ -229,7 +229,15 @@ export type Expr =
 // statements
 // ═════════════════════════════════════════════════════════════════════════════
 
-export type LetDecl = { type: "LetDecl"; name: string; value: Expr; kind: "let" | "const"; pos: number };
+export type LetDecl = {
+  type: "LetDecl";
+  name: string;
+  value: Expr;
+  kind: "let" | "const";
+  /** A `,` joined this declarator to the one before it, so the two share a stage. */
+  joined: boolean;
+  pos: number;
+};
 
 export type FuncDecl = {
   type: "FuncDecl";
@@ -238,6 +246,8 @@ export type FuncDecl = {
   kind: "let" | "const";
   /** Two spellings, one node. `function` is not reserved — it lexes as a name. */
   form: "arrow" | "function";
+  /** A `,` joined this declarator to the one before it. A function holds no stage of its own. */
+  joined: boolean;
   pos: number;
 };
 
