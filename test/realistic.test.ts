@@ -144,12 +144,7 @@ $$ = candidateProductIds
             pipeline: [
               {
                 $match: {
-                  $expr: {
-                    $gt: [
-                      "$createdAt",
-                      { $dateSubtract: { startDate: { $toDate: "$$NOW" }, unit: "year", amount: 1 } },
-                    ],
-                  },
+                  $expr: { $gt: ["$createdAt", { $dateSubtract: { startDate: "$$NOW", unit: "year", amount: 1 } }] },
                 },
               },
               { $sort: { createdAt: -1 } },
@@ -935,7 +930,7 @@ describe("stamp login activity (multi-field update)", { features: ["Update filte
     { kind: "pipeline", usage: "db.users.updateOne({ _id: 123 }, jsmql(...))" },
     () => {
       expect(jsmql(`$.loginCount += 1, $.lastSeenAt = new Date()`)).toEqual([
-        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+        { $set: { loginCount: { $add: ["$loginCount", 1] }, lastSeenAt: "$$NOW" } },
       ]);
     },
   );
@@ -2010,9 +2005,7 @@ describe("days since last login (Math.abs + $dateDiff + ?? + new Date)", { featu
       expect(
         jsmql.expr(`Math.abs($dateDiff({ startDate: $.lastLoginAt, endDate: new Date(), unit: 'day' }) ?? -1)`),
       ).toEqual({
-        $abs: {
-          $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }, -1],
-        },
+        $abs: { $ifNull: [{ $dateDiff: { startDate: "$lastLoginAt", endDate: "$$NOW", unit: "day" } }, -1] },
       });
     },
   );
@@ -2024,7 +2017,7 @@ describe("days since document was created", { features: ["Date and time"] }, () 
     { kind: "expression", usage: "db.documents.aggregate([{ $addFields: { daysSinceCreated: jsmql.expr(...) } }])" },
     () => {
       expect(jsmql.expr(`$dateDiff({ startDate: $.createdAt, endDate: new Date(), unit: "day" })`)).toEqual({
-        $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" },
+        $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" },
       });
     },
   );

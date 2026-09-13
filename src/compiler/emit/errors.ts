@@ -49,6 +49,22 @@ const countWord = (args: Arity): string => {
 };
 
 /**
+ * The sentence for a name whose row has no cell for the position — the position's
+ * own reason, in the words the rows use for it, so a name a row never mentions in
+ * that position is refused like one that does. The name arrives quoted.
+ */
+const NO_CELL: Readonly<Record<Position, (quoted: string, bare: string) => string>> = {
+  value: (q) => `${q} has no value form here — see its 'where'.`,
+  filter: (q, b) => `${q} is a value, not a test. Compare it: '$.<field> === ${b}'.`,
+  stream: (q) => `${q} produces a value, not a stream of documents.`,
+  statement: (q, b) => `${q} computes a value, and a statement writes one. Assign it to a field: '$.<field> = ${b};'`,
+  group: (q) => `${q} is not an accumulator. Inside '$group' write the MongoDB operator.`,
+  window: (q) => `${q} is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+  updateDoc: (q, b) =>
+    `${q} is computed on the server, and a document-form update takes constants. Use the pipeline form ('jsmql.pipeline("$.<field> = ${b}…;")'), which 'updateOne' accepts as well, or pass the value from your code.`,
+};
+
+/**
  * The error for a final `Selected` answer that is not a rule. `spelled` is how
  * the SOURCE wrote the name — `'.trim()'`, `'$abs'`, `'Math.max'` — because one
  * row answers for every spelling and only the caller knows which it saw.
@@ -137,7 +153,7 @@ export function refusalFor(
         pos,
       );
     case "noCell":
-      return new CodegenError(`${spelled} cannot stand in ${position} position.`, pos);
+      return new CodegenError(NO_CELL[position](spelled.startsWith("'") ? spelled : `'${spelled}'`, bare), pos);
     case "rule":
     case "dispatch":
       return new CodegenError(

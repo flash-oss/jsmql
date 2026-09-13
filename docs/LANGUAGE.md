@@ -1382,10 +1382,11 @@ the server.
 **Operator flattening:** Chained `&&`, `||`, `+`, `*`, and `??` operators are flattened into a single MongoDB array instead of nesting:
 ```js
 $.a + $.b + $.c                // → { $add: ["$a", "$b", "$c"] }
-$.x && $.y && $.z              // → { $and: ["$x", "$y", "$z"] }
-$.x || $.y || $.z              // → { $or: ["$x", "$y", "$z"] }
+$.a > 1 && $.b > 2 && $.c > 3  // → { $and: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }   (a Filter merges them into one query document)
+$.a > 1 || $.b > 2 || $.c > 3  // → { $or: [{ $gt: ["$a", 1] }, { $gt: ["$b", 2] }, { $gt: ["$c", 3] }] }
 $.a ?? $.b ?? $.c              // → { $ifNull: ["$a", "$b", "$c"] }
 ```
+Between plain values (`$.x && $.y`) the operators keep JavaScript's meaning — the result is the operand that decided, after the JavaScript truthiness test — see [Truthy and falsy](#truthy-and-falsy).
 
 **Context-sensitive `+`:** If any operand is a string literal or string-producing method, the entire chain becomes `$concat`:
 ```js
@@ -2460,7 +2461,7 @@ new Date(2024, 11, 31, 23, 59, 58, 999)
 new Date(Date.UTC(2024, 1, 15))    // Date(2024-02-15T00:00:00Z)
 
 // Runtime arguments → the aggregation form (value isn't known until query time):
-new Date()                         // { $toDate: "$$NOW" }  (current date/time)
+new Date()                         // "$$NOW"  (current date/time)
 new Date($.dateString)             // { $toDate: "$dateString" }
 new Date($.y, $.m, $.d)            // { $dateFromParts: { year: "$y", month: { $add: ["$m", 1] }, day: "$d" } }
 
@@ -2545,7 +2546,7 @@ $.end.diff($.start, "day")
 // { $dateDiff: { startDate: "$start", endDate: "$end", unit: "day" } }
 
 new Date().diff($._id, "day")      // how old is this document?
-// { $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// { $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" } }
 ```
 
 **The receiver is the later date**, so the result is `receiver − other` — the direction Moment's `.diff`, Luxon's `.diff` and Temporal's `.since` all use. `other` may be a date, a BSON timestamp, or an ObjectId (MongoDB reads the creation time out of the id), and so may the receiver.
@@ -3076,6 +3077,8 @@ jsmql.update("$.cnt += 1")               // → { $inc: { cnt: 1 } }
 jsmql.update("$.score *= 2")             // → { $mul: { score: 2 } }
 jsmql.update("delete $.tmp")             // → { $unset: { tmp: "" } }
 jsmql.update("$.updatedAt = new Date()") // → { $currentDate: { updatedAt: true } }
+// `new Date()` is the server's clock only as the whole write; `$.a = { t: new Date() }`
+// is refused, naming '$.a.t = new Date()' and the pipeline form.
 jsmql.update("delete $.a, delete $.b, $.status = 'done'")
 // → { $unset: { a: "", b: "" }, $set: { status: "done" } }
 
@@ -3101,7 +3104,7 @@ jsmql(`[
 // → [
 //     { $match: { $expr: { $and: [{ $ne: [{ $ifNull: ["$active", null] }, null] },   // `$.active` is the JavaScript truthiness test
 //                                 { $ne: ["$active", false] }, { $ne: ["$active", ""] }, { $ne: ["$active", 0] }] } } },
-//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: { $toDate: "$$NOW" } } },
+//     { $set: { score: { $add: ["$score", 1] }, lastSeenAt: "$$NOW" } },
 //     { $sort: { score: -1 } }
 //   ]
 ```
@@ -3850,7 +3853,7 @@ jsmql(`[{ $match: typeof $.x === "bool" }]`);
 // → "boolean" is refused, with 'bool' named — see "typeof" under Operators
 jsmql(`[{ $match: $.items.length === 3 }]`);
 // → [{ $match: { $expr: { $eq: [{ $switch: { branches: [
-//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: { $ifNull: ["$items", []] } } },
+//       { case: { $in: [{ $type: "$items" }, ["array"]] }, then: { $size: "$items" } },
 //       { case: { $in: [{ $type: "$items" }, ["string", "null", "missing"]] }, then: { $strLenCP: { $ifNull: ["$items", ""] } } }
 //     ], default: "$$REMOVE" } }, 3] } } }]
 //   `.length` vs a natural number is a string-or-array length (works on both, unlike a bare $size).
@@ -4780,7 +4783,7 @@ jsmql.expr("$.createdAt.getFullYear()")
 
 // Days since creation
 jsmql.expr("$dateDiff($.createdAt, new Date(), 'day')")
-// → { $dateDiff: { startDate: "$createdAt", endDate: { $toDate: "$$NOW" }, unit: "day" } }
+// → { $dateDiff: { startDate: "$createdAt", endDate: "$$NOW", unit: "day" } }
 
 // Format date
 jsmql.expr('$dateToString($.createdAt, "%Y-%m-%d")')

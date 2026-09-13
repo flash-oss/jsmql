@@ -390,7 +390,7 @@ describe("let bindings — RHS expression coverage", () => {
 
   it("`new Date()` RHS", () => {
     expect(jsmql("let now = new Date(); $project({ now })")).toEqual([
-      { $set: { "__jsmql.var.now": { $toDate: "$$NOW" } } },
+      { $set: { "__jsmql.var.now": "$$NOW" } },
       { $project: { now: "$__jsmql.var.now" } },
       { $unset: "__jsmql" },
     ]);

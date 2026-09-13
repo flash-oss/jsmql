@@ -62,6 +62,66 @@ A second correlated equality keeps its `let` var and its `$expr` beside the pair
 under `||` is no pair, because that `$match` is an `$or`, not a conjunction. Measured on the
 project's mongod (the live half of `test/compiler-join.test.ts`): every moved shape answers
 the same documents as before.
+## 2026-09-12 — docs: three `// →` claims match the compiler again
+
+`scripts/check-doc-claims.mjs` found three claims the compiler had stopped
+keeping. Two were the present-array change: `[...$.mods, …].includes($.userId)`
+in the README and `$.items.length === 3` in LANGUAGE.md still showed the outer
+`$ifNull` guard the compiler no longer emits where the array is known to be
+there. The third was older: the operator-flattening example claimed
+`$.x && $.y && $.z` is `{ $and: ["$x", "$y", "$z"] }`, which it has not been
+since `&&` between values took JavaScript's meaning — the example now flattens
+predicates, where the `$and` is what the compiler emits, and points at the
+truthiness section for the value case.
+
+## 2026-09-12 — chore(scripts): check-doc-claims reads every claim the prose writes
+
+The checker skipped or misread most of the prose: a claim on the source's own
+line (`$.a + $.b   // → { $add: … }`), a template tag with nothing interpolated,
+a `jsmql.stringify(<call>)` wrapper, a `jsmql.validate(…)` claim, a `\"` inside
+a quoted source, a trailing `// note` on a claim line, a trailing comma before a
+closing bracket, prose after the shape (`db.users.find(…)`, `identical to: …`),
+and a fragment that opens on a key (`let: { … }`). Each is now read as the
+author meant it, or skipped as illustrative. Exact claims checked went from 123
+to 184 and the false disagreements from 15 to 0 — the two that remained were
+real drift and are fixed in the docs commit beside this one.
+
+## 2026-09-12 — fix(errors): a name with no cell for a position is refused in that position's own words
+
+`$.a = { t: new Date() }` on `jsmql.update` said `Date cannot stand in updateDoc
+position` — an internal label, and no way out. `noCell` in `refusalFor`
+(`src/compiler/emit/errors.ts`) now has one sentence per position, in the words
+the rows use for that position: an update document "takes constants" and names the
+pipeline form, `$group` says "is not an accumulator", a statement says "computes a
+value, and a statement writes one". `typeof $.x` in `$group` and every other name
+whose row never mentions the position read the same way as a name whose row does.
+
+The three names a document-form update refuses most — `new Date(…)` inside a
+value, `ObjectId()`, `Date.now()` — get an `updateDoc` cell on their row, because
+only the row knows its own alternative: `new Date()` says that the whole write
+`$.<field> = new Date()` is `$currentDate` and that a nested Date comes from the
+caller's code or the pipeline form. `NameSpec` and `GlobalSpec` gain the optional
+cell for exactly this use; the update document holds constants, so the cell is
+always a refusal.
+
+## 2026-09-12 — fix(emit): `new Date()` is the bare `"$$NOW"`
+
+`new Date()` lowered to `{ $toDate: "$$NOW" }`. `$$NOW` is already a date, so the
+wrap converted a date to a date: 24 characters to say what 7 say, in every
+`$dateDiff`, `$set` and `$expr` comparison that names "now". The row in
+`src/registry/names.ts` now emits `"$$NOW"`, so `$.expiresAt < new Date()` is
+`{ $expr: { $lt: ["$expiresAt", "$$NOW"] } }` and `$.createdAt.diff(new Date(), "day")`
+is `{ $dateDiff: { startDate: "$$NOW", endDate: "$createdAt", unit: "day" } }`.
+Measured on the project's mongod: a `$set` stores a real date, the filter matches an
+expired document, `.diff` counts days and `.getTime()` answers milliseconds.
+
+This supersedes the note in the 2026-08 entry on default-restating lowerings, which
+kept the wrap because a bare `"$$NOW"` in a non-pipeline update document is the
+eight-character string. That road no longer exists: `jsmql.update` lowers
+`$.t = new Date()` to `{ $currentDate: { t: true } }` and refuses `new Date()` in
+every other update-document slot, and `jsmql.expr` refuses a write outright. No
+entry point hands an aggregation expression to a literal-value slot, so the wrap
+guarded nothing. `Date.now()` keeps `{ $toLong: "$$NOW" }` — that conversion is real.
 
 ## 2026-09-12 — feat(stream): the lodash set methods, `.compact()`, `.flat()` and the bare sorts work on an unwound element
 

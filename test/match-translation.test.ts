@@ -273,10 +273,10 @@ describe("$match translation — `new Date(...)` RHS (compile-time fold)", () =>
   });
 
   it("falls back to $expr for `new Date()` (zero-arg — must evaluate at query time)", () => {
-    // `new Date()` codegens to `{ $toDate: "$$NOW" }` and folding it at
-    // compile time would freeze the timestamp. Must stay in $expr.
+    // `new Date()` lowers to the server-side `"$$NOW"`; a compile-time fold
+    // would freeze the timestamp. Must stay in $expr.
     expect(jsmql("[$match($.expiresAt < new Date())]")).toEqual([
-      { $match: { $expr: { $lt: ["$expiresAt", { $toDate: "$$NOW" }] } } },
+      { $match: { $expr: { $lt: ["$expiresAt", "$$NOW"] } } },
     ]);
   });
 

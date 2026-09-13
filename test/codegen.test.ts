@@ -3788,7 +3788,7 @@ describe("date difference (.diff)", () => {
   });
   it("accepts an ObjectId receiver and argument (mongod reads their timestamps)", () => {
     expect(jsmql.expr('new Date().diff($._id, "day")')).toEqual({
-      $dateDiff: { startDate: "$_id", endDate: { $toDate: "$$NOW" }, unit: "day" },
+      $dateDiff: { startDate: "$_id", endDate: "$$NOW", unit: "day" },
     });
   });
   it("rejects the wrong argument count, naming the parameters", () => {
@@ -3917,7 +3917,7 @@ describe("typeof", () => {
 
 describe("new Date()", () => {
   it("no-arg maps to $$NOW", () => {
-    expect(jsmql.expr("new Date()")).toEqual({ $toDate: "$$NOW" });
+    expect(jsmql.expr("new Date()")).toEqual("$$NOW");
   });
   it("with field arg", () => {
     expect(jsmql.expr("new Date($.ts)")).toEqual({ $toDate: "$ts" });

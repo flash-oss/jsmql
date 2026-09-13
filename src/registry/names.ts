@@ -308,6 +308,12 @@ type NameSpec<W extends readonly Position[], O extends On, T extends string = ne
   group: Cell<Lists<W, "group">, Of<O>, GroupIn, OutOf["group"]>;
   /** $setWindowFields.output — a DIFFERENT slot from $group. See MongoSpec.window. */
   window: Cell<Lists<W, "window">, Of<O>, GroupIn, OutOf["window"]>;
+  /**
+   * The update DOCUMENT (`jsmql.update`) holds constants, so no row renders here;
+   * a row states the cell only to say what to write instead of it. Absent, the
+   * position's general sentence answers (`refusalFor` in src/compiler/emit/errors.ts).
+   */
+  updateDoc?: Cell<Lists<W, "updateDoc">, Of<O>, ExprIn, OutOf["updateDoc"]>;
 };
 
 type MongoSpec<
@@ -579,6 +585,12 @@ type GlobalSpec<W extends readonly Position[]> = {
   statement: Cell<Lists<W, "statement">, Family, StageIn, OutOf["statement"]>;
   group: Cell<Lists<W, "group">, Family, GroupIn, OutOf["group"]>;
   window: Cell<Lists<W, "window">, Family, GroupIn, OutOf["window"]>;
+  /**
+   * The update DOCUMENT (`jsmql.update`) holds constants, so no row renders here;
+   * a row states the cell only to say what to write instead of it. Absent, the
+   * position's general sentence answers (`refusalFor` in src/compiler/emit/errors.ts).
+   */
+  updateDoc?: Cell<Lists<W, "updateDoc">, Family, ExprIn, OutOf["updateDoc"]>;
 };
 
 export type RootEntry<W extends readonly Position[]> = RootSpec<W> & { kind: "root" };
@@ -13704,9 +13716,12 @@ export const NAMES = {
     returns: "date",
     where: ["value"],
     filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
+    updateDoc: unsupported(
+      "'new Date(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date(\"2026-01-01\")', or an interpolated '${new Date()}'), or use the pipeline form ('jsmql.pipeline(\"$.a = { t: new Date() };\")'), which 'updateOne' accepts as well.",
+    ),
     expr: {
       byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => ({ $toDate: "$$NOW" }) },
+        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
         // A valid date spelling never reaches this row — the fold makes it a Date value first.
         // A constant the fold could evaluate never reaches this row; one that stays
         // is a string `Date.parse` refuses.
@@ -13738,6 +13753,9 @@ export const NAMES = {
     returns: "objectId",
     where: ["value"],
     filter: because("an ObjectId is a value, not a test. Compare it: '$._id === 0x507f1f77bcf86cd799439011'."),
+    updateDoc: unsupported(
+      "'ObjectId(…)' is computed on the server, and a document-form update takes constants. Pass an id from your code (a '0x507f1f77bcf86cd799439011' literal, or an interpolated '${new ObjectId()}'), or use the pipeline form ('jsmql.pipeline(\"$.id = ObjectId();\")'), which 'updateOne' accepts as well.",
+    ),
     expr: {
       byArgs: {
         none: { args: { sig: "", none: true }, emit: () => ({ $createObjectId: {} }) },
@@ -13879,6 +13897,9 @@ export const NAMES = {
     returns: "unknown",
     where: ["value"],
     filter: viaFallback,
+    updateDoc: unsupported(
+      "'Date.now()' reads the server's clock, and a document-form update takes constants. For the time as a Date, '$.<field> = new Date()' is '$currentDate'; for milliseconds, use the pipeline form ('jsmql.pipeline(\"$.t = Date.now();\")'), which 'updateOne' accepts as well.",
+    ),
     expr: { args: { sig: "", none: true }, emit: () => ({ $toLong: "$$NOW" }) },
     stream: unsupported("'Date.now()' is a value. Use it inside a reshape or a '$set'."),
     statement: unsupported(
