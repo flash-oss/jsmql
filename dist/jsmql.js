@@ -15799,7 +15799,7 @@ var Parser = class _Parser {
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaOf(params, kw.pos);
-    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", pos: kw.pos };
+    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", joined: false, pos: kw.pos };
   }
   /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
   paramList() {
@@ -15856,6 +15856,7 @@ var Parser = class _Parser {
   declarator(kind, kwPos) {
     const name2 = this.c.expect("Ident");
     const pos = kwPos ?? name2.pos;
+    const joined = kwPos === null;
     if (!this.c.is("Eq")) {
       throw new ParseError(
         `'${kind} ${name2.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind \u2014 write '${kind} ${name2.text} = <expr>'.`,
@@ -15865,9 +15866,9 @@ var Parser = class _Parser {
     this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", pos };
+      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", joined, pos };
     }
-    return { type: "LetDecl", name: name2.text, value, kind, pos };
+    return { type: "LetDecl", name: name2.text, value, kind, joined, pos };
   }
   // ── writes ────────────────────────────────────────────────────────────────
   //
@@ -21399,6 +21400,12 @@ var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
 });
+var readsRef = (mql, ref) => {
+  if (typeof mql === "string") return mql === ref || mql.startsWith(`${ref}.`);
+  if (Array.isArray(mql)) return mql.some((m) => readsRef(m, ref));
+  if (mql !== null && typeof mql === "object") return Object.values(mql).some((m) => readsRef(m, ref));
+  return false;
+};
 
 // src/compiler/emit/mode.ts
 var mint = (doc) => doc;
@@ -23075,16 +23082,30 @@ function membership2(node, env) {
 }
 function exprBlock(node, env, ret) {
   const seen = /* @__PURE__ */ new Set();
-  const step = (i, e) => {
+  const step = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
-    const d = node.decls[i];
-    if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
-    seen.add(d.name);
-    const value = lowerValue(d.value, childEnv(e, node, "decls"));
-    const bound = e.param(d.name, kindOf(d.value, e), d.pos);
-    return letOne(bound.as, value, step(i + 1, bound.env));
+    const vars = {};
+    const refs = [];
+    let scope = e;
+    let j = i;
+    let carry = carried;
+    for (; ; ) {
+      const d = node.decls[j];
+      if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
+      const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
+      carry = null;
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      seen.add(d.name);
+      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      vars[bound.as] = value;
+      refs.push(`$$${bound.as}`);
+      scope = bound.env;
+      j++;
+      if (j === node.decls.length || !node.decls[j].joined) break;
+    }
+    return { $let: { vars, in: step(j, scope, null) } };
   };
-  return step(0, env);
+  return step(0, env, null);
 }
 
 // src/compiler/emit/union.ts
@@ -23472,12 +23493,15 @@ function lowerProgram(program, env) {
   }
   const stmts = program.type === "Pipeline" ? program.stmts : [program];
   let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
-  for (const stmt of stmts) {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
     if (env.chain.terminal !== null) {
       throw afterTerminalStage(Object.keys(env.chain.terminal)[0], stmt.pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    const step = statementStages(stmt, scope, first);
+    const run = declRun(stmts, i);
+    const step = run === null ? statementStages(stmt, scope, first) : declStages(run, scope);
+    if (run !== null) i += run.length - 1;
     env.chain.flush();
     env.chain.emitted.push(...step.stages);
     scope = step.env;
@@ -23505,6 +23529,47 @@ function statementStages(stmt, env, first) {
   }
   const stages = stageStatement(stmt, env, first);
   return { stages, env: afterStages(stages, env) };
+}
+function declRun(stmts, i) {
+  const head = stmts[i];
+  if (head.type !== "LetDecl" && head.type !== "FuncDecl") return null;
+  const run = [head];
+  while (i + run.length < stmts.length) {
+    const next = stmts[i + run.length];
+    if (next.type !== "LetDecl" && next.type !== "FuncDecl" || !next.joined) break;
+    run.push(next);
+  }
+  return run.length === 1 ? null : run;
+}
+function declStages(run, env) {
+  const out = [];
+  let fields = null;
+  let slots = [];
+  let scope = env;
+  const flush = () => {
+    if (fields !== null) out.push({ $set: fields });
+    fields = null;
+    slots = [];
+  };
+  for (const decl of run) {
+    const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    scope = step.env;
+    const only = step.stages.length === 1 ? step.stages[0] : null;
+    const set = only !== null && Object.keys(only).length === 1 ? only.$set : void 0;
+    if (step.stages.length === 0) continue;
+    if (set === void 0) {
+      flush();
+      out.push(...step.stages);
+      continue;
+    }
+    const slot = Object.keys(set)[0];
+    if (slots.some((s) => readsRef(set[slot], `$${s}`))) flush();
+    fields ??= {};
+    fields[slot] = set[slot];
+    slots.push(slot);
+  }
+  flush();
+  return { stages: out, env: scope };
 }
 function letStages(decl, env) {
   if (env.scope.declaredHere(decl.name)) throw redeclared(decl.kind, decl.name, decl.pos);
