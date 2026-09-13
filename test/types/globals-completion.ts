@@ -145,13 +145,14 @@ const _q: number = placedAt.quarter();
 const _sameDay: boolean = placedAt.isSame(new Date(), "day");
 const _reset: Date = placedAt.set({ year: 2030, month: 1 }).endOf("day");
 const _iso: Date = placedAt.set({ isoWeekYear: 2030, isoWeek: 5 });
-// `.clamp` is the one dual-receiver method — a number OR a date, result following
-// the receiver.
+// `.clamp` and `.inRange` are the dual-receiver methods — a number OR a date;
+// `.clamp`'s result follows its receiver.
 const _bounded: Date = placedAt.clamp(new Date(), new Date());
+const _inYear: boolean = placedAt.startOf("day").inRange(new Date(), new Date());
 // Native members still resolve to lib.d.ts's own declarations.
 const _epoch: number = placedAt.getTime();
 const _isoStr: string = placedAt.toISOString();
-void [_month, _hours, _q, _sameDay, _reset, _iso, _bounded, _epoch, _isoStr];
+void [_month, _hours, _q, _sameDay, _reset, _iso, _bounded, _inYear, _epoch, _isoStr];
 
 // ── Negatives: completion is real, not `any` ─────────────────────────────────
 // @ts-expect-error — typo on a typed array chain must error.

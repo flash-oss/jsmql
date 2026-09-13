@@ -6431,6 +6431,16 @@ describe("lodash number methods (per-doc value vocabulary)", () => {
       $and: [{ $gte: ["$n", { $min: [5, 10] }] }, { $lt: ["$n", { $max: [5, 10] }] }],
     });
   });
+  it(".inRange() reads a date receiver too — a date tests a range the way a number does", () => {
+    const lo = new Date("2024-01-01T00:00:00.000Z");
+    const hi = new Date("2025-01-01T00:00:00.000Z");
+    expect(jsmql.expr('$.t.startOf("day").inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
+      $and: [
+        { $gte: [{ $dateTrunc: { date: "$t", unit: "day" } }, { $min: [lo, hi] }] },
+        { $lt: [{ $dateTrunc: { date: "$t", unit: "day" } }, { $max: [lo, hi] }] },
+      ],
+    });
+  });
   it(".round([p]) → MongoDB $round (banker's rounding)", () => {
     expect(jsmql.expr("$.n.round()")).toEqual({ $round: ["$n", 0] });
     expect(jsmql.expr("$.n.round(2)")).toEqual({ $round: ["$n", 2] });

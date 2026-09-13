@@ -1110,7 +1110,7 @@ export type Refusal = {
  *
  * Kept distinct from `Refusal` because they mean opposite things to a user, and
  * because counting these is exactly the list of "works but scans" surface —
- * the class the `.inRange` collection-scan belongs to.
+ * the class every remaining collection scan belongs to.
  */
 export type ViaFallback = { fallback: "expr" };
 

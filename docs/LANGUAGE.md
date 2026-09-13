@@ -1349,7 +1349,7 @@ jsmql.expr('$.tags.split(",").toUpperCase()')
 //   Map over the array first, e.g. '.map(x => x.toUpperCase(...))', or take one element with '.at(0)'.
 ```
 
-Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` on a number or a date, and `.toString` / `.getTime` on anything.
+Every method that applies to only one type takes part, in both directions — an array-only method (`.map`, `.findIndex`, `.sort`, `.reduceRight`, …) is refused on a string, number, date or document receiver, and likewise for the string-only, number-only, date-only and document-only methods. Methods that genuinely accept more than one type are never refused: `.slice`, `.concat`, `.indexOf`, `.includes` and `.lastIndexOf` work on a string or an array, `.size` on an array or a document, `.clamp` and `.inRange` on a number or a date, and `.toString` / `.getTime` on anything.
 
 A receiver's type is known whenever it comes from a method with an invariant result (`.trim()` → string, `.startOf()` → date, `.map()` → array, `.some()` → boolean, `.size()` → number), from an operator whose result type is invariant (`$concat(...)` → string, `$dateTrunc(...)` → date, `$year(...)` → number), from `new Date(…)`, from a literal or a template string, or from `.length`.
 
@@ -2380,6 +2380,7 @@ Value-mode methods on a number field (per-doc, not stream methods):
 $.n.clamp(0, 100)      // { $min: [{ $max: ["$n", 0] }, 100] }
 $.n.inRange(10)        // 0 <= n < 10   (checked with $min/$max so negative ranges swap)
 $.n.inRange(5, 10)     // 5 <= n < 10
+$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))   // a date reads the same range test
 $.n.round()            // { $round: ["$n", 0] }   — MongoDB $round is half-to-EVEN (banker's), so round(2.5) === 2
 $.n.round(2)           // { $round: ["$n", 2] }
 $.n.ceil()             // { $ceil: "$n" }
@@ -3828,6 +3829,12 @@ jsmql(`[{ $match: $.tags.includes("a") && $.tags.includes("b") }]`);
 // Regex match — receiver field, regex-literal arg
 jsmql(`[{ $match: $.name.match(/^a/i) }]`);
 // → [{ $match: { name: { $regex: /^a/i } } }]
+
+// Half-open range — field receiver, constant bounds
+jsmql(`[{ $match: $.age.inRange(18, 65) }]`);
+// → [{ $match: { age: { $gte: 18, $lt: 65 } } }]
+//   The bounds order at compile time, so `.inRange(65, 18)` is the same clause.
+//   A bound read at run time keeps the `$min`/`$max` expression under `$expr`.
 
 // Nested-array predicate
 jsmql(`[{ $match: $.items.some(it => it.qty > 5 && it.tag === "vip") }]`);

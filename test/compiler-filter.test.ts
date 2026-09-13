@@ -216,6 +216,22 @@ describe("compiler/emit/filter — methods and operators", () => {
     });
   });
 
+  it("lowers .inRange() on a field against constant bounds to an indexable range on that field", () => {
+    expect(filter("$.age.inRange(18, 65)")).toEqual({ age: { $gte: 18, $lt: 65 } });
+    // the bounds order at COMPILE time, so the swapped spelling is the same clause
+    expect(filter("$.age.inRange(65, 18)")).toEqual({ age: { $gte: 18, $lt: 65 } });
+    expect(filter("$.n.inRange(10)")).toEqual({ n: { $gte: 0, $lt: 10 } });
+    expect(filter("$.a.b.inRange(1, 2)")).toEqual({ "a.b": { $gte: 1, $lt: 2 } });
+    // a date field takes the same clause
+    expect(filter('$.t.inRange(new Date("2024-01-01"), new Date("2025-01-01"))')).toEqual({
+      t: { $gte: new Date("2024-01-01T00:00:00.000Z"), $lt: new Date("2025-01-01T00:00:00.000Z") },
+    });
+    // a bound read at run time cannot order here, and keeps the $min/$max expression
+    expect(filter("$.n.inRange($.lo, $.hi)")).toHaveProperty("$expr");
+    // a number against a date does not compare, so the pair keeps the expression form too
+    expect(filter('$.t.inRange(new Date("2024-01-01"))')).toHaveProperty("$expr");
+  });
+
   it("keeps the expression form where the receiver or the argument is not a path and a constant", () => {
     // The query cell answers null, and the fallback asks the VALUE lowering, which
     // arrives under `$expr`.

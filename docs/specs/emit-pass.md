@@ -245,7 +245,7 @@ keeps MongoDB's own reading.
 A query cell is a row fact: the comparison productions carry `strictEqualityQuery`
 and friends (the type test, the presence test, the modulo test, the null test, a
 field against a constant — in that order), `includes`/`startsWith`/`endsWith`/
-`match`/`some` carry theirs, `$sampleRate` states its one slot `constant`, a
+`match`/`some`/`inRange` carry theirs, `$sampleRate` states its one slot `constant`, a
 `number`, in the range `[0, 1]`. Each answers null where the operands are not a
 path and a constant, and null is the `FilterOut` contract for "wrap my value
 form". A row with no value form (a query-only operator) has nothing to wrap, so
@@ -256,7 +256,16 @@ root, and only its fields are paths — an outer callback's parameter read insid
 a nested one has no query form and takes the `$expr` road; the `$elemMatch`
 boundary records which parameter is its element), `constant` (a value the query
 language compares as written — never an array, a regex or a bigint), `query`,
-`nativeQuery` and `elementQuery`. The
+`nativeQuery` and `elementQuery`.
+
+`.inRange()` accepts its two bounds either way round, and the value form orders
+them at run time with `$min`/`$max`. A query clause has no such operator, so its
+cell orders the pair at COMPILE time — which it can only do when both bounds are
+constants of one kind, two numbers or two dates. Any other pair answers null and
+takes the `$expr` road, so no clause is emitted from a comparison the compiler
+could not actually make.
+
+The
 predicate alias tables (`typeof` spellings, the numeric group) are registry data
 in `vocabulary.ts`, read by both the query and the expression cells.
 

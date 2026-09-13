@@ -799,6 +799,22 @@ const isExprNode = (e: { type: string }): e is Expr => e.type !== "SpreadElement
 const arrayOrEmpty = (recv: unknown): unknown => (Array.isArray(recv) ? recv : { $ifNull: [recv, []] });
 
 /**
+ * Two constant bounds in low-to-high order, or null when the pair does not
+ * compare at compile time.
+ *
+ * `.inRange()` accepts its bounds either way round, and the expression form
+ * orders them at run time with `$min`/`$max`. A query clause has no such
+ * operator, so the ordering has to happen here — which it only can when both
+ * bounds are the same kind of value. A number against a date does not compare,
+ * and the row keeps the expression fallback for it.
+ */
+const orderedBounds = (a: unknown, b: unknown): readonly [unknown, unknown] | null => {
+  if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
+  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  return null;
+};
+
+/**
  * `$nor([p, q])` — `logicalList` where the list is never empty. `$nor` is
  * filter-only, so its cell is TOTAL: the empty case is refused by the row's
  * `nonEmpty` fact before the cell runs, and the null branch is unreachable.
@@ -11351,10 +11367,25 @@ export const NAMES = {
   inRange: name({
     doc: "'.inRange()' — see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    // a number and a date test a range the same way, so one cell serves both families
+    on: ["number", "date"],
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // A field against two constant bounds is a range on one field — the clause an
+    // index answers, and the document a MongoDB developer writes by hand.
+    filter: {
+      args: { sig: "[start, ]end", allowed: [1, 2] },
+      emit: ({ recv, args, pathOf, constant }) => {
+        const path = recv === null ? null : pathOf(recv);
+        if (path === null) return null;
+        const given = args.map(constant);
+        if (given.some((c) => c === null)) return null;
+        const values = given.map((c) => c!.value);
+        const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
+        if (bounds === null) return null;
+        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+      },
+    },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
       emit: ({ recv, args, value }) => {

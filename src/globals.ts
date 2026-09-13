@@ -3262,7 +3262,7 @@ declare global {
     clamp(lower: number, upper: number): number;
     /** Round down to `precision` decimals — `_.floor`. */
     floor(precision?: number): number;
-    /** Whether the number is in the range — `_.inRange`. */
+    /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
     inRange(start: number, end?: number): boolean;
     /** Round to `precision` decimals — `_.round`. */
     round(precision?: number): number;
@@ -3285,6 +3285,8 @@ declare global {
     ): Date;
     /** Render with an MQL format string — `$dateToString`. */
     format(format: string, timezone?: string): string;
+    /** Whether the value is in the half-open range `[start, end)` — `_.inRange`. */
+    inRange(start: Date, end: Date): boolean;
     /** Whether this date's `unit` follows `other`'s. */
     isAfter(
       other: Date,

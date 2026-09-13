@@ -10,6 +10,24 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — feat(registry): `.inRange()` reads a date, and a constant range on a field becomes an indexable clause
+
+`.inRange()` stated `on: "number"`, so a receiver PROVEN to be a date —
+`$.t.startOf("day").inRange(lo, hi)` — was refused, while `$.t.inRange(lo, hi)` compiled only
+because a bare field path has no proven family. A date tests a half-open range exactly the
+way a number does, so the row now states `on: ["number", "date"]`, as `.clamp()` already did.
+
+The row also kept `filter: viaFallback`, so every range test rode in `$expr` and scanned the
+collection. It now carries a query cell: a field receiver against two constant bounds emits
+`{ age: { $gte: 18, $lt: 65 } }` — the document a MongoDB developer writes by hand, and one
+`explain` on the fixture confirms the plan is an `IXSCAN` with bounds `[18, 65)`. The method
+accepts its bounds either way round and the value form orders them at run time with
+`$min`/`$max`; a query clause has no such operator, so `orderedBounds`
+(`src/registry/names.ts`) orders the pair at compile time. That is only possible for two
+numbers or two dates, so any other pair — a bound read at run time, a number against a date —
+answers null and keeps the expression road. Both roads were run against the fixture on the
+same documents and select the same rows.
+
 ## 2026-09-13 — docs(examples): the flagship example keeps co-purchases from the last year, and drops its redundant final cut
 
 The recommended-products example (`test/realistic.test.ts`, the playground's default,
