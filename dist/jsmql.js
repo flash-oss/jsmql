@@ -14509,8 +14509,8 @@ var PRODUCTIONS = {
     statement: unsupported("'{ return \u2026 }' is not a statement \u2014 see its 'where'.")
   }),
   constantBinding: production({
-    doc: "Binds a name for the statements that follow.",
-    tokens: ["const", "=", "identifier"],
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["const", "=", "identifier", ","],
     spelling: "const x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -14522,8 +14522,8 @@ var PRODUCTIONS = {
     stream: unsupported("'const x = \u2026' is not a link in a '$$ = $$\u2026' chain \u2014 see its 'where'.")
   }),
   mutableBinding: production({
-    doc: "Binds a reassignable name.",
-    tokens: ["let", "=", "identifier"],
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["let", "=", "identifier", ","],
     spelling: "let x = \u2026",
     becomes: "LetDecl",
     on: "any",
@@ -15748,11 +15748,12 @@ var Parser = class _Parser {
         const close = this.c.expect("RBrace");
         return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
-      const st = this.statement();
+      const run = this.statement();
+      const st = run[0];
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
-      stmts.push(st);
+      stmts.push(...run);
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
       if (this.c.is("Semi")) sawSemi = true;
       if (!this.c.eat("Semi") && !this.c.is(terminator) && !blockBodied) {
@@ -15761,12 +15762,16 @@ var Parser = class _Parser {
     }
     return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
+  /**
+   * One statement — or the RUN of them a declaration list stands for, since
+   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   */
   statement() {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+    if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
     this.refuseAsync();
-    if (this.functionAhead()) return this.functionDecl();
-    if (this.writeAhead()) return this.writes();
-    return this.expression();
+    if (this.functionAhead()) return [this.functionDecl()];
+    if (this.writeAhead()) return [this.writes()];
+    return [this.expression()];
   }
   /** Is a `function` declaration next? The word comes from its row's `word`. */
   functionAhead() {
@@ -15805,7 +15810,7 @@ var Parser = class _Parser {
     const name2 = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaOf(params, kw.pos);
-    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", pos: kw.pos };
+    return { type: "FuncDecl", name: name2.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
   /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
   paramList() {
@@ -15833,17 +15838,46 @@ var Parser = class _Parser {
     const params = this.paramList();
     return this.lambdaOf(params, kw.pos);
   }
-  /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
-  binding() {
+  /**
+   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * wherever `;` separates statements. Each declarator becomes its own
+   * declaration and reads the ones before it. The KEYWORD's offset marks them as
+   * ONE declaration, which is what lets the emit phase give them one stage — and
+   * what stops a folded-away neighbour from bridging a `;` the developer wrote.
+   * See docs/specs/let-bindings.md.
+   */
+  bindings() {
     const kw = this.c.next();
     const kind = kw.type === "Const" ? "const" : "let";
+    const out = [this.declarator(kind, kw.pos, kw.pos)];
+    while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
+    return out;
+  }
+  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  binding() {
+    const kw = this.c.next();
+    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
+  }
+  /**
+   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
+   * keyword and every later one at its own name, so an error underlines the
+   * declarator it is about. A function body makes it a FuncDecl.
+   */
+  declarator(kind, kwPos, group) {
     const name2 = this.c.expect("Ident");
-    this.c.expect("Eq");
+    const pos = kwPos ?? name2.pos;
+    if (!this.c.is("Eq")) {
+      throw new ParseError(
+        `'${kind} ${name2.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind \u2014 write '${kind} ${name2.text} = <expr>'.`,
+        pos
+      );
+    }
+    this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", pos: kw.pos };
+      return { type: "FuncDecl", name: name2.text, lambda: value, kind, form: "arrow", group, pos };
     }
-    return { type: "LetDecl", name: name2.text, value, kind, pos: kw.pos };
+    return { type: "LetDecl", name: name2.text, value, kind, group, pos };
   }
   // ── writes ────────────────────────────────────────────────────────────────
   //
@@ -19983,14 +20017,21 @@ var Chain = class {
    * lowers the body twice, and the first attempt's hoists are discarded — so the
    * stamps it took have to go with them, or the second attempt reuses a field the
    * discarded stage was going to write.
+   *
+   * The scratch counter goes back too. A slot the discarded attempt minted is named
+   * only by the stages that went with it, so holding the number would leave a gap —
+   * and the gap is VISIBLE: `let a = …, b = <a foreign read>;` and the same program
+   * spelled with a `;` would name the same slot `__jsmql.tmp.1` and `__jsmql.tmp.0`.
+   * One lowering, one output.
    */
   mark() {
-    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped) };
+    return { hoisted: this.hoisted.length, stamped: new Set(this.stamped), slots: this.slots };
   }
-  /** Undo everything hoisted and stamped since `mark`. */
+  /** Undo everything hoisted, stamped and minted since `mark`. */
   rewind(m) {
     this.hoisted.length = m.hoisted;
     this.stamped = new Set(m.stamped);
+    this.slots = m.slots;
   }
   /** Place `stages` ahead of the stages of the lowering that hoisted them; answer the reference that reads `reads`. */
   hoist(stages, reads2) {
@@ -21430,6 +21471,12 @@ var matchExpr = (test) => ({ $expr: test });
 var letOne = (as, value, body) => ({
   $let: { vars: { [as]: value }, in: body }
 });
+var readsRef = (mql, ref) => {
+  if (typeof mql === "string") return mql === ref || mql.startsWith(`${ref}.`);
+  if (Array.isArray(mql)) return mql.some((m) => readsRef(m, ref));
+  if (mql !== null && typeof mql === "object") return Object.values(mql).some((m) => readsRef(m, ref));
+  return false;
+};
 
 // src/compiler/emit/mode.ts
 var mint = (doc) => doc;
@@ -23115,16 +23162,30 @@ function membership2(node, env) {
 }
 function exprBlock(node, env, ret) {
   const seen = /* @__PURE__ */ new Set();
-  const step = (i, e) => {
+  const step = (i, e, carried) => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
-    const d = node.decls[i];
-    if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
-    seen.add(d.name);
-    const value = lowerValue(d.value, childEnv(e, node, "decls"));
-    const bound = e.param(d.name, kindOf(d.value, e), d.pos);
-    return letOne(bound.as, value, step(i + 1, bound.env));
+    const vars = {};
+    const refs = [];
+    let scope = e;
+    let j = i;
+    let carry = carried;
+    for (; ; ) {
+      const d = node.decls[j];
+      if (seen.has(d.name)) throw redeclared(d.kind, d.name, d.pos);
+      const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
+      carry = null;
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      seen.add(d.name);
+      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      vars[bound.as] = value;
+      refs.push(`$$${bound.as}`);
+      scope = bound.env;
+      j++;
+      if (j === node.decls.length || node.decls[j].group !== d.group) break;
+    }
+    return { $let: { vars, in: step(j, scope, null) } };
   };
-  return step(0, env);
+  return step(0, env, null);
 }
 
 // src/compiler/emit/union.ts
@@ -23518,12 +23579,16 @@ function lowerProgram(program, env) {
   }
   const stmts = program.type === "Pipeline" ? program.stmts : [program];
   let scope = program.type === "Pipeline" ? childEnv(env, program, "stmts") : env;
-  for (const stmt of stmts) {
+  for (let i = 0; i < stmts.length; i++) {
+    const stmt = stmts[i];
     if (env.chain.terminal !== null) {
       throw afterTerminalStage(Object.keys(env.chain.terminal)[0], stmt.pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    const step = statementStages(stmt, scope, first);
+    const run = declRun(stmts, i);
+    const taken = run === null ? null : declStages(run, scope);
+    const step = taken ?? statementStages(stmt, scope, first);
+    if (taken !== null) i += taken.consumed - 1;
     env.chain.flush();
     env.chain.emitted.push(...step.stages);
     scope = step.env;
@@ -23551,6 +23616,60 @@ function statementStages(stmt, env, first) {
   }
   const stages = stageStatement(stmt, env, first);
   return { stages, env: afterStages(stages, env) };
+}
+function declRun(stmts, i) {
+  const head = stmts[i];
+  if (head.type !== "LetDecl" && head.type !== "FuncDecl") return null;
+  const group = head.group;
+  const run = [head];
+  while (i + run.length < stmts.length) {
+    const next = stmts[i + run.length];
+    if (next.type !== "LetDecl" && next.type !== "FuncDecl") break;
+    if (next.group !== group) break;
+    run.push(next);
+  }
+  return run.length === 1 ? null : run;
+}
+function declStages(run, env) {
+  const out = [];
+  let fields = null;
+  let slots = [];
+  let scope = env;
+  let consumed = 0;
+  const flush = () => {
+    if (fields !== null) out.push({ $set: fields });
+    fields = null;
+    slots = [];
+  };
+  for (const decl of run) {
+    const mark = env.chain.mark();
+    const rootMark = env.rootChain.mark();
+    const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
+    if (consumed > 0 && hoisted) {
+      env.chain.rewind(mark);
+      env.rootChain.rewind(rootMark);
+      break;
+    }
+    consumed++;
+    scope = step.env;
+    const only = step.stages.length === 1 ? step.stages[0] : null;
+    const set = only !== null && Object.keys(only).length === 1 ? only.$set : void 0;
+    if (step.stages.length === 0) continue;
+    if (set === void 0) {
+      flush();
+      out.push(...step.stages);
+      continue;
+    }
+    const slot = Object.keys(set)[0];
+    if (slots.some((sl) => readsRef(set[slot], `$${sl}`))) flush();
+    fields ??= {};
+    fields[slot] = set[slot];
+    slots.push(slot);
+  }
+  if (consumed < 2) return null;
+  flush();
+  return { stages: out, env: scope, consumed };
 }
 function letStages(decl, env) {
   if (env.scope.declaredHere(decl.name)) throw redeclared(decl.kind, decl.name, decl.pos);

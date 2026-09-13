@@ -88,6 +88,168 @@ describe("let bindings — basic shape", () => {
   });
 });
 
+describe("let bindings — declaration lists", () => {
+  it("takes any number of declarators, and a later one reads the earlier ones", () => {
+    expect(jsmql("let x = $.a, y = x + 1, z = y * 2; $.c = z;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { "__jsmql.var.z": { $multiply: ["$__jsmql.var.y", 2] } } },
+      { $set: { c: "$__jsmql.var.z" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("shares ONE $set across the declarators a `,` joined", () => {
+    // The `,` is the merge and the `;` is the stage boundary — the rule
+    // `$.a = …, $.b = …` already follows.
+    expect(jsmql("let a = $.p, b = $.q; $match(a > b);")).toEqual([
+      { $set: { "__jsmql.var.a": "$p", "__jsmql.var.b": "$q" } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let a = $.p; let b = $.q; $match(a > b);")).toEqual([
+      { $set: { "__jsmql.var.a": "$p" } },
+      { $set: { "__jsmql.var.b": "$q" } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("breaks the shared $set exactly where a declarator reads a sibling, and nowhere else", () => {
+    // A `$set` evaluates every field against the stage's INPUT document, so `y`
+    // could not read an `x` bound beside it. Measured: merged answers `y: null`.
+    expect(jsmql("let x = $.a, y = x + 1; $.c = y;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { c: "$__jsmql.var.y" } },
+      { $unset: "__jsmql" },
+    ]);
+    // The break is only at the dependency: `c` reads neither `a` nor `b`, so it
+    // joins `b` rather than opening a third stage.
+    expect(jsmql("let a = $.x, b = a + 1, c = $.y; $.o = b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("keeps a declarator that hoists a $lookup OUT of the shared $set", () => {
+    // A foreign read in a value position puts its `$lookup` AHEAD of the statement
+    // it belongs to. Shared with the sibling it correlates on, that `$lookup` would
+    // run BEFORE the `$set` that binds the sibling and would join on a missing
+    // field — silently wrong data, and a server rejection when two joins chain.
+    // Such a declarator therefore ends the run and takes a stage of its own.
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.0" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.0" } } },
+      { $set: { o: "$__jsmql.var.b" } },
+      { $unset: "__jsmql" },
+    ]);
+    // One lowering, one output: the `;` spelling of this program is the SAME
+    // document, scratch-slot numbers included. The taken-back lowering gives its
+    // slot back, so the two spellings cannot drift to `tmp.0` and `tmp.1`.
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual(
+      jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).length; $.o = b;"),
+    );
+  });
+
+  it("does not let a folded-away declarator bridge a `;` the developer wrote", () => {
+    // `b` folds to a constant and leaves the statement list, so `a` and `c` become
+    // neighbours. They belong to DIFFERENT declarations — the developer put a `;`
+    // between them — so they must not share a stage. Membership is the keyword's
+    // offset, not adjacency.
+    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual(
+      jsmql("let a = $.x; let b = 5; let c = $.y; $.o = a + b + c;"),
+    );
+  });
+
+  it("shares ONE $let across the declarators a `,` joined inside a block", () => {
+    // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds:
+    // independent vars share one `$let`, a dependent one opens the next.
+    expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = v + 1; return d + e; });")).toEqual([
+      {
+        $set: {
+          o: {
+            $map: {
+              input: "$i",
+              as: "v",
+              in: {
+                $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } }, in: { $add: ["$$d", "$$e"] } },
+              },
+            },
+          },
+        },
+      },
+    ]);
+    expect(jsmql("$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });")).toEqual([
+      {
+        $set: {
+          o: {
+            $map: {
+              input: "$i",
+              as: "v",
+              in: {
+                $let: {
+                  vars: { d: { $multiply: ["$$v", 2] } },
+                  in: { $let: { vars: { e: { $add: ["$$d", 1] } }, in: "$$e" } },
+                },
+              },
+            },
+          },
+        },
+      },
+    ]);
+  });
+
+  it("gives a declarator that takes no stage the meaning its own statement has", () => {
+    // A folded constant and a function each emit nothing, list or no list.
+    for (const [list, separate] of [
+      ["const k = 2, n = k * 3; $.c = $.a * n;", "const k = 2; const n = k * 3; $.c = $.a * n;"],
+      ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
+    ]) {
+      expect(jsmql(list), list).toEqual(jsmql(separate));
+    }
+    expect(jsmql("const k = 2, n = k * 3; $.c = $.a * n;")).toEqual([{ $set: { c: { $multiply: ["$a", 6] } } }]);
+  });
+
+  it("keeps `const` read-only and `let` reassignable per declarator", () => {
+    expect(jsmql("let x = $.a, y = $.b; x = y; $.c = x;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a", "__jsmql.var.y": "$b" } },
+      { $set: { "__jsmql.var.x": "$__jsmql.var.y" } },
+      { $set: { c: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(() => jsmql("const x = $.a, y = $.b; y = x;")).toThrow(/is a 'const' and cannot be assigned again/);
+  });
+
+  it("catches a duplicate name inside one list", () => {
+    expect(() => jsmql("let x = $.a, x = $.b; $.c = x;")).toThrow(/already declared/);
+  });
+
+  it("rejects a trailing comma, as JavaScript does", () => {
+    expect(() => jsmql("const a = 1, b = 2,; $.x = a;")).toThrow("Expected identifier but got ';'");
+  });
+
+  it("leaves the bracketed pipeline's `,` as its element separator", () => {
+    // Inside `[…]` the comma already separates statements, so each element
+    // carries its own keyword.
+    expect(jsmql("[let x = $.a, let y = x + 1, $match(y > 5)]")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.y", 5] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 describe("let bindings — bracketed pipeline form", () => {
   it("works as the first element of a [...] pipeline", () => {
     expect(jsmql("[let x = $.a + 1, $match(x > 5)]")).toEqual([
@@ -282,8 +444,14 @@ describe("let bindings — parser errors", () => {
     expect(() => jsmql("let = 5;")).toThrow("Expected identifier but got '=' at position 4");
   });
 
-  it("rejects `let x` with no `=`", () => {
-    expect(() => jsmql("let x 5;")).toThrow("Expected '=' but got '5' at position 6");
+  it("rejects a declarator that binds no value, and names the spelling that does", () => {
+    const named = "'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'let x = <expr>'.";
+    expect(() => jsmql("let x 5;")).toThrow(named);
+    expect(() => jsmql("let x;")).toThrow(named);
+    // A later declarator is refused the same way, at its OWN name.
+    expect(() => jsmql("let a = 1, x;")).toThrow(
+      "'let x' binds no value at position 11. jsmql has no 'undefined' to bind — write 'let x = <expr>'.",
+    );
   });
 
   it("rejects `let x =` with no expression", () => {
@@ -894,7 +1062,9 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 
   it("parser errors echo the `const` keyword the user actually wrote", () => {
     expect(() => jsmql("const = 5;")).toThrow("Expected identifier but got '=' at position 6");
-    expect(() => jsmql("const x 5;")).toThrow("Expected '=' but got '5' at position 8");
+    expect(() => jsmql("const x 5;")).toThrow(
+      "'const x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'const x = <expr>'.",
+    );
   });
 
   it("`const` is still usable as a field name and object key", () => {

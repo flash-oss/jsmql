@@ -3983,6 +3983,57 @@ Lowers to:
 ]
 ```
 
+A `,` continues the declaration, exactly as it does in JavaScript, and a later declarator reads the ones before it:
+
+```js
+jsmql`
+  const start = new Date("2026-08-01"), end = start.plus(1, "month");
+  $.t.inRange(start, end);
+`;
+// → { t: { $gte: new Date("2026-08-01T00:00:00.000Z"),
+//          $lt:  new Date("2026-09-01T00:00:00.000Z") } }
+```
+
+**The `,` shares a stage; the `;` starts a new one.** This is the same rule writes follow (`$.a = 1, $.b = 2` is one `$set`, `$.a = 1; $.b = 2;` is two):
+
+```js
+jsmql`
+  let a = $.p, b = $.q;
+  $match(a > b);
+`;
+// → [
+//   { $set: { "__jsmql.var.a": "$p", "__jsmql.var.b": "$q" } },
+//   { $match: { $expr: { $gt: ["$__jsmql.var.a", "$__jsmql.var.b"] } } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+A declarator that reads one bound beside it starts the next stage, because a `$set` reads every field from the document that **enters** it. Nothing else breaks the run — below, `c` reads neither `a` nor `b`, so it joins `b`:
+
+```js
+jsmql`
+  let a = $.x, b = a + 1, c = $.y;
+  $.o = b + c;
+`;
+// → [
+//   { $set: { "__jsmql.var.a": "$x" } },
+//   { $set: { "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] }, "__jsmql.var.c": "$y" } },
+//   { $set: { o: { $add: ["$__jsmql.var.b", "$__jsmql.var.c"] } } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+Both declarators of the date example above are constants, so both fold at compile time and neither emits a stage at all.
+
+A declarator whose value is an arrow is a [reusable function](#reusable-functions), in a list as anywhere else. Every declarator needs a value — there is no `undefined` in MQL to bind, so `let x;` is an error naming `let x = <expr>`.
+
+Inside a block-body arrow the same rule binds `$let` variables instead of document fields, because `$let` also reads every variable from the enclosing scope:
+
+```js
+jsmql.expr`$.i.map((v) => { const d = v * 2, e = v + 1; return d + e; })`;
+// → { $map: { input: "$i", as: "v", in: { $let: { vars: { d: { $multiply: ["$$v", 2] }, e: { $add: ["$$v", 1] } }, in: { $add: ["$$d", "$$e"] } } } } }
+```
+
 Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 
 - Each derived value sits on its own line — natural spot for a one-line `// …` comment.

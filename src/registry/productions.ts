@@ -1325,8 +1325,8 @@ export const PRODUCTIONS = {
   }),
 
   constantBinding: production({
-    doc: "Binds a name for the statements that follow.",
-    tokens: ["const", "=", "identifier"],
+    doc: "Binds a name for the statements that follow. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["const", "=", "identifier", ","],
     spelling: "const x = …",
     becomes: "LetDecl",
     on: "any",
@@ -1339,8 +1339,8 @@ export const PRODUCTIONS = {
   }),
 
   mutableBinding: production({
-    doc: "Binds a reassignable name.",
-    tokens: ["let", "=", "identifier"],
+    doc: "Binds a reassignable name. A `,` continues the list, and each declarator is its own declaration.",
+    tokens: ["let", "=", "identifier", ","],
     spelling: "let x = …",
     becomes: "LetDecl",
     on: "any",

@@ -153,16 +153,6 @@ The spread is therefore refused wherever the operand is PROVABLY a string: a str
 
 Reconsider only if MongoDB gains a string-to-array operator.
 
-### Multi-binding `let a = …, b = …;`
-
-One `let` statement declares one binding. The idea was a comma-separated list inside one statement, emitted as a single `$set` stage. Rejected on two counts, both measured.
-
-The single stage is **wrong** wherever a binding reads the one before it. `$set` evaluates every field against the stage's INPUT document, so a sibling added in the same stage is not visible. Measured on a running mongod over `{ x: 10 }`: `[{ $set: { "__jsmql.var.a": "$x", "__jsmql.var.b": { $add: ["$__jsmql.var.a", 1] } } }]` answers `{ a: 10, b: null }`, where the two-stage form answers `{ a: 10, b: 11 }`. Combining is therefore correct only when no binding depends on an earlier one — which would make the emitted stage count depend on whether the author happened to write a dependency, the silent output drift rejected elsewhere in this section.
-
-What is left is one stage boundary. `let userId = $.userId; let total = $.amount * 1.1; $match(total > 100);` is 182 bytes of compact MQL against the 171 a combined `$set` would hold — eleven bytes, for a third spelling of something two already say: the statement form above, and the bracketed pipeline `[ let a = …, let b = …, … ]`, whose comma already separates statements and which emits the identical pipeline.
-
-Reconsider only if MongoDB adds a stage whose fields evaluate left to right.
-
 ### `$let`-as-optimisation (peephole)
 
 When a `let` is read in exactly one downstream expression with no reshape between, the compiler *could* emit a single `$let` instead of `$set`/`$unset`. Rejected: the same input producing a different stage shape because of a downstream-reshape heuristic is the surprise jsmql avoids. Users who need `$let` write `$op($let, …)` explicitly.

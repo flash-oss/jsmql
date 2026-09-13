@@ -45,3 +45,18 @@ export const matchExpr = (test: Truth): QueryDoc => ({ $expr: test });
 export const letOne = (as: MongoVar, value: unknown, body: unknown): unknown => ({
   $let: { vars: { [as]: value }, in: body },
 });
+
+/**
+ * Does this lowered MQL read `ref` — a field path (`"$__jsmql.var.a"`) or a
+ * variable (`"$$a"`)? A declarator may share a stage with the ones beside it
+ * ONLY when it reads none of them: a `$set` evaluates every field against the
+ * stage's INPUT document, and `$let` evaluates every var in the ENCLOSING scope,
+ * so a sibling bound alongside is not there yet. Matches the whole reference or
+ * a field under it, never a longer name that merely starts the same way.
+ */
+export const readsRef = (mql: unknown, ref: string): boolean => {
+  if (typeof mql === "string") return mql === ref || mql.startsWith(`${ref}.`);
+  if (Array.isArray(mql)) return mql.some((m) => readsRef(m, ref));
+  if (mql !== null && typeof mql === "object") return Object.values(mql).some((m) => readsRef(m, ref));
+  return false;
+};

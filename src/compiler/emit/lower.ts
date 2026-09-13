@@ -44,7 +44,7 @@ import * as E from "./errors.ts";
 import { readsAnotherCollection } from "./join.ts";
 import { onOwnStream, childEnv, exprInputs, type Reader } from "./inputs.ts";
 import { and, asValue, jsTruthy, not, or, truthOf } from "./mode.ts";
-import { cond, letOne, switchOn } from "./mql.ts";
+import { cond, letOne, readsRef, switchOn } from "./mql.ts";
 import { positionOf } from "./consult.ts";
 import { select, shapeOf, type Receiver, type Selected } from "./select.ts";
 import { familyOfKind, isPresent, kindOf, sourceFamily } from "./types.ts";
@@ -1086,19 +1086,47 @@ function membership(node: Extract<Expr, { type: "BinaryExpr" }>, env: Env): unkn
 
 // ── blocks ───────────────────────────────────────────────────────────────────
 
-/** `{ const y = …; return … }`: one `$let` per declaration the fold could not inline, innermost last. */
+/**
+ * `{ const y = …; return … }`: one `$let` per declaration the fold could not
+ * inline, innermost last — and ONE `$let` for the declarators a `,` joined, the
+ * same rule the `$set` road follows. `$let` evaluates every var in the ENCLOSING
+ * scope (mongod answers "Use of undefined variable" for a var that reads a
+ * sibling), so a joined declarator that reads one bound beside it opens a new
+ * `$let` there. See docs/specs/let-bindings.md.
+ */
 function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e: Expr, env: Env) => unknown): unknown {
   const seen = new Set<string>();
-  const step = (i: number, e: Env): unknown => {
+  // Each declarator lowers ONCE. One that breaks its group is already lowered, so
+  // it rides to the next `$let` rather than through `lowerValue` a second time —
+  // a second call would mint a second compiler name for the same value.
+  const step = (i: number, e: Env, carried: { value: unknown } | null): unknown => {
     if (i === node.decls.length) return ret(node.ret, childEnv(e, node, "ret"));
-    const d = node.decls[i];
-    if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
-    seen.add(d.name);
-    const value = lowerValue(d.value, childEnv(e, node, "decls"));
-    const bound = e.param(d.name, kindOf(d.value, e), d.pos);
-    return letOne(bound.as as MongoVar, value, step(i + 1, bound.env));
+    const vars: Record<string, unknown> = {};
+    const refs: string[] = [];
+    let scope = e;
+    let j = i;
+    let carry = carried;
+    // Every declarator this `$let` holds: the head, then each one the `,` joined
+    // that reads none of the vars already in it.
+    for (;;) {
+      const d = node.decls[j];
+      if (seen.has(d.name)) throw E.redeclared(d.kind, d.name, d.pos);
+      const value = carry !== null ? carry.value : lowerValue(d.value, childEnv(scope, node, "decls"));
+      carry = null;
+      if (j > i && refs.some((r) => readsRef(value, r))) return { $let: { vars, in: step(j, scope, { value }) } };
+      seen.add(d.name);
+      const bound = scope.param(d.name, kindOf(d.value, scope), d.pos);
+      vars[bound.as as string] = value;
+      refs.push(`$$${bound.as as string}`);
+      scope = bound.env;
+      j++;
+      // Membership is the keyword's offset, so a declarator the fold removed
+      // cannot let a later one bridge a `;` the developer wrote.
+      if (j === node.decls.length || node.decls[j].group !== d.group) break;
+    }
+    return { $let: { vars, in: step(j, scope, null) } };
   };
-  return step(0, env);
+  return step(0, env, null);
 }
 
 /** The callback parameter kinds a row states, for a caller binding them. Unused parameters bind as "unknown". */

@@ -10,242 +10,76 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
-## 2026-09-13 — fix(registry): a `statement` body slot states WHAT it holds, and two placement bugs close with it
+## 2026-09-13 — feat(emit): the `,` in a declaration list shares a stage, as it does for writes
 
-`place` judged every registry name it found inside a stage's body against THIS
-pipeline's first position, at any depth. It walks the body for a real reason — `$text`
-must sit in the pipeline's first `$match`, and that rule belongs to `$text` — but it
-walked into sub-pipelines too, and one line then did two wrong things at once.
+`let a = $.p, b = $.q;` now takes ONE `$set`, and a block's `const d = …, e = …;` one `$let`.
+This completes the declaration list: the earlier entry below gave the list its syntax but kept
+one stage per declarator, which left the `,` with no meaning beyond the keyword it saves. The
+rule now matches the one update ops already follow — `$.a = …, $.b = …` is one `$set` and
+`$.a = …; $.b = …;` is two — so the `,` is the merge and the `;` is the stage boundary for
+every statement in the language, not just for writes.
 
-It REFUSED a valid pipeline. `$.b = 2; $lookup({ from: "c", as: "o", pipeline:
-[$geoNear({ … })] });` was rejected because a `$set` stood ahead of the `$lookup`.
-`$geoNear` is the first stage of the sub-pipeline and its own `place` call had already
-said so; the outer walk judged it again, against a position it does not stand in. The
-server runs that document — measured. Drop the `$set` and jsmql compiled it, so the
-refusal turned on what preceded the container, which is not a fact about `$geoNear`.
+The merge breaks at exactly one place: a declarator that reads a sibling bound beside it. A
+`$set` evaluates every field against the stage's INPUT document, and a `$let` evaluates every
+var in the ENCLOSING scope (mongod answers `Use of undefined variable: a` for
+`vars: { a: 5, b: { $add: ["$$a", 1] } }`), so a shared slot would read nothing. The test runs
+on the LOWERED value through `readsRef` in [src/compiler/emit/mql.ts](src/compiler/emit/mql.ts),
+not on the source: a dependency that arrives through an inlined reusable function counts the
+same as one written by hand. `let a = $.x, b = a + 1, c = $.y;` therefore breaks once — `c`
+reads neither `a` nor `b`, so it joins `b` rather than opening a third stage. Verified on the
+fixture `mongod` in both roads: the merged, the split and the three-way forms all return
+JavaScript's own answers.
 
-And it let INVALID MQL through. `$merge.whenMatched` also holds a list of stages, but it
-is an UPDATE spec, not a pipeline: MEASURED, one stage per run with a valid body, the
-server runs `$addFields`, `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith`
-and `$fill` there, and answers "<name> is not allowed to be used within an update" for
-24 others. jsmql emitted all of them. The same `!first` line caught a few by accident —
-but only when a statement happened to precede the `$merge`, which is why
-`$merge({ into: "c", whenMatched: [$geoNear({ … })] })` compiled and its `$.b = 2;`
-variant did not.
-
-The two pull one line in opposite directions, so neither closes alone: relax it for the
-sub-pipeline case and the update spec loses its accidental guard. What was missing is a
-FACT. Six rows file a body slot as `statement` and no field told the two kinds apart —
-`pipelineOver` is stated on `$lookup` and `$unionWith` only, so `$facet` sits on the
-wrong side of it. Each of the six now states `statementBody`: `"pipeline"` for the five
-that start a pipeline of their own, and for `$merge` the list of stages an update runs.
-`namesWithin` reads it instead of the slot kind, and `place` reads it again to refuse a
-stage the update spec does not name. A stage the language gains later is refused there
-until the row names it — the safe default, and the server's own answer.
-
-Three gates keep it from coming back. A row that files a `statement` slot and states no
-`statementBody` fails [test/registry-agrees.test.ts](test/registry-agrees.test.ts), so a
-new container cannot forget; a name in an update spec's list must be a real stage; and
-[test/compiler-statement.test.ts](test/compiler-statement.test.ts) asks the SERVER, one
-stage per run, and compares its answer with the row's — each was made to fail before it
-was trusted. Specs: [emit-pass.md](docs/specs/emit-pass.md) § the placement table,
-[out-stage.md](docs/specs/out-stage.md) § `whenMatched` is an UPDATE.
+The parser keeps the flat statements it already built and marks each continuation declarator
+`joined` — the `,` the developer wrote, which
+[src/compiler/emit/statement.ts](src/compiler/emit/statement.ts) reads to group a run. Nothing
+else in the compiler learned a new node. This supersedes the earlier entry's claim that N
+declarators lower as N statements: they do where a declarator reads the one before it, and
+share a stage where none does. It also closes the §B row *Multi-binding `let a = …, b = …;`*
+in [docs/DEFERRED.md](docs/DEFERRED.md), which is removed — the row rejected the merge as
+unconditional, and the break makes it conditional and correct.
 
 ---
 
-## 2026-09-13 — fix(union): a written document list holds only what the program spells
+## 2026-09-13 — feat(parse): `const a = …, b = …;` — a declaration is a LIST of declarators
 
-`$$ = [{ n: $.a }]` emitted `{ $documents: [{ n: "$a" }] }` and the server answered
-`{}` — the documents run inside a `$unionWith`, over NO input document, so there is no
-`$a` to read. The `$$.push({ n: $.a })` spelling of the same stage refused that read
-correctly, because `unionStages` lowers its documents under the `$unionWith` boundary
-and `documentsStages` lowered them outside it. One lowering, two answers, and the one
-that compiled lost the value in silence.
+`const start = new Date("2026-08-01"), end = start.plus(1, "month");` was a parse error at the
+comma. That broke the project's second priority: every expression jsmql accepts must be valid
+JavaScript, and a multi-declarator declaration is not an exotic corner of the language — it is
+what a developer writes when two constants belong together. The parser now reads the `,` as
+JavaScript reads it, for `let` and `const` alike, with no limit on the number of declarators.
 
-`documentsStages` now enters the same boundary, which states no `let`, so both
-spellings meet the existing "'$unionWith' has no 'let'" refusal and meet it alike.
+The lowering needed no new machinery, because a declaration list IS N declarations. The parser
+builds for `const a = …, b = …;` exactly the nodes it builds for the two `;`-separated
+statements — [test/compiler-parse.test.ts](test/compiler-parse.test.ts) asserts the two trees
+are identical with positions erased — so every downstream phase was already correct by
+construction: a later declarator reads the earlier ones, a foldable declarator still emits no
+stage, a runtime one still takes a `$set` of its own (a `$set` evaluates every field against
+the stage's INPUT document, so two bindings sharing a stage could not depend on each other),
+and an arrow-valued declarator is still a reusable function. `statement()` in
+[src/compiler/parse/parser.ts](src/compiler/parse/parser.ts) returns the RUN of statements a
+declaration stands for rather than one statement, and `declarator()` holds the
+function/value fork so both dispatch sites inherit it.
 
-The position's other half went with it. `$documents` is the FIRST stage of that body,
-so nothing can stand ahead of it to produce a value either — and a field whose value
-needs a stage of its own (`$$.push({ n: $$$.p.find({ _id: "x" }).n })`) hoisted a
-`$lookup` onto a chain nothing drains, leaving `"$__jsmql.tmp.0.n"` as a path nothing
-writes. Measured: the joined value 42 came back as `{}`, in all three spellings.
-`noStageInDocuments` in [union.ts](src/compiler/emit/union.ts) is the one gate both
-roads call; its message names the collection append (`$$.push(...$$$.<coll>.filter(…))`
-for many, `$$.push($$$.<coll>.find({ … }))` for one) and the constant or
-`jsmql.compile` parameter, each compiled and checked.
+Two decisions the shape forced. Inside a bracketed `[…]` pipeline the `,` is ALREADY the
+element separator, so a list is not read there and each element keeps its own keyword
+(`[ let a = …, let b = …, … ]`) — overloading one comma with two meanings in the one place they
+compete would be a worse trade than the extra keyword. And a declarator with no initialiser
+stays refused, because a binding is a value and MQL has no `undefined` to hold the place of
+one; the generic `Expected '=' but got ';'` is replaced by a message that names the spelling
+that works, positioned at the declarator it is about rather than at the keyword. Verified on
+the fixture `mongod`: the runtime chain, the folded date window, the function-declarator chain,
+a reassignment and a callback-block list all return JavaScript's own answers. See
+[docs/specs/let-bindings.md](docs/specs/let-bindings.md) § Declaration lists and
+[docs/specs/grammar.md](docs/specs/grammar.md).
 
-A written list the program does spell out is untouched — `$$ = [{ n: 1 }]`,
-`$$ = []`, `$$ = [{ a: 1 }, { a: 2 }]`, `$$.push({ a: 1 })` and a `jsmql.compile`
-parameter as a field value all emit what they emitted. Specs:
-[union-stage.md](docs/specs/union-stage.md) § A written list of documents,
-[replace-stream-stage.md](docs/specs/replace-stream-stage.md).
-
----
-
-## 2026-09-13 — fix(out): the stage that writes the output cannot read a scratch field
-
-`$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] })` emitted
-`[$setWindowFields, $unset "__jsmql", $merge]`, and the server answered "Use of
-undefined variable: v". A stage the row files as LAST is filed on the chain rather than
-emitted, so the `__jsmql` cleanup always precedes it and nothing may follow it — which
-is exactly right for every terminal that writes documents, and exactly wrong for one
-whose own body READS a value jsmql materialised. There is no order that works: moving
-the `$unset` after the terminal is a statement after `$out`, which the server refuses,
-and dropping it writes the scratch namespace into the destination collection.
-
-So `place` refuses it, naming the rewrite that does work — put the value in a field of
-the document and read that field, `$.n = $$.length; $merge({ … let: { v: $.n } … });`,
-which was compiled and run (the destination took `z: 2`, the true count). The mirror of
-the first-only refusal below, and the same fact read backwards.
-
-The guard tests for a field PATH into the namespace, not for the name in it: a read
-always carries the leading `$`, and a collection the developer happens to have called
-`__jsmqlArchive` is a name `$out` takes as written. Tested in both directions — the two
-refusing shapes refuse, and thirteen legitimate ones (`$$$.c = $$`, `+=`, `.concat`,
-`.push`, a filtered source, a cross-database target, a `$merge` `let` on a real field,
-and `$out` after a hoist or a `let`) are byte-identical. Spec:
-[out-stage.md](docs/specs/out-stage.md) § Validation.
-
----
-
-## 2026-09-13 — fix(emit): a stage that must be FIRST is refused when its own body needs a hoisted stage
-
-A value in a stage's body can need a stage of its own — `$$.length` a
-`$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and that stage is placed directly
-ahead of the one that reads it. `place` in [statement.ts](src/compiler/emit/statement.ts)
-judged "is this stage first?" against a `first` flag computed BEFORE the body was
-lowered, so the hoist was invisible to it and landed ahead of `$geoNear`, `$documents`,
-`$changeStream`, `$search`, `$vectorSearch`, `$listSearchIndexes`, or a `$text` inside
-the first `$match`. Ten reachable shapes, every one refused by the server — MEASURED,
-"$geoNear was not the first stage in the pipeline after optimization". An HR3 violation:
-the pipeline does not run at all.
-
-There is no placement to find. The materialiser cannot follow the read and nothing may
-precede the stage, so it is a refusal, and `place` now asks the question of the chain's
-PENDING hoist as well as of `first`. The message names the later-statement rewrite, and
-— because `maxDistance: $$.length` has no later-statement form at all, the server
-reading a setting before it has any documents — the constant or `jsmql.compile`
-parameter for a value that IS one of the stage's settings. Where the rule belongs to an
-operator the body holds rather than to the stage, it words it as that instead:
-`$match($text(…)); $match(<the test>);`. Each alternative was compiled and run.
-
-Two details the shape of the fix turns on. `place` reads a hoist that is still pending,
-so it has to run BEFORE the drain — on the array-reducer road the two sat in one
-argument list, `ahead()` was evaluated first and handed `place` an empty one, and
-`$$.reduce((acc, d) => $text(…) && d.n === $$.length ? … )` kept emitting the bad shape.
-And a first-only name the BODY holds is only judged against THIS pipeline: `namesWithin`
-now says whether the name sits in a slot the row files as a sub-pipeline, where the
-stage is first where IT stands and its own `place` call has already said so. Without
-that, `$lookup({ … pipeline: [$geoNear(…)] })` with an outer hoist was refused while its
-`$$$.<coll>.$geoNear(…)` twin compiled — two spellings of one lowering disagreeing, and
-the server runs both. Spec: [emit-pass.md](docs/specs/emit-pass.md) § the placement table.
-
----
-
-## 2026-09-13 — fix(lower): the bracket-index dispatch is a `$switch`, which a constant receiver cannot fold
-
-`$.arr[0]` has no provable receiver type, so it lowered to a nested `$cond` over the
-three meanings JavaScript gives an integer key: array position, string character, and a
-field named `"0"`. MongoDB optimises a `$cond`'s branches BEFORE it reads the test, and
-`$lookup` substitutes its `let` into the sub-pipeline before optimising it — so
-`$.o = $$$.products.find({ _id: $.arr[0] })` folded `$substrCP` against an array and the
-server refused the whole pipeline before reading a document ("can't convert from BSON
-type array to String"). A string key refused the other way, on `$arrayElemAt`. An HR3
-violation: the pipeline does not run at all.
-
-Not a join bug. Any value the server holds as a CONSTANT is the same hazard, and a
-`jsmql.compile` parameter inside `$literal` is one —
-`jsmql.expr.compile(({ s }) => s[0])({ s: "$b" })` failed with no `$lookup` anywhere.
-`$switch` drops a branch whose case folds to false without optimising it, measured for
-an array, a string, a document, a number, null and missing, against the `$cond` on each:
-identical answers on every field-path receiver, and no refusal on any constant one. So
-`indexAccess` in [lower.ts](src/compiler/emit/lower.ts) writes a `$switch` — which is
-what every other runtime family dispatch here already wrote (`.at`, `.length`, `.slice`,
-`.includes`, `.indexOf`, `.concat` all build one through `select.ts`), and the flatter
-document besides. One shape everywhere, never chosen by position.
-
-Verified on the project's mongod that the three JavaScript meanings survive: over
-`["p1","p2"]`, `"p2xyz"` and `{ "0": "p1" }` the join key answers the p1 product, no
-product (the character `"p"` matches none) and the p1 product — the same three answers
-a plain field path gave before and still gives. Specs:
-[lookup-stage.md](docs/specs/lookup-stage.md) § A correlated key is a CONSTANT,
-[LANGUAGE.md](docs/LANGUAGE.md) § Bracket Access.
-
----
-
-## 2026-09-13 — fix(stream-length): a stream handle counts the body that BOUND it, not the one reading it
-
-`coll.length` on an `.aggregate`/`.map` callback's third parameter is the count of the
-sub-stream that callback runs over. The `hoist` service in
-[inputs.ts](src/compiler/emit/inputs.ts) asked `onOwnStream` — a BOOLEAN — where the
-answer is a stream, so a DEEPER body reading an ANCESTOR's handle stamped its own chain
-at its own level. `shpmntsColl.length` and `ordersColl.length` both became
-`$__jsmql.length`, one field for two different counts: `assert(shpmntsColl.length <
-ordersColl.length, …)` compared a value with itself and could never pass. Nothing about
-that document is invalid MQL, so the server answered it without a word —
-[test/realistic.test.ts](test/realistic.test.ts) asserted the
-`{ $lt: ["$__jsmql.length", "$__jsmql.length"] }` it produced while its own comment
-claimed all three scopes resolved correctly.
-
-The binding now CARRIES the chain its body assembles: `Ref.streamHandle` in
-[names.ts](src/compiler/emit/names.ts) holds the `Chain`, `Binding.level` already held
-the level, and `streamHandleOf` reads both back where the stamp is placed. So an
-ancestor's count is materialised on the ancestor's own pipeline and comes back down
-through each `$lookup.let` as `jsmql_s<level>_length` — the hop an outer field already
-took. The CHAIN and not the level is what decides, because a `$facet` branch assembles a
-chain of its own at the same level: keying on the level alone put the ROOT count inside
-a branch, where it counted the branch instead of the stream.
-
-Measured on the project's mongod over users → orders → shipments: the two counts now
-answer 2/1/4/1 shipments per order against 3/3/3/1 orders per user, where before both
-read the shipment count. The regression runs there too
-([test/compiler-join.test.ts](test/compiler-join.test.ts) compares the documents that
-come back), because a `toEqual` on the MQL is exactly what let this through. Spec:
-[stream-length.md](docs/specs/stream-length.md) § Sub-stream length.
-
----
-
-## 2026-09-13 — fix(join): a hoisted `$lookup` lands beside the stage that reads it, not at the front of the statement
-
-A join written in a callback was hoisted ahead of the whole STATEMENT, past the stages
-of the same statement. `$$.$sortByCount($.productIds).map(g => ({ _id: g._id, name:
-$$$.products.find({ _id: g._id }).name }))` put the `$lookup` first, so `localField: "_id"`
-read the SOURCE document's `_id` and not the group key `g._id` names — and `$sortByCount`
-then replaced the document and discarded the scratch slot, so the trailing `$replaceWith`
-read a path that resolves to missing. Measured on a live mongod: every row came back
-without its `name` and the server raised nothing. The `.length` spelling of the same shape
-was refused instead ("The argument to $size must be an array, but was of type: missing"),
-and a `$unwind` in the same position answered the WRONG document silently, because
-`$unwind` keeps the slot.
-
-The constraint is one sentence: a stage a lowering hoists must run over the documents the
-stage that lowering produces runs over, because a callback's parameter names the document
-ITS stage receives. `Chain.flush` only ever drained at the statement boundary, which is
-correct for a statement that becomes one stage and wrong for every statement that becomes
-several. [`Chain.ahead`](src/compiler/emit/env.ts) now hands the hoisted stages back, and
-every road in [statement.ts](src/compiler/emit/statement.ts) that builds a statement out of
-more than one stage drains at each of them: the stream chain per link, a `,`-joined run of
-writes per op (so `$.k = $.pid, $.name = $$$.c.find({ _id: $.k }).name` joins on the `k` the
-first write made), the array reducer, a bracketed program, and a stage block's statements.
-`lookupOf` in [join.ts](src/compiler/emit/join.ts) had always drained per link, which is why
-the identical chain inside a `$lookup` body placed its nested join correctly — that was the
-reference for what the top level should do.
-
-Two things follow. `$$.length` now agrees with itself across spellings:
-`$$.$match(p).map(d => $$.length)` counts the MATCHED documents, exactly as `$match(p); $.n
-= $$.length;` does, where the chained form previously stamped the count before the `$match`.
-And a join whose body reads a variable an ENCLOSING expression binds is now refused rather
-than emitted: `$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name)` has no correct
-placement at all — `$lookup` is a stage and cannot run once per array element — and mongod
-answered "Use of undefined variable: x", an HR3 violation hiding behind a green `toEqual`.
-`Located` of kind `var` now carries the level it was BOUND on and `Env.render` refuses a read
-of one from a deeper level, with a message naming the two spellings that work (`$$ = $.items;`
-to make the elements documents, or `let ps = $$$.<coll>.filter(…);` to join once outside the
-callback). Placement and refusal are specced in
-[docs/specs/lookup-stage.md](docs/specs/lookup-stage.md) § Where a hoisted stage lands, and the
-regressions run on a live mongod in [test/compiler-join.test.ts](test/compiler-join.test.ts) —
-a `toEqual` on the MQL is exactly what let this through.
+This supersedes half of the §B row *Multi-binding `let a = …, b = …;`* in
+[docs/DEFERRED.md](docs/DEFERRED.md). That row weighed the list purely as an MQL-size
+optimisation — eleven bytes, and "a third spelling of something two already say" — and never
+weighed it against priority #2, which is what actually decides a spelling that JavaScript
+already has. Its measured half is untouched and still law: merging N declarators into ONE
+`$set` stage is wrong, because a `$set` cannot see a sibling it adds. The row is rewritten to
+reject the merge rather than the syntax.
 
 ---
 
@@ -301,6 +135,298 @@ A second correlated equality keeps its `let` var and its `$expr` beside the pair
 under `||` is no pair, because that `$match` is an `$or`, not a conjunction. Measured on the
 project's mongod (the live half of `test/compiler-join.test.ts`): every moved shape answers
 the same documents as before.
+
+---
+
+## 2026-09-13 — fix(emit): a declaration list never shares a stage with a value that hoists one
+
+An adversarial audit of the stage-merge below found two ways it produced a pipeline that
+disagreed with the `;` spelling. Both are fixed, and both now have a regression test that runs
+on the fixture `mongod`.
+
+**A value that hoists its own stage jumped the shared `$set`.** A foreign read in a VALUE
+position — `let n = $$$.orders.filter(o => o.k === a).length` — leaves a `$set` behind and puts
+its `$lookup` on the chain's prologue, which the chain flushes ahead of every stage the
+statement returns. `readsRef` inspects only the `$set` body, so the sibling read inside
+`$lookup.localField` was invisible, and the join ran BEFORE the `$set` that bound the field it
+correlates on. It matched nothing and answered silently wrong counts; two chained joins were
+rejected outright by the server, which is an HR3 violation. Such a declarator now ends the run:
+the speculative lowering is taken back with `Chain.rewind` — which exists for exactly this —
+and the declarator is lowered again as its own statement, where the per-statement flush lands
+its prologue correctly. `declStages` therefore reports how many declarators it could take
+rather than assuming the whole run.
+
+**A folded declarator bridged a `;`.** Membership was adjacency in the statement list plus a
+`joined` flag, and the constant fold REMOVES a folded declaration from that list. In
+`let a = $.x; let b = 5, c = $.y;` the folded `b` left `a` and `c` side by side, and `c`'s flag
+merged them — two declarations the developer had separated with a `;`. Membership is now the
+source offset of the KEYWORD that opened the declaration, carried on every declarator of it, so
+a removed neighbour cannot join two declarations that were never one. The flag is gone.
+
+The audit also refuted ten other candidate defects, four of them as pre-existing behaviour this
+change merely exposed; those stay as they were. See
+[docs/specs/let-bindings.md](docs/specs/let-bindings.md) § Where a shared stage breaks.
+
+---
+
+## 2026-09-13 — fix(emit): a stage that must be FIRST is refused when its own body needs a hoisted stage
+
+A value in a stage's body can need a stage of its own — `$$.length` a
+`$setWindowFields`, a `$$$.<coll>` read a `$lookup` — and that stage is placed directly
+ahead of the one that reads it. `place` in [statement.ts](src/compiler/emit/statement.ts)
+judged "is this stage first?" against a `first` flag computed BEFORE the body was
+lowered, so the hoist was invisible to it and landed ahead of `$geoNear`, `$documents`,
+`$changeStream`, `$search`, `$vectorSearch`, `$listSearchIndexes`, or a `$text` inside
+the first `$match`. Ten reachable shapes, every one refused by the server — MEASURED,
+"$geoNear was not the first stage in the pipeline after optimization". An HR3 violation:
+the pipeline does not run at all.
+
+There is no placement to find. The materialiser cannot follow the read and nothing may
+precede the stage, so it is a refusal, and `place` now asks the question of the chain's
+PENDING hoist as well as of `first`. The message names the later-statement rewrite, and
+— because `maxDistance: $$.length` has no later-statement form at all, the server
+reading a setting before it has any documents — the constant or `jsmql.compile`
+parameter for a value that IS one of the stage's settings. Where the rule belongs to an
+operator the body holds rather than to the stage, it words it as that instead:
+`$match($text(…)); $match(<the test>);`. Each alternative was compiled and run.
+
+Two details the shape of the fix turns on. `place` reads a hoist that is still pending,
+so it has to run BEFORE the drain — on the array-reducer road the two sat in one
+argument list, `ahead()` was evaluated first and handed `place` an empty one, and
+`$$.reduce((acc, d) => $text(…) && d.n === $$.length ? … )` kept emitting the bad shape.
+And a first-only name the BODY holds is only judged against THIS pipeline: `namesWithin`
+now says whether the name sits in a slot the row files as a sub-pipeline, where the
+stage is first where IT stands and its own `place` call has already said so. Without
+that, `$lookup({ … pipeline: [$geoNear(…)] })` with an outer hoist was refused while its
+`$$$.<coll>.$geoNear(…)` twin compiled — two spellings of one lowering disagreeing, and
+the server runs both. Spec: [emit-pass.md](docs/specs/emit-pass.md) § the placement table.
+
+---
+
+## 2026-09-13 — fix(emit): a taken-back lowering gives its scratch slot back
+
+`Chain.rewind` restored what a discarded lowering had hoisted and stamped, but not the
+scratch-slot counter it had advanced. The number was then skipped, and the gap was VISIBLE:
+`let a = $.x, b = $$$.probe.filter(o => o.x === a).length + 1;` named its `$lookup` output
+`__jsmql.tmp.1`, while the same program spelled with a `;` named it `__jsmql.tmp.0`. Two
+spellings of one lowering emitted two different documents — the drift the project rejects.
+
+A slot the discarded attempt minted is named only by the stages discarded with it, which is the
+same argument that already makes rewinding the stamps safe, so the counter goes back with them.
+Both callers — the declaration-list run in
+[src/compiler/emit/statement.ts](src/compiler/emit/statement.ts) and the chain-after-a-join
+retry in [src/compiler/emit/join.ts](src/compiler/emit/join.ts) — discard a whole attempt, so
+neither can hold a reference to the returned number. The two spellings of that program are now
+byte-identical, and the regression tests assert that identity rather than a literal slot name,
+so a future gap fails the build instead of being written into the expectation.
+
+---
+
+## 2026-09-13 — fix(join): a hoisted `$lookup` lands beside the stage that reads it, not at the front of the statement
+
+A join written in a callback was hoisted ahead of the whole STATEMENT, past the stages
+of the same statement. `$$.$sortByCount($.productIds).map(g => ({ _id: g._id, name:
+$$$.products.find({ _id: g._id }).name }))` put the `$lookup` first, so `localField: "_id"`
+read the SOURCE document's `_id` and not the group key `g._id` names — and `$sortByCount`
+then replaced the document and discarded the scratch slot, so the trailing `$replaceWith`
+read a path that resolves to missing. Measured on a live mongod: every row came back
+without its `name` and the server raised nothing. The `.length` spelling of the same shape
+was refused instead ("The argument to $size must be an array, but was of type: missing"),
+and a `$unwind` in the same position answered the WRONG document silently, because
+`$unwind` keeps the slot.
+
+The constraint is one sentence: a stage a lowering hoists must run over the documents the
+stage that lowering produces runs over, because a callback's parameter names the document
+ITS stage receives. `Chain.flush` only ever drained at the statement boundary, which is
+correct for a statement that becomes one stage and wrong for every statement that becomes
+several. [`Chain.ahead`](src/compiler/emit/env.ts) now hands the hoisted stages back, and
+every road in [statement.ts](src/compiler/emit/statement.ts) that builds a statement out of
+more than one stage drains at each of them: the stream chain per link, a `,`-joined run of
+writes per op (so `$.k = $.pid, $.name = $$$.c.find({ _id: $.k }).name` joins on the `k` the
+first write made), the array reducer, a bracketed program, and a stage block's statements.
+`lookupOf` in [join.ts](src/compiler/emit/join.ts) had always drained per link, which is why
+the identical chain inside a `$lookup` body placed its nested join correctly — that was the
+reference for what the top level should do.
+
+Two things follow. `$$.length` now agrees with itself across spellings:
+`$$.$match(p).map(d => $$.length)` counts the MATCHED documents, exactly as `$match(p); $.n
+= $$.length;` does, where the chained form previously stamped the count before the `$match`.
+And a join whose body reads a variable an ENCLOSING expression binds is now refused rather
+than emitted: `$.n = $.items.map(x => $$$.products.find({ _id: x.pid }).name)` has no correct
+placement at all — `$lookup` is a stage and cannot run once per array element — and mongod
+answered "Use of undefined variable: x", an HR3 violation hiding behind a green `toEqual`.
+`Located` of kind `var` now carries the level it was BOUND on and `Env.render` refuses a read
+of one from a deeper level, with a message naming the two spellings that work (`$$ = $.items;`
+to make the elements documents, or `let ps = $$$.<coll>.filter(…);` to join once outside the
+callback). Placement and refusal are specced in
+[docs/specs/lookup-stage.md](docs/specs/lookup-stage.md) § Where a hoisted stage lands, and the
+regressions run on a live mongod in [test/compiler-join.test.ts](test/compiler-join.test.ts) —
+a `toEqual` on the MQL is exactly what let this through.
+
+---
+
+## 2026-09-13 — fix(lower): the bracket-index dispatch is a `$switch`, which a constant receiver cannot fold
+
+`$.arr[0]` has no provable receiver type, so it lowered to a nested `$cond` over the
+three meanings JavaScript gives an integer key: array position, string character, and a
+field named `"0"`. MongoDB optimises a `$cond`'s branches BEFORE it reads the test, and
+`$lookup` substitutes its `let` into the sub-pipeline before optimising it — so
+`$.o = $$$.products.find({ _id: $.arr[0] })` folded `$substrCP` against an array and the
+server refused the whole pipeline before reading a document ("can't convert from BSON
+type array to String"). A string key refused the other way, on `$arrayElemAt`. An HR3
+violation: the pipeline does not run at all.
+
+Not a join bug. Any value the server holds as a CONSTANT is the same hazard, and a
+`jsmql.compile` parameter inside `$literal` is one —
+`jsmql.expr.compile(({ s }) => s[0])({ s: "$b" })` failed with no `$lookup` anywhere.
+`$switch` drops a branch whose case folds to false without optimising it, measured for
+an array, a string, a document, a number, null and missing, against the `$cond` on each:
+identical answers on every field-path receiver, and no refusal on any constant one. So
+`indexAccess` in [lower.ts](src/compiler/emit/lower.ts) writes a `$switch` — which is
+what every other runtime family dispatch here already wrote (`.at`, `.length`, `.slice`,
+`.includes`, `.indexOf`, `.concat` all build one through `select.ts`), and the flatter
+document besides. One shape everywhere, never chosen by position.
+
+Verified on the project's mongod that the three JavaScript meanings survive: over
+`["p1","p2"]`, `"p2xyz"` and `{ "0": "p1" }` the join key answers the p1 product, no
+product (the character `"p"` matches none) and the p1 product — the same three answers
+a plain field path gave before and still gives. Specs:
+[lookup-stage.md](docs/specs/lookup-stage.md) § A correlated key is a CONSTANT,
+[LANGUAGE.md](docs/LANGUAGE.md) § Bracket Access.
+
+---
+
+## 2026-09-13 — fix(out): the stage that writes the output cannot read a scratch field
+
+`$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] })` emitted
+`[$setWindowFields, $unset "__jsmql", $merge]`, and the server answered "Use of
+undefined variable: v". A stage the row files as LAST is filed on the chain rather than
+emitted, so the `__jsmql` cleanup always precedes it and nothing may follow it — which
+is exactly right for every terminal that writes documents, and exactly wrong for one
+whose own body READS a value jsmql materialised. There is no order that works: moving
+the `$unset` after the terminal is a statement after `$out`, which the server refuses,
+and dropping it writes the scratch namespace into the destination collection.
+
+So `place` refuses it, naming the rewrite that does work — put the value in a field of
+the document and read that field, `$.n = $$.length; $merge({ … let: { v: $.n } … });`,
+which was compiled and run (the destination took `z: 2`, the true count). The mirror of
+the first-only refusal below, and the same fact read backwards.
+
+The guard tests for a field PATH into the namespace, not for the name in it: a read
+always carries the leading `$`, and a collection the developer happens to have called
+`__jsmqlArchive` is a name `$out` takes as written. Tested in both directions — the two
+refusing shapes refuse, and thirteen legitimate ones (`$$$.c = $$`, `+=`, `.concat`,
+`.push`, a filtered source, a cross-database target, a `$merge` `let` on a real field,
+and `$out` after a hoist or a `let`) are byte-identical. Spec:
+[out-stage.md](docs/specs/out-stage.md) § Validation.
+
+---
+
+## 2026-09-13 — fix(registry): a `statement` body slot states WHAT it holds, and two placement bugs close with it
+
+`place` judged every registry name it found inside a stage's body against THIS
+pipeline's first position, at any depth. It walks the body for a real reason — `$text`
+must sit in the pipeline's first `$match`, and that rule belongs to `$text` — but it
+walked into sub-pipelines too, and one line then did two wrong things at once.
+
+It REFUSED a valid pipeline. `$.b = 2; $lookup({ from: "c", as: "o", pipeline:
+[$geoNear({ … })] });` was rejected because a `$set` stood ahead of the `$lookup`.
+`$geoNear` is the first stage of the sub-pipeline and its own `place` call had already
+said so; the outer walk judged it again, against a position it does not stand in. The
+server runs that document — measured. Drop the `$set` and jsmql compiled it, so the
+refusal turned on what preceded the container, which is not a fact about `$geoNear`.
+
+And it let INVALID MQL through. `$merge.whenMatched` also holds a list of stages, but it
+is an UPDATE spec, not a pipeline: MEASURED, one stage per run with a valid body, the
+server runs `$addFields`, `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith`
+and `$fill` there, and answers "<name> is not allowed to be used within an update" for
+24 others. jsmql emitted all of them. The same `!first` line caught a few by accident —
+but only when a statement happened to precede the `$merge`, which is why
+`$merge({ into: "c", whenMatched: [$geoNear({ … })] })` compiled and its `$.b = 2;`
+variant did not.
+
+The two pull one line in opposite directions, so neither closes alone: relax it for the
+sub-pipeline case and the update spec loses its accidental guard. What was missing is a
+FACT. Six rows file a body slot as `statement` and no field told the two kinds apart —
+`pipelineOver` is stated on `$lookup` and `$unionWith` only, so `$facet` sits on the
+wrong side of it. Each of the six now states `statementBody`: `"pipeline"` for the five
+that start a pipeline of their own, and for `$merge` the list of stages an update runs.
+`namesWithin` reads it instead of the slot kind, and `place` reads it again to refuse a
+stage the update spec does not name. A stage the language gains later is refused there
+until the row names it — the safe default, and the server's own answer.
+
+Three gates keep it from coming back. A row that files a `statement` slot and states no
+`statementBody` fails [test/registry-agrees.test.ts](test/registry-agrees.test.ts), so a
+new container cannot forget; a name in an update spec's list must be a real stage; and
+[test/compiler-statement.test.ts](test/compiler-statement.test.ts) asks the SERVER, one
+stage per run, and compares its answer with the row's — each was made to fail before it
+was trusted. Specs: [emit-pass.md](docs/specs/emit-pass.md) § the placement table,
+[out-stage.md](docs/specs/out-stage.md) § `whenMatched` is an UPDATE.
+
+---
+
+## 2026-09-13 — fix(stream-length): a stream handle counts the body that BOUND it, not the one reading it
+
+`coll.length` on an `.aggregate`/`.map` callback's third parameter is the count of the
+sub-stream that callback runs over. The `hoist` service in
+[inputs.ts](src/compiler/emit/inputs.ts) asked `onOwnStream` — a BOOLEAN — where the
+answer is a stream, so a DEEPER body reading an ANCESTOR's handle stamped its own chain
+at its own level. `shpmntsColl.length` and `ordersColl.length` both became
+`$__jsmql.length`, one field for two different counts: `assert(shpmntsColl.length <
+ordersColl.length, …)` compared a value with itself and could never pass. Nothing about
+that document is invalid MQL, so the server answered it without a word —
+[test/realistic.test.ts](test/realistic.test.ts) asserted the
+`{ $lt: ["$__jsmql.length", "$__jsmql.length"] }` it produced while its own comment
+claimed all three scopes resolved correctly.
+
+The binding now CARRIES the chain its body assembles: `Ref.streamHandle` in
+[names.ts](src/compiler/emit/names.ts) holds the `Chain`, `Binding.level` already held
+the level, and `streamHandleOf` reads both back where the stamp is placed. So an
+ancestor's count is materialised on the ancestor's own pipeline and comes back down
+through each `$lookup.let` as `jsmql_s<level>_length` — the hop an outer field already
+took. The CHAIN and not the level is what decides, because a `$facet` branch assembles a
+chain of its own at the same level: keying on the level alone put the ROOT count inside
+a branch, where it counted the branch instead of the stream.
+
+Measured on the project's mongod over users → orders → shipments: the two counts now
+answer 2/1/4/1 shipments per order against 3/3/3/1 orders per user, where before both
+read the shipment count. The regression runs there too
+([test/compiler-join.test.ts](test/compiler-join.test.ts) compares the documents that
+come back), because a `toEqual` on the MQL is exactly what let this through. Spec:
+[stream-length.md](docs/specs/stream-length.md) § Sub-stream length.
+
+---
+
+## 2026-09-13 — fix(union): a written document list holds only what the program spells
+
+`$$ = [{ n: $.a }]` emitted `{ $documents: [{ n: "$a" }] }` and the server answered
+`{}` — the documents run inside a `$unionWith`, over NO input document, so there is no
+`$a` to read. The `$$.push({ n: $.a })` spelling of the same stage refused that read
+correctly, because `unionStages` lowers its documents under the `$unionWith` boundary
+and `documentsStages` lowered them outside it. One lowering, two answers, and the one
+that compiled lost the value in silence.
+
+`documentsStages` now enters the same boundary, which states no `let`, so both
+spellings meet the existing "'$unionWith' has no 'let'" refusal and meet it alike.
+
+The position's other half went with it. `$documents` is the FIRST stage of that body,
+so nothing can stand ahead of it to produce a value either — and a field whose value
+needs a stage of its own (`$$.push({ n: $$$.p.find({ _id: "x" }).n })`) hoisted a
+`$lookup` onto a chain nothing drains, leaving `"$__jsmql.tmp.0.n"` as a path nothing
+writes. Measured: the joined value 42 came back as `{}`, in all three spellings.
+`noStageInDocuments` in [union.ts](src/compiler/emit/union.ts) is the one gate both
+roads call; its message names the collection append (`$$.push(...$$$.<coll>.filter(…))`
+for many, `$$.push($$$.<coll>.find({ … }))` for one) and the constant or
+`jsmql.compile` parameter, each compiled and checked.
+
+A written list the program does spell out is untouched — `$$ = [{ n: 1 }]`,
+`$$ = []`, `$$ = [{ a: 1 }, { a: 2 }]`, `$$.push({ a: 1 })` and a `jsmql.compile`
+parameter as a field value all emit what they emitted. Specs:
+[union-stage.md](docs/specs/union-stage.md) § A written list of documents,
+[replace-stream-stage.md](docs/specs/replace-stream-stage.md).
+
+---
+
 ## 2026-09-12 — docs: three `// →` claims match the compiler again
 
 `scripts/check-doc-claims.mjs` found three claims the compiler had stopped
@@ -487,27 +613,6 @@ became `{ age: -1 }`.
 
 ---
 
-## 2026-09-12 — docs(examples): the recommended-products joins are one equality each, and the products join loads two fields
-
-The "recommended products" example in [realistic.test.ts](test/realistic.test.ts)
-(and its live copy in [integration.test.ts](test/integration.test.ts)) spelled its
-two joins in two ways: the co-purchase join as `.filter({ productIds: myProductIds })`
-and the products join as `.filter(pr => pr._id in candidateProductIds)`. The second
-lowered to `let` + `$match: { $expr: { $in: ["$_id", "$$var"] } }` — correct on a
-scalar `_id`, but a different shape from the first join for the same idea, and one
-the reader had to know MongoDB's `$in` to follow. It is now `.filter({ _id:
-candidateProductIds })`, which the join road lowers to the `localField` /
-`foreignField` pair on `_id` with the `$limit` in `pipeline` — measured on the
-project's mongod: same documents, `_id_` index used.
-
-The same join then ends in `.pick(["_id", "name"])`, which lowers to
-`{ $project: { _id: 1, name: 1 } }` inside the `$lookup`, so the joined array holds
-the two fields the example reads and not whole product documents. The example is
-the playground's default and the README's headline, so `playground.html` is
-regenerated with it.
-
----
-
 ## 2026-09-12 — docs: the desugar spec describes the pass that exists
 
 `docs/specs/desugar-pass.md` held two documents. A scripted edit had truncated it
@@ -550,6 +655,27 @@ multikey index (803 keys, 800 documents examined for the same 100 rows). Both
 copies now use the equality spelling; the integration copy joins on the nested
 path, `{ "items.productId": myProductIds }`, and returns the same rows as
 before. The playground and the README examples follow from the suite.
+
+---
+
+## 2026-09-12 — docs(examples): the recommended-products joins are one equality each, and the products join loads two fields
+
+The "recommended products" example in [realistic.test.ts](test/realistic.test.ts)
+(and its live copy in [integration.test.ts](test/integration.test.ts)) spelled its
+two joins in two ways: the co-purchase join as `.filter({ productIds: myProductIds })`
+and the products join as `.filter(pr => pr._id in candidateProductIds)`. The second
+lowered to `let` + `$match: { $expr: { $in: ["$_id", "$$var"] } }` — correct on a
+scalar `_id`, but a different shape from the first join for the same idea, and one
+the reader had to know MongoDB's `$in` to follow. It is now `.filter({ _id:
+candidateProductIds })`, which the join road lowers to the `localField` /
+`foreignField` pair on `_id` with the `$limit` in `pipeline` — measured on the
+project's mongod: same documents, `_id_` index used.
+
+The same join then ends in `.pick(["_id", "name"])`, which lowers to
+`{ $project: { _id: 1, name: 1 } }` inside the `$lookup`, so the joined array holds
+the two fields the example reads and not whole product documents. The example is
+the playground's default and the README's headline, so `playground.html` is
+regenerated with it.
 
 ---
 

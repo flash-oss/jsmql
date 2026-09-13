@@ -191,6 +191,27 @@ describe("const folding — fallback to runtime binding", () => {
   });
 });
 
+describe("const folding — declaration lists", () => {
+  it("folds a declarator from the one before it in the same list, and emits no stage", () => {
+    // The motivating shape: a window bounded by a constant date.
+    expect(
+      jsmql('const start = new Date("2026-08-01"), end = start.plus(1, "month"); $.t.inRange(start, end)'),
+    ).toEqual({ t: { $gte: new Date("2026-08-01T00:00:00.000Z"), $lt: new Date("2026-09-01T00:00:00.000Z") } });
+    // Folded declarations emit no stage, so the program still collapses to a Filter.
+    expect(jsmql("const ms = 1000, day = ms * 60 * 60 * 24; $.elapsedMs > day")).toEqual({
+      elapsedMs: { $gt: 86400000 },
+    });
+  });
+
+  it("folds only the declarators that are constant, and keeps the runtime $set for the rest", () => {
+    expect(jsmql("const k = 2, y = $.a * k; $match($.b === y)")).toEqual([
+      { $set: { "__jsmql.var.y": { $multiply: ["$a", 2] } } },
+      { $match: { $expr: { $eq: ["$b", "$__jsmql.var.y"] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 describe("const folding — errors", () => {
   it("a declaration with nothing reading it errors", () => {
     expect(() => jsmql("const x = 5;")).toThrow(

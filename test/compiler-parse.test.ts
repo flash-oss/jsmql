@@ -415,8 +415,8 @@ describe("compiler/parse — a `{ … }` callback body is stages only where its 
 });
 
 describe("compiler/parse — one statement loop", () => {
-  /** The tree with positions erased, so two spellings at different columns compare equal. */
-  const shape = (p: Program): string => JSON.stringify(p, (k, v) => (k === "pos" ? 0 : v));
+  /** The tree with positions erased, so two spellings at different columns compare equal. `group` is a position too. */
+  const shape = (p: Program): string => JSON.stringify(p, (k, v) => (k === "pos" || k === "group" ? 0 : v));
 
   it("gives an entry block exactly the meaning of the same text at the top level", () => {
     // One statement loop reads both, so a trailing `;` says "this is a pipeline"
@@ -427,10 +427,33 @@ describe("compiler/parse — one statement loop", () => {
       "$.a = 1",
       "$.a = 1;",
       "let x = 1; $.a === x",
+      "let x = 1, y = x + 1; $.a === y",
       "$match($.a > 1); $.b = 2;",
     ]) {
       expect(shape(parseEntry(`({ $ }) => { ${src} }`).program), src).toBe(shape(parse(src)));
     }
+  });
+
+  it("reads a declaration list as the declarations it stands for, all marked as ONE declaration", () => {
+    // `const a = …, b = …;` is N declarations in JavaScript, and the parser builds
+    // the same N nodes it builds for N statements. The ONE thing a list adds is
+    // `group` — the keyword's offset, shared by every declarator of that
+    // declaration, which the emit phase reads to give them one stage. Erase it
+    // and the trees are equal.
+    for (const [list, separate] of [
+      ["let x = 1, y = 2; $.a = x + y;", "let x = 1; let y = 2; $.a = x + y;"],
+      ["const a = $.p, b = a + 1, c = b * 2; $.d = c;", "const a = $.p; const b = a + 1; const c = b * 2; $.d = c;"],
+      ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
+    ]) {
+      expect(shape(parse(list)), list).toBe(shape(parse(separate)));
+    }
+    // One declaration, one group; a `;` starts a new one.
+    const groups = (src: string): number[] =>
+      (parse(src) as { stmts: { group?: number }[] }).stmts.filter((st) => "group" in st).map((st) => st.group!);
+    const oneList = groups("let x = 1, y = 2, z = 3; $.a = x;");
+    expect(new Set(oneList).size, "three declarators of one declaration share a group").toBe(1);
+    expect(oneList).toHaveLength(3);
+    expect(new Set(groups("let x = 1; let y = 2; $.a = x;")).size, "a `;` starts a new declaration").toBe(2);
   });
 
   it("carries a real position on every entry-form refusal", () => {
