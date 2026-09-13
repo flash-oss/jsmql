@@ -119,9 +119,33 @@ $.o = b + c;
 ```
 
 `c` reads neither `a` nor `b`, so it joins `b` rather than opening a third stage.
-A declarator whose lowering is not a plain `$set` — a `$lookup` join — stands on
-its own. One that emits no stage at all (a folded constant, a function) groups
-with anything.
+
+Two more declarators end a run, both for the same reason — a stage would end up on
+the wrong side of the shared `$set`:
+
+- **One whose lowering is not a plain `$set`** — a `$lookup` a foreign read writes
+  into a binding's slot.
+- **One whose value HOISTS a stage of its own.** A foreign read in a VALUE position
+  (`let n = $$$.orders.filter(o => o.k === a).length`) leaves a `$set` behind and
+  puts its `$lookup` on the chain's prologue, which the chain flushes AHEAD of every
+  stage the statement returns. Shared with the sibling it correlates on, that
+  `$lookup` would run before the `$set` that binds the sibling and would correlate
+  on a field nothing has written: measured, `let a = $.x, b = $$$.c.filter(o => o.x
+  === a).length + 1;` answered `1` for every document where the `;` spelling
+  answered the real counts, and two chained joins were REJECTED by the server. The
+  declarator is therefore taken back (`Chain.rewind`) and lowered again as its own
+  statement, where the per-statement flush lands its prologue correctly.
+
+One that emits no stage at all (a folded constant, a function) groups with anything.
+
+#### Membership is the keyword, not adjacency
+
+Declarators of one declaration share the source offset of the KEYWORD that opened
+it. Adjacency in the statement list is not enough, because the constant fold
+REMOVES a folded declaration from that list: in `let a = $.x; let b = 5, c = $.y;`
+the folded `b` leaves `a` and `c` side by side, and grouping them would merge two
+declarations the developer separated with a `;`. They carry different keyword
+offsets, so they take a stage each.
 
 #### The same rule inside a block
 

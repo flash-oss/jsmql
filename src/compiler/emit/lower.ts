@@ -1100,7 +1100,9 @@ function exprBlock(node: Extract<Expr, { type: "ExprBlock" }>, env: Env, ret: (e
       refs.push(`$$${bound.as as string}`);
       scope = bound.env;
       j++;
-      if (j === node.decls.length || !node.decls[j].joined) break;
+      // Membership is the keyword's offset, so a declarator the fold removed
+      // cannot let a later one bridge a `;` the developer wrote.
+      if (j === node.decls.length || node.decls[j].group !== d.group) break;
     }
     return { $let: { vars, in: step(j, scope, null) } };
   };

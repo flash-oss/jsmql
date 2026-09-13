@@ -10,6 +10,37 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(emit): a declaration list never shares a stage with a value that hoists one
+
+An adversarial audit of the stage-merge below found two ways it produced a pipeline that
+disagreed with the `;` spelling. Both are fixed, and both now have a regression test that runs
+on the fixture `mongod`.
+
+**A value that hoists its own stage jumped the shared `$set`.** A foreign read in a VALUE
+position — `let n = $$$.orders.filter(o => o.k === a).length` — leaves a `$set` behind and puts
+its `$lookup` on the chain's prologue, which the chain flushes ahead of every stage the
+statement returns. `readsRef` inspects only the `$set` body, so the sibling read inside
+`$lookup.localField` was invisible, and the join ran BEFORE the `$set` that bound the field it
+correlates on. It matched nothing and answered silently wrong counts; two chained joins were
+rejected outright by the server, which is an HR3 violation. Such a declarator now ends the run:
+the speculative lowering is taken back with `Chain.rewind` — which exists for exactly this —
+and the declarator is lowered again as its own statement, where the per-statement flush lands
+its prologue correctly. `declStages` therefore reports how many declarators it could take
+rather than assuming the whole run.
+
+**A folded declarator bridged a `;`.** Membership was adjacency in the statement list plus a
+`joined` flag, and the constant fold REMOVES a folded declaration from that list. In
+`let a = $.x; let b = 5, c = $.y;` the folded `b` left `a` and `c` side by side, and `c`'s flag
+merged them — two declarations the developer had separated with a `;`. Membership is now the
+source offset of the KEYWORD that opened the declaration, carried on every declarator of it, so
+a removed neighbour cannot join two declarations that were never one. The flag is gone.
+
+The audit also refuted ten other candidate defects, four of them as pre-existing behaviour this
+change merely exposed; those stay as they were. See
+[docs/specs/let-bindings.md](docs/specs/let-bindings.md) § Where a shared stage breaks.
+
+---
+
 ## 2026-09-13 — feat(emit): the `,` in a declaration list shares a stage, as it does for writes
 
 `let a = $.p, b = $.q;` now takes ONE `$set`, and a block's `const d = …, e = …;` one `$let`.

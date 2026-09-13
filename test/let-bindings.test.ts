@@ -134,6 +134,41 @@ describe("let bindings — declaration lists", () => {
     ]);
   });
 
+  it("keeps a declarator that hoists a $lookup OUT of the shared $set", () => {
+    // A foreign read in a value position puts its `$lookup` AHEAD of the statement
+    // it belongs to. Shared with the sibling it correlates on, that `$lookup` would
+    // run BEFORE the `$set` that binds the sibling and would join on a missing
+    // field — silently wrong data, and a server rejection when two joins chain.
+    // Such a declarator therefore ends the run and takes a stage of its own.
+    expect(jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $lookup: { from: "probe", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { o: "$__jsmql.var.b" } },
+      { $unset: "__jsmql" },
+    ]);
+    // the `;` spelling of the same program orders the stages the same way
+    const semi = jsmql("let a = $.x; let b = $$$.probe.filter(o => o.k === a).length; $.o = b;") as unknown[];
+    const comma = jsmql("let a = $.x, b = $$$.probe.filter(o => o.k === a).length; $.o = b;") as unknown[];
+    expect(comma.map((st) => Object.keys(st as object)[0])).toEqual(semi.map((st) => Object.keys(st as object)[0]));
+  });
+
+  it("does not let a folded-away declarator bridge a `;` the developer wrote", () => {
+    // `b` folds to a constant and leaves the statement list, so `a` and `c` become
+    // neighbours. They belong to DIFFERENT declarations — the developer put a `;`
+    // between them — so they must not share a stage. Membership is the keyword's
+    // offset, not adjacency.
+    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $set: { "__jsmql.var.c": "$y" } },
+      { $set: { o: { $add: ["$__jsmql.var.a", 5, "$__jsmql.var.c"] } } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(jsmql("let a = $.x; let b = 5, c = $.y; $.o = a + b + c;")).toEqual(
+      jsmql("let a = $.x; let b = 5; let c = $.y; $.o = a + b + c;"),
+    );
+  });
+
   it("shares ONE $let across the declarators a `,` joined inside a block", () => {
     // `$let` evaluates every var in the ENCLOSING scope, so the same rule holds:
     // independent vars share one `$let`, a dependent one opens the next.

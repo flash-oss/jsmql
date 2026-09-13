@@ -503,7 +503,7 @@ class Parser {
     const name = this.c.expect("Ident");
     const params = this.paramList();
     const lambda = this.lambdaOf(params, kw.pos);
-    return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", joined: false, pos: kw.pos };
+    return { type: "FuncDecl", name: name.text, lambda, kind: "const", form: "function", group: kw.pos, pos: kw.pos };
   }
 
   /** `(a, [b, c], { d },)` — a parenthesised parameter list, names and patterns like the arrow's, trailing comma allowed. */
@@ -537,24 +537,23 @@ class Parser {
   /**
    * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
    * wherever `;` separates statements. Each declarator becomes its own
-   * declaration, so N declarators lower exactly as N statements do: `y` reads
-   * the `x` bound before it, and each runtime binding still takes a `$set` of
-   * its own (a `$set` evaluates every field against the stage's INPUT document,
-   * so two bindings sharing one stage could not depend on each other).
+   * declaration and reads the ones before it. The KEYWORD's offset marks them as
+   * ONE declaration, which is what lets the emit phase give them one stage — and
+   * what stops a folded-away neighbour from bridging a `;` the developer wrote.
    * See docs/specs/let-bindings.md.
    */
   private bindings(): (LetDecl | FuncDecl)[] {
     const kw = this.c.next();
     const kind = kw.type === "Const" ? "const" : "let";
-    const out = [this.declarator(kind, kw.pos)];
-    while (this.c.eat("Comma")) out.push(this.declarator(kind, null));
+    const out = [this.declarator(kind, kw.pos, kw.pos)];
+    while (this.c.eat("Comma")) out.push(this.declarator(kind, null, kw.pos));
     return out;
   }
 
   /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
   private binding(): LetDecl | FuncDecl {
     const kw = this.c.next();
-    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos);
+    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos, kw.pos);
   }
 
   /**
@@ -562,11 +561,9 @@ class Parser {
    * keyword and every later one at its own name, so an error underlines the
    * declarator it is about. A function body makes it a FuncDecl.
    */
-  private declarator(kind: "let" | "const", kwPos: number | null): LetDecl | FuncDecl {
+  private declarator(kind: "let" | "const", kwPos: number | null, group: number): LetDecl | FuncDecl {
     const name = this.c.expect("Ident");
     const pos = kwPos ?? name.pos;
-    // Only a declarator the `,` carried has no keyword of its own.
-    const joined = kwPos === null;
     // `let a;` / `let a, b;` — a binding is a value, and MQL has no undefined to
     // hold the place of one. Refused where the initialiser belongs.
     if (!this.c.is("Eq")) {
@@ -578,9 +575,9 @@ class Parser {
     this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name.text, lambda: value, kind, form: "arrow", joined, pos };
+      return { type: "FuncDecl", name: name.text, lambda: value, kind, form: "arrow", group, pos };
     }
-    return { type: "LetDecl", name: name.text, value, kind, joined, pos } satisfies LetDecl;
+    return { type: "LetDecl", name: name.text, value, kind, group, pos } satisfies LetDecl;
   }
 
   // ── writes ────────────────────────────────────────────────────────────────

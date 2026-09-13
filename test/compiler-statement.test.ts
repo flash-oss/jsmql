@@ -293,6 +293,22 @@ describe("compiler/emit/statement — bindings between stages", () => {
     ]);
   });
 
+  it("keeps a declarator whose value hoists a stage out of the shared $set", () => {
+    // A foreign read in a value position hoists its `$lookup` AHEAD of the
+    // statement. Shared with the sibling it correlates on, the join would run
+    // before the `$set` that binds that sibling and would correlate on a field
+    // nothing has written — silently wrong, and a server rejection when two joins
+    // chain. So it ends the run and takes its own stage, exactly as the `;`
+    // spelling does.
+    expect(compiled("let a = $.x, b = $$$.other.filter(o => o.k === a).length; $.o = b;")).toEqual([
+      { $set: { "__jsmql.var.a": "$x" } },
+      { $lookup: { from: "other", localField: "__jsmql.var.a", foreignField: "k", as: "__jsmql.tmp.1" } },
+      { $set: { "__jsmql.var.b": { $size: "$__jsmql.tmp.1" } } },
+      { $set: { o: "$__jsmql.var.b" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   it("loses a binding at a stage that replaces the document, and says so on the next read", () => {
     // `$group` drops every field; the cleanup is not owed for what is gone
     expect(compiled("let x = $.a; $group({ _id: x });")).toEqual([

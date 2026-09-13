@@ -199,11 +199,13 @@ export function lowerProgram(program: Program, env: Env): Stage[] {
       throw E.afterTerminalStage(Object.keys(env.chain.terminal)[0], (stmt as { pos: number }).pos);
     }
     const first = env.chain.emitted.length === 0 && env.chain.hoisted.length === 0;
-    // `let a = …, b = …;` — the `,` joined the declarators, so they share a stage
-    // the way `$.a = …, $.b = …` does. The run is every declarator the commas carried.
+    // `let a = …, b = …;` — one declaration, so one stage, the way
+    // `$.a = …, $.b = …` is one stage. `declStages` says how many of the
+    // declarators it could actually take.
     const run = declRun(stmts, i);
-    const step = run === null ? statementStages(stmt, scope, first) : declStages(run, scope);
-    if (run !== null) i += run.length - 1;
+    const taken = run === null ? null : declStages(run, scope);
+    const step = taken ?? statementStages(stmt, scope, first);
+    if (taken !== null) i += taken.consumed - 1;
     // A value that needed a stage of its own placed it ahead of this statement.
     env.chain.flush();
     env.chain.emitted.push(...step.stages);
@@ -241,17 +243,21 @@ function statementStages(stmt: PipelineStmt, env: Env, first: boolean): Step {
 }
 
 /**
- * The declarators one `,`-joined declaration holds, read at `i`, or null where
- * no comma joined anything. A declaration list is ONE statement, so it takes one
- * stage — the same rule `$.a = …, $.b = …` follows.
+ * The declarators of ONE declaration, read at `i`, or null where the statement is
+ * not a declaration holding more than one. Membership is the keyword's offset, so
+ * a declarator the fold removed cannot let a later one bridge a `;` the developer
+ * wrote: in `let a = $.x; let b = 5, c = $.y;` the folded `b` leaves `a` and `c`
+ * in different declarations, and they take a stage each.
  */
 function declRun(stmts: readonly PipelineStmt[], i: number): (LetDecl | FuncDecl)[] | null {
   const head = stmts[i];
   if (head.type !== "LetDecl" && head.type !== "FuncDecl") return null;
+  const group = (head as LetDecl | FuncDecl).group;
   const run = [head as LetDecl | FuncDecl];
   while (i + run.length < stmts.length) {
     const next = stmts[i + run.length];
-    if ((next.type !== "LetDecl" && next.type !== "FuncDecl") || !(next as LetDecl | FuncDecl).joined) break;
+    if (next.type !== "LetDecl" && next.type !== "FuncDecl") break;
+    if ((next as LetDecl | FuncDecl).group !== group) break;
     run.push(next as LetDecl | FuncDecl);
   }
   return run.length === 1 ? null : run;
@@ -261,22 +267,42 @@ function declRun(stmts: readonly PipelineStmt[], i: number): (LetDecl | FuncDecl
  * `let a = …, b = …;` — the declarators of one declaration, in ONE `$set` where
  * that says what the source says. A `$set` evaluates every field against the
  * stage's INPUT document, so a declarator that reads a sibling bound beside it
- * would read nothing: the run therefore breaks into a new stage exactly there,
- * and nowhere else. Measured on `{ x: 10 }`, `let a = $.x, b = a + 1;` answers
- * `b: null` merged and `b: 11` split. See docs/specs/let-bindings.md.
+ * would read nothing: the run breaks into a new stage exactly there. Measured on
+ * `{ x: 10 }`, `let a = $.x, b = a + 1;` answers `b: null` merged and `b: 11`
+ * split. See docs/specs/let-bindings.md.
+ *
+ * `consumed` says how many declarators this stage took. A value that needs a
+ * stage of its OWN ahead of the `$set` — a `$lookup` a foreign read hoists —
+ * cannot join a stage that is already holding fields, because the chain flushes
+ * that prologue ahead of every stage returned here, and it would then correlate
+ * on a sibling slot nothing has written yet. Such a declarator ends the run and
+ * is lowered again as its own statement, where the flush lands it correctly.
  */
-function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): Step {
+function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): (Step & { consumed: number }) | null {
   const out: Stage[] = [];
   let fields: Record<string, unknown> | null = null;
   let slots: string[] = [];
   let scope = env;
+  let consumed = 0;
   const flush = (): void => {
     if (fields !== null) out.push({ $set: fields });
     fields = null;
     slots = [];
   };
   for (const decl of run) {
+    // The lowering is speculative for every declarator after the first: one that
+    // hoists a prologue has to be taken back and lowered as its own statement.
+    // Both chains, because `$$.length` materialises on the ROOT one.
+    const mark = env.chain.mark();
+    const rootMark = env.rootChain.mark();
     const step = decl.type === "FuncDecl" ? statementStages(decl, scope, false) : letStages(decl, scope);
+    const hoisted = env.chain.hoisted.length > mark.hoisted || env.rootChain.hoisted.length > rootMark.hoisted;
+    if (consumed > 0 && hoisted) {
+      env.chain.rewind(mark);
+      env.rootChain.rewind(rootMark);
+      break;
+    }
+    consumed++;
     scope = step.env;
     // A declaration that takes no stage of its own (a function, a folded value)
     // groups with anything; one that takes a shape other than a plain `$set`
@@ -290,13 +316,15 @@ function declStages(run: readonly (LetDecl | FuncDecl)[], env: Env): Step {
       continue;
     }
     const slot = Object.keys(set)[0];
-    if (slots.some((s) => readsRef(set[slot], `$${s}`))) flush();
+    if (slots.some((sl) => readsRef(set[slot], `$${sl}`))) flush();
     fields ??= {};
     fields[slot] = set[slot];
     slots.push(slot);
   }
+  // Nothing shared a stage after all: let the caller lower the head on its own.
+  if (consumed < 2) return null;
   flush();
-  return { stages: out, env: scope };
+  return { stages: out, env: scope, consumed };
 }
 
 /**
