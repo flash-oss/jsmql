@@ -262,6 +262,28 @@ describe("compiler/emit/statement — bindings between stages", () => {
     expect(() => pipeline("const x = $.a; x = $.b;")).toThrow(/is a 'const' and cannot be assigned again/);
   });
 
+  it("reads a declaration list as one declaration per declarator", () => {
+    // `,` continues the list, exactly as JavaScript reads it, and a later
+    // declarator sees the earlier ones. N declarators lower as N statements:
+    // each runtime binding keeps a `$set` of its own, because a `$set` evaluates
+    // every field against the stage's INPUT document.
+    expect(compiled("let x = $.a, y = x + 1; $.c = y;")).toEqual(compiled("let x = $.a; let y = x + 1; $.c = y;"));
+    expect(compiled("let x = $.a, y = x + 1; $.c = y;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { c: "$__jsmql.var.y" } },
+      { $unset: "__jsmql" },
+    ]);
+    // a foldable declarator emits no stage in a list either
+    expect(compiled("const k = 2, n = k * 3; $.c = $.a * n;")).toEqual([{ $set: { c: { $multiply: ["$a", 6] } } }]);
+    // an arrow declarator is a reusable function, list or no list
+    expect(compiled("const dbl = (v) => v * 2, y = dbl($.a); $.c = dbl(y);")).toEqual([
+      { $set: { "__jsmql.var.y": { $let: { vars: { v: "$a" }, in: { $multiply: ["$$v", 2] } } } } },
+      { $set: { c: { $let: { vars: { v: "$__jsmql.var.y" }, in: { $multiply: ["$$v", 2] } } } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
   it("loses a binding at a stage that replaces the document, and says so on the next read", () => {
     // `$group` drops every field; the cleanup is not owed for what is gone
     expect(compiled("let x = $.a; $group({ _id: x });")).toEqual([

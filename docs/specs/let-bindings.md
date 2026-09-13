@@ -67,17 +67,44 @@ Two keywords in [src/compiler/lex/lexer.ts](../../src/compiler/lex/lexer.ts):
 
 A leading `let` (or its `const` alias) opens a declaration wherever a statement
 stands — at the top level, inside a bracketed pipeline, and inside a block body —
-and the declaration is `let <Ident> = <Expression>`. A missing identifier or a
-missing `=` is a position-marked `ParseError` that echoes the keyword as written
-(`Expected '=' after \`const x\``).
+and the declaration is `let <Ident> = <Expression>`. A missing identifier is a
+position-marked `ParseError` that echoes the keyword as written. So is a missing
+initialiser: a binding is a value and MQL has no `undefined` to hold the place of
+one, so `let x;` is refused with the spelling that works —
+`'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write
+'let x = <expr>'.`
 
-One statement declares ONE binding: the declaration ends with its expression, and a
-`,` after it separates statements rather than opening a second binding. Several
-bindings are several statements — `let a = …; let b = …;`, or `[ let a = …, let b = …,
-… ]` inside a bracketed pipeline. Each takes its own `$set`, and that is what lets a
+### Declaration lists
+
+A `,` continues the declaration, exactly as JavaScript reads
+`const a = …, b = …;`. Each declarator is its OWN declaration, so the parser
+builds for a list the same nodes it builds for the `;`-separated statements: a
+later declarator reads the ones before it, a foldable declarator still emits no
+stage, and a declarator whose initialiser is an arrow is still a reusable
+function ([reusable-functions.md](reusable-functions.md)). An initialiser is
+required per declarator, and a trailing `,` is refused — JavaScript refuses both.
+
+Each runtime binding therefore keeps a `$set` of its own, and that is what lets a
 binding read the one before it: a `$set` evaluates every field against the stage's
 INPUT document, so two bindings sharing a stage could not depend on each other
 (measured on `{ x: 10 }`: one stage answers `b: null`, two answer `b: 11`).
+
+```js
+let x = $.a, y = x + 1;
+$.c = y;
+// → [{ $set: { "__jsmql.var.x": "$a" } },
+//    { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+//    { $set: { c: "$__jsmql.var.y" } },
+//    { $unset: "__jsmql" }]
+```
+
+Inside a bracketed `[…]` pipeline the `,` is already the ELEMENT separator, so a
+list is not read there: each element carries its own keyword
+(`[ let a = …, let b = …, … ]`).
+
+The declaration's `pos` — the offset every codegen error about the binding
+forwards — is the KEYWORD for the first declarator and the declarator's own NAME
+for each one after it, so an error underlines the declarator it is about.
 
 A declaration ALONE is not a program: with no `;` to make the input a pipeline, a
 lone `let X = …` is refused with the two spellings that work — a trailing `;`, or

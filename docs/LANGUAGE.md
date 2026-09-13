@@ -3937,6 +3937,34 @@ Lowers to:
 ]
 ```
 
+A `,` continues the declaration, exactly as it does in JavaScript, and a later declarator reads the ones before it. A declaration list means the same as the declarations written out one per statement — the same stages, in the same order:
+
+```js
+jsmql`
+  const start = new Date("2026-08-01"), end = start.plus(1, "month");
+  $.t.inRange(start, end);
+`;
+// → { t: { $gte: new Date("2026-08-01T00:00:00.000Z"),
+//          $lt:  new Date("2026-09-01T00:00:00.000Z") } }
+```
+
+Both declarators above are constants, so both fold at compile time and neither emits a stage. One that reads the document keeps its own `$set`, list or no list:
+
+```js
+jsmql`
+  let x = $.a, y = x + 1;
+  $.c = y;
+`;
+// → [
+//   { $set: { "__jsmql.var.x": "$a" } },
+//   { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+//   { $set: { c: "$__jsmql.var.y" } },
+//   { $unset: "__jsmql" },
+// ]
+```
+
+A declarator whose value is an arrow is a [reusable function](#reusable-functions), in a list as anywhere else. Every declarator needs a value — there is no `undefined` in MQL to bind, so `let x;` is an error naming `let x = <expr>`.
+
 Why use `let` instead of `$.tmp = …; … ; delete $.tmp`:
 
 - Each derived value sits on its own line — natural spot for a one-line `// …` comment.

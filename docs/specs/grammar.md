@@ -28,12 +28,22 @@ function_decl  = "function" IDENT "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                   follow with no `;` (and its presence flips into pipeline mode).
                   See docs/specs/reusable-functions.md § The `function` keyword. *)
 
-let_decl       = ("let" | "const") IDENT "=" expression
+let_decl       = ("let" | "const") declarator ("," declarator)*
                (* pipeline-scoped local binding; see docs/specs/let-bindings.md.
                   `let` is reassignable (`name = …` later), `const` is not.
                   Only valid inside a pipeline (any `;`-separated form or a
                   bracketed `[...]` pipeline element). A top-level let/const in
-                  expression mode is a parse error. *)
+                  expression mode is a parse error.
+                  A declaration list is N declarations, as in JavaScript: a later
+                  declarator reads the earlier ones, and the parser builds the
+                  same nodes it builds for N `;`-separated statements. Inside a
+                  bracketed `[...]` pipeline the `,` is already the ELEMENT
+                  separator, so each element there carries its own keyword. *)
+
+declarator     = IDENT "=" expression
+               (* an initialiser is required: a binding is a value, and MQL has
+                  no `undefined` to hold the place of one, so `let x;` is a
+                  position-marked ParseError naming `let x = <expr>`. *)
 
 update_filter  = update_op ("," update_op)* ","?
                (* parser dispatch:
@@ -167,7 +177,8 @@ template_literal = "`" template_chunk ("${" expression "}" template_chunk)* "`"
 lambda_unparen = IDENT "=>" lambda_body                      (* x => expr | x => { … } *)
 lambda_paren   = "(" [IDENT ("," IDENT)* ","?] ")" "=>" lambda_body  (* (x, y) => … *)
 lambda_body    = expr_block | expression
-expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let *)
+expr_block     = "{" (let_decl ";")* "return" expression [";"] "}"   (* lowers to nested $let;
+                  a let_decl here may be a list, and each declarator nests one more $let *)
 function_expr  = "function" IDENT? "(" [IDENT ("," IDENT)* ","?] ")" expr_block
                (* a function expression — the same node a block-body arrow
                   produces. An optional name is parsed and discarded (unreachable

@@ -10,6 +10,48 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — feat(parse): `const a = …, b = …;` — a declaration is a LIST of declarators
+
+`const start = new Date("2026-08-01"), end = start.plus(1, "month");` was a parse error at the
+comma. That broke the project's second priority: every expression jsmql accepts must be valid
+JavaScript, and a multi-declarator declaration is not an exotic corner of the language — it is
+what a developer writes when two constants belong together. The parser now reads the `,` as
+JavaScript reads it, for `let` and `const` alike, with no limit on the number of declarators.
+
+The lowering needed no new machinery, because a declaration list IS N declarations. The parser
+builds for `const a = …, b = …;` exactly the nodes it builds for the two `;`-separated
+statements — [test/compiler-parse.test.ts](test/compiler-parse.test.ts) asserts the two trees
+are identical with positions erased — so every downstream phase was already correct by
+construction: a later declarator reads the earlier ones, a foldable declarator still emits no
+stage, a runtime one still takes a `$set` of its own (a `$set` evaluates every field against
+the stage's INPUT document, so two bindings sharing a stage could not depend on each other),
+and an arrow-valued declarator is still a reusable function. `statement()` in
+[src/compiler/parse/parser.ts](src/compiler/parse/parser.ts) returns the RUN of statements a
+declaration stands for rather than one statement, and `declarator()` holds the
+function/value fork so both dispatch sites inherit it.
+
+Two decisions the shape forced. Inside a bracketed `[…]` pipeline the `,` is ALREADY the
+element separator, so a list is not read there and each element keeps its own keyword
+(`[ let a = …, let b = …, … ]`) — overloading one comma with two meanings in the one place they
+compete would be a worse trade than the extra keyword. And a declarator with no initialiser
+stays refused, because a binding is a value and MQL has no `undefined` to hold the place of
+one; the generic `Expected '=' but got ';'` is replaced by a message that names the spelling
+that works, positioned at the declarator it is about rather than at the keyword. Verified on
+the fixture `mongod`: the runtime chain, the folded date window, the function-declarator chain,
+a reassignment and a callback-block list all return JavaScript's own answers. See
+[docs/specs/let-bindings.md](docs/specs/let-bindings.md) § Declaration lists and
+[docs/specs/grammar.md](docs/specs/grammar.md).
+
+This supersedes half of the §B row *Multi-binding `let a = …, b = …;`* in
+[docs/DEFERRED.md](docs/DEFERRED.md). That row weighed the list purely as an MQL-size
+optimisation — eleven bytes, and "a third spelling of something two already say" — and never
+weighed it against priority #2, which is what actually decides a spelling that JavaScript
+already has. Its measured half is untouched and still law: merging N declarators into ONE
+`$set` stage is wrong, because a `$set` cannot see a sibling it adds. The row is rewritten to
+reject the merge rather than the syntax.
+
+---
+
 ## 2026-09-13 — feat(registry): `.inRange()` reads a date, and a constant range on a field becomes an indexable clause
 
 `.inRange()` stated `on: "number"`, so a receiver PROVEN to be a date —

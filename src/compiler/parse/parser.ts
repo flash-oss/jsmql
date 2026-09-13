@@ -431,13 +431,15 @@ class Parser {
         const close = this.c.expect("RBrace");
         return { stmts, ret, retPos: r.pos, sawSemi, endPos: close.pos };
       }
-      const st = this.statement();
+      // A declaration list is one statement per declarator, so a run comes back.
+      const run = this.statement();
+      const st = run[0];
       // `x => { k: x }` — JavaScript reads `k:` as a label; the developer meant an
       // object. Say so, with the spelling that returns one.
       if (terminator === "RBrace" && st.type === "Ident" && this.c.is("Colon")) {
         throw new ParseError(needsReturn(st.pos, `an identifier '${st.name}'`), st.pos);
       }
-      stmts.push(st);
+      stmts.push(...run);
       // `function f(x) { … }` ends with its closing brace, so the separator is
       // optional after it — the same rule JavaScript uses.
       const blockBodied = st.type === "FuncDecl" && st.form === "function";
@@ -449,12 +451,16 @@ class Parser {
     return { stmts, ret: null, retPos: 0, sawSemi, endPos };
   }
 
-  private statement(): PipelineStmt {
-    if (this.c.is("Let") || this.c.is("Const")) return this.binding();
+  /**
+   * One statement — or the RUN of them a declaration list stands for, since
+   * `const a = …, b = …;` is N declarations in JavaScript and N here too.
+   */
+  private statement(): PipelineStmt[] {
+    if (this.c.is("Let") || this.c.is("Const")) return this.bindings();
     this.refuseAsync();
-    if (this.functionAhead()) return this.functionDecl();
-    if (this.writeAhead()) return this.writes();
-    return this.expression();
+    if (this.functionAhead()) return [this.functionDecl()];
+    if (this.writeAhead()) return [this.writes()];
+    return [this.expression()];
   }
 
   /** Is a `function` declaration next? The word comes from its row's `word`. */
@@ -528,17 +534,51 @@ class Parser {
     return this.lambdaOf(params, kw.pos);
   }
 
-  /** `let x = …` / `const x = …`. A function body makes it a FuncDecl. */
-  private binding(): LetDecl | FuncDecl {
+  /**
+   * `let x = …, y = …` / `const x = …, y = …` — JavaScript's declaration list,
+   * wherever `;` separates statements. Each declarator becomes its own
+   * declaration, so N declarators lower exactly as N statements do: `y` reads
+   * the `x` bound before it, and each runtime binding still takes a `$set` of
+   * its own (a `$set` evaluates every field against the stage's INPUT document,
+   * so two bindings sharing one stage could not depend on each other).
+   * See docs/specs/let-bindings.md.
+   */
+  private bindings(): (LetDecl | FuncDecl)[] {
     const kw = this.c.next();
     const kind = kw.type === "Const" ? "const" : "let";
+    const out = [this.declarator(kind, kw.pos)];
+    while (this.c.eat("Comma")) out.push(this.declarator(kind, null));
+    return out;
+  }
+
+  /** `let x = …` / `const x = …`, one declarator — a bracketed pipeline's element, where `,` separates elements. */
+  private binding(): LetDecl | FuncDecl {
+    const kw = this.c.next();
+    return this.declarator(kw.type === "Const" ? "const" : "let", kw.pos);
+  }
+
+  /**
+   * One declarator, after the keyword. `kwPos` positions the FIRST one at the
+   * keyword and every later one at its own name, so an error underlines the
+   * declarator it is about. A function body makes it a FuncDecl.
+   */
+  private declarator(kind: "let" | "const", kwPos: number | null): LetDecl | FuncDecl {
     const name = this.c.expect("Ident");
-    this.c.expect("Eq");
+    const pos = kwPos ?? name.pos;
+    // `let a;` / `let a, b;` — a binding is a value, and MQL has no undefined to
+    // hold the place of one. Refused where the initialiser belongs.
+    if (!this.c.is("Eq")) {
+      throw new ParseError(
+        `'${kind} ${name.text}' binds no value at position ${pos}. jsmql has no 'undefined' to bind — write '${kind} ${name.text} = <expr>'.`,
+        pos,
+      );
+    }
+    this.c.next();
     const value = this.expression();
     if (value.type === "Lambda") {
-      return { type: "FuncDecl", name: name.text, lambda: value, kind, form: "arrow", pos: kw.pos };
+      return { type: "FuncDecl", name: name.text, lambda: value, kind, form: "arrow", pos };
     }
-    return { type: "LetDecl", name: name.text, value, kind, pos: kw.pos } satisfies LetDecl;
+    return { type: "LetDecl", name: name.text, value, kind, pos } satisfies LetDecl;
   }
 
   // ── writes ────────────────────────────────────────────────────────────────

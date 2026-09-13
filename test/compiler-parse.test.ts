@@ -427,9 +427,23 @@ describe("compiler/parse — one statement loop", () => {
       "$.a = 1",
       "$.a = 1;",
       "let x = 1; $.a === x",
+      "let x = 1, y = x + 1; $.a === y",
       "$match($.a > 1); $.b = 2;",
     ]) {
       expect(shape(parseEntry(`({ $ }) => { ${src} }`).program), src).toBe(shape(parse(src)));
+    }
+  });
+
+  it("reads a declaration list as the declarations it stands for", () => {
+    // `const a = …, b = …;` is N declarations in JavaScript, and the parser
+    // builds the same N nodes it builds for N statements — so nothing
+    // downstream needs a second shape to lower.
+    for (const [list, separate] of [
+      ["let x = 1, y = 2; $.a = x + y;", "let x = 1; let y = 2; $.a = x + y;"],
+      ["const a = $.p, b = a + 1, c = b * 2; $.d = c;", "const a = $.p; const b = a + 1; const c = b * 2; $.d = c;"],
+      ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
+    ]) {
+      expect(shape(parse(list)), list).toBe(shape(parse(separate)));
     }
   });
 

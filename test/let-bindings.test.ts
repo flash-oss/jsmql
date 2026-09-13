@@ -88,6 +88,62 @@ describe("let bindings — basic shape", () => {
   });
 });
 
+describe("let bindings — declaration lists", () => {
+  it("takes any number of declarators, and a later one reads the earlier ones", () => {
+    expect(jsmql("let x = $.a, y = x + 1, z = y * 2; $.c = z;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $set: { "__jsmql.var.z": { $multiply: ["$__jsmql.var.y", 2] } } },
+      { $set: { c: "$__jsmql.var.z" } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+
+  it("lowers exactly as the same declarators written as separate statements", () => {
+    const pairs: readonly [string, string][] = [
+      ["let x = $.a, y = x + 1; $.c = y;", "let x = $.a; let y = x + 1; $.c = y;"],
+      ["const k = 2, n = k * 3; $.c = $.a * n;", "const k = 2; const n = k * 3; $.c = $.a * n;"],
+      ["const f = (v) => v * 2, y = f($.a); $.c = y;", "const f = (v) => v * 2; const y = f($.a); $.c = y;"],
+      ["let a = $.p, b = $.q; $match(a > b);", "let a = $.p; let b = $.q; $match(a > b);"],
+      [
+        "$.o = $.i.map((v) => { const d = v * 2, e = d + 1; return e; });",
+        "$.o = $.i.map((v) => { const d = v * 2; const e = d + 1; return e; });",
+      ],
+    ];
+    for (const [list, separate] of pairs) expect(jsmql(list), list).toEqual(jsmql(separate));
+  });
+
+  it("keeps `const` read-only and `let` reassignable per declarator", () => {
+    expect(jsmql("let x = $.a, y = $.b; x = y; $.c = x;")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": "$b" } },
+      { $set: { "__jsmql.var.x": "$__jsmql.var.y" } },
+      { $set: { c: "$__jsmql.var.x" } },
+      { $unset: "__jsmql" },
+    ]);
+    expect(() => jsmql("const x = $.a, y = $.b; y = x;")).toThrow(/is a 'const' and cannot be assigned again/);
+  });
+
+  it("catches a duplicate name inside one list", () => {
+    expect(() => jsmql("let x = $.a, x = $.b; $.c = x;")).toThrow(/already declared/);
+  });
+
+  it("rejects a trailing comma, as JavaScript does", () => {
+    expect(() => jsmql("const a = 1, b = 2,; $.x = a;")).toThrow("Expected identifier but got ';'");
+  });
+
+  it("leaves the bracketed pipeline's `,` as its element separator", () => {
+    // Inside `[…]` the comma already separates statements, so each element
+    // carries its own keyword.
+    expect(jsmql("[let x = $.a, let y = x + 1, $match(y > 5)]")).toEqual([
+      { $set: { "__jsmql.var.x": "$a" } },
+      { $set: { "__jsmql.var.y": { $add: ["$__jsmql.var.x", 1] } } },
+      { $match: { $expr: { $gt: ["$__jsmql.var.y", 5] } } },
+      { $unset: "__jsmql" },
+    ]);
+  });
+});
+
 describe("let bindings — bracketed pipeline form", () => {
   it("works as the first element of a [...] pipeline", () => {
     expect(jsmql("[let x = $.a + 1, $match(x > 5)]")).toEqual([
@@ -282,8 +338,14 @@ describe("let bindings — parser errors", () => {
     expect(() => jsmql("let = 5;")).toThrow("Expected identifier but got '=' at position 4");
   });
 
-  it("rejects `let x` with no `=`", () => {
-    expect(() => jsmql("let x 5;")).toThrow("Expected '=' but got '5' at position 6");
+  it("rejects a declarator that binds no value, and names the spelling that does", () => {
+    const named = "'let x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'let x = <expr>'.";
+    expect(() => jsmql("let x 5;")).toThrow(named);
+    expect(() => jsmql("let x;")).toThrow(named);
+    // A later declarator is refused the same way, at its OWN name.
+    expect(() => jsmql("let a = 1, x;")).toThrow(
+      "'let x' binds no value at position 11. jsmql has no 'undefined' to bind — write 'let x = <expr>'.",
+    );
   });
 
   it("rejects `let x =` with no expression", () => {
@@ -895,7 +957,9 @@ describe("let bindings — `const` is a read-only alias for `let`", () => {
 
   it("parser errors echo the `const` keyword the user actually wrote", () => {
     expect(() => jsmql("const = 5;")).toThrow("Expected identifier but got '=' at position 6");
-    expect(() => jsmql("const x 5;")).toThrow("Expected '=' but got '5' at position 8");
+    expect(() => jsmql("const x 5;")).toThrow(
+      "'const x' binds no value at position 0. jsmql has no 'undefined' to bind — write 'const x = <expr>'.",
+    );
   });
 
   it("`const` is still usable as a field name and object key", () => {

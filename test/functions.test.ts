@@ -45,6 +45,22 @@ describe("reusable functions — declaration + call", () => {
     ]);
   });
 
+  it("a declaration list holds functions beside values, and a later declarator calls an earlier one", () => {
+    expect(jsmql("const double = (x) => x * 2, half = (x) => double(x) / 4, v = half($.p); $ = { a: v };")).toEqual([
+      {
+        $set: {
+          "__jsmql.var.v": {
+            $let: {
+              vars: { x: "$p" },
+              in: { $divide: [{ $let: { vars: { x: "$$x" }, in: { $multiply: ["$$x", 2] } } }, 4] },
+            },
+          },
+        },
+      },
+      { $replaceWith: { a: "$__jsmql.var.v" } },
+    ]);
+  });
+
   it("block-body with a local `const` nests $let in source order", () => {
     expect(jsmql("const f = (a) => { const t = a * 2; return t + 1; }; $ = { v: f($.n) };")).toEqual([
       {
