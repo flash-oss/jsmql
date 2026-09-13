@@ -1506,6 +1506,54 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     ]);
   });
 
+  // A first-only stage inside a body the row files as a PIPELINE of its own is first
+  // where IT stands. `first` and the pending hoist are facts about the OUTER pipeline
+  // and say nothing about that one — MEASURED, the server runs both of these.
+  it("keeps a first-only stage in a sub-pipeline, whatever stands ahead of the container", () => {
+    expect(
+      jsmql('$.b = 2; $lookup({ from: "c", as: "o", pipeline: [$geoNear({ near: [0, 0], distanceField: "d" })] });'),
+    ).toEqual([
+      { $set: { b: 2 } },
+      { $lookup: { from: "c", as: "o", pipeline: [{ $geoNear: { near: [0, 0], distanceField: "d" } }] } },
+    ]);
+    // the same for `$unionWith` and a `$facet` branch, the other rows that state it
+    expect(
+      jsmql('$.b = 2; $unionWith({ coll: "c", pipeline: [$geoNear({ near: [0, 0], distanceField: "d" })] });'),
+    ).toEqual([
+      { $set: { b: 2 } },
+      { $unionWith: { coll: "c", pipeline: [{ $geoNear: { near: [0, 0], distanceField: "d" } }] } },
+    ]);
+    // and it is still refused where it is NOT first of that pipeline
+    expect(() =>
+      jsmql(
+        '$lookup({ from: "c", as: "o", pipeline: [$sort({ a: 1 }), $geoNear({ near: [0, 0], distanceField: "d" })] });',
+      ),
+    ).toThrow(/'\$geoNear' produces the pipeline's source documents/);
+  });
+
+  // `$merge.whenMatched` is an UPDATE, not a pipeline: no first position, and a
+  // closed set of stages. The `$merge` row states the set; the server's own answer
+  // is compared against it in compiler-statement.test.ts.
+  it("refuses a stage an update spec does not run, wherever the $merge stands", () => {
+    const refused = /cannot stand inside '\$merge': that body is an UPDATE, not a pipeline/;
+    expect(() => jsmql('$merge({ into: "c", whenMatched: [$sort({ a: 1 })] });')).toThrow(refused);
+    expect(() => jsmql('$.b = 2; $merge({ into: "c", whenMatched: [$sort({ a: 1 })] });')).toThrow(refused);
+    expect(() =>
+      jsmql('$merge({ into: "c", whenMatched: [$geoNear({ near: [0, 0], distanceField: "d" })] });'),
+    ).toThrow(refused);
+    // the message names every stage the server does run there
+    expect(() => jsmql('$merge({ into: "c", whenMatched: [$match($.a > 1)] });')).toThrow(
+      /'\$addFields', '\$set', '\$project', '\$unset', '\$replaceRoot', '\$replaceWith' and '\$fill'/,
+    );
+    // and each of those compiles
+    expect(jsmql('$merge({ into: "c", whenMatched: [$set({ z: 9 })] });')).toEqual([
+      { $merge: { into: "c", whenMatched: [{ $set: { z: 9 } }] } },
+    ]);
+    expect(jsmql('$merge({ into: "c", whenMatched: [$fill({ output: { a: { value: 0 } } })] });')).toEqual([
+      { $merge: { into: "c", whenMatched: [{ $fill: { output: { a: { value: 0 } } } }] } },
+    ]);
+  });
+
   // .validate() carries a meaningful position.
   it("surfaces a structural violation through validate() with a meaningful pos", () => {
     const src = "[ { $facet: { a: [ { $out: 'x' } ] } } ]";

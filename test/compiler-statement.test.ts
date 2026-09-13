@@ -13,6 +13,7 @@ import { afterAll, beforeAll, describe, expect, it } from "vitest";
 import { MongoClient, type Collection } from "mongodb";
 import { pipeline } from "../src/compiler/index.ts";
 import { liveClient } from "./fixtures/live.ts";
+import { statementBodyOf } from "../src/compiler/rows.ts";
 
 /**
  * Sources whose pipeline is valid MQL that THIS deployment cannot run, each with
@@ -668,5 +669,74 @@ describe("compiler/emit/statement — a root write of a provable array fans out"
       { $set: { y: { $in: ["a", { $ifNull: ["$__jsmql.var.ids", []] }] } } },
       { $unset: "__jsmql" },
     ]);
+  });
+});
+
+describe("compiler/emit/statement — the update spec's closed set, against the server's own answer", () => {
+  // `$merge.whenMatched` is an UPDATE, not a pipeline: the server runs a closed set of
+  // stages there and refuses the rest outright. jsmql reads that set off the `$merge`
+  // row (`statementBody`), and this is the gate that keeps the row honest — it asks
+  // the server, one stage per run, and compares the two sets.
+  const ALLOWED = statementBodyOf("$merge");
+
+  /** A body each stage accepts, so a rejection is about the UPDATE and not the shape. */
+  const BODIES: Readonly<Record<string, unknown>> = {
+    $addFields: { z: 1 },
+    $set: { z: 1 },
+    $project: { z: 1 },
+    $unset: "qty",
+    $replaceRoot: { newRoot: { $mergeObjects: ["$$ROOT", { z: 1 }] } },
+    $replaceWith: { $mergeObjects: ["$$ROOT", { z: 1 }] },
+    $fill: { output: { a: { value: 0 } } },
+    $match: { a: 2 },
+    $limit: 1,
+    $skip: 0,
+    $sort: { a: 1 },
+    $count: "n",
+    $group: { _id: "$a" },
+    $unwind: "$items",
+    $sortByCount: "$a",
+    $redact: "$$KEEP",
+    $setWindowFields: { output: { w: { $count: {} } } },
+    $bucketAuto: { groupBy: "$a", buckets: 1 },
+    $sample: { size: 1 },
+  };
+
+  it("allows exactly what the server allows", async () => {
+    if (coll === null) {
+      expect(Array.isArray(ALLOWED) && ALLOWED.length > 0).toBe(true);
+      return;
+    }
+    expect(Array.isArray(ALLOWED)).toBe(true);
+    const c = coll;
+    const serverAllows: string[] = [];
+    for (const [name, body] of Object.entries(BODIES)) {
+      try {
+        await c.aggregate([{ $merge: { into: "update_spec_probe", whenMatched: [{ [name]: body }] } }]).toArray();
+        serverAllows.push(name);
+      } catch (e) {
+        // Anything BUT the update refusal means the probe body was wrong, not that the
+        // stage is banned — a silent miscount is the one failure this gate must not have.
+        const m = (e as Error).message;
+        expect(m, `'${name}' was refused for a reason other than the update spec`).toMatch(
+          /is not allowed to be used within an update/,
+        );
+      }
+    }
+    const registryAllows = (ALLOWED as readonly string[]).filter((n) => n in BODIES);
+    expect([...serverAllows].sort()).toEqual([...registryAllows].sort());
+    // and every name the row states is one this probe actually exercised
+    expect((ALLOWED as readonly string[]).filter((n) => !(n in BODIES))).toEqual([]);
+  });
+
+  it("refuses at compile time exactly the ones the server refuses", () => {
+    for (const name of Object.keys(BODIES)) {
+      const src = `$merge({ into: "c", whenMatched: [{ ${name}: ${JSON.stringify(BODIES[name])} }] });`;
+      if ((ALLOWED as readonly string[]).includes(name)) {
+        expect(() => pipeline(src), name).not.toThrow();
+      } else {
+        expect(() => pipeline(src), name).toThrow(/cannot stand inside '\$merge': that body is an UPDATE/);
+      }
+    }
   });
 });

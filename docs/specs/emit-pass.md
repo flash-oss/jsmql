@@ -318,6 +318,7 @@ the server enforces it and no renderer implies it:
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
+| `statementBody` | says what a `statement` slot HOLDS: a pipeline of its own, or an update spec and the stages it runs | "$sort is not allowed to be used within an update" |
 | `literalKeys` | judges a `$`-led string against the closed set, because the server reads the key as a word | `{ $merge: { whenMatched: "$g" } }` → "Enumeration value '$g' for field 'whenMatched' is not a valid value" |
 
 A stage's own body sub-pipeline runs under its OWN chain, with the container
@@ -337,7 +338,15 @@ chain it asks is `env.chain` and never the root one: a `$$.length` read inside a
 sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first (measured,
 the server runs it). A name the BODY holds is judged the same way, unless the row files
 its slot as a sub-pipeline — a stage there is first where IT stands and its own `place`
-call has already said so. The `stageLast` mirror is the same fact read backwards: the
+call has already said so — and which slots those are is the row's `statementBody` fact,
+not the slot's `statement` kind. The two are different things: `$lookup.pipeline` and a
+`$facet` branch start a pipeline, while `$merge.whenMatched` is an UPDATE spec with no
+first position at all and a closed set of stages the server runs there. Reading the
+slot kind alone conflated them, and one line then did two wrong things at once: it
+refused `$geoNear` first-in-a-`$lookup`-body because a statement preceded the `$lookup`
+(the server runs that), and it caught a banned stage in `whenMatched` only when a
+statement happened to precede the `$merge` (the server never runs that). The row states
+which kind it is; a row that files a `statement` slot and says nothing fails the build. The `stageLast` mirror is the same fact read backwards: the
 cleanup that drops the scratch fields is the stage before the terminal, so a terminal
 body that reads one reads a field already gone.
 

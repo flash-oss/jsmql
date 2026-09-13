@@ -18,6 +18,8 @@ type Row = {
   on?: string | readonly string[];
   where?: readonly Position[];
   only?: readonly Only[];
+  bodyPositions?: Readonly<Record<string, unknown>>;
+  statementBody?: "pipeline" | readonly string[];
   params?: unknown;
   iterateeSlots?: Readonly<Record<string, unknown>>;
   replacesDocument?: true;
@@ -109,5 +111,49 @@ describe("registry — `only` and the positions it qualifies", () => {
       if (row.where?.includes("stream") !== true) stray.push(name);
     }
     expect(stray).toEqual([]);
+  });
+});
+
+describe("registry — a `statement` body slot says WHAT it holds", () => {
+  /** Every row with a body key it files as `statement`, at any depth of the layout. */
+  const withStatementSlot = Object.entries(NAMES as Record<string, Row>).filter(([, r]) =>
+    Object.values(r.bodyPositions ?? {}).some(
+      (v) => v === "statement" || (typeof v === "object" && v !== null && Object.values(v).includes("statement")),
+    ),
+  );
+
+  // A `statement` slot holds one of two things, and they are not alike: a pipeline of
+  // its own (`$lookup.pipeline`) has a FIRST position and its own placement rules; an
+  // update spec (`$merge.whenMatched`) has neither and runs a closed set of stages.
+  // No other field tells them apart, so the row states it — and this fails the build
+  // for a row that forgets, which is how the distinction stays honest as rows are added.
+  it("every row with one states `statementBody`", () => {
+    expect(withStatementSlot.length).toBeGreaterThan(0);
+    const silent = withStatementSlot.filter(([, r]) => r.statementBody === undefined).map(([n]) => n);
+    expect(silent, `${silent.length} row(s) file a 'statement' body slot without saying what it holds`).toEqual([]);
+  });
+
+  it("no row states it without having one", () => {
+    const have = new Set(withStatementSlot.map(([n]) => n));
+    const spurious = Object.entries(NAMES as Record<string, Row>)
+      .filter(([n, r]) => r.statementBody !== undefined && !have.has(n))
+      .map(([n]) => n);
+    expect(spurious).toEqual([]);
+  });
+
+  // An update spec's list is a set of STAGE names: a name that is not one could never
+  // match the stage `place` asks about, so the allowance would silently never apply.
+  it("every name an update spec allows is a stage this registry has", () => {
+    const stages = new Set(
+      Object.entries(NAMES as Record<string, Row>)
+        .filter(([, r]) => (r.where ?? []).includes("statement" as Position))
+        .map(([n]) => n),
+    );
+    for (const [name, r] of withStatementSlot) {
+      if (r.statementBody === undefined || r.statementBody === "pipeline") continue;
+      for (const allowed of r.statementBody) {
+        expect(stages.has(allowed), `'${name}' allows '${allowed}', which is not a stage`).toBe(true);
+      }
+    }
   });
 });

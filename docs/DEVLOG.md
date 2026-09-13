@@ -10,6 +10,49 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(registry): a `statement` body slot states WHAT it holds, and two placement bugs close with it
+
+`place` judged every registry name it found inside a stage's body against THIS
+pipeline's first position, at any depth. It walks the body for a real reason — `$text`
+must sit in the pipeline's first `$match`, and that rule belongs to `$text` — but it
+walked into sub-pipelines too, and one line then did two wrong things at once.
+
+It REFUSED a valid pipeline. `$.b = 2; $lookup({ from: "c", as: "o", pipeline:
+[$geoNear({ … })] });` was rejected because a `$set` stood ahead of the `$lookup`.
+`$geoNear` is the first stage of the sub-pipeline and its own `place` call had already
+said so; the outer walk judged it again, against a position it does not stand in. The
+server runs that document — measured. Drop the `$set` and jsmql compiled it, so the
+refusal turned on what preceded the container, which is not a fact about `$geoNear`.
+
+And it let INVALID MQL through. `$merge.whenMatched` also holds a list of stages, but it
+is an UPDATE spec, not a pipeline: MEASURED, one stage per run with a valid body, the
+server runs `$addFields`, `$set`, `$project`, `$unset`, `$replaceRoot`, `$replaceWith`
+and `$fill` there, and answers "<name> is not allowed to be used within an update" for
+24 others. jsmql emitted all of them. The same `!first` line caught a few by accident —
+but only when a statement happened to precede the `$merge`, which is why
+`$merge({ into: "c", whenMatched: [$geoNear({ … })] })` compiled and its `$.b = 2;`
+variant did not.
+
+The two pull one line in opposite directions, so neither closes alone: relax it for the
+sub-pipeline case and the update spec loses its accidental guard. What was missing is a
+FACT. Six rows file a body slot as `statement` and no field told the two kinds apart —
+`pipelineOver` is stated on `$lookup` and `$unionWith` only, so `$facet` sits on the
+wrong side of it. Each of the six now states `statementBody`: `"pipeline"` for the five
+that start a pipeline of their own, and for `$merge` the list of stages an update runs.
+`namesWithin` reads it instead of the slot kind, and `place` reads it again to refuse a
+stage the update spec does not name. A stage the language gains later is refused there
+until the row names it — the safe default, and the server's own answer.
+
+Three gates keep it from coming back. A row that files a `statement` slot and states no
+`statementBody` fails [test/registry-agrees.test.ts](test/registry-agrees.test.ts), so a
+new container cannot forget; a name in an update spec's list must be a real stage; and
+[test/compiler-statement.test.ts](test/compiler-statement.test.ts) asks the SERVER, one
+stage per run, and compares its answer with the row's — each was made to fail before it
+was trusted. Specs: [emit-pass.md](docs/specs/emit-pass.md) § the placement table,
+[out-stage.md](docs/specs/out-stage.md) § `whenMatched` is an UPDATE.
+
+---
+
 ## 2026-09-13 — fix(union): a written document list holds only what the program spells
 
 `$$ = [{ n: $.a }]` emitted `{ $documents: [{ n: "$a" }] }` and the server answered

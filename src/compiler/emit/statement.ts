@@ -44,7 +44,7 @@ import { lowerFilter } from "./filter.ts";
 import { locate, lowerValue, provideJoin, lowerTruth } from "./lower.ts";
 import { joinRoot, joinStream, joinWrite, joinValue, readsAnotherCollection, type JoinServices } from "./join.ts";
 import { elementKindOf, isPresent, kindOf } from "./types.ts";
-import { bodySlotAt, positionalKeysOf, positionsOf } from "../rows.ts";
+import { bodySlotAt, positionalKeysOf, positionsOf, statementBodyOf } from "../rows.ts";
 import { select, shapeOf, type Receiver } from "./select.ts";
 import { noStageInDocuments, unionStages } from "./union.ts";
 import { holdsStreamReduce, isReduceWrap, reduceWrapStages, arrayReduceParts, isStreamReduce } from "./reduce-wrap.ts";
@@ -368,10 +368,12 @@ function documentsStages(list: Extract<Expr, { type: "ArrayLiteral" }>, env: Env
 
 /**
  * Every registry name that appears as a KEY anywhere inside an emitted stage's
- * body, and whether it sits in a SUB-PIPELINE of it — a body key the row files as
- * `statement`. A name in a sub-pipeline is a stage of ANOTHER pipeline, whose own
- * `place` call already judged where it stands; a name outside one is part of this
- * stage and stands where this stage does.
+ * body, and whether it sits in a PIPELINE OF ITS OWN inside it — a body key the row
+ * files as `statement` AND states `statementBody: "pipeline"` for. Such a name is a
+ * stage of another pipeline, whose own `place` call already judged where it stands.
+ * Every other name is part of THIS stage and stands where this stage does — an
+ * update spec's stages included, which is why the row's fact decides and the slot's
+ * `statement` kind does not.
  */
 function namesWithin(
   stage: string,
@@ -379,7 +381,8 @@ function namesWithin(
   path: BodyPath = [],
   out: Map<string, boolean> = new Map(),
 ): Map<string, boolean> {
-  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement";
+  const nested =
+    path.length > 0 && bodySlotAt(stage, path)?.at === "statement" && statementBodyOf(stage) === "pipeline";
   if (Array.isArray(body)) {
     for (const el of body) namesWithin(stage, el, path, out);
   } else if (typeof body === "object" && body !== null) {
@@ -425,11 +428,24 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
         throw E.forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
-    if (held === name || !onlyOf(held).includes("stageFirst")) continue;
+    // An enclosing body that is an UPDATE spec takes a closed set of stages, which
+    // its row states: the server refuses every other one outright (MEASURED, "$sort
+    // is not allowed to be used within an update"). A stage the language gains later
+    // is refused here until the row names it — the safe default, and the server's.
+    if (held === name) {
+      for (const b of env.site.boundaries) {
+        const allows = statementBodyOf(b.stage);
+        if (allows === null || allows === "pipeline" || allows.includes(name)) continue;
+        if (bodySlotAt(b.stage, b.path)?.at !== "statement") continue;
+        throw E.notInUpdateSpec(name, b.stage, allows, pos);
+      }
+    }
+    // A name inside a pipeline of its own is first where IT stands — `first` and the
+    // pending hoist are facts about THIS pipeline and say nothing about that one.
+    // MEASURED, the server runs `[{ $set: … }, { $lookup: { pipeline: [{ $geoNear: … }] } }]`.
+    if (held === name || nested || !onlyOf(held).includes("stageFirst")) continue;
     if (!first) throw E.mustBeFirstStage(held, pos, placementOf(held).first);
-    // A name inside a SUB-pipeline is first where IT stands; a hoist on this chain
-    // stands ahead of this stage and leaves that body's own order alone.
-    if (hoisted !== undefined && !nested) noPlacement(held);
+    if (hoisted !== undefined) noPlacement(held);
   }
   if (only.includes("stageFirst")) {
     if (!first) throw E.mustBeFirstStage(name, pos, placementOf(name).first);

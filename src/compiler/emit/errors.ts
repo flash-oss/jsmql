@@ -753,6 +753,27 @@ export const documentsNeedNoStage = (written: string, made: string, pos: number)
     pos,
   );
 
+/**
+ * `$merge({ into: "c", whenMatched: [$sort({ a: 1 })] })` — a stage inside an UPDATE
+ * spec, which is not a pipeline. The server runs a closed set there and refuses the
+ * rest outright: MEASURED, "$sort is not allowed to be used within an update".
+ */
+export const notInUpdateSpec = (
+  name: string,
+  container: string,
+  allowed: readonly string[],
+  pos: number,
+): CodegenError =>
+  new CodegenError(
+    `'${name}' cannot stand inside '${container}': that body is an UPDATE, not a pipeline, and the server runs only ${allowed
+      .slice(0, -1)
+      .map((a) => `'${a}'`)
+      .join(
+        ", ",
+      )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}' — its documents are what the update receives.`,
+    pos,
+  );
+
 /** `$$$$.<db>.<coll>.find(…)` — a `$lookup` reads the current database only. */
 export const crossDatabaseRead = (pos: number): CodegenError =>
   new CodegenError(

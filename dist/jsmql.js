@@ -5124,6 +5124,7 @@ var NAMES = {
   }),
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: [], optional: [], closed: false },
@@ -5469,6 +5470,7 @@ var NAMES = {
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     preservesCount: true,
     body: {
@@ -5522,6 +5524,9 @@ var NAMES = {
   }),
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
+    // and 24 others answer "<name> is not allowed to be used within an update".
+    statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
@@ -5654,6 +5659,7 @@ var NAMES = {
   }),
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -5791,6 +5797,7 @@ var NAMES = {
   }),
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -6057,6 +6064,7 @@ var NAMES = {
     replacesDocument: true,
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     body: {
       required: [],
@@ -14927,6 +14935,9 @@ function streamBodyOf(name2) {
 function pipelineOverOf(name2) {
   return row(name2)?.pipelineOver ?? null;
 }
+function statementBodyOf(name2) {
+  return row(name2)?.statementBody ?? null;
+}
 function mongoNames() {
   return Object.keys(NAMES).filter((n2) => NAMES[n2]?.kind === "mongo");
 }
@@ -19658,6 +19669,12 @@ var documentsNeedNoStage = (written, made, pos) => new CodegenError(
   `'${written}' writes the documents out as the program spells them, and this value needs a '${made}' stage of its own to produce it \u2014 the documents run where nothing may stand ahead of them. Append the other collection's documents themselves ('$$.push(...$$$.<coll>.filter(\u2026))' for many, '$$.push($$$.<coll>.find({ \u2026 }))' for one), or give the field a value the program already holds: a constant, or a 'jsmql.compile' parameter.`,
   pos
 );
+var notInUpdateSpec = (name2, container, allowed, pos) => new CodegenError(
+  `'${name2}' cannot stand inside '${container}': that body is an UPDATE, not a pipeline, and the server runs only ${allowed.slice(0, -1).map((a) => `'${a}'`).join(
+    ", "
+  )} and '${allowed[allowed.length - 1]}' there. Reshape the document with one of those, or do the work in the pipeline BEFORE '${container}' \u2014 its documents are what the update receives.`,
+  pos
+);
 var crossDatabaseRead = (pos) => new CodegenError(
   "A read of another DATABASE isn't supported: '$lookup' and '$unionWith' reach the current database only (the '{ db, coll }' form is Atlas Data Federation's). Drop the '$$$$.<db>.' prefix \u2014 '$$$.<coll>' \u2014 and run the pipeline against that database. Cross-database WRITES work: '$$$$.<db>.<coll> = $$'.",
   pos
@@ -23615,7 +23632,7 @@ function documentsStages(list, env, written = "$$ = [ \u2026 ]") {
   return [dropAll, { $unionWith: { pipeline: [{ [DOCUMENTS2]: documents }] } }];
 }
 function namesWithin(stage, body, path = [], out = /* @__PURE__ */ new Map()) {
-  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement";
+  const nested = path.length > 0 && bodySlotAt(stage, path)?.at === "statement" && statementBodyOf(stage) === "pipeline";
   if (Array.isArray(body)) {
     for (const el of body) namesWithin(stage, el, path, out);
   } else if (typeof body === "object" && body !== null) {
@@ -23639,9 +23656,17 @@ function place(name2, stage, env, first, pos) {
         throw forbiddenInContainer(held, container, pos, placementOf(held).container);
       }
     }
-    if (held === name2 || !onlyOf(held).includes("stageFirst")) continue;
+    if (held === name2) {
+      for (const b of env.site.boundaries) {
+        const allows = statementBodyOf(b.stage);
+        if (allows === null || allows === "pipeline" || allows.includes(name2)) continue;
+        if (bodySlotAt(b.stage, b.path)?.at !== "statement") continue;
+        throw notInUpdateSpec(name2, b.stage, allows, pos);
+      }
+    }
+    if (held === name2 || nested || !onlyOf(held).includes("stageFirst")) continue;
     if (!first) throw mustBeFirstStage(held, pos, placementOf(held).first);
-    if (hoisted !== void 0 && !nested) noPlacement(held);
+    if (hoisted !== void 0) noPlacement(held);
   }
   if (only.includes("stageFirst")) {
     if (!first) throw mustBeFirstStage(name2, pos, placementOf(name2).first);

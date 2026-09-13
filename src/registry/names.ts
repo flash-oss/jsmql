@@ -485,6 +485,22 @@ type MongoSpec<
    */
   pipelineOver?: "foreign";
   /**
+   * What a body slot this row files as `statement` HOLDS. Stated by every row that
+   * has such a slot, because the two kinds are not the same thing and no other fact
+   * tells them apart — `test/registry-agrees.test.ts` fails a row that forgets.
+   *
+   *   "pipeline"   a pipeline of its OWN. It has its own first position, so a stage
+   *                inside it is judged by its own placement and not by where the
+   *                container stands. `$lookup`, `$unionWith`, `$facet`,
+   *                `$rankFusion`, `$scoreFusion`.
+   *   a name list  an UPDATE spec, which is no pipeline at all: there is no "first"
+   *                there and only these stages run. MEASURED on mongod, every other
+   *                one answers "<name> is not allowed to be used within an update".
+   *                A stage the language gains later is refused there until this list
+   *                names it, which is the safe default and the server's own answer.
+   */
+  statementBody?: "pipeline" | readonly string[];
+  /**
    * The position this operator's OPERAND stands in, where it is not the operator's
    * own. A query document's values are read as query values, and `$expr`'s is the
    * one that is not: `{ $expr: { $multiply: [ … ] } }` is an aggregation expression
@@ -5252,6 +5268,7 @@ export const NAMES = {
 
   $facet: mongo({
     doc: "Processes multiple aggregation pipelines within a single stage on the same set of input documents. Enables multi-faceted aggregations characterizing data across multiple dimensions in a single stage.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     replacesDocument: true,
     body: { required: [], optional: [], closed: false },
@@ -5609,6 +5626,7 @@ export const NAMES = {
   $lookup: mongo({
     doc: "Performs a left outer join to another collection in the same database to filter in documents from the joined collection for processing.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     preservesCount: true,
     body: {
@@ -5665,6 +5683,9 @@ export const NAMES = {
 
   $merge: mongo({
     doc: "Writes the resulting documents of the aggregation pipeline to a collection. Must be the last stage in the pipeline.",
+    // MEASURED on mongod 8.3.7, one stage per run with a valid body: these seven run,
+    // and 24 others answer "<name> is not allowed to be used within an update".
+    statementBody: ["$addFields", "$set", "$project", "$unset", "$replaceRoot", "$replaceWith", "$fill"],
     where: ["stream", "statement"],
     only: ["stageLast"],
     // MEASURED: { $merge: { into: "c", zzz: 1 } } → BSON field '$merge.zzz' is an unknown field
@@ -5802,6 +5823,7 @@ export const NAMES = {
 
   $rankFusion: mongo({
     doc: "Combines multiple pipelines using rank-based fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -5945,6 +5967,7 @@ export const NAMES = {
 
   $scoreFusion: mongo({
     doc: "Combines multiple pipelines using relative score fusion to create hybrid search results.",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     only: ["stageFirst"],
     // MEASURED: Atlas only; the key set is the manual's
@@ -6223,6 +6246,7 @@ export const NAMES = {
     replacesDocument: true,
     doc: "Performs a union of two collections; combines pipeline results from two collections into a single result set.",
     pipelineOver: "foreign",
+    statementBody: "pipeline",
     where: ["stream", "statement"],
     body: {
       required: [],
