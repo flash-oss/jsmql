@@ -919,6 +919,11 @@ var logicalList = ({ name: name2, args, query }) => {
 };
 var isExprNode = (e) => e.type !== "SpreadElement";
 var arrayOrEmpty = (recv) => Array.isArray(recv) ? recv : { $ifNull: [recv, []] };
+var orderedBounds = (a, b) => {
+  if (typeof a === "number" && typeof b === "number") return a <= b ? [a, b] : [b, a];
+  if (a instanceof Date && b instanceof Date) return a <= b ? [a, b] : [b, a];
+  return null;
+};
 var norList = (input) => logicalList(input) ?? { $nor: [] };
 var lodashDifference = ({ recv, args, value, bind }) => {
   const other = value(args[0]);
@@ -10991,10 +10996,25 @@ var NAMES = {
   inRange: name({
     doc: "'.inRange()' \u2014 see docs/LANGUAGE.md.",
     call: true,
-    on: "number",
+    // a number and a date test a range the same way, so one cell serves both families
+    on: ["number", "date"],
     returns: "bool",
-    where: ["value"],
-    filter: viaFallback,
+    where: ["value", "filter"],
+    // A field against two constant bounds is a range on one field — the clause an
+    // index answers, and the document a MongoDB developer writes by hand.
+    filter: {
+      args: { sig: "[start, ]end", allowed: [1, 2] },
+      emit: ({ recv, args, pathOf: pathOf3, constant }) => {
+        const path = recv === null ? null : pathOf3(recv);
+        if (path === null) return null;
+        const given = args.map(constant);
+        if (given.some((c) => c === null)) return null;
+        const values = given.map((c) => c.value);
+        const bounds = orderedBounds(args.length === 2 ? values[0] : 0, values[values.length - 1]);
+        if (bounds === null) return null;
+        return queryOwnValue(path, { $gte: bounds[0], $lt: bounds[1] });
+      }
+    },
     expr: {
       args: { sig: "[start, ]end", allowed: [1, 2] },
       emit: ({ recv, args, value }) => {
