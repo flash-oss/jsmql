@@ -314,7 +314,7 @@ the server enforces it and no renderer implies it:
 | the row says | the target does | measured |
 |---|---|---|
 | `only: ["stageFirst"]` | refuses the stage anywhere but first, and anywhere its own body needs a hoisted stage | "$documents is only valid as the first stage"; "$geoNear was not the first stage in the pipeline after optimization" |
-| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, and refuses a statement after it | "$out can only be the final stage" |
+| `only: ["stageLast"]` | files it on the chain, so the `__jsmql` cleanup precedes it, refuses a statement after it, and refuses a body that READS a scratch field | "$out can only be the final stage"; "Use of undefined variable: v" |
 | `forbiddenIn: […]` | refuses it inside those containers | the server refuses a write stage in a sub-pipeline |
 | `bodyPositions` | reads each body key in the position it names | `$geoNear`'s `query` as an aggregation expression: "unknown top level operator: $eq" |
 | `bodyPositions` with a `{ list, otherwise }` pair | reads a bracketed list one way and every other shape the other | `$merge`'s `whenMatched` takes an update pipeline or one of four words |
@@ -337,7 +337,9 @@ chain it asks is `env.chain` and never the root one: a `$$.length` read inside a
 sub-pipeline stamps OUTSIDE it and leaves that body's own first stage first (measured,
 the server runs it). A name the BODY holds is judged the same way, unless the row files
 its slot as a sub-pipeline — a stage there is first where IT stands and its own `place`
-call has already said so.
+call has already said so. The `stageLast` mirror is the same fact read backwards: the
+cleanup that drops the scratch fields is the stage before the terminal, so a terminal
+body that reads one reads a field already gone.
 
 Two JavaScript meanings the query language does not share by default:
 

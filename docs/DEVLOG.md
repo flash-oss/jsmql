@@ -10,6 +10,32 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-13 — fix(out): the stage that writes the output cannot read a scratch field
+
+`$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] })` emitted
+`[$setWindowFields, $unset "__jsmql", $merge]`, and the server answered "Use of
+undefined variable: v". A stage the row files as LAST is filed on the chain rather than
+emitted, so the `__jsmql` cleanup always precedes it and nothing may follow it — which
+is exactly right for every terminal that writes documents, and exactly wrong for one
+whose own body READS a value jsmql materialised. There is no order that works: moving
+the `$unset` after the terminal is a statement after `$out`, which the server refuses,
+and dropping it writes the scratch namespace into the destination collection.
+
+So `place` refuses it, naming the rewrite that does work — put the value in a field of
+the document and read that field, `$.n = $$.length; $merge({ … let: { v: $.n } … });`,
+which was compiled and run (the destination took `z: 2`, the true count). The mirror of
+the first-only refusal below, and the same fact read backwards.
+
+The guard tests for a field PATH into the namespace, not for the name in it: a read
+always carries the leading `$`, and a collection the developer happens to have called
+`__jsmqlArchive` is a name `$out` takes as written. Tested in both directions — the two
+refusing shapes refuse, and thirteen legitimate ones (`$$$.c = $$`, `+=`, `.concat`,
+`.push`, a filtered source, a cross-database target, a `$merge` `let` on a real field,
+and `$out` after a hoist or a `let`) are byte-identical. Spec:
+[out-stage.md](docs/specs/out-stage.md) § Validation.
+
+---
+
 ## 2026-09-13 — fix(emit): a stage that must be FIRST is refused when its own body needs a hoisted stage
 
 A value in a stage's body can need a stage of its own — `$$.length` a

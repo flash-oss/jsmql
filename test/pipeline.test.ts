@@ -1481,6 +1481,31 @@ describe("pipeline — structural stage placement (pre-flight validation)", () =
     ]);
   });
 
+  // The mirror: the `__jsmql` cleanup is the stage before the one that writes the
+  // output, and nothing may follow that one — so a body reading a scratch field
+  // reads one already gone. MEASURED: "Use of undefined variable: v".
+  it("rejects a terminal stage whose body reads a materialised value", () => {
+    expect(() => jsmql('$merge({ into: "c", let: { v: $$.length }, whenMatched: [$set({ z: "$$v" })] });')).toThrow(
+      /'\$merge' writes the pipeline's output and has to be its LAST stage.*\$\.n = \$\$\.length; \$merge\(/s,
+    );
+    // the alternative the message names does compile
+    expect(
+      jsmql('$.n = $$.length; $merge({ into: "c", let: { v: $.n }, whenMatched: [$set({ z: "$$v" })] });'),
+    ).toEqual([
+      { $setWindowFields: { output: { "__jsmql.length": { $count: {} } } } },
+      { $set: { n: "$__jsmql.length" } },
+      { $unset: "__jsmql" },
+      { $merge: { into: "c", let: { v: "$n" }, whenMatched: [{ $set: { z: "$$v" } }] } },
+    ]);
+    // The guard reads a field PATH, not the namespace's NAME: a collection called
+    // `__jsmqlArchive` is a name `$out` takes as written, and a read carries the `$`.
+    expect(jsmql('$$$["__jsmqlArchive"] = $$;')).toEqual([{ $out: "__jsmqlArchive" }]);
+    // a `$merge` `let` reading a real field of the document is untouched
+    expect(jsmql('$merge({ into: "c", let: { v: $.n }, whenMatched: [$set({ z: "$$v" })] });')).toEqual([
+      { $merge: { into: "c", let: { v: "$n" }, whenMatched: [{ $set: { z: "$$v" } }] } },
+    ]);
+  });
+
   // .validate() carries a meaningful position.
   it("surfaces a structural violation through validate() with a meaningful pos", () => {
     const src = "[ { $facet: { a: [ { $out: 'x' } ] } } ]";

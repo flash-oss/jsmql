@@ -505,6 +505,18 @@ export const firstStageNeedsHoist = (
   );
 };
 
+/**
+ * `$merge({ into: "c", let: { v: $$.length } })` — the stage that writes the output
+ * reading a value jsmql materialised into a scratch field. The `__jsmql` cleanup is
+ * the stage before it and nothing may follow it, so the field is gone by then.
+ * MEASURED: "Use of undefined variable: v".
+ */
+export const terminalReadsScratch = (name: string, pos: number): CodegenError =>
+  new CodegenError(
+    `'${name}' writes the pipeline's output and has to be its LAST stage, and jsmql clears its scratch fields in the stage right before it — so a value this body reads ('$$.length', a '$$$.<coll>' read) is already gone by the time the server evaluates it. Put the value in a field of the document first and read that field: '$.n = $$.length; ${name}({ … let: { v: $.n } … });'.`,
+    pos,
+  );
+
 /** Two stages that each have to be last. */
 export const twoTerminalStages = (name: string, already: string, pos: number): CodegenError =>
   new CodegenError(

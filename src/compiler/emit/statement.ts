@@ -37,7 +37,7 @@ import { consult, everyName, listedIn } from "./consult.ts";
 import { checkBody, checkSlots } from "./check.ts";
 import { Chain, Env } from "./env.ts";
 import { Capture, fieldSlot, type Declared } from "./names.ts";
-import { bindingSlot } from "../../namespace.ts";
+import { bindingSlot, JSMQL_NS } from "../../namespace.ts";
 import * as E from "./errors.ts";
 import { childEnv, onOwnStream, stageInputs } from "./inputs.ts";
 import { lowerFilter } from "./filter.ts";
@@ -431,10 +431,27 @@ function place(name: string, stage: Stage, env: Env, first: boolean, pos: number
   if (only.includes("stageLast")) {
     const already = env.chain.terminal;
     if (already !== null) throw E.twoTerminalStages(name, Object.keys(already)[0], pos);
+    // The `__jsmql` cleanup is the stage BEFORE the one that writes the output, and
+    // nothing may run after that one — so a body reading a scratch field reads one
+    // that is already gone. MEASURED: `$merge({ let: { v: $$.length } })` answered
+    // "Use of undefined variable: v".
+    if (readsScratch(stage)) throw E.terminalReadsScratch(name, pos);
     env.chain.terminal = stage;
     return [];
   }
   return [stage];
+}
+
+/**
+ * Does this stage's document READ a `__jsmql` scratch field? A read is a field path,
+ * so it carries the leading `$` — which is what separates it from a collection the
+ * developer happens to have named `__jsmqlArchive`, a name `$out` takes as written.
+ */
+function readsScratch(v: unknown): boolean {
+  if (typeof v === "string") return v.startsWith("$" + JSMQL_NS);
+  if (Array.isArray(v)) return v.some(readsScratch);
+  if (v !== null && typeof v === "object") return Object.values(v).some(readsScratch);
+  return false;
 }
 
 // ── the writes ───────────────────────────────────────────────────────────────
