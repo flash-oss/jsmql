@@ -10,6 +10,28 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-15 — test(bson): the constructors run against both supported majors
+
+The peer range is `^6.10.0 || ^7.0.0`, but the dev tree resolves to 7 alone, so the
+`^6` half was a claim with nothing behind it. `bson6` is now an npm alias for the 6.x
+line installed beside the 7.x one, and [test/bson-majors.test.ts](test/bson-majors.test.ts)
+exercises every constructor through each.
+
+One lane rather than a full CI matrix, because the compiler is bson-agnostic: it builds
+nine values and reads a `_bsontype` string, and no parser or emitter behaviour can vary
+by bson major. What CAN vary is the two things the suite checks — the class behaviour
+jsmql's own refusals are built on (MEASURED the same in both: `new Int32(5000000000)`
+wraps to 705032704, `Decimal128.fromString("abc")` throws), and a value from the OTHER
+copy flowing through recognition, the query road and the printer.
+
+The suite also holds the proof of the peer-dependency decision. A bson 7 serializer
+REFUSES a bson 6 value outright — `BSONVersionError`, raised from the
+`@@mdb.bson.version` registry symbol, which reads 6 and 7 on the two copies. So a
+nested second copy would not merely fail an `instanceof` in the caller's code: the
+query would never reach the server at all.
+
+---
+
 ## 2026-09-15 — fix(bson): a BigInt literal is a `Long`, not a per-document `$toLong`
 
 `5n` compiled to `{ $toLong: "5" }` — a string the server parsed on every document,

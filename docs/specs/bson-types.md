@@ -153,6 +153,24 @@ siblings either: `true + 1`, `[1,2] + 1` and `0x507f… + 1` all emit `$add` tod
 general operand gate over every kind is its own change; a MinKey-only one would be an
 inconsistency, not a fix.
 
+## Running against both majors
+
+The peer range is `^6.10.0 || ^7.0.0`, and a range jsmql never runs against is a claim
+with nothing behind it. `test/bson-majors.test.ts` is the second lane: `bson6` is an
+npm alias for the 6.x line installed beside the 7.x one, so both are in the tree at
+once and every constructor is exercised through each.
+
+It covers the two things that can vary — the class BEHAVIOUR jsmql's refusals are built
+on (which throw, which silently wrap), and a value from the OTHER copy flowing through
+the compiler, which is what `instanceof || tag` exists for. The rest of the suite runs
+once, because the compiler is bson-agnostic: it builds nine values and reads a
+`_bsontype` string.
+
+That lane also holds the proof of the peer decision. A bson 7 serializer REFUSES a
+bson 6 value outright (`BSONVersionError`, from the `@@mdb.bson.version` registry
+symbol) — so a nested second copy would not merely fail an `instanceof`; the query
+would never reach the server.
+
 ## The plausibility rule
 
 `src/compiler/objectid-guard.ts` refuses an ObjectId whose embedded timestamp predates
