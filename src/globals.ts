@@ -3093,22 +3093,139 @@ declare global {
     [key: string]: any;
   };
 
-  // ── JS construction forms (ObjectId) ──────────────────────────────────
-  interface ObjectIdConstructor {
-    (hexString: string): any;
-    new (hexString: string): any;
+  // ── BSON value constructors (ObjectId, Decimal128, …) ────────────────
+  interface Decimal128Constructor {
+    (value?: any): any;
+    new (value?: any): any;
   }
   /**
-   * Construct a constant BSON `ObjectId` from a 24-character hex string —
-   * e.g. `$._id === ObjectId("507f1f77bcf86cd799439011")`. `new ObjectId(...)`
-   * is equivalent. jsmql emits a live ObjectId value (the only form the MongoDB
-   * driver accepts in a query document). For an id known only at runtime,
-   * interpolate a real ObjectId (template tag or a `jsmql.compile` parameter),
-   * or convert a string field server-side with `$toObjectId($.idStr)`.
+   * A Decimal128 — exact decimal arithmetic. A constant is a literal; anything else converts.
    *
-   * @see https://www.mongodb.com/docs/manual/reference/method/ObjectId/
+   * `Decimal128(…)` and `new Decimal128(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var Decimal128: Decimal128Constructor;
+  interface DoubleConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.
+   *
+   * `Double(…)` and `new Double(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var Double: DoubleConstructor;
+  interface Int32Constructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * A 32-bit integer. A constant is a literal; anything else converts.
+   *
+   * `Int32(…)` and `new Int32(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var Int32: Int32Constructor;
+  interface ISODateConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * A date. `new ISODate()` is now; `new ISODate(x)` converts x.
+   *
+   * `ISODate(…)` and `new ISODate(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var ISODate: ISODateConstructor;
+  interface LongConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * A 64-bit integer. A constant is a literal; anything else converts.
+   *
+   * `Long(…)` and `new Long(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var Long: LongConstructor;
+  interface MaxKeyConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * The value that compares above every other type.
+   *
+   * `MaxKey(…)` and `new MaxKey(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var MaxKey: MaxKeyConstructor;
+  interface MinKeyConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * The value that compares below every other type.
+   *
+   * `MinKey(…)` and `new MinKey(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var MinKey: MinKeyConstructor;
+  interface NumberDecimalConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * The mongosh spelling of `Decimal128`.
+   *
+   * `NumberDecimal(…)` and `new NumberDecimal(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var NumberDecimal: NumberDecimalConstructor;
+  interface NumberIntConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * The mongosh spelling of `Int32`.
+   *
+   * `NumberInt(…)` and `new NumberInt(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var NumberInt: NumberIntConstructor;
+  interface NumberLongConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * The mongosh spelling of `Long`.
+   *
+   * `NumberLong(…)` and `new NumberLong(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var NumberLong: NumberLongConstructor;
+  interface ObjectIdConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.
+   *
+   * `ObjectId(…)` and `new ObjectId(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
    */
   var ObjectId: ObjectIdConstructor;
+  interface UUIDConstructor {
+    (value?: any): any;
+    new (value?: any): any;
+  }
+  /**
+   * A UUID. A constant is a literal; anything else converts.
+   *
+   * `UUID(…)` and `new UUID(…)` are equivalent; jsmql emits a live BSON
+   * value, which is the only form the MongoDB driver accepts in a query document.
+   */
+  var UUID: UUIDConstructor;
 
   // ── Statement-form built-ins (assert) ─────────────────────────────────
   /**

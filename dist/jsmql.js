@@ -461,6 +461,21 @@ var escapeForRegex = (needle) => needle.replace(/[.*+?^${}()|[\]\\]/g, (m) => "\
 function queryOwnValue(path, test) {
   return { [path]: shorthand(test) };
 }
+var BSON_KIND = {
+  ObjectId: "objectId",
+  Decimal128: "number",
+  Long: "number",
+  Int32: "number",
+  Double: "number",
+  Binary: "binData",
+  MinKey: "minKey",
+  MaxKey: "maxKey"
+};
+function bsonTagOf(v) {
+  if (typeof v !== "object" || v === null) return void 0;
+  const tag = v._bsontype;
+  return typeof tag === "string" ? tag === "ObjectID" ? "ObjectId" : tag : void 0;
+}
 var isSlotLayout = (l) => !("arrowOnly" in l) && !("sortSpec" in l);
 var BSON_TYPE_ALIASES = [
   "double",
@@ -820,6 +835,92 @@ var root = (e) => ({ ...e, kind: "root" });
 var name = (e) => ({ ...e, kind: "name" });
 var mongo = (e) => ({ ...e, kind: "mongo" });
 var global_ = (e) => ({ ...e, kind: "global" });
+var dateRow = (spelling) => global_({
+  doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
+  token: "Ident",
+  // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
+  // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
+  // same choice every BSON constructor makes, so one rule covers all nine.
+  newKeyword: "optional",
+  provides: "Date",
+  returns: "date",
+  where: ["value"],
+  filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+  updateDoc: unsupported(
+    `'new ${spelling}(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`
+  ),
+  expr: {
+    byArgs: {
+      none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
+      // A valid date spelling never reaches this row — the fold makes it a Date value first.
+      // A constant the fold could evaluate never reaches this row; one that stays
+      // is a string `Date.parse` refuses.
+      constant: unsupported(
+        `new ${spelling}(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`
+      ),
+      dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
+      // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
+      // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
+      multiple: {
+        args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
+        emit: ({ args, value }) => dateFromParts(args.map(value), null)
+      },
+      otherwise: unsupported(
+        `'new ${spelling}(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`
+      )
+    }
+  },
+  stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
+  statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+  group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'${spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
+var bsonValue = (e) => global_({
+  doc: e.doc,
+  token: "Ident",
+  newKeyword: "optional",
+  returns: e.returns,
+  where: ["value"],
+  filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
+  updateDoc: unsupported(
+    `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form ('jsmql.pipeline(...)'), which 'updateOne' accepts as well.`
+  ),
+  expr: {
+    byArgs: {
+      constant: unsupported(e.refuseConstant),
+      dynamic: {
+        args: { sig: "value", exact: 1 },
+        emit: ({ args, value }) => ({ [e.convert]: value(args[0]) })
+      },
+      otherwise: unsupported(`'${e.spelling}(\u2026)' takes one value to convert, or one constant.`)
+    }
+  },
+  stream: unsupported(`'${e.spelling}' produces a value, not a stream of documents.`),
+  statement: unsupported(`'${e.spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+  group: unsupported(`'${e.spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'${e.spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
+var bsonSentinel = (spelling, doc, compare) => global_({
+  doc,
+  token: "Ident",
+  newKeyword: "optional",
+  returns: spelling === "MinKey" ? "minKey" : "maxKey",
+  where: ["value"],
+  filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
+  // The fold builds the value — there is no MQL expression that produces one, so
+  // no rule here could. MEASURED: `{ $minKey: 1 }` is "Unrecognized expression".
+  expr: inCode("src/compiler/passes/fold-methods.ts"),
+  stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
+  statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+  group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+  window: unsupported(
+    `'${spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`
+  )
+});
 var TIME_UNIT = [
   "year",
   "quarter",
@@ -13213,45 +13314,6 @@ var NAMES = {
     group: unsupported("'$$$$' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
   }),
-  Date: global_({
-    doc: "A date. `new Date()` is now; `new Date(x)` converts x.",
-    token: "Ident",
-    // MEASURED: `Date("2024-01-01")` and `Date()` are both "Unknown function 'Date(...)'".
-    // `new` is REQUIRED, not optional.
-    newKeyword: "required",
-    provides: "Date",
-    returns: "date",
-    where: ["value"],
-    filter: because(`a date is a value, not a test. Compare it: '$.t > new Date("2024-01-01")'.`),
-    updateDoc: unsupported(
-      `'new Date(\u2026)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date("2026-01-01")', or an interpolated '\${new Date()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new Date() };")'), which 'updateOne' accepts as well.`
-    ),
-    expr: {
-      byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-        // A valid date spelling never reaches this row — the fold makes it a Date value first.
-        // A constant the fold could evaluate never reaches this row; one that stays
-        // is a string `Date.parse` refuses.
-        constant: unsupported(
-          'new Date(<constant>) \u2014 only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).'
-        ),
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
-        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
-        // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
-        multiple: {
-          args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
-          emit: ({ args, value }) => dateFromParts(args.map(value), null)
-        },
-        otherwise: unsupported(
-          "'new Date(\u2026)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'."
-        )
-      }
-    },
-    stream: unsupported("'Date' produces a value, not a stream of documents."),
-    statement: unsupported("'Date' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Date' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Date' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
-  }),
   ObjectId: global_({
     doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
     token: "Ident",
@@ -13277,6 +13339,91 @@ var NAMES = {
     statement: unsupported("'ObjectId' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'ObjectId' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'ObjectId' is not a window function. Inside '$setWindowFields' write the MongoDB operator.")
+  }),
+  Date: dateRow("Date"),
+  ISODate: dateRow("ISODate"),
+  // ── the BSON value constructors ────────────────────────────────────────────
+  //
+  // One factory, because the nine differ in three cells and agree on every other.
+  // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
+  // MongoDB has something to mint, a constant is a live BSON value the fold builds
+  // (so the `constant` cell below is only ever reached by a constant the type
+  // CANNOT hold), and anything else converts on the server through its `$to…`
+  // operator. `new X(…)` and `X(…)` are both accepted; jsmql.stringify writes
+  // `new X(…)`. See docs/specs/bson-types.md.
+  Decimal128: bsonValue({
+    spelling: "Decimal128",
+    doc: "A Decimal128 \u2014 exact decimal arithmetic. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toDecimal",
+    isA: "a decimal",
+    compare: '$.price > Decimal128("9.99")',
+    refuseConstant: `'Decimal128(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
+  }),
+  Long: bsonValue({
+    spelling: "Long",
+    doc: "A 64-bit integer. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toLong",
+    isA: "a long",
+    compare: '$.n === Long("9007199254740993")',
+    refuseConstant: `'Long(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
+  }),
+  Int32: bsonValue({
+    spelling: "Int32",
+    doc: "A 32-bit integer. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toInt",
+    isA: "an int",
+    compare: "$.count === Int32(3)",
+    refuseConstant: "'Int32(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
+  }),
+  Double: bsonValue({
+    spelling: "Double",
+    doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
+    returns: "number",
+    convert: "$toDouble",
+    isA: "a double",
+    compare: "$.ratio === Double(1)",
+    refuseConstant: "'Double(<constant>)' \u2014 this constant is not a finite number. Write 'Double(1.5)'."
+  }),
+  UUID: bsonValue({
+    spelling: "UUID",
+    doc: "A UUID. A constant is a literal; anything else converts.",
+    returns: "binData",
+    convert: "$toUUID",
+    isA: "a UUID",
+    compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
+    refuseConstant: `'UUID(<constant>)' \u2014 this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID("6ac24965-7917-4323-8d44-920ad1d69b94")').`
+  }),
+  MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
+  MaxKey: bsonSentinel("MaxKey", "The value that compares above every other type.", "$.grade === MaxKey()"),
+  NumberDecimal: bsonValue({
+    spelling: "NumberDecimal",
+    doc: "The mongosh spelling of `Decimal128`.",
+    returns: "number",
+    convert: "$toDecimal",
+    isA: "a decimal",
+    compare: '$.price > NumberDecimal("9.99")',
+    refuseConstant: `'NumberDecimal(<constant>)' \u2014 this constant is not a decimal. Write a digit string ('Decimal128("9.99")'), at most 34 significant digits.`
+  }),
+  NumberLong: bsonValue({
+    spelling: "NumberLong",
+    doc: "The mongosh spelling of `Long`.",
+    returns: "number",
+    convert: "$toLong",
+    isA: "a long",
+    compare: '$.n === NumberLong("9007199254740993")',
+    refuseConstant: `'NumberLong(<constant>)' \u2014 this constant is not a whole number in the 64-bit range (-9223372036854775808 \u2026 9223372036854775807). Write 'Decimal128(\u2026)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits \u2014 spell it as a string ('Long("9007199254740993")') or a BigInt (9007199254740993n).`
+  }),
+  NumberInt: bsonValue({
+    spelling: "NumberInt",
+    doc: "The mongosh spelling of `Int32`.",
+    returns: "number",
+    convert: "$toInt",
+    isA: "an int",
+    compare: "$.count === NumberInt(3)",
+    refuseConstant: "'NumberInt(<constant>)' \u2014 this constant is not a whole number in the 32-bit range (-2147483648 \u2026 2147483647). Write 'Long(\u2026)' for a bigger integer, or 'Double(\u2026)' to keep a fraction."
   }),
   Set: global_({
     doc: "A set of values, for the set operations. Folds to a plain array \u2014 MongoDB has no set type.",
@@ -13546,7 +13693,8 @@ function orderedQuery(input, op) {
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   const v = pc.value;
-  if (typeof v !== "number" && typeof v !== "string" && !(v instanceof Date)) return null;
+  const ordered = typeof v === "number" || typeof v === "string" || v instanceof Date || bsonTagOf(v) !== void 0;
+  if (!ordered) return null;
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 var PRODUCTIONS = {
@@ -18390,11 +18538,6 @@ var MAXSIZE = 1024 * 1024 * 17;
 var buffer = ByteUtils.allocate(MAXSIZE);
 
 // src/bson.ts
-function bsonTagOf(v) {
-  if (typeof v !== "object" || v === null) return void 0;
-  const tag = v._bsontype;
-  return typeof tag === "string" ? tag === "ObjectID" ? "ObjectId" : tag : void 0;
-}
 function isBsonType(v, cls, tag) {
   return v instanceof cls || bsonTagOf(v) === tag;
 }
@@ -18411,6 +18554,76 @@ function objectIdHex(value) {
     const s = v.toString();
     if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
   }
+  return null;
+}
+var INT32_MIN = -2147483648;
+var INT32_MAX = 2147483647;
+var INT64_MIN = -(2n ** 63n);
+var INT64_MAX = 2n ** 63n - 1n;
+function exactInteger(v) {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return Number.isSafeInteger(v) ? BigInt(v) : null;
+  if (typeof v === "string" && /^[+-]?\d+$/.test(v.trim())) return BigInt(v.trim());
+  return null;
+}
+function finiteNumber(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n2 = Number(v);
+    return Number.isFinite(n2) ? n2 : null;
+  }
+  return null;
+}
+function attempt(build2) {
+  try {
+    return build2();
+  } catch {
+    return null;
+  }
+}
+function bsonConstant(name2, value) {
+  switch (canonicalBsonName(name2)) {
+    case "ObjectId":
+      return typeof value === "string" && /^[0-9a-fA-F]{24}$/.test(value) ? new ObjectId(value.toLowerCase()) : null;
+    case "Decimal128": {
+      const text = typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : null;
+      return text === null ? null : attempt(() => Decimal128.fromString(text));
+    }
+    case "Long": {
+      const n2 = exactInteger(value);
+      return n2 === null || n2 < INT64_MIN || n2 > INT64_MAX ? null : attempt(() => Long.fromString(n2.toString()));
+    }
+    case "Int32": {
+      const n2 = exactInteger(value);
+      return n2 === null || n2 < BigInt(INT32_MIN) || n2 > BigInt(INT32_MAX) ? null : new Int32(Number(n2));
+    }
+    case "Double": {
+      const n2 = finiteNumber(value);
+      return n2 === null ? null : new Double(n2);
+    }
+    case "UUID":
+      return typeof value === "string" ? attempt(() => new UUID(value)) : null;
+    default:
+      return null;
+  }
+}
+function canonicalBsonName(spelling) {
+  switch (spelling) {
+    case "NumberDecimal":
+      return "Decimal128";
+    case "NumberLong":
+      return "Long";
+    case "NumberInt":
+      return "Int32";
+    case "ISODate":
+      return "Date";
+    default:
+      return spelling;
+  }
+}
+function bsonNullary(name2) {
+  if (name2 === "MinKey") return new MinKey();
+  if (name2 === "MaxKey") return new MaxKey();
   return null;
 }
 
@@ -20200,7 +20413,7 @@ function foldNamespaceConstant(namespace, name2) {
 }
 function foldConstructor(name2, args) {
   const values = args.map(valueOf);
-  switch (name2) {
+  switch (canonicalBsonName(name2)) {
     case "Date":
       return foldNewDate(values);
     case "Set": {
@@ -20208,16 +20421,18 @@ function foldConstructor(name2, args) {
       if (args.length === 0) return ok2([]);
       return Array.isArray(a) ? ok2(a) : NO2;
     }
-    case "ObjectId":
-      return objectIdFrom(values);
     default:
-      return NO2;
+      return bsonValue2(name2, args.length, values);
   }
 }
 function foldNamedCall(name2, args) {
   const values = args.map(valueOf);
   const [a] = values;
-  switch (name2) {
+  switch (canonicalBsonName(name2)) {
+    // `Date(…)` without `new` means the same date `new Date(…)` does. JavaScript's
+    // bare call returns a string instead; jsmql keeps the syntax, not that meaning.
+    case "Date":
+      return foldNewDate(values);
     case "String":
       if (a === null) return ok2(null);
       if (typeof a === "string") return ok2(a);
@@ -20231,30 +20446,36 @@ function foldNamedCall(name2, args) {
       return args.length === 1 ? ok2(Boolean(a)) : NO2;
     case "Number":
       return NO2;
-    case "ObjectId":
-      return objectIdFrom(values);
     default:
-      return NO2;
+      return bsonValue2(name2, args.length, values);
   }
+}
+function bsonValue2(name2, count, values) {
+  if (count === 0) {
+    const minted = bsonNullary(name2);
+    return minted === null ? NO2 : ok2(minted);
+  }
+  if (count !== 1) return NO2;
+  const built = bsonConstant(name2, values[0]);
+  return built === null ? NO2 : ok2(built);
 }
 function numberSpelling(n2) {
   if (!Number.isInteger(n2) || Object.is(n2, -0) || Math.abs(n2) >= 1e16) return null;
   return String(n2);
-}
-function objectIdFrom(values) {
-  const [a] = values;
-  if (typeof a !== "string" || !/^[0-9a-fA-F]{24}$/.test(a)) return NO2;
-  return ok2(new ObjectId(a.toLowerCase()));
 }
 function foldInstanceCall(receiver, name2, args) {
   if (typeof receiver === "string") return stringMethod(receiver, name2, args);
   if (Array.isArray(receiver)) return arrayMethod(receiver, name2, args);
   if (typeof receiver === "number") return numberMethod(receiver, name2, args);
   if (receiver instanceof Date) return foldDateMethod(receiver, name2, args.map(valueOf));
-  if (isObjectId(receiver)) {
+  if (bsonTagOf(receiver) !== void 0) {
     if (name2 !== "toString" || args.length !== 0) return NO2;
-    const hex = objectIdHex(receiver);
-    return hex === null ? NO2 : ok2(hex);
+    if (isObjectId(receiver)) {
+      const hex = objectIdHex(receiver);
+      return hex === null ? NO2 : ok2(hex);
+    }
+    const own = receiver.toString;
+    return typeof own === "function" && own !== Object.prototype.toString ? ok2(String(own.call(receiver))) : NO2;
   }
   if (isPlainObject2(receiver)) return objectMethod(receiver, name2, args);
   return NO2;
@@ -24128,7 +24349,8 @@ function kindOf(node, env) {
       if (typeof v === "boolean") return "bool";
       if (v instanceof Date) return "date";
       if (Array.isArray(v)) return isMqlShaped(v) ? "unknown" : "array";
-      if (isObjectId(v)) return "objectId";
+      const tag = bsonTagOf(v);
+      if (tag !== void 0) return BSON_KIND[tag] ?? "unknown";
       if (v !== null && typeof v === "object" && Object.getPrototypeOf(v) === Object.prototype) {
         return isMqlShaped(v) ? "unknown" : "object";
       }
@@ -25098,7 +25320,7 @@ function constantIn(e) {
 }
 function isQueryConstant(x) {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
-  if (x instanceof Date || isObjectId(x)) return true;
+  if (x instanceof Date || bsonTagOf(x) !== void 0) return true;
   if (Array.isArray(x)) return x.every(isQueryConstant);
   return false;
 }

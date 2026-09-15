@@ -611,6 +611,23 @@ export function newKeywordOf(name: string): "required" | "optional" | "forbidden
 }
 
 /** Does the row for `name` exist, of kind `root` or `global` — a name reached without a receiver? */
+/**
+ * Every value-constructing global, with the `new` rule and the doc its row states —
+ * `ObjectId`, `Decimal128`, `MinKey`, `Date`, and their mongosh spellings.
+ *
+ * Read for the ambient `declare global` block (scripts/generate-globals.mjs), so a
+ * tenth constructor is one ROW and no generator edit. `Set` is not here: its row
+ * demands `new` and it builds an array, not a BSON value.
+ */
+export function constructorGlobals(): readonly { name: string; newKeyword: string; doc: string }[] {
+  const out: { name: string; newKeyword: string; doc: string }[] = [];
+  for (const [name, r] of Object.entries(ROWS) as [string, { kind?: string; newKeyword?: string; doc?: string }][]) {
+    if (r?.kind !== "global" || r.newKeyword !== "optional") continue;
+    out.push({ name, newKeyword: r.newKeyword, doc: r.doc ?? "" });
+  }
+  return out.sort((a, b) => a.name.localeCompare(b.name));
+}
+
 export function isGlobalName(name: string): boolean {
   const k = row(name)?.kind;
   return k === "global" || k === "root";

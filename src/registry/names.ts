@@ -640,6 +640,121 @@ const mongo = <
 const global_ = <const W extends readonly Position[]>(e: GlobalSpec<W>): GlobalEntry<W> => ({ ...e, kind: "global" });
 
 /**
+ * One BSON value constructor, and its mongosh spelling where it has one.
+ *
+ * `spelling` is the name the row answers to, so every message names what the user
+ * actually typed. `convert` is the `$to…` operator the dynamic form lowers to.
+ * `refuseConstant` is the message for a constant the type cannot hold — the fold
+ * builds every constant it CAN (src/compiler/passes/fold-methods.ts), so this cell
+ * is reached only by one it could not, and the message names the type that fits.
+ */
+const dateRow = (spelling: string) =>
+  global_({
+    doc: `A date. \`new ${spelling}()\` is now; \`new ${spelling}(x)\` converts x.`,
+    token: "Ident",
+    // `new Date(…)` and `Date(…)` both mean a date here. JavaScript's bare `Date()`
+    // returns a STRING, and jsmql keeps the syntax rather than that meaning — the
+    // same choice every BSON constructor makes, so one rule covers all nine.
+    newKeyword: "optional",
+    provides: "Date",
+    returns: "date",
+    where: ["value"],
+    filter: because(`a date is a value, not a test. Compare it: '$.t > new ${spelling}("2024-01-01")'.`),
+    updateDoc: unsupported(
+      `'new ${spelling}(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new ${spelling}()' is '$currentDate'. Inside a value, pass a Date from your code ('new ${spelling}("2026-01-01")', or an interpolated '\${new ${spelling}()}'), or use the pipeline form ('jsmql.pipeline("$.a = { t: new ${spelling}() };")'), which 'updateOne' accepts as well.`,
+    ),
+    expr: {
+      byArgs: {
+        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
+        // A valid date spelling never reaches this row — the fold makes it a Date value first.
+        // A constant the fold could evaluate never reaches this row; one that stays
+        // is a string `Date.parse` refuses.
+        constant: unsupported(
+          `new ${spelling}(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new ${spelling}("2026-01-01") or new ${spelling}(0).`,
+        ),
+        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
+        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
+        // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
+        multiple: {
+          args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
+          emit: ({ args, value }) => dateFromParts(args.map(value), null),
+        },
+        otherwise: unsupported(
+          `'new ${spelling}(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.`,
+        ),
+      },
+    },
+    stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
+    statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+    group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+    window: unsupported(
+      `'${spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+    ),
+  });
+
+const bsonValue = (e: {
+  spelling: string;
+  doc: string;
+  returns: Returns;
+  convert: string;
+  isA: string;
+  compare: string;
+  refuseConstant: string;
+}) =>
+  global_({
+    doc: e.doc,
+    token: "Ident",
+    newKeyword: "optional",
+    returns: e.returns,
+    where: ["value"],
+    filter: because(`${e.isA} is a value, not a test. Compare it: '${e.compare}'.`),
+    updateDoc: unsupported(
+      `'${e.spelling}(<value>)' is computed on the server, and a document-form update takes constants. Write a constant ('${e.compare.split(" ").pop()}'), or use the pipeline form ('jsmql.pipeline(...)'), which 'updateOne' accepts as well.`,
+    ),
+    expr: {
+      byArgs: {
+        constant: unsupported(e.refuseConstant),
+        dynamic: {
+          args: { sig: "value", exact: 1 },
+          emit: ({ args, value }: ExprIn) => ({ [e.convert]: value(args[0]) }),
+        },
+        otherwise: unsupported(`'${e.spelling}(…)' takes one value to convert, or one constant.`),
+      },
+    },
+    stream: unsupported(`'${e.spelling}' produces a value, not a stream of documents.`),
+    statement: unsupported(`'${e.spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+    group: unsupported(`'${e.spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+    window: unsupported(
+      `'${e.spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+    ),
+  });
+
+/**
+ * A BSON sentinel: `MinKey()` / `MaxKey()`. It compares against every other type
+ * and computes with none — MEASURED, `$add: [MinKey, 1]` is "only supports numeric
+ * or date types". There is no MQL expression that produces one either (`$minKey` is
+ * "Unrecognized expression"), so the value can only be the live one the fold builds.
+ */
+const bsonSentinel = (spelling: string, doc: string, compare: string) =>
+  global_({
+    doc,
+    token: "Ident",
+    newKeyword: "optional",
+    returns: spelling === "MinKey" ? "minKey" : "maxKey",
+    where: ["value"],
+    filter: because(`${spelling}() is a value, not a test. Compare it: '${compare}'.`),
+    // The fold builds the value — there is no MQL expression that produces one, so
+    // no rule here could. MEASURED: `{ $minKey: 1 }` is "Unrecognized expression".
+    expr: inCode("src/compiler/passes/fold-methods.ts"),
+    stream: unsupported(`'${spelling}' produces a value, not a stream of documents.`),
+    statement: unsupported(`'${spelling}' produces a value. Use it inside a reshape or a '$set'.`),
+    group: unsupported(`'${spelling}' is not an accumulator. Inside '$group' write the MongoDB operator.`),
+    window: unsupported(
+      `'${spelling}' is not a window function. Inside '$setWindowFields' write the MongoDB operator.`,
+    ),
+  });
+
+/**
  * The units a DATE operator's `unit` key accepts. MEASURED: `"days"` and `"Day"`
  * are both refused ("unknown time unit value"), so the list is exact and
  * case-sensitive. One constant for every row that spells it, so a stale copy
@@ -13730,46 +13845,6 @@ export const NAMES = {
     window: unsupported("'$$$$' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
   }),
 
-  Date: global_({
-    doc: "A date. `new Date()` is now; `new Date(x)` converts x.",
-    token: "Ident",
-    // MEASURED: `Date("2024-01-01")` and `Date()` are both "Unknown function 'Date(...)'".
-    // `new` is REQUIRED, not optional.
-    newKeyword: "required",
-    provides: "Date",
-    returns: "date",
-    where: ["value"],
-    filter: because("a date is a value, not a test. Compare it: '$.t > new Date(\"2024-01-01\")'."),
-    updateDoc: unsupported(
-      "'new Date(…)' is computed on the server, and a document-form update takes constants. As the whole write, '$.<field> = new Date()' is '$currentDate'. Inside a value, pass a Date from your code ('new Date(\"2026-01-01\")', or an interpolated '${new Date()}'), or use the pipeline form ('jsmql.pipeline(\"$.a = { t: new Date() };\")'), which 'updateOne' accepts as well.",
-    ),
-    expr: {
-      byArgs: {
-        none: { args: { sig: "", none: true }, emit: () => "$$NOW" },
-        // A valid date spelling never reaches this row — the fold makes it a Date value first.
-        // A constant the fold could evaluate never reaches this row; one that stays
-        // is a string `Date.parse` refuses.
-        constant: unsupported(
-          'new Date(<constant>) — only an ISO 8601 string or a millisecond count is a date constant, and this one is neither a valid date string nor a number. Write new Date("2026-01-01") or new Date(0).',
-        ),
-        dynamic: { args: { sig: "value", exact: 1 }, emit: ({ args, value }) => ({ $toDate: value(args[0]) }) },
-        // MEASURED: new Date($.y, $.m, $.d) → $dateFromParts, and an eighth
-        // argument is "takes at most 7". Months are 1-BASED here, unlike JavaScript.
-        multiple: {
-          args: { sig: "year, month, day, hour, minute, second, ms", allowed: [2, 3, 4, 5, 6, 7] },
-          emit: ({ args, value }) => dateFromParts(args.map(value), null),
-        },
-        otherwise: unsupported(
-          "'new Date(…)' takes no argument (now), one value to convert, or the calendar parts 'year, month, day[, hour, minute, second, ms]'.",
-        ),
-      },
-    },
-    stream: unsupported("'Date' produces a value, not a stream of documents."),
-    statement: unsupported("'Date' produces a value. Use it inside a reshape or a '$set'."),
-    group: unsupported("'Date' is not an accumulator. Inside '$group' write the MongoDB operator."),
-    window: unsupported("'Date' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
-  }),
-
   ObjectId: global_({
     doc: "An ObjectId. Empty mints one, a 24-hex constant is a literal, anything else converts.",
     token: "Ident",
@@ -13795,6 +13870,102 @@ export const NAMES = {
     statement: unsupported("'ObjectId' produces a value. Use it inside a reshape or a '$set'."),
     group: unsupported("'ObjectId' is not an accumulator. Inside '$group' write the MongoDB operator."),
     window: unsupported("'ObjectId' is not a window function. Inside '$setWindowFields' write the MongoDB operator."),
+  }),
+
+  Date: dateRow("Date"),
+  ISODate: dateRow("ISODate"),
+
+  // ── the BSON value constructors ────────────────────────────────────────────
+  //
+  // One factory, because the nine differ in three cells and agree on every other.
+  // Each has the SAME three-way meaning `ObjectId` has: no argument mints where
+  // MongoDB has something to mint, a constant is a live BSON value the fold builds
+  // (so the `constant` cell below is only ever reached by a constant the type
+  // CANNOT hold), and anything else converts on the server through its `$to…`
+  // operator. `new X(…)` and `X(…)` are both accepted; jsmql.stringify writes
+  // `new X(…)`. See docs/specs/bson-types.md.
+
+  Decimal128: bsonValue({
+    spelling: "Decimal128",
+    doc: "A Decimal128 — exact decimal arithmetic. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toDecimal",
+    isA: "a decimal",
+    compare: '$.price > Decimal128("9.99")',
+    refuseConstant:
+      "'Decimal128(<constant>)' — this constant is not a decimal. Write a digit string ('Decimal128(\"9.99\")'), at most 34 significant digits.",
+  }),
+  Long: bsonValue({
+    spelling: "Long",
+    doc: "A 64-bit integer. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toLong",
+    isA: "a long",
+    compare: '$.n === Long("9007199254740993")',
+    refuseConstant:
+      "'Long(<constant>)' — this constant is not a whole number in the 64-bit range (-9223372036854775808 … 9223372036854775807). Write 'Decimal128(…)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits — spell it as a string ('Long(\"9007199254740993\")') or a BigInt (9007199254740993n).",
+  }),
+  Int32: bsonValue({
+    spelling: "Int32",
+    doc: "A 32-bit integer. A constant is a literal; anything else converts.",
+    returns: "number",
+    convert: "$toInt",
+    isA: "an int",
+    compare: "$.count === Int32(3)",
+    refuseConstant:
+      "'Int32(<constant>)' — this constant is not a whole number in the 32-bit range (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)' to keep a fraction.",
+  }),
+  Double: bsonValue({
+    spelling: "Double",
+    doc: "A double. A constant is a literal; anything else converts. `Double(1)` keeps a whole number a double, where a written `1` is an int.",
+    returns: "number",
+    convert: "$toDouble",
+    isA: "a double",
+    compare: "$.ratio === Double(1)",
+    refuseConstant: "'Double(<constant>)' — this constant is not a finite number. Write 'Double(1.5)'.",
+  }),
+  UUID: bsonValue({
+    spelling: "UUID",
+    doc: "A UUID. A constant is a literal; anything else converts.",
+    returns: "binData",
+    convert: "$toUUID",
+    isA: "a UUID",
+    compare: '$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")',
+    refuseConstant:
+      "'UUID(<constant>)' — this constant is not a UUID. Write 32 hex digits, or the hyphenated form ('UUID(\"6ac24965-7917-4323-8d44-920ad1d69b94\")').",
+  }),
+  MinKey: bsonSentinel("MinKey", "The value that compares below every other type.", "$.grade === MinKey()"),
+  MaxKey: bsonSentinel("MaxKey", "The value that compares above every other type.", "$.grade === MaxKey()"),
+
+  NumberDecimal: bsonValue({
+    spelling: "NumberDecimal",
+    doc: "The mongosh spelling of `Decimal128`.",
+    returns: "number",
+    convert: "$toDecimal",
+    isA: "a decimal",
+    compare: '$.price > NumberDecimal("9.99")',
+    refuseConstant:
+      "'NumberDecimal(<constant>)' — this constant is not a decimal. Write a digit string ('Decimal128(\"9.99\")'), at most 34 significant digits.",
+  }),
+  NumberLong: bsonValue({
+    spelling: "NumberLong",
+    doc: "The mongosh spelling of `Long`.",
+    returns: "number",
+    convert: "$toLong",
+    isA: "a long",
+    compare: '$.n === NumberLong("9007199254740993")',
+    refuseConstant:
+      "'NumberLong(<constant>)' — this constant is not a whole number in the 64-bit range (-9223372036854775808 … 9223372036854775807). Write 'Decimal128(…)' for a bigger or fractional number. A number literal past 2^53 has already lost its digits — spell it as a string ('Long(\"9007199254740993\")') or a BigInt (9007199254740993n).",
+  }),
+  NumberInt: bsonValue({
+    spelling: "NumberInt",
+    doc: "The mongosh spelling of `Int32`.",
+    returns: "number",
+    convert: "$toInt",
+    isA: "an int",
+    compare: "$.count === NumberInt(3)",
+    refuseConstant:
+      "'NumberInt(<constant>)' — this constant is not a whole number in the 32-bit range (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)' to keep a fraction.",
   }),
 
   Set: global_({

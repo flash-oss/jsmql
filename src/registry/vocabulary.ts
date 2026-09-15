@@ -292,6 +292,42 @@ export type Context = "expression" | "params" | "callArgs" | "statement" | "obje
 type ArgShape = "none" | "multiple" | "object" | "constant" | "dynamic";
 
 /** The type a result has. Not the same set as `Family`. */
+/**
+ * The kind a BSON value proves, by its tag.
+ *
+ * The four numerics are `number` because MongoDB treats them as one: its own
+ * `$type: "number"` alias IS int + long + double + decimal, and `$add`, `$gt` and
+ * `$sum` take them interchangeably. MEASURED on mongod — `$round` on a Decimal128
+ * answers a Decimal128, and `$max: [Long, Int32]` answers the Long.
+ *
+ * A `UUID` reports the tag `Binary`, which is why the table is keyed by tag rather
+ * than by the class: from another copy of `bson` the tag is all there is.
+ */
+export const BSON_KIND: Readonly<Record<string, Kind>> = {
+  ObjectId: "objectId",
+  Decimal128: "number",
+  Long: "number",
+  Int32: "number",
+  Double: "number",
+  Binary: "binData",
+  MinKey: "minKey",
+  MaxKey: "maxKey",
+};
+
+/**
+ * The BSON type tag a value carries, or undefined for anything else. Every `bson`
+ * class sets one, and reading it needs no `bson` import — which is why the fact
+ * lives here, where a ROW can read it, rather than in `src/bson.ts` (which
+ * re-exports this). A value from a SECOND copy of `bson` carries the tag too, and
+ * that is the point: recognition must not depend on a shared prototype.
+ */
+export function bsonTagOf(v: unknown): string | undefined {
+  if (typeof v !== "object" || v === null) return undefined;
+  const tag = (v as { _bsontype?: unknown })._bsontype;
+  // bson 1.x spelled ObjectId's tag with an uppercase D, and jsmql reads both.
+  return typeof tag === "string" ? (tag === "ObjectID" ? "ObjectId" : tag) : undefined;
+}
+
 export type Kind =
   | "string"
   | "array"
@@ -303,7 +339,12 @@ export type Kind =
   | "objectId"
   // MEASURED: { $type: { $hash: { input: "$s", algorithm: "sha256" } } } → "binData",
   // and the same for $toUUID. No other name produces one.
-  | "binData";
+  | "binData"
+  // The two sentinels. They compare against every other type and compute with
+  // NONE — MEASURED, `$add: [MinKey, 1]` is "only supports numeric or date types",
+  // so a kind of their own is what lets that refusal be a compile-time one.
+  | "minKey"
+  | "maxKey";
 
 /**
  * A position something can be written in. Each REQUIRES the matching renderer,

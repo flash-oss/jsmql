@@ -51,6 +51,7 @@ export const SCRATCH_PASS = "jsmql-fixture-scratch";
  */
 export const SCRATCH_DBS = [
   "jsmql_accumulator_agrees",
+  "jsmql_compiler_bson",
   "jsmql_compiler_join",
   "jsmql_compiler_js_agreement",
   "jsmql_compiler_methods",

@@ -69,6 +69,74 @@ what it is.
 | `src/compiler/emit/lower.ts` | a literal to the value the driver sends |
 | `src/stringify.ts` | the value as the JavaScript that rebuilds it — tag-keyed, never `instanceof` |
 
+## The nine the source can spell
+
+| spelling | mongosh name | no argument | a constant | a runtime value |
+|---|---|---|---|---|
+| `ObjectId` | — | `$createObjectId` | live value | `$toObjectId` |
+| `Date` | `ISODate` | `$$NOW` | live value | `$toDate` |
+| `Decimal128` | `NumberDecimal` | refused | live value | `$toDecimal` |
+| `Long` | `NumberLong` | refused | live value | `$toLong` |
+| `Int32` | `NumberInt` | refused | live value | `$toInt` |
+| `Double` | — | refused | live value | `$toDouble` |
+| `UUID` | — | refused | live value | `$toUUID` |
+| `MinKey` | — | live value | refused | refused |
+| `MaxKey` | — | live value | refused | refused |
+
+`X(…)` and `new X(…)` are both accepted (`newKeyword: "optional"` on every row), and
+`jsmql.stringify` writes `new X(…)` for either. JavaScript's own bare `Date()` returns
+a STRING; jsmql keeps the syntax and not that meaning, so one rule covers all nine.
+
+The rows come from two factories in `src/registry/names.ts` — `bsonValue` and
+`bsonSentinel` — so a tenth type is one call, and `constructorGlobals()` in
+`src/compiler/rows.ts` feeds the ambient declarations without a generator edit.
+
+## Constant, and what the fold may do with it
+
+The FOLD builds every constant it can (`bsonConstant` in `src/bson.ts`, reached from
+`src/compiler/passes/fold-methods.ts`), so a row's `constant` cell is reached ONLY by a
+constant the type cannot hold — which is why that cell is a refusal naming the type
+that fits.
+
+`bson` does not refuse what it cannot hold. MEASURED against 7.2.0:
+
+| written | `bson` answers | jsmql |
+|---|---|---|
+| `new Int32(3.7)` | `3` | refuses |
+| `new Int32(5000000000)` | `705032704` | refuses |
+| `Long.fromString("1.5")` | `1` | refuses |
+| `Long.fromString("99999999999999999999")` | `7766279631452241919` | refuses |
+| `new Double("x")` | `NaN` | refuses |
+
+A JavaScript number past 2^53 has already lost the integer it was written as, so it is
+refused too — the same line the fold holds for `(2 ** 60) + 1`.
+
+Once built, a BSON value is a VALUE and nothing else:
+
+- **Its kind is `number`** for the four numerics (`BSON_KIND` in
+  `src/registry/vocabulary.ts`), because MongoDB's own `$type: "number"` alias is
+  int + long + double + decimal. That is what keeps a comparison on the query road and
+  a method off the per-document `$isArray` wrapper.
+- **The fold never computes with it.** `bson.Decimal128`'s whole prototype is
+  `toString` / `toJSON` / `toExtendedJSON` — there is no decimal arithmetic to fold
+  with, and the server's answer is the exact one (MEASURED: `$add: ["$p", Decimal128("0.2")]`
+  is `0.3` where a double is `0.30000000000000004`). `Long` and `Int32` would need
+  MongoDB's promotion matrix reimplemented, and a wrong square is a wrong number in a
+  report.
+- **One exact read folds**: `toString()`, which cannot lose anything.
+
+## The sentinels
+
+`MinKey` / `MaxKey` compare against every type and compute with none. MEASURED:
+`$add: [MinKey, 1]` is "only supports numeric or date types". There is no MQL
+expression that produces one either — `{ $minKey: 1 }` is "Unrecognized expression" —
+so the value can only be the live one the fold builds, and their rows say `inCode`.
+
+jsmql does not refuse `MinKey() + 1` at compile time, because it refuses none of its
+siblings either: `true + 1`, `[1,2] + 1` and `0x507f… + 1` all emit `$add` today. A
+general operand gate over every kind is its own change; a MinKey-only one would be an
+inconsistency, not a fix.
+
 ## The plausibility rule
 
 `src/compiler/objectid-guard.ts` refuses an ObjectId whose embedded timestamp predates

@@ -17,15 +17,22 @@
 // prototype AND the `_bsontype` tag, and either one answers yes.
 export { Decimal128, Double, Int32, Long, MaxKey, MinKey, ObjectId, UUID } from "bson";
 
-import { Binary, ObjectId as ObjectIdClass, UUID } from "bson";
+import { bsonTagOf } from "./registry/vocabulary.ts";
+import {
+  Binary,
+  Decimal128 as Decimal128Class,
+  Double as DoubleClass,
+  Int32 as Int32Class,
+  Long as LongClass,
+  MaxKey as MaxKeyClass,
+  MinKey as MinKeyClass,
+  ObjectId as ObjectIdClass,
+  UUID,
+} from "bson";
 
-/** The BSON type tag a value carries, or undefined for anything else. Every `bson` class sets one. */
-export function bsonTagOf(v: unknown): string | undefined {
-  if (typeof v !== "object" || v === null) return undefined;
-  const tag = (v as { _bsontype?: unknown })._bsontype;
-  // bson 1.x spelled ObjectId's tag with an uppercase D, and jsmql reads both.
-  return typeof tag === "string" ? (tag === "ObjectID" ? "ObjectId" : tag) : undefined;
-}
+// The tag reader needs no `bson` import, so it lives in the registry's vocabulary
+// where a ROW can read it as well. Re-exported here so the compiler has one name.
+export { bsonTagOf, BSON_KIND } from "./registry/vocabulary.ts";
 
 /**
  * Is `v` the named BSON type? `cls` is the class from THIS copy of `bson`; `tag` is
@@ -67,5 +74,114 @@ export function objectIdHex(value: unknown): string | null {
     const s = v.toString();
     if (/^[0-9a-fA-F]{24}$/.test(s)) return s.toLowerCase();
   }
+  return null;
+}
+
+// ── building a constant ──────────────────────────────────────────────────────
+
+const INT32_MIN = -2147483648;
+const INT32_MAX = 2147483647;
+const INT64_MIN = -(2n ** 63n);
+const INT64_MAX = 2n ** 63n - 1n;
+
+/**
+ * The exact integer `v` names, or null when it names none.
+ *
+ * `bson` does NOT refuse what it cannot hold — MEASURED, `new Int32(5000000000)` is
+ * 705032704 and `Long.fromString("1.5")` is 1. A wrapped integer in an analytics
+ * report is undetectable, so jsmql reads the value itself and lets the row refuse.
+ * A JavaScript number past 2^53 has already lost the integer it was written as, so
+ * it names none — the same line the fold holds for `(2 ** 60) + 1`.
+ */
+function exactInteger(v: unknown): bigint | null {
+  if (typeof v === "bigint") return v;
+  if (typeof v === "number") return Number.isSafeInteger(v) ? BigInt(v) : null;
+  if (typeof v === "string" && /^[+-]?\d+$/.test(v.trim())) return BigInt(v.trim());
+  return null;
+}
+
+/** The finite number `v` names, or null. A numeric string counts — mongosh's `Double("1.5")` does too. */
+function finiteNumber(v: unknown): number | null {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v === "string" && v.trim() !== "") {
+    const n = Number(v);
+    return Number.isFinite(n) ? n : null;
+  }
+  return null;
+}
+
+/** Run a `bson` constructor that throws on bad input, and answer null instead. */
+function attempt<T>(build: () => T): T | null {
+  try {
+    return build();
+  } catch {
+    return null;
+  }
+}
+
+/**
+ * The live BSON value `name(value)` builds, or null when it builds none — a
+ * malformed constant, or one the type cannot hold.
+ *
+ * Null is not an error: the caller is the FOLD, and a fold that cannot answer
+ * leaves the call standing so the name's row refuses it at its source position,
+ * with the row's own message. See docs/specs/bson-types.md.
+ */
+export function bsonConstant(name: string, value: unknown): object | null {
+  switch (canonicalBsonName(name)) {
+    case "ObjectId":
+      return typeof value === "string" && /^[0-9a-fA-F]{24}$/.test(value)
+        ? new ObjectIdClass(value.toLowerCase())
+        : null;
+    case "Decimal128": {
+      // A number's shortest round-trip spelling IS the decimal the source wrote:
+      // `Decimal128(0.1)` means decimal 0.1, not the double's 0.1000000000000000055.
+      const text = typeof value === "string" ? value.trim() : typeof value === "number" ? String(value) : null;
+      return text === null ? null : attempt(() => Decimal128Class.fromString(text));
+    }
+    case "Long": {
+      const n = exactInteger(value);
+      // `fromString` rather than `fromBigInt`: it is present in every supported major.
+      return n === null || n < INT64_MIN || n > INT64_MAX ? null : attempt(() => LongClass.fromString(n.toString()));
+    }
+    case "Int32": {
+      const n = exactInteger(value);
+      return n === null || n < BigInt(INT32_MIN) || n > BigInt(INT32_MAX) ? null : new Int32Class(Number(n));
+    }
+    case "Double": {
+      const n = finiteNumber(value);
+      return n === null ? null : new DoubleClass(n);
+    }
+    case "UUID":
+      return typeof value === "string" ? attempt(() => new UUID(value)) : null;
+    default:
+      return null;
+  }
+}
+
+/**
+ * The `bson` class name a spelling means. mongosh names four of these types
+ * differently, and an analyst arrives with that spelling in hand — both compile, and
+ * `jsmql.stringify` writes the `new X(…)` form for either. See docs/LANGUAGE.md.
+ */
+export function canonicalBsonName(spelling: string): string {
+  switch (spelling) {
+    case "NumberDecimal":
+      return "Decimal128";
+    case "NumberLong":
+      return "Long";
+    case "NumberInt":
+      return "Int32";
+    case "ISODate":
+      return "Date";
+    default:
+      return spelling;
+  }
+}
+
+/** The live BSON value `name()` mints with no argument, or null when the name mints none. */
+export function bsonNullary(name: string): object | null {
+  if (name === "MinKey") return new MinKeyClass();
+  if (name === "MaxKey") return new MaxKeyClass();
   return null;
 }

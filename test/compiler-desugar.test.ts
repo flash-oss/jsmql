@@ -327,7 +327,10 @@ describe("compiler/passes/desugar — a shorthand is rewritten only where a ROW 
     // rewrite only knows a callable global from everything else.
     expect(arg("$.items.map(Number)")).toBe("Lambda");
     expect(arg("$.items.map(Math.floor)")).toBe("Lambda");
-    expect(arg("$.items.map(Date)")).toBe("Ident");
+    expect(arg("$.items.map(Date)")).toBe("Lambda");
+    expect(arg("$.items.map(Decimal128)")).toBe("Lambda");
+    // `Set` still demands `new`, so it is not callable bare.
+    expect(arg("$.items.map(Set)")).toBe("Ident");
     expect(arg("$.items.map(f)")).toBe("Ident");
   });
 

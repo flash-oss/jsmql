@@ -14,7 +14,7 @@
 // call stays a runtime one.
 
 import type { Evaluation } from "./evaluate.ts";
-import { isObjectId, objectIdHex, ObjectId } from "../../bson.ts";
+import { bsonConstant, bsonNullary, bsonTagOf, canonicalBsonName, isObjectId, objectIdHex } from "../../bson.ts";
 import { sameValue, truthy } from "./evaluate.ts";
 import { setKey } from "../../registry/mql.ts";
 import { foldDateMethod, foldDateUTC, foldNewDate } from "./fold-dates.ts";
@@ -223,7 +223,7 @@ export function foldNamespaceConstant(namespace: string, name: string): Evaluati
  */
 export function foldConstructor(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
-  switch (name) {
+  switch (canonicalBsonName(name)) {
     case "Date":
       return foldNewDate(values);
     case "Set": {
@@ -231,11 +231,8 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
       if (args.length === 0) return ok([]);
       return Array.isArray(a) ? ok(a) : NO;
     }
-    case "ObjectId":
-      return objectIdFrom(values);
     default:
-      // `new RegExp(…)` and anything else: not something this knows.
-      return NO;
+      return bsonValue(name, args.length, values);
   }
 }
 
@@ -251,7 +248,11 @@ export function foldConstructor(name: string, args: readonly Arg[]): Evaluation 
 export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
   const values = args.map(valueOf);
   const [a] = values;
-  switch (name) {
+  switch (canonicalBsonName(name)) {
+    // `Date(…)` without `new` means the same date `new Date(…)` does. JavaScript's
+    // bare call returns a string instead; jsmql keeps the syntax, not that meaning.
+    case "Date":
+      return foldNewDate(values);
     case "String":
       // `$toString(null)` is null, not the four letters "null".
       if (a === null) return ok(null);
@@ -270,11 +271,28 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
       // and converts at run time, where the server also judges a string it cannot
       // parse (" 12 ", "0x10").
       return NO;
-    case "ObjectId":
-      return objectIdFrom(values);
     default:
-      return NO;
+      return bsonValue(name, args.length, values);
   }
+}
+
+/**
+ * The live BSON value a constructor name settles to: `Decimal128("1.50")`,
+ * `MinKey()`, `ObjectId("<24 hex>")`. `new X(…)` and `X(…)` fold alike — the row
+ * decides which spellings the name accepts, not this.
+ *
+ * NO for anything the type cannot hold, so the call stands and the row refuses it
+ * at its source position. jsmql never builds a value `bson` would silently wrap:
+ * `new Int32(5000000000)` is 705032704 there. See docs/specs/bson-types.md.
+ */
+function bsonValue(name: string, count: number, values: readonly unknown[]): Evaluation {
+  if (count === 0) {
+    const minted = bsonNullary(name);
+    return minted === null ? NO : ok(minted);
+  }
+  if (count !== 1) return NO;
+  const built = bsonConstant(name, values[0]);
+  return built === null ? NO : ok(built);
 }
 
 /**
@@ -288,13 +306,6 @@ export function foldNamedCall(name: string, args: readonly Arg[]): Evaluation {
 export function numberSpelling(n: number): string | null {
   if (!Number.isInteger(n) || Object.is(n, -0) || Math.abs(n) >= 1e16) return null;
   return String(n);
-}
-
-/** A 24-hex string, and nothing else: `ObjectId()` mints one and is not constant. */
-function objectIdFrom(values: readonly unknown[]): Evaluation {
-  const [a] = values;
-  if (typeof a !== "string" || !/^[0-9a-fA-F]{24}$/.test(a)) return NO;
-  return ok(new ObjectId(a.toLowerCase()));
 }
 
 // ── instance calls ───────────────────────────────────────────────────────────
@@ -311,11 +322,20 @@ export function foldInstanceCall(receiver: unknown, name: string, args: readonly
   if (Array.isArray(receiver)) return arrayMethod(receiver, name, args);
   if (typeof receiver === "number") return numberMethod(receiver, name, args);
   if (receiver instanceof Date) return foldDateMethod(receiver, name, args.map(valueOf));
-  // An ObjectId's one read: its 24 hex digits, the string the driver prints.
-  if (isObjectId(receiver)) {
+  // A BSON value's one EXACT read: the text it prints. Nothing else folds — a
+  // decimal's arithmetic belongs to the server, which is the whole reason the type
+  // exists (MEASURED: `$add: ["$p", Decimal128("0.2")]` is 0.3 where a double is
+  // 0.30000000000000004), and a long's would need MongoDB's promotion rules.
+  if (bsonTagOf(receiver) !== undefined) {
     if (name !== "toString" || args.length !== 0) return NO;
-    const hex = objectIdHex(receiver);
-    return hex === null ? NO : ok(hex);
+    // An ObjectId prints its 24 hex digits, and the defensive reader is the one
+    // that survives a plain object wearing the tag.
+    if (isObjectId(receiver)) {
+      const hex = objectIdHex(receiver);
+      return hex === null ? NO : ok(hex);
+    }
+    const own = (receiver as { toString?: () => string }).toString;
+    return typeof own === "function" && own !== Object.prototype.toString ? ok(String(own.call(receiver))) : NO;
   }
   // PLAIN objects only. A RegExp, a Date and a BSON value are all objects to
   // JavaScript, and reading one with the object rules answers about the wrong

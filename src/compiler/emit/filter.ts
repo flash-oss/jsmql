@@ -21,7 +21,7 @@ import { queryOwnValue } from "../../registry/vocabulary.ts";
 import { internalError } from "../../errors.ts";
 import { namedRow, staticKey } from "../passes/naming.ts";
 import { evaluate } from "../passes/evaluate.ts";
-import { isObjectId, ObjectId } from "../../bson.ts";
+import { bsonTagOf, ObjectId } from "../../bson.ts";
 import { consult, listedIn } from "./consult.ts";
 import { checkSlots } from "./check.ts";
 import type { Env } from "./env.ts";
@@ -467,10 +467,20 @@ export function constantIn(e: Expr): { value: unknown } | null {
   return isQueryConstant(x) ? { value: x } : null;
 }
 
-/** A value the query language compares as written: a scalar, a Date, an ObjectId, a regex, or a list of such. */
+/**
+ * A value the query language compares as written: a scalar, a Date, any BSON value,
+ * a regex, or a list of such.
+ *
+ * Every BSON value belongs here, and the reason is correctness rather than output
+ * size. MEASURED on mongod, for `{ tags: [Long(5), Long(7)] }`:
+ *   { tags: Long(5) }                      → matches      (any ELEMENT equals)
+ *   { $expr: { $eq: ["$tags", Long(5)] } } → matches NOT   (the whole array, to a scalar)
+ * A BSON value left off this list takes the `$expr` road and quietly answers the
+ * second question on every array field.
+ */
 function isQueryConstant(x: unknown): boolean {
   if (x === null || typeof x === "number" || typeof x === "string" || typeof x === "boolean") return true;
-  if (x instanceof Date || isObjectId(x)) return true;
+  if (x instanceof Date || bsonTagOf(x) !== undefined) return true;
   if (Array.isArray(x)) return x.every(isQueryConstant);
   return false;
 }

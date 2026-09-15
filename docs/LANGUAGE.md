@@ -2490,7 +2490,62 @@ jsmql`$._id === ${someObjectId}`              // interpolate a live ObjectId ins
 jsmql.compile(({ id }) => $._id === id)       // then call with { id: someObjectId }
 ```
 
-> Note: the value jsmql constructs is hard-coded to the BSON major version jsmql's supported driver ships (currently bson 7). It serializes byte-for-byte identically to a driver `ObjectId`; if your app pins a *different* bson major, prefer interpolating your driver's own ObjectId instance.
+The value is an `ObjectId` from **your own `bson`**. jsmql declares `bson` as a peer dependency, so it resolves to the one copy your driver already carries — the value passes `instanceof` in your code and hands to any other module unchanged.
+
+### The other BSON types
+
+Eight more BSON types have the same three-way spelling. A constant is a live BSON value; a runtime value converts on the server; `X(…)` and `new X(…)` are equivalent, and `jsmql.stringify` writes the `new X(…)` form.
+
+```js
+$.price === Decimal128("9.99")     // → { price: new Decimal128("9.99") }
+$.n === Long("9007199254740993")   // → { n: Long.fromString("9007199254740993") }
+$.count === Int32(3)               // → { count: new Int32(3) }
+$.ratio === Double(1)              // → { ratio: new Double(1) }
+$.id === UUID("6ac24965-7917-4323-8d44-920ad1d69b94")
+$.grade === MinKey()               // → { grade: new MinKey() }
+$.grade < MaxKey()                 // → { grade: { $lt: new MaxKey() } }
+
+$.a = Decimal128($.s);             // → [{ $set: { a: { $toDecimal: "$s" } } }]
+```
+
+If you come from mongosh, its names work too and mean exactly the same thing: `NumberDecimal` → `Decimal128`, `NumberLong` → `Long`, `NumberInt` → `Int32`, `ISODate` → `Date`.
+
+`Timestamp`, `Binary`, `DBRef`, `Code`, `BSONSymbol` and `BSONRegExp` have **no source spelling** — they are not analytics types, and `Timestamp` in particular is MongoDB's *internal* oplog type rather than a date. Interpolate one when you need it (`` jsmql`$.ts === ${new Timestamp({ t, i })}` ``); jsmql passes it through untouched and `jsmql.stringify` prints it correctly.
+
+**`Double` is load-bearing.** The driver writes a whole JavaScript number as an **int**, so `$.a = 1;` stores an int and `$.a = Double(1);` stores a double.
+
+**Arithmetic stays on the server.** jsmql never evaluates arithmetic on a BSON number at compile time, because doing it in JavaScript would destroy the guarantee you asked for by writing the type:
+
+```js
+$.a = Decimal128("0.1") + Decimal128("0.2");
+// → [{ $set: { a: { $add: [new Decimal128("0.1"), new Decimal128("0.2")] } } }]
+// the server answers 0.3 — exact. A double answers 0.30000000000000004.
+```
+
+The one thing that does fold is an exact read: `Decimal128("1.50").toString()` → `"1.50"`.
+
+**jsmql refuses what `bson` would silently wrap.** `new Int32(5000000000)` is `705032704` in `bson` and in mongosh — a plausible-looking wrong number. jsmql rejects it at the source position and names the type that fits:
+
+```js
+$.a = Int32(5000000000);
+// 'Int32(<constant>)' — this constant is not a whole number in the 32-bit range
+// (-2147483648 … 2147483647). Write 'Long(…)' for a bigger integer, or 'Double(…)'
+// to keep a fraction.
+```
+
+### Surprise: numeric equality is cross-type, but exact
+
+MongoDB compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a double and a decimal `1.5` alike. But the comparison is **exact**, and most decimal fractions are not exactly representable as a double:
+
+```js
+// a collection storing money as Decimal128
+$.price === Decimal128("0.1")   // finds it
+$.price === 0.1                 // finds NOTHING — and reports no error
+```
+
+The double `0.1` is really `0.1000000000000000055…`, which genuinely differs from decimal `0.1`. On a `Decimal128` column, write the constant as `Decimal128(…)`. (`1.5` happens to be exactly representable, so it matches either way — which is what makes this easy to miss.)
+
+Two more measured surprises worth knowing. `Long + Double` promotes to a double and loses the integer: `$add: [Long("9007199254740993"), Double(0.5)]` is `9007199254740992`. And `MinKey`/`MaxKey` **compare** with every type but **compute** with none — `$add: [MinKey(), 1]` is a server error.
 
 ---
 

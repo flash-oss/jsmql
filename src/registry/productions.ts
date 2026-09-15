@@ -19,7 +19,7 @@
 import type { NodeName, On, Only, Position, Returns } from "./vocabulary.ts";
 import { composedInto, inCode, unsupported, viaFallback } from "./vocabulary.ts";
 import type { Cell, Expr, ExprIn, FilterIn, FilterOut, Lists, Of, OutOf, QueryDoc, StageIn } from "./vocabulary.ts";
-import { queryOwnValue, typeAliasOf } from "./vocabulary.ts";
+import { bsonTagOf, queryOwnValue, typeAliasOf } from "./vocabulary.ts";
 import type { TokenKey } from "./tokens.ts";
 import type { KeywordKey } from "./keywords.ts";
 
@@ -297,13 +297,23 @@ function looseEqualityQuery(input: FilterIn, negated: boolean): QueryDoc | null 
 
 const FLIPPED = { $gt: "$lt", $gte: "$lte", $lt: "$gt", $lte: "$gte" } as const;
 
-/** An ordered comparison of a field with a number, a string or a date; flipped when the field is on the right. */
+/**
+ * An ordered comparison of a field with a value BSON orders; flipped when the field
+ * is on the right.
+ *
+ * Every BSON value qualifies — BSON defines a total order across types, and the
+ * sentinels exist to sit at its ends: MEASURED, `{ g: { $gt: MinKey() } }` returns
+ * every document whose `g` is anything else. Off this road the comparison becomes
+ * `$expr`, which compares a whole ARRAY to a scalar and so answers a different
+ * question on an array field.
+ */
 function orderedQuery(input: FilterIn, op: keyof typeof FLIPPED): QueryDoc | null {
   if (comparesALength(input)) return null;
   const pc = pathAndConstant(input);
   if (pc === null) return null;
   const v = pc.value;
-  if (typeof v !== "number" && typeof v !== "string" && !(v instanceof Date)) return null;
+  const ordered = typeof v === "number" || typeof v === "string" || v instanceof Date || bsonTagOf(v) !== undefined;
+  if (!ordered) return null;
   return queryOwnValue(pc.path, { [pc.flipped ? FLIPPED[op] : op]: v });
 }
 

@@ -533,7 +533,12 @@ describe("compiler/emit — the JavaScript globals, Math, regex methods and the 
       $map: { input: ["$neg", "$n"], as: "x", in: { $abs: "$$x" } },
     });
     expect(compiled("$.a.some(Number.isInteger)", () => DOC.a.some(Number.isInteger))).toBeDefined();
-    expect(() => expr("$.a.map(Date)")).toThrow(/takes an arrow/);
+    // A BSON constructor applies point-free too, but not HERE: this suite asks the
+    // server to agree with JavaScript, and a BSON conversion has no JavaScript
+    // counterpart to agree with — `$toDecimal` answers a Decimal128 where JavaScript
+    // answers a number. test/codegen.test.ts asserts those shapes without running.
+    // `Set` demands `new`, so no bare spelling of it applies to an element.
+    expect(() => expr("$.a.map(Set)")).toThrow(/takes an arrow/);
   });
 
   it("lowers a regex literal's own methods", () => {

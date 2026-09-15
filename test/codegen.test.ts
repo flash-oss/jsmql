@@ -3120,11 +3120,15 @@ describe("bare built-in callbacks", () => {
       expect(() => jsmql.expr(src), src).not.toThrow();
     }
   });
-  // `Date` is excluded on purpose: called without `new` it ignores its argument, so a
-  // point-free spelling would not mean what it reads as. `parseInt` is refused outright —
-  // `Number` is the one numeric conversion — and the same call proves both.
-  it("rejects the built-ins whose point-free form would mislead", () => {
-    expect(() => jsmql.expr("$.xs.map(Date)")).toThrow();
+  // Every BSON constructor converts its argument here, so each has a point-free form
+  // that reads as what it does — `Date` included, where JavaScript's bare `Date()`
+  // would ignore the argument and answer a string.
+  it("applies a BSON constructor point-free", () => {
+    expect(jsmql.expr("$.xs.map(Date)")).toEqual({ $map: { input: "$xs", as: "x", in: { $toDate: "$$x" } } });
+    expect(jsmql.expr("$.xs.map(Decimal128)")).toEqual({ $map: { input: "$xs", as: "x", in: { $toDecimal: "$$x" } } });
+  });
+  // `parseInt` is refused outright — `Number` is the one numeric conversion.
+  it("rejects a built-in that is not part of jsmql", () => {
     expect(() => jsmql.expr("$.xs.map(parseInt)")).toThrow(/'parseInt\(\)' is not part of jsmql/);
   });
   it("a bare ObjectId outside callback position names the call forms", () => {

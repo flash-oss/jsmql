@@ -10,6 +10,73 @@ A chronological log of decisions, changes, and the reasoning behind them. Every 
 
 ---
 
+## 2026-09-15 — feat(bson): eight more BSON types the source can spell
+
+`ObjectId` was the only BSON type JSMQL could WRITE. Every other one could arrive
+through a `${slot}` and print correctly, but there was no way to spell a decimal
+comparison in source at all. Eight more now have the same three-way meaning `ObjectId`
+has: no argument mints where MongoDB has something to mint, a constant is a live BSON
+value, anything else converts through the type's own `$to…` operator. They are
+`Decimal128`, `Long`, `Int32`, `Double`, `UUID`, `MinKey`, `MaxKey` — chosen for
+ANALYTICS, which is what ruled the rest out. `Timestamp` is MongoDB's internal oplog
+type and not a date at all, and offering it would invite people to reach for it when
+they mean `Date`; `Binary`, `DBRef`, `Code` and `BSONSymbol` have nothing to group,
+sum or bucket. Those six keep passing through a slot untouched.
+
+Two decisions shape the semantics, and they point opposite ways. The four numerics
+report the kind `number`, because MongoDB's own `$type: "number"` alias IS int + long
++ double + decimal — that is what keeps `$.price > Decimal128("9.99")` on the query
+road instead of in `$expr`, which MEASURED compares a whole ARRAY to a scalar and so
+silently answers a different question on an array field. But the fold never COMPUTES
+with one. `bson.Decimal128` has no arithmetic to fold with, and the server's answer is
+the exact one the type exists for (`$add: ["$p", Decimal128("0.2")]` is 0.3 where a
+double is 0.30000000000000004); `Long` and `Int32` would need MongoDB's promotion
+matrix reimplemented, and a wrong square there is a wrong number in a report. The one
+fold kept is `toString()`, which can lose nothing.
+
+jsmql also refuses what `bson` silently wraps. MEASURED against 7.2.0, `new
+Int32(5000000000)` is `705032704` and `Long.fromString("1.5")` is `1` — mongosh agrees
+with both. A wrapped integer in an analytics report is undetectable, so every constant
+is read before it is built and the refusal names the type that fits. This is the line
+the fold already held for `(2 ** 60) + 1`.
+
+Both spellings work everywhere: `X(…)` and `new X(…)`, and mongosh's `NumberDecimal` /
+`NumberLong` / `NumberInt` / `ISODate` beside the `bson` class names, because analysts
+arrive from mongosh and Compass with those in hand. `jsmql.stringify` still writes one
+form, `new X(…)`, which runs unchanged in a driver script and in mongosh alike. `Date`
+joins the rule, so bare `Date()` is now a date — JavaScript's own bare `Date()` returns
+a string, and JSMQL keeps the syntax rather than that meaning. That also makes `Date`
+applicable point-free (`$.xs.map(Date)`), which it was not while it demanded `new`.
+
+The rows are two factories in [src/registry/names.ts](src/registry/names.ts) and the
+ambient declarations are DERIVED from them through `constructorGlobals()`, so a tenth
+type is one row and no generator edit. See
+[docs/specs/bson-types.md](docs/specs/bson-types.md) and
+[test/compiler-bson.test.ts](test/compiler-bson.test.ts), which runs every document it
+asserts against a live mongod.
+
+---
+
+## 2026-09-15 — docs: numeric equality is cross-type, and exact
+
+MEASURED, and it is the trap this language surface can lead an analyst into. MongoDB
+compares numbers across BSON types, so `{ price: 1.5 }` matches an int, a long, a
+double and a decimal alike — but the comparison is EXACT, and most decimal fractions
+are not exactly representable as a double. On a collection storing money as
+`Decimal128`, `$.price === 0.1` returns zero rows and no error, because the double
+`0.1` really is `0.1000000000000000055…`. `1.5` happens to be exactly representable,
+which is what makes the failure easy to miss.
+
+jsmql cannot fix this. It does not know a field's stored type, and inferring one would
+make the same input compile to different output depending on a guess. So it is
+documented instead, in [docs/LANGUAGE.md](docs/LANGUAGE.md), together with two more
+measured surprises: `Long + Double` promotes to a double and loses the integer
+(`$add: [Long("9007199254740993"), Double(0.5)]` is 9007199254740992), and the driver
+writes a whole JavaScript number as an INT, which is what makes `Double(1)` the only
+way to store a whole-number double.
+
+---
+
 ## 2026-09-15 — fix(bson): ObjectId comes from the `bson` module, a peer dependency
 
 jsmql built its own ObjectId — a duck-typed class in `src/objectid.ts` that tagged itself
