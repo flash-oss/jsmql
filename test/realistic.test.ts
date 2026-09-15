@@ -53,7 +53,7 @@ describe("recommended products (collaborative filtering)", { features: ["Pipelin
         jsmql`
 const userId = 0x507f1f77bcf86cd799439011;
 $$.filter({ _id: userId }); // limit the whole pipeline down to one pass
-assert($$.length === 1, "More than one user with such ID found");
+assert($$.length === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
@@ -98,13 +98,7 @@ $$ = candidateProductIds
             $expr: {
               $convert: {
                 input: true,
-                to: {
-                  $cond: [
-                    { $eq: ["$__jsmql.length", 1] },
-                    "bool",
-                    "jsmql assertion failed: More than one user with such ID found",
-                  ],
-                },
+                to: { $cond: [{ $eq: ["$__jsmql.length", 1] }, "bool", "jsmql assertion failed: User not found"] },
               },
             },
           },

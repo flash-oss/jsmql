@@ -135,6 +135,18 @@ became `{ age: -1 }`.
 
 ---
 
+## 2026-09-15 — docs(examples): the recommended-products assertion says what went wrong
+
+The "recommended products" example in [realistic.test.ts](test/realistic.test.ts) (and its
+live copy in [integration.test.ts](test/integration.test.ts)) opens with
+`assert($$.length === 1, …)`. Its message read "More than one user with such ID found",
+which names only one of the two ways the check fails; the common one — no user at all —
+is what a reader hits first. The message is now "User not found". The emitted
+`$convert.onError` text follows the source, so the expected MQL and the regenerated
+`playground.html` carry the new wording.
+
+---
+
 ## 2026-09-12 — docs(examples): the recommended-products joins are one equality each, and the products join loads two fields
 
 The "recommended products" example in [realistic.test.ts](test/realistic.test.ts)

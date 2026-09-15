@@ -771,7 +771,7 @@ $ = { lines };`,
       "users",
       `const userId = 0x6500000000000000000000a2;
 $$.filter({ _id: userId });
-assert($$.length === 1, "More than one user with such ID found");
+assert($$.length === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
@@ -886,7 +886,7 @@ $ = { n: $.n, m: $.m, lines: $.lines };`,
       "users",
       `const userId = 0x6500000000000000000000a2;
 $$.filter({ _id: userId });
-assert($$.length === 1, "More than one user with such ID found");
+assert($$.length === 1, "User not found");
 
 const myProductIds = $$$.orders
   .filter({ userId })
